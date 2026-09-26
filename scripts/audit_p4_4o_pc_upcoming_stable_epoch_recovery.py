@@ -24,6 +24,7 @@ RECEIPT_PATH = Path("artifacts/architecture/p4_4o_pc_upcoming_stable_epoch_recov
 POLICY_ID = "ATHENA_P4_4O_PC_UPCOMING_STABLE_EPOCH_RECOVERY_V1"
 BASE_MAIN_SHA = "a8c9776889b38ad412ac8887fa104f7546fad238"
 OLD_RUNTIME_SHA256 = "fd203fc4b857bb3c5faa22536e87e1bc214cd4fdcf79ec5b6c4c681cd9d0cf73"
+HISTORICAL_RUNTIME_SHA256 = "dac1f99da0b536b3808f8c7e41f66ad501101871d811131f8ede9e5dc99d4a5f"
 SOURCE_SHA256 = "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075"
 TEAM_LABEL_SHA256 = "0c382ec8b12d802879a51b766daae8f655dd5b371509653e56a13190a85c6c7b"
 IDENTITY_COMPATIBILITY_SHA256 = "2fdbb8165262f6e633ee48276aea57c9235699272235798e1cef12fdc714ae04"
@@ -91,6 +92,10 @@ def _verify_receipt(root: Path) -> dict[str, Any]:
              "P4.4O receipt schema or policy identity drifted")
     _require(value.get("repository") == "Thabearr/ATHENA" and value.get("base_main_sha") == BASE_MAIN_SHA,
              "P4.4O base/repository identity drifted")
+    _require(value.get("current_runtime_policy_id") == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
+             and value.get("runtime_policy_sha256_before") == "fd203fc4b857bb3c5faa22536e87e1bc214cd4fdcf79ec5b6c4c681cd9d0cf73"
+             and value.get("runtime_policy_sha256_after") == HISTORICAL_RUNTIME_SHA256,
+             "P4.4O historical runtime identity drifted")
     _require(value.get("failed_proof_run") == 36245444226
              and value.get("failed_proof_artifact_id") == 10907222195
              and value.get("failed_proof_artifact_name") == "athena-run-36245444226"
@@ -167,78 +172,13 @@ def _verify_historical_receipts(root: Path, receipt: dict[str, Any]) -> None:
 
 
 def _verify_current_contract(receipt: dict[str, Any], root: Path) -> None:
-    runtime.validate_contract()
-    _require(runtime.POLICY_ID == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
-             and runtime.calculate_policy_sha256() == runtime.PINNED_POLICY_SHA256
-             and runtime.PINNED_POLICY_SHA256 != OLD_RUNTIME_SHA256
-             and receipt.get("current_runtime_policy_id") == runtime.POLICY_ID
-             and receipt.get("runtime_policy_sha256_after") == runtime.PINNED_POLICY_SHA256,
-             "current runtime wrapper is not the exact P4.4O supersession")
-    stabilization = runtime._policy_payload().get("capture_stabilization")
-    _require(stabilization == {
-        "recovery_semantics": "FRESH_CAPTURE_EPOCH_AFTER_EXACT_CROSS_PAGE_TOTALNUM_DRIFT",
-        "exact_first_epoch_trigger": source.TOTALNUM_DRIFT_ERROR,
-        "max_capture_epochs": 2,
-        "max_pages_per_epoch": 20,
-        "max_successful_page_responses": 40,
-        "each_epoch_starts_at_page": 1,
-        "no_per_page_http_retry": True,
-        "no_third_capture_epoch": True,
-        "failed_epoch_provider_absence_authority": False,
-        "failed_epoch_identity_learning_authority": False,
-        "failed_epoch_reconciliation_authority": False,
-        "failed_epoch_selection_authority": False,
-        "failed_epoch_pricing_authority": False,
-        "failed_epoch_router_authority": False,
-        "failed_epoch_portfolio_authority": False,
-        "failed_epoch_delivery_authority": False,
-        "cross_epoch_event_merge": False,
-        "accepted_epoch_independently_source_v1_verified": True,
-        "accepted_epoch_independently_runtime_complete": True,
-        "source_fallback": False,
-        "all_attempt_evidence_retained_under_source_evidence_root": True,
-        "workflow_retry": False,
-        "per_page_transport_retry": False,
-        "provider_request_upper_bound_is_finite": True,
-    }, "runtime capture-stabilization policy drifted")
-    _require(source.POLICY_ID == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1"
-             and source.calculate_policy_sha256() == SOURCE_SHA256
-             and source.PINNED_POLICY_SHA256 == SOURCE_SHA256,
-             "PR #405 source V1 policy changed")
-    _require(team_labels.EXPECTED_POLICY_SHA256 == TEAM_LABEL_SHA256
-             and compatibility.EXPECTED_POLICY_SHA256 == IDENTITY_COMPATIBILITY_SHA256
-             and bridge.PINNED_POLICY_SHA256 == BRIDGE_SHA256,
-             "P4.4N or P4.4L identity ancestry changed")
-    _require(identity_v2.REGISTRY_SHA256 == V2_SHA256
-             and identity_v2.SEED_REGISTRY_SHA256 == V2_SEED_SHA256,
-             "V2 semantic or seed registry changed")
-    _require(wap.CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 == WAP_SHA256
-             and paginated.EXPECTED_CONTRACT_SHA256 == PAGINATED_SHA256
-             and fanout.EXPECTED_CONTRACT_SHA256 == FANOUT_SHA256,
-             "retained WAP/paginated/fanout contract changed")
-    _require(runner.reconciliation is runtime and runner.upcoming_discovery is runtime,
-             "Current Shadow runtime source owner changed")
-    p3_contract = p3.check_f_upcoming_discovery_contract()
-    _require(p3_contract.get("runtime_policy_id") == runtime.POLICY_ID
-             and p3_contract.get("runtime_policy_sha256") == runtime.PINNED_POLICY_SHA256,
-             "P3 source owner/runtime pin differs from Current Shadow")
-    _require(runtime.AUTHORITY["model"] is False and runtime.AUTHORITY["pricing"] is False
-             and runtime.AUTHORITY["router"] is False and runtime.AUTHORITY["portfolio"] is False
-             and runtime.AUTHORITY["login"] is False and runtime.AUTHORITY["cookies"] is False
-             and runtime.AUTHORITY["wallet"] is False and runtime.AUTHORITY["staking"] is False
-             and runtime.AUTHORITY["bet"] is False and runtime.AUTHORITY["wager_placed"] is False,
-             "runtime authority profile broadened")
-
-    workflow_path = root / ".github/workflows/athena-run.yml"
-    p4m = _read_json(root / "artifacts/architecture/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json")
-    try:
-        workflow_sha = hashlib.sha256(workflow_path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
-    except OSError as exc:
-        raise P44OError("P4.4M workflow preservation contract is unavailable") from exc
-    _require(workflow_sha == P44M_WORKFLOW_SHA256
-             and p4m.get("workflow_after_identity", {}).get("source_sha256") == workflow_sha,
-             "P4.4M workflow bytes changed")
-    _require(value_has_preservation_root(workflow_path), "P4.4M active pcUpcoming evidence root is not preserved")
+    # Kept as an internal compatibility seam for callers of the old audit.
+    # P4.4O itself is historical; only the exact P4.4P receipt owns current pins.
+    from scripts import audit_p4_4p_pc_upcoming_preparse_response_evidence as p44p
+    current = p44p.audit_current(root)
+    _require(receipt.get("runtime_policy_sha256_after") == HISTORICAL_RUNTIME_SHA256
+             and current.get("runtime_policy_sha256") == runtime.PINNED_POLICY_SHA256,
+             "P4.4O historical runtime/P4.4P current supersession chain drifted")
 
 
 def value_has_preservation_root(path: Path) -> bool:
@@ -246,17 +186,37 @@ def value_has_preservation_root(path: Path) -> bool:
     return text.count(".cache/athena-research/current-shadow-sportybet-pc-upcoming-discovery") == 1
 
 
-def audit(repository_root: str | Path = ".") -> dict[str, Any]:
+def audit_historical(repository_root: str | Path = ".") -> dict[str, Any]:
+    """Validate only immutable P4.4O history, never current runtime pins."""
     root = Path(repository_root)
     receipt = _verify_receipt(root)
     _verify_historical_receipts(root, receipt)
-    _verify_current_contract(receipt, root)
     return {
         "status": "PASSED",
         "policy_id": POLICY_ID,
         "receipt_sha256": receipt["canonical_sha256"],
+        "historical_runtime_policy_id": receipt["current_runtime_policy_id"],
+        "historical_runtime_wrapper_sha256": receipt["runtime_policy_sha256_after"],
+        "recovery_policy": receipt["recovery_policy"],
+    }
+
+
+def audit(repository_root: str | Path = ".") -> dict[str, Any]:
+    """Validate P4.4O history plus the exact later P4.4P current-state receipt."""
+    root = Path(repository_root)
+    historical = audit_historical(root)
+    from scripts import audit_p4_4p_pc_upcoming_preparse_response_evidence as p44p
+    current = p44p.audit_current(root)
+    return {
+        "status": "PASSED",
+        "policy_id": POLICY_ID,
+        "receipt_sha256": historical["receipt_sha256"],
         "runtime_policy_id": runtime.POLICY_ID,
-        "runtime_policy_sha256": runtime.PINNED_POLICY_SHA256,
+        "runtime_policy_sha256": current["runtime_policy_sha256"],
+        "historical_runtime_wrapper_sha256": historical["historical_runtime_wrapper_sha256"],
+        "p4_4p_receipt_sha256": current["receipt_sha256"],
+        "workflow_yaml_changed": False,
+        "current_shadow_and_p3_shared_source": True,
         "source_policy_sha256": source.PINNED_POLICY_SHA256,
         "team_label_policy_sha256": team_labels.EXPECTED_POLICY_SHA256,
         "identity_compatibility_sha256": compatibility.EXPECTED_POLICY_SHA256,

@@ -210,6 +210,7 @@ def test_p3_readiness_accepts_new_identity_pins_and_rejects_stale_ones(monkeypat
     accepted = readiness.check_f_upcoming_discovery_contract()
     assert accepted["status"] == "PASSED"
     assert accepted["runtime_policy_id"] == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
+    assert accepted["runtime_policy_sha256"] == "a5c42439e894d33950b5cba608dcd5a031896e7a8e75c6bf613b2314497b1c24"
     assert accepted["runtime_pagination_complete_required"] is True
     actual = upcoming.validate_contract()
     stale = dict(actual)
@@ -219,7 +220,7 @@ def test_p3_readiness_accepts_new_identity_pins_and_rejects_stale_ones(monkeypat
         readiness.check_f_upcoming_discovery_contract()
     monkeypatch.setattr(upcoming, "validate_contract", lambda: {
         **actual,
-        "runtime_policy_sha256": "fd203fc4b857bb3c5faa22536e87e1bc214cd4fdcf79ec5b6c4c681cd9d0cf73",
+        "runtime_policy_sha256": "dac1f99da0b536b3808f8c7e41f66ad501101871d811131f8ede9e5dc99d4a5f",
     })
     with pytest.raises(readiness.P30LiveReadinessError, match="runtime wrapper or completeness rule drifted"):
         readiness.check_f_upcoming_discovery_contract()

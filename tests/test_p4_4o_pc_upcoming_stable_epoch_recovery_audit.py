@@ -15,7 +15,7 @@ def test_p4_4o_receipt_and_current_runtime_supersession_are_exact():
     assert result["policy_id"] == "ATHENA_P4_4O_PC_UPCOMING_STABLE_EPOCH_RECOVERY_V1"
     assert result["runtime_policy_id"] == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
     assert result["runtime_policy_sha256"] == (
-        "dac1f99da0b536b3808f8c7e41f66ad501101871d811131f8ede9e5dc99d4a5f"
+        "a5c42439e894d33950b5cba608dcd5a031896e7a8e75c6bf613b2314497b1c24"
     )
     assert result["source_policy_sha256"] == (
         "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075"
@@ -33,6 +33,15 @@ def test_p4_4n_history_keeps_its_then_current_runtime_hash_and_p4_4o_supersedes_
     assert current["runtime_wrapper_sha256"] == audit.runtime.PINNED_POLICY_SHA256
     assert current["historical_runtime_wrapper_sha256"] == historical["historical_runtime_wrapper_sha256"]
     assert current["p4_4o_receipt_sha256"] == audit._verify_receipt(Path.cwd())["canonical_sha256"]
+    assert current["p4_4p_receipt_sha256"]
+
+
+def test_p4_4o_remains_exact_historical_runtime_evidence():
+    historical = audit.audit_historical(Path.cwd())
+    assert historical["historical_runtime_wrapper_sha256"] == (
+        "dac1f99da0b536b3808f8c7e41f66ad501101871d811131f8ede9e5dc99d4a5f"
+    )
+    assert audit._verify_receipt(Path.cwd())["runtime_policy_sha256_after"] == historical["historical_runtime_wrapper_sha256"]
 
 
 def test_p4_4o_receipt_hash_rejects_unreviewed_mutation(tmp_path: Path):

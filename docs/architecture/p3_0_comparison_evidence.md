@@ -585,3 +585,19 @@ authority. Any non-drift error fails immediately, and there is no third epoch
 or fallback source. No new live proof has run; the successor proof remains
 incomplete until separately authorized. See
 `artifacts/architecture/p4_4o_pc_upcoming_stable_epoch_recovery_v1.json`.
+
+### P4.4P pre-parse pcUpcoming response evidence (2026-09-26)
+
+Run `36266310513` exposed that a successful runtime HTTP response could be
+rejected by strict semantic parsing before its raw bytes were preserved. The
+exact malformed response/value remains unknown; the six retained contiguous
+pages replay as valid and are not evidence of the offending value. P4.4P adds a
+runtime-only pre-parse observer that exclusively preserves each successful
+response and its request/page/time/SHA ancestry before calling the unchanged
+source V1 parser. Parse failures receive a self-hashed receipt bound to those
+raw bytes and remain fail-closed with no provider-absence or downstream
+authority. Provider-native ID acceptance and public source V1 semantics are
+unchanged. P4.4O's one fresh epoch remains limited to exact cross-page
+`totalNum` drift; a semantic parse failure cannot start another epoch. No live
+proof was rerun, and the successor proof remains incomplete. See
+`artifacts/architecture/p4_4p_pc_upcoming_preparse_response_evidence_v1.json`.

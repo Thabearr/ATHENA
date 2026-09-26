@@ -126,6 +126,10 @@ def test_exact_drift_then_stable_epoch_restarts_at_page_one_and_isolates_failed_
     assert all((_attempt(root, 2) / f"pages/page-{page:03d}.raw.json").is_file() for page in (1, 2))
     for attempt_index in (1, 2):
         attempt_root = _attempt(root, attempt_index)
+        raw_journal = runtime._read_raw_response_observations(attempt_root)
+        assert [row["page_num"] for row in raw_journal] == [1, 2]
+        assert all(row["semantic_parse_attempted"] is True and row["semantic_parse_succeeded"] is True for row in raw_journal)
+        assert not (attempt_root / runtime.PARSE_FAILURE_FILENAME).exists()
         journal = runtime._read_page_observations(attempt_root)
         assert [row["page_num"] for row in journal] == [1, 2]
         for row in journal:
