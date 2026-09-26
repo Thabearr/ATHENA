@@ -99,3 +99,27 @@ identity, or wager authority.
 
 Current control state: the P3.0-E1 retry has not been performed, the P3.0
 comparator remains unstarted, and P3.1 remains unstarted.
+
+## P4.4N — exact one-trailing-ASCII-space source shape
+
+V5 used six event-bound exact projections. Across five independent retained
+hosted captures, those six examples repeatedly showed the same narrow source
+shape: exactly one final ASCII space (`U+0020`). P4.4N promotes only that shape
+for the provider fields `homeTeamName` and `awayTeamName`; already-trimmed
+labels pass through unchanged. The six historical rows and their event,
+category, tournament, raw-page SHA, run, and artifact metadata remain immutable
+evidence examples. They are no longer the event admission allowlist.
+
+The failed post-PR407 successor proof run `36229731847` did not preserve its
+active pcUpcoming raw pages, so its exact new raw label is unknown. That run is
+not evidence that its label had one trailing ASCII space. P4.4N's shape authority
+comes only from the prior retained six-example evidence. P4.4M adds the active
+pcUpcoming source root to future canonical artifact preservation.
+
+Generic trimming remains forbidden. Leading whitespace, multiple trailing
+spaces, non-ASCII boundary whitespace, and tabs/control whitespace remain
+fail-closed. Projection removes only the one final ASCII space; retained raw
+provider bytes and source-page SHA ancestry remain authoritative. This source
+schema rule grants no fixture, model, pricing, selection, share-code, account,
+or wager authority. No provider acquisition, retry, or live workflow is part of
+P4.4N.

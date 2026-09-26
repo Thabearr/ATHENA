@@ -142,12 +142,12 @@ def validate_receipt(receipt: Any) -> str:
     _require(continuity.get("v2_registry_sha256_after") == V2_REGISTRY_SHA256_AFTER == identity.REGISTRY_SHA256 == identity.registry_sha256(), "new V2 semantic registry identity drifted")
     _require(V2_REGISTRY_SHA256_AFTER != V2_REGISTRY_SHA256_BEFORE, "V2 semantic registry falsely retained old hash")
     _require(continuity.get("identity_compatibility_sha256_before") == COMPATIBILITY_SHA256_BEFORE, "historical compatibility identity drifted")
-    _require(continuity.get("identity_compatibility_sha256_after") == COMPATIBILITY_SHA256_AFTER == compatibility.EXPECTED_POLICY_SHA256 == compatibility.calculate_policy_sha256(), "new compatibility identity drifted")
+    _require(continuity.get("identity_compatibility_sha256_after") == COMPATIBILITY_SHA256_AFTER, "historical PR #406 compatibility identity drifted")
     _require(continuity.get("current_shadow_upcoming_compatibility_sha256_before") == UPCOMING_COMPATIBILITY_SHA256_BEFORE, "historical upcoming compatibility identity drifted")
-    _require(continuity.get("current_shadow_upcoming_compatibility_sha256_after") == UPCOMING_COMPATIBILITY_SHA256_AFTER == old_upcoming.CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 == old_upcoming.calculate_current_shadow_upcoming_compatibility_sha256(), "new upcoming compatibility identity drifted")
+    _require(continuity.get("current_shadow_upcoming_compatibility_sha256_after") == UPCOMING_COMPATIBILITY_SHA256_AFTER, "historical PR #406 upcoming compatibility identity drifted")
     _require(continuity.get("upstream_upcoming_source_contract_sha256_unchanged") == UPSTREAM_SOURCE_SHA256 == old_upcoming.UPSTREAM_UPCOMING_SOURCE_CONTRACT_SHA256, "upstream provider-source contract changed")
-    _require(continuity.get("retained_paginated_compatibility_sha256_before") == PAGINATED_SHA256_BEFORE and continuity.get("retained_paginated_compatibility_sha256_after") == PAGINATED_SHA256_AFTER == paginated.EXPECTED_CONTRACT_SHA256 == paginated.calculate_contract_sha256(), "retained paginated compatibility lineage drifted")
-    _require(continuity.get("retained_fanout_compatibility_sha256_before") == FANOUT_SHA256_BEFORE and continuity.get("retained_fanout_compatibility_sha256_after") == FANOUT_SHA256_AFTER == fanout.EXPECTED_CONTRACT_SHA256 == fanout.calculate_contract_sha256(), "retained fanout compatibility lineage drifted")
+    _require(continuity.get("retained_paginated_compatibility_sha256_before") == PAGINATED_SHA256_BEFORE and continuity.get("retained_paginated_compatibility_sha256_after") == PAGINATED_SHA256_AFTER, "historical PR #406 paginated compatibility lineage drifted")
+    _require(continuity.get("retained_fanout_compatibility_sha256_before") == FANOUT_SHA256_BEFORE and continuity.get("retained_fanout_compatibility_sha256_after") == FANOUT_SHA256_AFTER, "historical PR #406 fanout compatibility lineage drifted")
     _require(continuity.get("identity_state_schema_version") == 2 == identity.STATE_SCHEMA_VERSION, "identity-state schema changed")
     _require(continuity.get("current_shadow_runtime_source") == "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1" and continuity.get("p3_runtime_source") == "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1", "current runtime source owner changed")
     _require(continuity.get("pc_upcoming_status") == "EVIDENCE_QUALIFIED_CANDIDATE_NOT_RUNTIME_OWNER" and continuity.get("current_shadow_runtime_changed") is False and continuity.get("p3_runtime_changed") is False, "pcUpcoming candidate was promoted")
@@ -167,7 +167,7 @@ def validate_receipt(receipt: Any) -> str:
     return actual
 
 
-def validate_runtime_isolation() -> None:
+def validate_runtime_isolation(repository_root: str | Path = ".") -> None:
     identity.reset_runtime_evidence()
     _require(identity.seed_registry_sha256() == SEED_REGISTRY_SHA256, "V2 club/general seed set changed")
     _require(identity.registry_sha256() == V2_REGISTRY_SHA256_AFTER, "V2 semantic registry hash drifted")
@@ -186,7 +186,11 @@ def validate_runtime_isolation() -> None:
     preemption = compatibility_payload.get("international_bridge_preemption", {})
     _require(preemption.get("match_order") == ["V2_STABLE_IDENTITY_WITH_INTERNATIONAL_PROVIDER_FAMILY_BRIDGE", "FAIL_CLOSED_NO_RUN199_V3_ALIAS_LITERAL_FALLTHROUGH"] and preemption.get("bridge_policy_sha256") == bridge.PINNED_POLICY_SHA256, "bridge-first compatibility contract missing")
     _require(compatibility_payload.get("provider_evidence_observation_policy_id") == "VERIFIED_PROVIDER_RAW_BYTES_PLUS_RAW_ANCESTRY_BOUND_ATHENA_PCUPCOMING_PROJECTION_V2" and compatibility_payload.get("provider_evidence_observation", {}).get("athena_projection_requires_exact_observed_provider_page_raw_sha256") is True, "projection observation contract is stale")
-    _require(compatibility.EXPECTED_POLICY_SHA256 == COMPATIBILITY_SHA256_AFTER and compatibility.calculate_policy_sha256() == COMPATIBILITY_SHA256_AFTER, "compatibility authority policy drifted")
+    from scripts import audit_p4_4n_sportybet_team_label_shape_compatibility as p44n
+    current = p44n.audit(repository_root)
+    _require(current.get("status") == "PASSED", "P4.4N current-state supersession is not authenticated")
+    _require(compatibility.EXPECTED_POLICY_SHA256 == current.get("identity_compatibility_sha256"), "current identity compatibility no longer matches P4.4N supersession")
+    _require(old_upcoming.CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 == current.get("retained_wap_compatibility_sha256"), "current WAP compatibility no longer matches P4.4N supersession")
 
 
 def audit(repository_root: str | Path = ".") -> dict[str, str]:
@@ -196,7 +200,7 @@ def audit(repository_root: str | Path = ".") -> dict[str, str]:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise InternationalProviderFamilyBridgeAuditError("bridge architecture receipt is unavailable") from exc
     receipt_sha = validate_receipt(receipt)
-    validate_runtime_isolation()
+    validate_runtime_isolation(root)
     from scripts import audit_post_p4_4l_pc_upcoming_runtime_migration as migration
     supersession = migration.audit(root)
     _require(supersession.get("status") == "PASSED", "reviewed runtime migration supersession is not authenticated")

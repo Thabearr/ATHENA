@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "policy_id": "ATHENA_P4_4N_SPORTYBET_TEAM_LABEL_SHAPE_COMPATIBILITY_V1",
+  "repository": "Thabearr/ATHENA",
+  "base_main_sha": "85f3ddca3142b93f1719bc32f72a44587e59c578",
+  "source_review_counter_while_unmerged": "4/5",
+  "source_review_counter_if_merged": "5/5",
+  "mandatory_source_reread_after_merge": true,
+  "failed_successor_proof_run": 36229731847,
+  "failed_successor_proof_artifact": 10901662346,
+  "run_evidence_comment_id": 5844630119,
+  "offline_diagnosis_comment_id": 5844716336,
+  "p4_4m_merge_comment_id": 5845591665,
+  "p4_4n_boundary_comment_id": 5845627259,
+  "shape_evidence_source": "PRIOR_RETAINED_V5_EVIDENCE_ONLY",
+  "failed_run_exact_raw_shape_known": false,
+  "historical_evidence_examples": 6,
+  "historical_evidence_captures": 5,
+  "historical_distinct_raw_labels": 3,
+  "historical_evidence_rows_sha256": "03d97a88d1e7ecf2f2b79ecb02728c79df2154046656c84896c58f62ae871fbd",
+  "admitted_shape": "EXACTLY_ONE_TRAILING_ASCII_U_0020_ONLY",
+  "generic_strip": false,
+  "leading_whitespace": false,
+  "multiple_trailing_spaces": false,
+  "non_ascii_boundary_whitespace": false,
+  "control_whitespace": false,
+  "team_label_policy": {
+    "before": {
+      "schema_version": 5,
+      "policy_id": "ATHENA_CURRENT_SHADOW_EXACT_PROVIDER_TRAILING_SPACE_LABEL_COMPATIBILITY_V5",
+      "sha256": "6ec1d805263cddb7d4a4cf8338a611a7b66b22dd12db665db1614b3baa799f14"
+    },
+    "after": {
+      "schema_version": 6,
+      "policy_id": "ATHENA_CURRENT_SHADOW_EXACT_ONE_TRAILING_ASCII_SPACE_LABEL_COMPATIBILITY_V6",
+      "sha256": "0c382ec8b12d802879a51b766daae8f655dd5b371509653e56a13190a85c6c7b"
+    }
+  },
+  "identity_compatibility_sha256_before": "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58",
+  "identity_compatibility_sha256_after": "2fdbb8165262f6e633ee48276aea57c9235699272235798e1cef12fdc714ae04",
+  "runtime_wrapper": {
+    "policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1",
+    "sha256_before": "e44d8b3476118a094d3e59f885f7456c3aebc677c07d8eeefaa232df5bc6a43e",
+    "sha256_after": "fd203fc4b857bb3c5faa22536e87e1bc214cd4fdcf79ec5b6c4c681cd9d0cf73"
+  },
+  "retained_wap_compatibility_sha256_before": "e0718a5e7c9e0c707ba5cc7369910f3ec371bd1a9f7520ab41aa30df69d0ab12",
+  "retained_wap_compatibility_sha256_after": "dd1b4366ef2cf4d1e12359c42fbff5cbae8bef60cc06ca40589ec0e8a157f943",
+  "retained_wap_upstream_source_contract_sha256_before": "90c14bd68ed6e8205c16fedfa815d120c53f2af1a3a8f362eee2702a4223b9ff",
+  "retained_wap_upstream_source_contract_sha256_after": "90c14bd68ed6e8205c16fedfa815d120c53f2af1a3a8f362eee2702a4223b9ff",
+  "retained_paginated_contract_sha256_before": "6de2847f8ed32873f7ae50e902708c7e27ca5516f492e183063f3dfc0f1635a8",
+  "retained_paginated_contract_sha256_after": "7373a05c25466206aa3a67bc53b219e8d2841f432fda13db2dc0808b40b47238",
+  "retained_fanout_contract_sha256_before": "2d8c1f7b533eea104c1951a9a1f963c4cd85933252aa44da7dbeb447528ad0a0",
+  "retained_fanout_contract_sha256_after": "c1ce52d8c441a6a38aee08c05413d579f0f18a497e56eb7833faf1fbc60c622f",
+  "pc_upcoming_source_sha256_before": "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075",
+  "pc_upcoming_source_sha256_after": "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075",
+  "international_bridge_sha256_before": "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb",
+  "international_bridge_sha256_after": "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb",
+  "v2_semantic_registry_sha256_before": "fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e",
+  "v2_semantic_registry_sha256_after": "fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e",
+  "v2_seed_registry_sha256_before": "7fe662fc91a80daabf1e774ddd5c8ecdb5215eaf63adb03822b3fb05f872df79",
+  "v2_seed_registry_sha256_after": "7fe662fc91a80daabf1e774ddd5c8ecdb5215eaf63adb03822b3fb05f872df79",
+  "runtime_source_owner": {
+    "before": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1",
+    "after": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1",
+    "changed": false
+  },
+  "p3_source_owner": {
+    "before": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1",
+    "after": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1",
+    "changed": false
+  },
+  "historical_receipts": {
+    "artifacts/architecture/post_p4_4l_international_provider_family_bridge_v1.json": {
+      "raw_sha256": "8e4c9af2993d7a0a3698176f17b4f73e99177003139d45f7e98d40dfa80fa495",
+      "canonical_sha256": "34c183b5274e9e2c3320b5a8d75a123b7ebed2405aa55cdfb1af7d59c2613aa2"
+    },
+    "artifacts/architecture/post_p4_4l_pc_upcoming_runtime_migration_v1.json": {
+      "raw_sha256": "1e4e302cff57719beca3db3402cc19526bae7bc056515c0b399473855ed14f30",
+      "canonical_sha256": "09bbbb0842b0f92c214d5e868ec3fe5e2d047f9de7b5c3e6d620bc147092f6f3"
+    },
+    "artifacts/architecture/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json": {
+      "raw_sha256": "88c7c1423b81251515da0ca145fbbfd26040df4966da10b5a5d322aaf44aacb3",
+      "canonical_sha256": "8202845b28abcea6ff8ea0ffb279a924b09ca7b2e5ab1d1918c957b757f345cf"
+    }
+  },
+  "p4_4m_workflow_sha256_unchanged": "45f7fe3556f892320a12b15c210637782edca60792ccbf030a714414a32f005a",
+  "workflow_count": 38,
+  "workflow_retirement_count": 3,
+  "provider_acquisition": 0,
+  "workflow_dispatch": 0,
+  "live_retry": 0,
+  "share_code_actions": 0,
+  "wager_actions": 0,
+  "account_wager_authority_changed": false,
+  "successor_proof_complete": false,
+  "next_live_proof_authorized": false,
+  "p4_4_complete": false,
+  "architecture_checkpoint_e_complete": false,
+  "canonical_sha256": "3f08b29da1cfa782d897d8bad9ea8cb4c05a962e5402144d3982d7f7e3e47ec5"
+}

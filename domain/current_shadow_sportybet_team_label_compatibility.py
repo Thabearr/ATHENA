@@ -1,14 +1,15 @@
-"""Evidence-bound SportyBet team-label compatibility for current Shadow fanout.
+"""Narrow SportyBet source-schema compatibility for team-label fields.
 
-The provider evidence captured by workflow runs 33743684967, 33907719257,
-34243048761, 34689842174, and 34897587697 proved exactly six current event labels
-with one trailing ASCII space. This module does not define a generic trimming rule. It admits only the
-exact reviewed (event id, source field, raw label) tuples below and projects them
-to the exact reviewed label used by the existing reconciliation boundary.
+Five retained hosted captures contain six immutable event-bound evidence rows
+with exactly one trailing ASCII U+0020. V6 promotes only that repeated shape:
+already-trimmed labels pass unchanged, and exactly one final ASCII space may be
+projected away. The six historical rows remain evidence examples, not an
+event-based admission allowlist. Raw provider bytes and page-SHA ancestry remain
+authoritative.
 
-The retained raw provider response and SHA-256 remain the source evidence. This
-policy grants no fixture-reconciliation, model, pricing, selection, transport,
-login, wallet, staking, BET, or wager authority by itself.
+This policy grants source-schema compatibility only; it independently grants
+no fixture-reconciliation, model, pricing, selection, transport, account, or
+wager authority.
 """
 from __future__ import annotations
 
@@ -18,8 +19,8 @@ import json
 from types import MappingProxyType
 from typing import Any, Mapping
 
-SCHEMA_VERSION = 5
-POLICY_ID = "ATHENA_CURRENT_SHADOW_EXACT_PROVIDER_TRAILING_SPACE_LABEL_COMPATIBILITY_V5"
+SCHEMA_VERSION = 6
+POLICY_ID = "ATHENA_CURRENT_SHADOW_EXACT_ONE_TRAILING_ASCII_SPACE_LABEL_COMPATIBILITY_V6"
 EVIDENCE_WORKFLOW_RUN_ID = 33743684967
 EVIDENCE_ARTIFACT_ID = 9888817924
 EVIDENCE_ARTIFACT_SHA256 = (
@@ -60,7 +61,7 @@ POST_PR360_P3_E1_BLOCKER_EVIDENCE_TOURNAMENT_RAW_SHA256 = (
 )
 POST_PR360_P3_E1_BLOCKER_EVIDENCE_OBSERVED_AT = "2026-09-14T21:16:10.040050Z"
 EXPECTED_POLICY_SHA256 = (
-    "6ec1d805263cddb7d4a4cf8338a611a7b66b22dd12db665db1614b3baa799f14"
+    "0c382ec8b12d802879a51b766daae8f655dd5b371509653e56a13190a85c6c7b"
 )
 
 
@@ -175,13 +176,6 @@ REVIEWED_PROJECTIONS = tuple(
     )
 )
 
-_PROJECTION_BY_KEY = MappingProxyType(
-    {
-        (row.event_id, row.field, row.raw_source_label): row.projected_label
-        for row in REVIEWED_PROJECTIONS
-    }
-)
-
 AUTHORITY = MappingProxyType(
     {
         "source_schema_compatibility": True,
@@ -245,7 +239,7 @@ def policy_payload() -> dict[str, Any]:
                 ),
             },
         ],
-        "projections": [
+        "historical_evidence_examples": [
             {
                 "event_id": row.event_id,
                 "field": row.field,
@@ -261,16 +255,26 @@ def policy_payload() -> dict[str, Any]:
             for row in REVIEWED_PROJECTIONS
         ],
         "rules": {
-            "exact_tuple_only": True,
+            "admission_basis": "EXACTLY_ONE_TRAILING_ASCII_U_0020_ONLY",
+            "field_scope": ["homeTeamName", "awayTeamName"],
+            "already_trimmed_passthrough": True,
+            "event_bound_allowlist_required": False,
             "generic_strip": False,
-            "leading_space": False,
+            "leading_whitespace": False,
             "multiple_trailing_spaces": False,
-            "tabs_or_other_whitespace": False,
-            "unknown_event_or_label": False,
+            "trailing_non_ascii_whitespace": False,
+            "tabs_or_control_whitespace": False,
+            "empty_after_projection": False,
             "raw_source_bytes_remain_authoritative": True,
+            "raw_source_sha_ancestry_required": True,
             "fixture_reconciliation_authority": False,
             "pricing_authority": False,
             "selection_authority": False,
+            "share_code_authority": False,
+            "login": False,
+            "cookies": False,
+            "wallet": False,
+            "staking": False,
             "bet_authority": False,
             "wager_placed": False,
         },
@@ -305,11 +309,11 @@ def validate_policy() -> Mapping[str, str]:
 
 
 def project_team_label(*, event_id: Any, field: str, value: Any) -> str:
-    """Return exact source text or one exact reviewed evidence-bound projection.
+    """Return exact text, or project exactly one final ASCII U+0020.
 
-    Already-trimmed labels pass through unchanged. Any non-trimmed label must match
-    one of the six exact reviewed tuples above. No dynamic ``strip`` or other
-    normalization is performed.
+    ``event_id`` remains validated contextual evidence, but is not an admission
+    key. ``strip`` is used only as an equality predicate; output projection is
+    the exact prefix obtained by removing one final ASCII space.
     """
     if field not in ("homeTeamName", "awayTeamName"):
         raise CurrentShadowSportyBetTeamLabelCompatibilityError(
@@ -330,12 +334,16 @@ def project_team_label(*, event_id: Any, field: str, value: Any) -> str:
         )
     if value == value.strip():
         return value
-    projected = _PROJECTION_BY_KEY.get((event_id, field, value))
-    if projected is None:
+    if not value.endswith(" "):
         raise CurrentShadowSportyBetTeamLabelCompatibilityError(
             "provider team label whitespace shape is outside reviewed evidence"
         )
-    return projected
+    base = value[:-1]
+    if not base or base != base.strip():
+        raise CurrentShadowSportyBetTeamLabelCompatibilityError(
+            "provider team label whitespace shape is outside reviewed evidence"
+        )
+    return base
 
 
 validate_policy()

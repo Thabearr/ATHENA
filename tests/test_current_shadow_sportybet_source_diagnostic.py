@@ -61,7 +61,7 @@ def _event(event_id: str, *, home: str):
     }
 
 
-def test_diagnostic_preserves_exact_rejected_raw_without_authority(monkeypatch, tmp_path):
+def test_diagnostic_preserves_exact_projected_raw_without_authority(monkeypatch, tmp_path):
     catalog = _catalog()
     tournament = _raw(
         {
@@ -89,14 +89,12 @@ def test_diagnostic_preserves_exact_rejected_raw_without_authority(monkeypatch, 
     raw_path = output / observation["raw_filename"]
     assert raw_path.read_bytes() == tournament
     assert observation["raw_sha256"] == hashlib.sha256(tournament).hexdigest()
-    assert observation["parse_status"] == "REVIEWED_PARSER_REJECTED"
+    assert observation["parse_status"] == "REVIEWED_PARSER_ACCEPTED"
+    assert observation["accepted_event_count"] == 2
+    assert observation["row_failures"] == []
     assert observation["fixture_reconciliation_authorized"] is False
-    assert len(observation["row_failures"]) == 1
-    failure = observation["row_failures"][0]
-    assert failure["eventId"] == "sr:match:124"
-    assert failure["homeTeamName"] == "Provider Name "
-    assert failure["error_message"] == "home_team_name must be an exact non-empty trimmed string"
-    assert failure["fixture_reconciliation_authorized"] is False
+    assert observation["raw_sha256"] == hashlib.sha256(tournament).hexdigest()
+    assert observation["observation_sha256"] is not None
     assert all(value is False for value in manifest["authority"].values())
 
     replayed_manifest = json.loads((output / "manifest.json").read_text("utf-8"))
