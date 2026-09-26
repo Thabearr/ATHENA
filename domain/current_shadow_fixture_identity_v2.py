@@ -18,6 +18,8 @@ import re
 from typing import Any, Iterable, Sequence
 
 from domain import current_shadow_fixture_identity_aliases as aliases
+from domain import current_shadow_sportybet_international_provider_family_bridge as international_bridge
+from domain import current_shadow_sportybet_pc_upcoming_discovery as pc_upcoming
 
 SCHEMA_VERSION = 1
 STATE_SCHEMA_VERSION = 2
@@ -78,6 +80,8 @@ _COMPETITOR_RE = re.compile(r"^sr:competitor:[1-9][0-9]*$", re.ASCII)
 _CATEGORY_RE = re.compile(r"^sr:category:.+$", re.ASCII)
 _TOURNAMENT_RE = re.compile(r"^sr:(?:tournament|simple_tournament):.+$", re.ASCII)
 _EVENT_RE = re.compile(r"^sr:match:[1-9][0-9]*$", re.ASCII)
+_PROJECTION_CATEGORY_RE = re.compile(r"^sr:category:[1-9][0-9]*$", re.ASCII)
+_PROJECTION_TOURNAMENT_RE = re.compile(r"^sr:(?:tournament|simple_tournament):[1-9][0-9]*$", re.ASCII)
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
 
 TEAM_IDENTITY_SEEDS = (
@@ -150,6 +154,7 @@ _validate_seeds()
 
 _fotmob: dict[str, dict[str, Any]] = {}
 _provider: dict[str, dict[str, Any]] = {}
+_provider_raw_observations: dict[str, list[dict[str, Any]]] = {}
 _team_forward: dict[int, str] = {}
 _team_reverse: dict[str, int] = {}
 _comp_forward: dict[tuple[str, int], tuple[str, str]] = {}
@@ -162,6 +167,7 @@ _alias_registry_ancestry: list[dict[str, str]] = []
 def reset_runtime_evidence() -> None:
     _fotmob.clear()
     _provider.clear()
+    _provider_raw_observations.clear()
     _team_forward.clear()
     _team_reverse.clear()
     _comp_forward.clear()
@@ -299,6 +305,7 @@ def observe_provider_payload(raw: bytes) -> None:
             continue
         tournament = category["tournament"]
         ci, ti, comp = category.get("id"), tournament.get("id"), tournament.get("name")
+        category_name = category.get("name")
         kickoff = _provider_kickoff(value.get("estimateStartTime"))
         if (
             type(ci) is not str
@@ -320,11 +327,193 @@ def observe_provider_payload(raw: bytes) -> None:
             "away": an,
             "payload_sha256": payload_sha256,
         }
+        raw_observation = {
+            **row,
+            "category_name": category_name if type(category_name) is str else None,
+        }
+        _provider_raw_observations.setdefault(event_id, []).append(raw_observation)
         prior = _provider.get(event_id)
         if prior is None:
             _provider[event_id] = row
         elif prior != row:
             _provider.pop(event_id, None)
+
+
+def observe_provider_identity_projection(raw: bytes) -> None:
+    """Observe PR #405's ATHENA projection without treating it as provider bytes.
+
+    The provider payload identity remains the exact source page raw SHA bound by
+    each projection row. The projection's own digest is retained separately.
+    """
+    if type(raw) is not bytes or not raw:
+        raise CurrentShadowFixtureIdentityStateError(
+            "provider identity projection must be non-empty bytes"
+        )
+    try:
+        payload = json.loads(raw.decode("utf-8", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CurrentShadowFixtureIdentityStateError(
+            "provider identity projection is not strict UTF-8 JSON"
+        ) from exc
+    if (
+        type(payload) is not dict
+        or set(payload) != {
+            "dataset", "projection_policy_id", "is_provider_response",
+            "source_policy_id", "source_policy_sha256", "events",
+        }
+        or payload.get("dataset") != "ATHENA_PC_UPCOMING_PROVIDER_IDENTITY_PROJECTION_V1"
+        or payload.get("projection_policy_id") != "EXACT_NATIVE_FIELDS_DERIVED_FROM_REPLAYED_PC_UPCOMING_RAW_BYTES"
+        or payload.get("is_provider_response") is not False
+        or payload.get("source_policy_id") != pc_upcoming.POLICY_ID
+        or payload.get("source_policy_sha256") != pc_upcoming.PINNED_POLICY_SHA256
+        or pc_upcoming.calculate_policy_sha256() != pc_upcoming.PINNED_POLICY_SHA256
+        or payload.get("source_policy_id") != international_bridge.PROVIDER_SOURCE_POLICY_ID
+        or payload.get("source_policy_sha256") != international_bridge.PROVIDER_SOURCE_POLICY_SHA256
+        or type(payload.get("events")) is not list
+    ):
+        raise CurrentShadowFixtureIdentityStateError(
+            "provider identity projection policy or top-level shape drifted"
+        )
+
+    projection_sha256 = hashlib.sha256(raw).hexdigest()
+    for event in payload["events"]:
+        if type(event) is not dict or set(event) != {
+            "eventId", "estimateStartTime", "homeTeamId", "homeTeamName",
+            "awayTeamId", "awayTeamName", "sport", "source_ancestry",
+        }:
+            raise CurrentShadowFixtureIdentityStateError(
+                "provider identity projection event shape drifted"
+            )
+        event_id = event.get("eventId")
+        estimate_start_time = event.get("estimateStartTime")
+        home_id, away_id = event.get("homeTeamId"), event.get("awayTeamId")
+        home_name, away_name = event.get("homeTeamName"), event.get("awayTeamName")
+        sport = event.get("sport")
+        ancestry = event.get("source_ancestry")
+        if (
+            type(event_id) is not str or _EVENT_RE.fullmatch(event_id) is None
+            or type(estimate_start_time) is not int or estimate_start_time <= 0
+            or type(home_id) is not str or _COMPETITOR_RE.fullmatch(home_id) is None
+            or type(away_id) is not str or _COMPETITOR_RE.fullmatch(away_id) is None
+            or home_id == away_id
+            or type(home_name) is not str or not home_name
+            or type(away_name) is not str or not away_name or home_name == away_name
+        ):
+            raise CurrentShadowFixtureIdentityStateError(
+                "provider identity projection event identity is malformed"
+            )
+        if type(sport) is not dict or set(sport) not in ({"category"}, {"id", "category"}):
+            raise CurrentShadowFixtureIdentityStateError(
+                "provider identity projection sport ancestry is malformed"
+            )
+        if "id" in sport and sport.get("id") != pc_upcoming.FOOTBALL_SPORT_ID:
+            raise CurrentShadowFixtureIdentityStateError(
+                "provider identity projection sport ID conflicts"
+            )
+        category = sport.get("category")
+        if type(category) is not dict or set(category) != {"id", "name", "tournament"}:
+            raise CurrentShadowFixtureIdentityStateError(
+                "provider identity projection category ancestry is malformed"
+            )
+        tournament = category.get("tournament")
+        ci, category_name = category.get("id"), category.get("name")
+        ti, tournament_name = (
+            tournament.get("id"), tournament.get("name")
+        ) if type(tournament) is dict else (None, None)
+        if (
+            type(ci) is not str or _PROJECTION_CATEGORY_RE.fullmatch(ci) is None
+            or type(category_name) is not str or not category_name
+            or type(ti) is not str or _PROJECTION_TOURNAMENT_RE.fullmatch(ti) is None
+            or type(tournament_name) is not str or not tournament_name
+        ):
+            raise CurrentShadowFixtureIdentityStateError(
+                "provider identity projection category/tournament identity is malformed"
+            )
+        if type(tournament) is not dict or set(tournament) != {"id", "name"}:
+            raise CurrentShadowFixtureIdentityStateError(
+                "provider identity projection tournament ancestry is malformed"
+            )
+        if type(ancestry) is not dict or set(ancestry) != {
+            "source_raw_sha256", "source_page_num", "source_observed_at",
+        }:
+            raise CurrentShadowFixtureIdentityStateError(
+                "provider identity projection raw ancestry is malformed"
+            )
+        source_raw_sha256 = ancestry.get("source_raw_sha256")
+        source_page_num = ancestry.get("source_page_num")
+        source_observed_at_text = ancestry.get("source_observed_at")
+        if (
+            type(source_raw_sha256) is not str or _SHA_RE.fullmatch(source_raw_sha256) is None
+            or type(source_page_num) is not int or not 1 <= source_page_num <= pc_upcoming.MAX_PAGES
+            or type(source_observed_at_text) is not str or not source_observed_at_text.endswith("Z")
+        ):
+            raise CurrentShadowFixtureIdentityStateError(
+                "provider identity projection raw ancestry values are malformed"
+            )
+        try:
+            source_observed_at = datetime.fromisoformat(
+                source_observed_at_text[:-1] + "+00:00"
+            ).astimezone(timezone.utc)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise CurrentShadowFixtureIdentityStateError(
+                "provider identity projection observation time is malformed"
+            ) from exc
+        canonical_observed_at = source_observed_at.isoformat().replace("+00:00", "Z")
+        if canonical_observed_at != source_observed_at_text:
+            raise CurrentShadowFixtureIdentityStateError(
+                "provider identity projection observation time is not canonical UTC"
+            )
+        kickoff = _provider_kickoff(estimate_start_time)
+        if kickoff is None:
+            raise CurrentShadowFixtureIdentityStateError(
+                "provider identity projection kickoff is malformed"
+            )
+        row = {
+            "category": ci,
+            "category_name": category_name,
+            "tournament": ti,
+            "competition": tournament_name,
+            "kickoff": kickoff,
+            "home_id": home_id,
+            "home": home_name,
+            "away_id": away_id,
+            "away": away_name,
+            # This field intentionally points to the exact provider source-page
+            # raw bytes, not to the ATHENA projection envelope.
+            "payload_sha256": source_raw_sha256,
+            "projection_sha256": projection_sha256,
+            "source_raw_sha256": source_raw_sha256,
+            "source_page_num": source_page_num,
+            "source_observed_at": source_observed_at.isoformat().replace("+00:00", "Z"),
+        }
+        raw_observations = _provider_raw_observations.get(event_id, [])
+        matching_page = [
+            observed for observed in raw_observations
+            if observed["payload_sha256"] == source_raw_sha256
+        ]
+        if not matching_page:
+            raise CurrentShadowFixtureIdentityStateError(
+                "provider identity projection has no observed raw source-page ancestry"
+            )
+        for observed in raw_observations:
+            if (
+                observed["category"] != ci
+                or observed["tournament"] != ti
+                or observed["competition"] != tournament_name
+                or observed["kickoff"] != kickoff
+                or observed["home_id"] != home_id
+                or observed["home"] != home_name
+                or observed["away_id"] != away_id
+                or observed["away"] != away_name
+                or observed.get("category_name") not in (None, category_name)
+            ):
+                raise CurrentShadowFixtureIdentityStateError(
+                    "provider identity projection conflicts with observed native provider identity"
+                )
+        # The projection restores a page-anchored identity row after ordinary
+        # provider observation has retained/removed repeated detail responses.
+        # Its provider payload SHA remains the exact matched raw page digest.
+        _provider[event_id] = row
 
 
 def observe_provider_directory(directory: Any) -> None:
@@ -384,12 +573,64 @@ def _restore_bindings(snapshot: tuple[Any, Any, Any, Any]) -> None:
 def _competition_matches(source: dict[str, Any], provider: dict[str, Any], reviewed_name: str) -> bool:
     sk = (source["ccode"], source["primary"])
     pk = (provider["category"], provider["tournament"])
+    bridge_classification = international_bridge.classify_source_provider_family(
+        source_ccode=source["ccode"],
+        source_primary_id=source["primary"],
+        provider_category_id=provider["category"],
+        provider_category_name=provider.get("category_name"),
+        provider_tournament_id=provider["tournament"],
+        provider_tournament_name=provider["competition"],
+    )
+    if bridge_classification is not international_bridge.InternationalProviderFamilyClassification.NOT_APPLICABLE:
+        return bridge_classification is international_bridge.InternationalProviderFamilyClassification.EXACT_REVIEWED_MAPPING
     bound = _comp_forward.get(sk)
     if bound is not None:
         return bound == pk
     if pk in _comp_reverse:
         return False
     return (provider["competition"] in {reviewed_name, source["competition"]}) and _bind_comp(sk, pk)
+
+
+def provider_event_requires_international_family_bridge(
+    event_id: Any,
+    reviewed_rows: Sequence[Any],
+) -> bool:
+    """Identify events that must not fall through to weaker display-name paths.
+
+    Exact reviewed provider-family IDs always preempt legacy aliases. In
+    addition, a reviewed or explicitly unqualified P4.4L source key in the
+    candidate set preempts those paths even when the provider identity
+    contradicts its expected pair; V2 then returns zero or preserves true
+    ambiguity rather than laundering the event by name.
+    """
+    provider = _provider.get(event_id) if type(event_id) is str else None
+    if provider is None:
+        return False
+    if (
+        international_bridge.provider_pair_is_reviewed_international_family(
+            provider.get("category"), provider.get("tournament")
+        )
+        or international_bridge.provider_tournament_is_reviewed_international_family(
+            provider.get("tournament")
+        )
+    ):
+        return True
+    for reviewed in reviewed_rows:
+        source_identifier = str(getattr(reviewed, "source_fixture_identifier", ""))
+        source = _fotmob.get(source_identifier)
+        if source is None:
+            continue
+        classification = international_bridge.classify_source_provider_family(
+            source_ccode=source.get("ccode"),
+            source_primary_id=source.get("primary"),
+            provider_category_id=provider.get("category"),
+            provider_category_name=provider.get("category_name"),
+            provider_tournament_id=provider.get("tournament"),
+            provider_tournament_name=provider.get("competition"),
+        )
+        if classification is not international_bridge.InternationalProviderFamilyClassification.NOT_APPLICABLE:
+            return True
+    return False
 
 
 def _team_matches(
@@ -745,7 +986,7 @@ def _new_evidence_record(
     source: dict[str, Any],
     provider: dict[str, Any],
 ) -> dict[str, Any]:
-    return {
+    record = {
         "source_fixture_identifier": source_fixture_identifier,
         "provider_event_id": provider_event_id,
         "kickoff_utc": source["kickoff"].isoformat().replace("+00:00", "Z"),
@@ -768,6 +1009,27 @@ def _new_evidence_record(
         "source_away_long_name": source["away_long"],
         "provider_away_name": provider["away"],
     }
+    if provider.get("source_raw_sha256") is not None:
+        record.update({
+            "provider_source_raw_sha256": provider["source_raw_sha256"],
+            "provider_source_page_num": provider["source_page_num"],
+            "provider_source_observed_at": provider["source_observed_at"],
+            "provider_identity_projection_sha256": provider["projection_sha256"],
+        })
+    bridge_mapping = international_bridge.mapping_for_exact_pair(
+        source_ccode=source["ccode"],
+        source_primary_id=source["primary"],
+        provider_category_id=provider["category"],
+        provider_category_name=provider.get("category_name"),
+        provider_tournament_id=provider["tournament"],
+        provider_tournament_name=provider["competition"],
+    )
+    if bridge_mapping is not None:
+        record.update({
+            "international_provider_family_bridge_policy_id": international_bridge.POLICY_ID,
+            "international_provider_family_bridge_policy_sha256": international_bridge.calculate_policy_sha256(),
+        })
+    return record
 
 
 def match_event(event: Any, reviewed_rows: Sequence[Any]) -> tuple[Any, ...]:
@@ -853,6 +1115,16 @@ def registry_payload() -> dict[str, Any]:
         "state_filename": STATE_FILENAME,
         "seed_registry_sha256": SEED_REGISTRY_SHA256,
         "seed_registry_payload": seed_registry_payload(),
+        "international_provider_family_bridge_policy_id": international_bridge.POLICY_ID,
+        "international_provider_family_bridge_policy_sha256": international_bridge.PINNED_POLICY_SHA256,
+        "international_bridge_behavior": "EXACT_REVIEWED_PROVIDER_FAMILY_PREEMPTS_GENERIC_COMPETITION_NAME_LEARNING",
+        "international_bridge_conflict_behavior": "FAIL_CLOSED_NO_GENERIC_COMPETITION_NAME_FALLTHROUGH",
+        "provider_identity_projection_dataset": "ATHENA_PC_UPCOMING_PROVIDER_IDENTITY_PROJECTION_V1",
+        "provider_identity_projection_source_policy_id": international_bridge.PROVIDER_SOURCE_POLICY_ID,
+        "provider_identity_projection_source_policy_sha256": international_bridge.PROVIDER_SOURCE_POLICY_SHA256,
+        "provider_identity_projection_is_provider_response": False,
+        "provider_identity_projection_raw_ancestry_required": True,
+        "provider_payload_sha_semantics": "EXACT_PROVIDER_SOURCE_PAGE_RAW_SHA256",
         "reviewed_alias_registry_ancestry": [
             [dict(row) for row in chain]
             for chain in _REVIEWED_COMPLETE_ALIAS_ANCESTRIES
@@ -939,6 +1211,8 @@ __all__ = [
     "observe_fotmob_payload",
     "observe_provider_directory",
     "observe_provider_payload",
+    "observe_provider_identity_projection",
+    "provider_event_requires_international_family_bridge",
     "registry_payload",
     "registry_sha256",
     "seed_registry_payload",

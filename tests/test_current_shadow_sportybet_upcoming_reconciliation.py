@@ -80,14 +80,14 @@ def test_contract_mirrors_exact_pr258_upcoming_path_without_changing_shared_cont
         "ATHENA_CURRENT_SHADOW_FIXTURE_IDENTITY_COMPATIBILITY_V1"
     )
     assert current.validate_contract()["identity_compatibility_policy_sha256"] == (
-        "e1ce7468c61dcf4067725f6d58cd34d36bd1dc01e3a2177c4a724647bcab324b"
+        "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58"
     )
     compatibility = identity_compatibility.validate_contract()
     assert compatibility["provider_evidence_observation_policy_id"] == (
-        "VERIFIED_ACTIVE_SOURCE_RAW_BYTES_ONLY"
+        "VERIFIED_PROVIDER_RAW_BYTES_PLUS_RAW_ANCESTRY_BOUND_ATHENA_PCUPCOMING_PROJECTION_V2"
     )
     assert compatibility["policy_sha256"] == (
-        "e1ce7468c61dcf4067725f6d58cd34d36bd1dc01e3a2177c4a724647bcab324b"
+        "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58"
     )
     assert runner.reconciliation is current
 

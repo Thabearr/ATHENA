@@ -24,9 +24,9 @@ from scripts import current_shadow_fixture_identity_reconciliation_recovery as i
 
 POLICY_ID = "ATHENA_CURRENT_SHADOW_FIXTURE_IDENTITY_COMPATIBILITY_V1"
 STATUS = "CURRENT_SHADOW_SOURCE_AGNOSTIC_IDENTITY_COMPATIBILITY_VERIFIED"
-PROVIDER_EVIDENCE_OBSERVATION_POLICY_ID = "VERIFIED_ACTIVE_SOURCE_RAW_BYTES_ONLY"
+PROVIDER_EVIDENCE_OBSERVATION_POLICY_ID = "VERIFIED_PROVIDER_RAW_BYTES_PLUS_RAW_ANCESTRY_BOUND_ATHENA_PCUPCOMING_PROJECTION_V2"
 STATE_SCHEMA_VERSION = fixture_identity_v2.STATE_SCHEMA_VERSION
-EXPECTED_POLICY_SHA256 = "e1ce7468c61dcf4067725f6d58cd34d36bd1dc01e3a2177c4a724647bcab324b"
+EXPECTED_POLICY_SHA256 = "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58"
 _AUTHORITY = {
     "provider_evidence_observation": True,
     "fixture_identity_reconciliation": True,
@@ -147,6 +147,22 @@ def _policy_payload() -> dict[str, Any]:
             "V2_STABLE_IDENTITY",
             "REVIEWED_LITERAL_MATCH",
         ],
+        "international_bridge_preemption": {
+            "trigger": "EXACT_REVIEWED_PROVIDER_FAMILY_OR_REVIEWED_SOURCE_CONFLICT",
+            "match_order": [
+                "V2_STABLE_IDENTITY_WITH_INTERNATIONAL_PROVIDER_FAMILY_BRIDGE",
+                "FAIL_CLOSED_NO_RUN199_V3_ALIAS_LITERAL_FALLTHROUGH",
+            ],
+            "bridge_policy_id": fixture_identity_v2.international_bridge.POLICY_ID,
+            "bridge_policy_sha256": fixture_identity_v2.international_bridge.PINNED_POLICY_SHA256,
+        },
+        "provider_evidence_observation": {
+            "provider_raw_bytes_required": True,
+            "athena_projection_requires_exact_observed_provider_page_raw_sha256": True,
+            "athena_projection_is_provider_response": False,
+            "provider_payload_ancestry": "EXACT_PROVIDER_SOURCE_PAGE_RAW_SHA256",
+            "projection_sha_is_separate_evidence": True,
+        },
         "team_label_policy_id": team_label_compatibility.POLICY_ID,
         "team_label_policy_sha256": team_label_compatibility.EXPECTED_POLICY_SHA256,
         "alias_v3_policy_id": alias_registry.POLICY_ID,
@@ -202,6 +218,7 @@ def begin_identity_scope(
     *,
     provider_raw_bytes: Sequence[bytes] = (),
     historical_page_raw_bytes: Sequence[bytes] = (),
+    provider_identity_projection_bytes: Sequence[bytes] = (),
 ) -> None:
     fixture_identity_v2.reset_runtime_evidence()
     fixture_identity_v2.configure_persistent_state(
@@ -214,6 +231,15 @@ def begin_identity_scope(
                 "verified provider evidence must be non-empty raw bytes"
             )
         fixture_identity_v2.observe_provider_payload(raw)
+    for projection in tuple(provider_identity_projection_bytes):
+        if type(projection) is not bytes or not projection:
+            raise CurrentShadowFixtureIdentityCompatibilityError(
+                "provider identity projection must be non-empty exact bytes"
+            )
+        try:
+            fixture_identity_v2.observe_provider_identity_projection(projection)
+        except fixture_identity_v2.CurrentShadowFixtureIdentityStateError as exc:
+            raise CurrentShadowFixtureIdentityCompatibilityError(str(exc)) from exc
 
 
 def project_event_labels(event: reviewed_discovery.SportyBetDiscoveredEvent) -> Any:
@@ -255,6 +281,16 @@ def match_current_shadow_event(
     reviewed_rows: Sequence[Any],
 ) -> tuple[Any, ...]:
     """Match with the reviewed V3 -> V2 -> alias -> literal identity order."""
+    if fixture_identity_v2.provider_event_requires_international_family_bridge(
+        getattr(event, "event_id", None), reviewed_rows
+    ):
+        result_v2 = fixture_identity_v2.match_event(event, reviewed_rows)
+        if len(result_v2) == 1:
+            _record_observed_provider_match(event, result_v2)
+        # A bridge-owned provider identity never falls through to run199, V3,
+        # aliases, or literal display-name matching, whether it matches zero,
+        # one, or multiple reviewed source fixtures.
+        return result_v2
     result = run199_identity.match_event(event, reviewed_rows)
     if len(result) == 1:
         _record_observed_provider_match(event, result)
