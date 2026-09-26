@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "repository": "Thabearr/ATHENA",
+  "base_main_sha": "34cfe161edd9c3c56d0c284c0eaa6dfe56087336",
+  "source_review_counter_while_unmerged": "2/5",
+  "pc_upcoming_source": {
+    "policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
+    "policy_sha256": "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075",
+    "receipt_sha256": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34",
+    "endpoint": "/api/ng/factsCenter/pcUpcomingEvents",
+    "source_method": "PUBLIC_ANONYMOUS_FACTS_CENTER_PC_UPCOMING_EVENTS_GET"
+  },
+  "international_provider_family_bridge": {
+    "policy_id": "ATHENA_CURRENT_SHADOW_INTERNATIONAL_PROVIDER_FAMILY_BRIDGE_V1",
+    "policy_sha256": "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb",
+    "receipt_sha256": "34c183b5274e9e2c3320b5a8d75a123b7ebed2405aa55cdfb1af7d59c2613aa2",
+    "reviewed_source_keys": [
+      ["INT", 114],
+      ["INT", 9806],
+      ["INT", 9807],
+      ["INT", 9808],
+      ["INT", 9821],
+      ["INT", 10608]
+    ]
+  },
+  "v2_seed_registry_sha256": "7fe662fc91a80daabf1e774ddd5c8ecdb5215eaf63adb03822b3fb05f872df79",
+  "v2_semantic_registry_sha256": "fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e",
+  "identity_compatibility_sha256": "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58",
+  "retained_old_wap_source": {
+    "policy_id": "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1",
+    "upstream_source_contract_sha256": "90c14bd68ed6e8205c16fedfa815d120c53f2af1a3a8f362eee2702a4223b9ff",
+    "current_compatibility_sha256": "e0718a5e7c9e0c707ba5cc7369910f3ec371bd1a9f7520ab41aa30df69d0ab12",
+    "status": "RETAINED_HISTORICAL_RUNTIME_SOURCE_NOT_CURRENT_OWNER"
+  },
+  "runtime_wrapper": {
+    "policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1",
+    "policy_sha256": "e44d8b3476118a094d3e59f885f7456c3aebc677c07d8eeefaa232df5bc6a43e",
+    "source_method": "PUBLIC_ANONYMOUS_FACTS_CENTER_PC_UPCOMING_EVENTS_GET",
+    "endpoint": "/api/ng/factsCenter/pcUpcomingEvents",
+    "pagination_complete_required": true,
+    "partial_pagination_provider_absence_authority": false,
+    "direct_event_contract_sha256": "b888cebab6447cd4072d823dab67b56f1f75f72eb72d67b692d47a4378b27555"
+  },
+  "runtime_query": {
+    "sportId": "sr:sport:1",
+    "marketId": 1,
+    "pageSize": 100,
+    "pageNum": "CONTIGUOUS_1_THROUGH_CEIL_PROVIDER_TOTAL_NUM_OVER_PAGE_SIZE",
+    "todayGames": false,
+    "timeline": 48,
+    "_t": "RESPONSE_SCOPED_NONCE"
+  },
+  "current_shadow_runtime_source_changed": true,
+  "p3_runtime_source_changed": true,
+  "current_shadow_and_p3_share_source": true,
+  "old_wap_source_retained_historical": true,
+  "paginated_runtime_authority": false,
+  "fanout_runtime_authority": false,
+  "international_mappings_unchanged": true,
+  "team_seeds_added": false,
+  "identity_state_schema_version": 2,
+  "historical_p4_4l_and_provider_receipts_rewritten": false,
+  "runtime_capability": {
+    "research_shadow_provider_acquisition": true,
+    "p3_pre_router_provider_acquisition": true,
+    "fixture_reconciliation": true,
+    "direct_event_confirmation": true,
+    "model": false,
+    "pricing": false,
+    "router": false,
+    "portfolio": false,
+    "production_main": false,
+    "login": false,
+    "cookies": false,
+    "wallet": false,
+    "staking": false,
+    "bet": false,
+    "wager_placed": false
+  },
+  "authority_and_actions": {
+    "model_authority_changed": false,
+    "pricing_algorithm_changed": false,
+    "router_algorithm_changed": false,
+    "portfolio_algorithm_changed": false,
+    "main_authority": false,
+    "login": false,
+    "cookies": false,
+    "wallet": false,
+    "staking": false,
+    "bet": false,
+    "wager_placed": false,
+    "provider_acquisition_during_implementation": false,
+    "workflow_dispatch_during_implementation": false,
+    "live_proof_during_implementation": false,
+    "share_code_action_during_implementation": false,
+    "wager_action_during_implementation": false,
+    "next_live_proof_authorized": false,
+    "p4_4_complete": false,
+    "architecture_checkpoint_e_complete": false
+  },
+  "canonical_sha256": "09bbbb0842b0f92c214d5e868ec3fe5e2d047f9de7b5c3e6d620bc147092f6f3"
+}

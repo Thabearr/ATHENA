@@ -178,34 +178,23 @@ def audit(repository_root: str | Path | None = None) -> dict[str, Any]:
         raise PcUpcomingSourceAuditError("architecture receipt is unavailable or malformed") from exc
     receipt_sha = validate_receipt(receipt)
 
-    from domain import current_shadow_all_market_runner as runner
-    from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming
-    from scripts import verify_p3_0_e1_live_readiness as p3
-
-    _require(runner.reconciliation is upcoming, "Current Shadow runtime owner changed")
-    _require(upcoming.CURRENT_SHADOW_UPCOMING_POLICY_ID == "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1", "old runtime source policy changed")
-    p3_contract = p3.check_f_upcoming_discovery_contract()
-    _require(p3_contract.get("status") == "PASSED" and p3_contract.get("paginated_runtime_reconciliation_authority") is False, "P3 source owner or paginated runtime authority changed")
-    p3_pipeline = p3.check_i_pre_router_pipeline_readiness(root)
-    _require(
-        p3_pipeline.get("status") == "PASSED"
-        and p3_pipeline.get("supported_and_p3_strategy_unified") is True
-        and p3_pipeline.get("paginated_runtime_reconciliation_authority") is False
-        and p3_pipeline.get("catalog_fanout_runtime_authority") is False,
-        "P3 shared source or paginated/fanout runtime authority changed",
-    )
-    p3_fanout = p3.check_g_fanout_request_scope_validation()
-    _require(p3_fanout.get("global_echo_rejection_verified") is True, "fanout global-echo fail-closed test regressed")
+    # The old receipt above remains the immutable candidate-not-runtime record.
+    # Current ownership may change only through the separately pinned migration
+    # receipt and audit, never by relaxing this source receipt's checks.
+    from scripts import audit_post_p4_4l_pc_upcoming_runtime_migration as migration
+    supersession = migration.audit(root)
+    _require(supersession.get("status") == "PASSED", "reviewed runtime supersession is not authenticated")
     return {
         "status": "PASSED",
         "policy_id": pc.POLICY_ID,
         "policy_sha256": pc.calculate_policy_sha256(),
         "receipt_canonical_sha256": receipt_sha,
-        "runtime_owner_unchanged": True,
-        "p3_runtime_owner_unchanged": True,
+        "historical_candidate_receipt_unchanged": True,
+        "runtime_owner_superseded_by_reviewed_migration": True,
         "paginated_runtime_authority_false": True,
         "fanout_runtime_authority_false": True,
         "fanout_global_echo_rejected": True,
+        "runtime_migration_receipt_sha256": supersession["migration_receipt_sha256"],
         "network_used": False,
     }
 

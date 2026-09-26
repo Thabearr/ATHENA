@@ -9,6 +9,7 @@ from domain import current_shadow_all_market_runner as runner
 from domain import current_shadow_fixture_identity_compatibility as identity_compatibility
 from domain import current_shadow_fixture_identity_v2 as identity_v2
 from domain import current_shadow_sportybet_upcoming_reconciliation as current
+from domain import current_shadow_sportybet_pc_upcoming_reconciliation as pc_upcoming
 
 UTC = timezone.utc
 OBSERVED = datetime(2026, 8, 29, 6, 37, 52, 774398, tzinfo=UTC)
@@ -89,7 +90,10 @@ def test_contract_mirrors_exact_pr258_upcoming_path_without_changing_shared_cont
     assert compatibility["policy_sha256"] == (
         "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58"
     )
-    assert runner.reconciliation is current
+    assert current.CURRENT_SHADOW_UPCOMING_POLICY_ID == (
+        "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
+    )
+    assert runner.reconciliation is pc_upcoming
 
 
 def test_request_matches_pr258_public_anonymous_upcoming_shape():

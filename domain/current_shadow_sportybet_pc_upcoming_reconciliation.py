@@ -121,6 +121,12 @@ def _policy_payload() -> dict[str, Any]:
             "RAW_ANCESTRY_BOUND_ATHENA_PROVIDER_IDENTITY_PROJECTION",
         ],
         "provider_identity_source_ancestry": "EXACT_PC_UPCOMING_PAGE_RAW_SHA256",
+        "bundle_replay_provenance": [
+            "VERIFIED_PC_UPCOMING_MANIFEST_AND_EACH_PAGE_RAW_SHA256",
+            "EXACT_FOTMOB_ADMISSION_AND_CAPTURE_IDENTITIES",
+            "DIRECT_EVENT_DETAIL_EVENT_IDS_AND_RAW_SHA256S",
+            "APPEND_ONLY_IDENTITY_STATE_SNAPSHOT_SHA256",
+        ],
         "direct_event_contract_sha256": DIRECT_EVENT_CONTRACT_SHA256,
         "reconciliation": {
             "kickoff": "EXACT_FULL_UTC",
@@ -136,7 +142,7 @@ def calculate_policy_sha256() -> str:
     return hashlib.sha256(_canonical(_policy_payload())).hexdigest()
 
 
-PINNED_POLICY_SHA256 = "5721d136035205aa48b9b214343e4816bcbf1e986d72e940a26010d4f792a3a9"
+PINNED_POLICY_SHA256 = "e44d8b3476118a094d3e59f885f7456c3aebc677c07d8eeefaa232df5bc6a43e"
 EXPECTED_CONTRACT_SHA256 = PINNED_POLICY_SHA256
 CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 = PINNED_POLICY_SHA256
 
@@ -285,6 +291,20 @@ class CurrentShadowPcUpcomingReconciliationBundle:
             "captured_event_count": self.manifest.captured_event_count,
             "captured_page_count": self.manifest.captured_page_count,
             "pagination_complete": self.manifest.pagination_complete,
+            "provider_page_raw_sha256s": [page.raw_sha256 for page in self.manifest.pages],
+            "fotmob_admission_sha256": self._legacy_bundle.source_fotmob_admission_sha256,
+            "fotmob_capture_identities": [
+                dict(item) for item in self._legacy_bundle.fotmob_capture_identities
+            ],
+            "direct_event_evidence_event_ids": [
+                event_id for event_id, _path in self._legacy_bundle._detail_directories
+            ],
+            "identity_state_sha256": getattr(
+                self._legacy_bundle, "_fixture_stable_identity_state_sha256", None
+            ),
+            "identity_state_schema_version": getattr(
+                self._legacy_bundle, "_fixture_stable_identity_state_snapshot", {}
+            ).get("schema_version"),
             "reconciliation": self._legacy_bundle.to_dict(),
         }
 
@@ -299,8 +319,14 @@ def _provider_events(manifest: source.PcUpcomingDiscoveryManifest) -> tuple[Any,
     # invoking the legacy one-page model's stricter label constructor.
     return tuple(SimpleNamespace(
         event_id=event.event_id,
+        home_team_id=event.home_team_id,
         home_team_name=event.home_team_name,
+        away_team_id=event.away_team_id,
         away_team_name=event.away_team_name,
+        category_id=event.category_id,
+        category_name=event.category_name,
+        tournament_id=event.tournament_id,
+        tournament_name=event.tournament_name,
         competition_name=event.tournament_name,
         competition_basis="EXACT_NATIVE_CATEGORY_TOURNAMENT_ANCESTRY",
         kickoff_utc=event.kickoff_utc,

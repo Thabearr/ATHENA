@@ -247,6 +247,7 @@ def _event(
     home_team_id: str | None = None,
     away_team_id: str | None = None,
     category_id: str = "sr:category:1",
+    category_name: str = "England",
     tournament_id: str = "sr:tournament:1",
 ) -> dict[str, Any]:
     value: dict[str, Any] = {
@@ -262,8 +263,8 @@ def _event(
             "id": "sr:sport:1",
             "name": "Football",
             "category": {
-                "id": "sr:category:1",
-                "name": "England",
+            "id": "sr:category:1",
+            "name": category_name,
                 "tournament": {
                     "id": "sr:tournament:1",
                     "name": tournament_name or "Premier League",
@@ -320,6 +321,7 @@ def _detail_raw(
     home_team_id: str | None = None,
     away_team_id: str | None = None,
     category_id: str = "sr:category:1",
+    category_name: str = "England",
     tournament_id: str = "sr:tournament:1",
 ) -> bytes:
     event = _event(
@@ -333,6 +335,7 @@ def _detail_raw(
         home_team_id=home_team_id,
         away_team_id=away_team_id,
         category_id=category_id,
+        category_name=category_name,
         tournament_id=tournament_id,
     )
     event["markets"] = [
@@ -379,6 +382,7 @@ def _install_upcoming_discovery(
     tournament_name: str = "Premier League",
     observed: datetime = DISCOVERY_OBSERVED,
 ) -> None:
+    source_observed = observed if observed.microsecond else observed + timedelta(milliseconds=1)
     grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
     for index, original in enumerate(events):
         row = dict(original)
@@ -393,6 +397,8 @@ def _install_upcoming_discovery(
         row["awayTeamId"] = row.get("awayTeamId") or f"sr:competitor:{91001 + index * 2}"
         row["bookingStatus"] = row.get("bookingStatus", "Booked")
         row["matchStatus"] = row.get("matchStatus", "Not start")
+        if row["matchStatus"] == "Not started":
+            row["matchStatus"] = "Not start"
         key = (category_id, category_name, tournament_id, name)
         grouped.setdefault(key, []).append(row)
     tournaments = [
@@ -406,24 +412,28 @@ def _install_upcoming_discovery(
     ).encode("utf-8")
 
     def fetch(page_num: int, nonce: int) -> tuple[bytes, datetime]:
-        return raw, observed
+        return raw, source_observed
 
-    monkeypatch.setattr(pc_upcoming_source.time, "time", lambda: observed.timestamp() - 0.250)
+    monkeypatch.setattr(pc_upcoming_source.time, "time", lambda: source_observed.timestamp() - 0.250)
     monkeypatch.setattr(pc_upcoming_source, "_fetch_page", fetch)
 
 
 def _install_detail(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    raw: bytes | None = None,
+    raw: bytes | dict[str, bytes] | None = None,
     observed: datetime = DETAIL_OBSERVED,
 ) -> None:
     detail_bytes = _detail_raw() if raw is None else raw
 
     def fetch(event_id: str) -> tuple[bytes, int, datetime]:
-        payload = json.loads(detail_bytes)
-        assert event_id == payload["data"]["event"]["eventId"]
-        return detail_bytes, 200, observed
+        selected = detail_bytes[event_id] if isinstance(detail_bytes, dict) else detail_bytes
+        payload = json.loads(selected)
+        event = payload["data"].get("event")
+        if event is None:
+            event = payload["data"][0]
+        assert event_id == event["eventId"]
+        return selected, 200, observed
 
     monkeypatch.setattr(live, "_network_fetch", fetch)
 
@@ -724,6 +734,17 @@ def test_full_admission_aware_source_to_router_pipeline_canonical_equivalence(
         lineage_main_sha="1" * 40,
         capture_mode="SUPPORTED_REQUEST",
     )
+    # Both capture modes use one global source snapshot; replay the exact same
+    # complete manifest rather than attempting a second capture into one root.
+    cached_source_directory = tmp_path / pc_upcoming_source.EVIDENCE_ROOT
+    cached_source_manifest = upcoming_discovery.verify_current_pc_upcoming_discovery(
+        repository_root=tmp_path
+    )
+    monkeypatch.setattr(
+        upcoming_discovery,
+        "capture_current_upcoming_discovery",
+        lambda **_kwargs: (cached_source_directory, cached_source_manifest),
+    )
 
     # Run P3_E1_PRE_ROUTER_CAPTURE through real capture & reconciliation
     p3_bundle = runner.acquire_current_shadow_pre_router_bundle(
@@ -963,6 +984,15 @@ def test_native_id_required_source_to_router_pipeline_canonical_equivalence(
         lineage_main_sha="1" * 40,
         capture_mode="SUPPORTED_REQUEST",
     )
+    cached_source_directory = tmp_path / pc_upcoming_source.EVIDENCE_ROOT
+    cached_source_manifest = upcoming_discovery.verify_current_pc_upcoming_discovery(
+        repository_root=tmp_path
+    )
+    monkeypatch.setattr(
+        upcoming_discovery,
+        "capture_current_upcoming_discovery",
+        lambda **_kwargs: (cached_source_directory, cached_source_manifest),
+    )
     p3_bundle = runner.acquire_current_shadow_pre_router_bundle(
         repository_root=tmp_path,
         lineage_main_sha="1" * 40,
@@ -1025,6 +1055,100 @@ def test_native_id_required_source_to_router_pipeline_canonical_equivalence(
     assert identity_compatibility.identity_state_snapshot()["schema_version"] == 2
     assert identity_compatibility.identity_state_snapshot()["learned_team_identities"] == []
     assert identity_compatibility.identity_state_snapshot()["learned_competition_identities"] == []
+
+
+def test_one_pc_upcoming_global_card_reconciles_reviewed_club_and_intl_through_same_wrapper(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """One provider page is shared; club seeds and INT bridge stay orthogonal."""
+    club_id = 6000101
+    intl_id = 6000102
+    club_event_id = "sr:match:9900101"
+    intl_event_id = "sr:match:9900102"
+    intl_kickoff = datetime(2026, 9, 20, 16, 0, tzinfo=UTC)
+
+    club_admission, club_captures = _fotmob_admission(
+        tmp_path, match_ids=(club_id,), home="Arsenal", away="Chelsea",
+        competition="Premier League", kickoff=KICKOFF, ccode="ENG",
+        league_id=47, primary_id=47, home_id=9825, away_id=8455,
+    )
+    intl_admission, intl_captures = _fotmob_admission(
+        tmp_path, match_ids=(intl_id,), home="Grenada", away="Cuba",
+        competition="CONCACAF Nations League B Grp. 3", kickoff=intl_kickoff,
+        ccode="INT", league_id=9821, primary_id=9821, home_id=3001, away_id=3002,
+    )
+    club_provider = _event(
+        event_id=club_event_id, home="Arsenal", away="Chelsea", kickoff=KICKOFF,
+        tournament_name="Premier League", home_team_id="sr:competitor:90001",
+        away_team_id="sr:competitor:90002", category_id="sr:category:1",
+        category_name="England", tournament_id="sr:tournament:1",
+    )
+    intl_provider = _event(
+        event_id=intl_event_id, home="Grenada", away="Cuba", kickoff=intl_kickoff,
+        tournament_name="CONCACAF Nations League", home_team_id="sr:competitor:90003",
+        away_team_id="sr:competitor:90004", category_id="sr:category:4",
+        category_name="International", tournament_id="sr:tournament:27420",
+    )
+    _install_upcoming_discovery(
+        monkeypatch, [club_provider, intl_provider], observed=DISCOVERY_OBSERVED
+    )
+    _install_detail(
+        monkeypatch,
+        raw={
+            club_event_id: _detail_raw(
+                event_id=club_event_id, home="Arsenal", away="Chelsea", kickoff=KICKOFF,
+                tournament_name="Premier League", booking_status="Available",
+                home_team_id="sr:competitor:90001", away_team_id="sr:competitor:90002",
+                category_id="sr:category:1", category_name="England",
+                tournament_id="sr:tournament:1",
+            ),
+            intl_event_id: _detail_raw(
+                event_id=intl_event_id, home="Grenada", away="Cuba", kickoff=intl_kickoff,
+                tournament_name="CONCACAF Nations League", booking_status="Available",
+                home_team_id="sr:competitor:90003", away_team_id="sr:competitor:90004",
+                category_id="sr:category:4", category_name="International",
+                tournament_id="sr:tournament:27420",
+            ),
+        },
+        observed=DETAIL_OBSERVED,
+    )
+    monkeypatch.setattr(reviewed_discovery, "_now_utc", lambda: EVALUATION)
+    discovery_dir, manifest = upcoming_discovery.capture_current_pc_upcoming_discovery(
+        repository_root=tmp_path, execute_live_network=True
+    )
+    assert manifest.pagination_complete is True
+    assert {event.event_id for event in manifest.events} == {club_event_id, intl_event_id}
+    assert {
+        (event.category_id, event.tournament_id) for event in manifest.events
+    } == {
+        ("sr:category:1", "sr:tournament:1"),
+        ("sr:category:4", "sr:tournament:27420"),
+    }
+
+    club_bundle = upcoming_discovery.reconcile_current_events_from_pc_upcoming_discovery(
+        repository_root=tmp_path, discovery_evidence_directory=discovery_dir,
+        fotmob_admission_value=club_admission, fotmob_captures=club_captures,
+        execute_live_network=True,
+    )
+    intl_bundle = upcoming_discovery.reconcile_current_events_from_pc_upcoming_discovery(
+        repository_root=tmp_path, discovery_evidence_directory=discovery_dir,
+        fotmob_admission_value=intl_admission, fotmob_captures=intl_captures,
+        execute_live_network=True,
+    )
+    assert len(club_bundle.matched_rows) == 1
+    assert club_bundle.matched_rows[0].event_id == club_event_id
+    assert club_bundle.matched_rows[0].matched_fotmob_fixture_id == str(club_id)
+    assert len(intl_bundle.matched_rows) == 1
+    assert intl_bundle.matched_rows[0].event_id == intl_event_id
+    assert intl_bundle.matched_rows[0].matched_fotmob_fixture_id == str(intl_id)
+    assert intl_bundle.manifest.canonical_sha256 == club_bundle.manifest.canonical_sha256
+    assert intl_bundle.canonical_sha256 != club_bundle.canonical_sha256
+    assert upcoming_discovery.verify_current_event_discovery_reconciliation_bundle(
+        club_bundle
+    ).canonical_sha256 == club_bundle.canonical_sha256
+    assert upcoming_discovery.verify_current_event_discovery_reconciliation_bundle(
+        intl_bundle
+    ).canonical_sha256 == intl_bundle.canonical_sha256
 
 
 def test_ambiguous_native_id_match_has_no_evidence_or_state_side_effect(

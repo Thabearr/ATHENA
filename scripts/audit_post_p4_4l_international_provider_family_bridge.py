@@ -14,7 +14,6 @@ from domain import current_shadow_sportybet_pc_upcoming_discovery as pc_upcoming
 from domain import current_shadow_sportybet_upcoming_reconciliation as old_upcoming
 from domain import current_shadow_sportybet_paginated_discovery_reconciliation as paginated
 from domain import current_shadow_sportybet_catalog_fanout_reconciliation as fanout
-from domain import current_shadow_all_market_runner as runner
 from scripts import verify_p3_0_e1_live_readiness as p3_readiness
 
 
@@ -177,10 +176,7 @@ def validate_runtime_isolation() -> None:
     _require(registry.get("provider_identity_projection_source_policy_id") == pc_upcoming.POLICY_ID and registry.get("provider_identity_projection_source_policy_sha256") == pc_upcoming.PINNED_POLICY_SHA256 and registry.get("provider_identity_projection_raw_ancestry_required") is True, "V2 registry omits projection raw ancestry")
     bridge_provider_keys = {row.provider_key for row in bridge.REVIEWED_MAPPINGS}
     _require(not (bridge_provider_keys & set(identity._comp_reverse)), "bridge rows were inserted in the learned one-to-one competition registry")
-    _require(runner.reconciliation is old_upcoming and old_upcoming.CURRENT_SHADOW_UPCOMING_POLICY_ID == "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1", "Current Shadow runtime owner changed")
     _require(pc_upcoming.PINNED_POLICY_SHA256 == bridge.PROVIDER_SOURCE_POLICY_SHA256, "pcUpcoming source contract identity drifted")
-    p3_source = inspect.getsource(p3_readiness)
-    _require("current_shadow_sportybet_upcoming_reconciliation" in p3_source and "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1" in p3_source, "P3 readiness no longer pins the old runtime owner")
     compatibility_source = inspect.getsource(compatibility.match_current_shadow_event)
     bridge_guard = compatibility_source.find("provider_event_requires_international_family_bridge")
     old_path = compatibility_source.find("run199_identity.match_event")
@@ -201,7 +197,14 @@ def audit(repository_root: str | Path = ".") -> dict[str, str]:
         raise InternationalProviderFamilyBridgeAuditError("bridge architecture receipt is unavailable") from exc
     receipt_sha = validate_receipt(receipt)
     validate_runtime_isolation()
-    return {"bridge_policy_sha256": bridge.calculate_policy_sha256(), "receipt_sha256": receipt_sha}
+    from scripts import audit_post_p4_4l_pc_upcoming_runtime_migration as migration
+    supersession = migration.audit(root)
+    _require(supersession.get("status") == "PASSED", "reviewed runtime migration supersession is not authenticated")
+    return {
+        "bridge_policy_sha256": bridge.calculate_policy_sha256(),
+        "receipt_sha256": receipt_sha,
+        "runtime_migration_receipt_sha256": supersession["migration_receipt_sha256"],
+    }
 
 
 if __name__ == "__main__":

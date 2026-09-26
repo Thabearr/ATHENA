@@ -15,6 +15,7 @@ from domain import _current_shadow_quote_binding as quote_binding
 from domain import current_shadow_all_market_portfolio as portfolio_module
 from domain import current_shadow_sportybet_catalog_fanout_reconciliation as catalog_reconciliation
 from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming_reconciliation
+from domain import current_shadow_sportybet_pc_upcoming_reconciliation as pc_upcoming_reconciliation
 from domain import current_sportybet_semantic_registry as prb
 from domain import sportybet_current_event_discovery_reconciliation as pr251_reconciliation
 from domain import sportybet_live_event_quote_evidence as live
@@ -49,6 +50,12 @@ def _reconciliation_verifier_and_basis(bundle):
             upcoming_reconciliation.verify_current_event_discovery_reconciliation_bundle,
             upcoming_reconciliation.CurrentShadowSportyBetUpcomingReconciliationError,
             "PRF_PR258_UPCOMING_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION",
+        )
+    if type(bundle) is pc_upcoming_reconciliation.CurrentShadowPcUpcomingReconciliationBundle:
+        return (
+            pc_upcoming_reconciliation.verify_current_event_discovery_reconciliation_bundle,
+            pc_upcoming_reconciliation.PcUpcomingRuntimeReconciliationError,
+            "PCUPCOMING_RUNTIME_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION",
         )
     if type(bundle) is catalog_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle:
         return (
