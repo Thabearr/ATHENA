@@ -148,11 +148,16 @@ class RecoveryHooks:
     original_expected_contract_sha256: str
     original_legacy_matching_basis: str
     original_legacy_expected_contract_sha256: str
+    runtime_wrapper_legacy_scope: bool = False
 
 
 def install(reconciliation_module: Any) -> RecoveryHooks:
     has_legacy = hasattr(reconciliation_module, "legacy") and hasattr(
         reconciliation_module.legacy, "MATCHING_BASIS"
+    )
+    runtime_wrapper_legacy_scope = (
+        getattr(reconciliation_module, "POLICY_ID", None)
+        == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
     )
     hooks = RecoveryHooks(
         original_match_event=identity.match_event,
@@ -166,9 +171,20 @@ def install(reconciliation_module: Any) -> RecoveryHooks:
         original_legacy_expected_contract_sha256=(
             reconciliation_module.legacy.EXPECTED_CONTRACT_SHA256 if has_legacy else ""
         ),
+        runtime_wrapper_legacy_scope=runtime_wrapper_legacy_scope,
     )
     identity.match_event = match_event
     if has_legacy:
+        if runtime_wrapper_legacy_scope:
+            # The pcUpcoming runtime wrapper has its own pinned policy hash.
+            # Historical identity-recovery diagnostics may temporarily change
+            # only the delegated legacy matcher's matching basis, so validate
+            # that legacy contract in its own scope without mutating or
+            # pretending to recompute the active wrapper policy.
+            legacy = reconciliation_module.legacy
+            legacy.MATCHING_BASIS = MATCHING_BASIS
+            reconciliation_module.validate_contract()
+            return hooks
         reconciliation_module.MATCHING_BASIS = MATCHING_BASIS
         reconciliation_module.legacy.MATCHING_BASIS = MATCHING_BASIS
         expected = reconciliation_module.calculate_contract_sha256()
@@ -180,6 +196,12 @@ def install(reconciliation_module: Any) -> RecoveryHooks:
 
 def restore(reconciliation_module: Any, hooks: RecoveryHooks) -> None:
     identity.match_event = hooks.original_match_event
+    if hooks.runtime_wrapper_legacy_scope:
+        reconciliation_module.legacy.MATCHING_BASIS = hooks.original_legacy_matching_basis
+        reconciliation_module.legacy.EXPECTED_CONTRACT_SHA256 = (
+            hooks.original_legacy_expected_contract_sha256
+        )
+        return
     if hasattr(reconciliation_module, "legacy") and hasattr(
         reconciliation_module.legacy, "MATCHING_BASIS"
     ):
