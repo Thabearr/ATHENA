@@ -71,15 +71,15 @@
   },
   "historical_receipts": {
     "artifacts/architecture/post_p4_4l_international_provider_family_bridge_v1.json": {
-      "raw_sha256": "8d59b19f7b8391b62de179f1799b7377ebd0c255010efcc4fe85b90667ce9fcc",
+      "raw_sha256": "8e4c9af2993d7a0a3698176f17b4f73e99177003139d45f7e98d40dfa80fa495",
       "canonical_sha256": "34c183b5274e9e2c3320b5a8d75a123b7ebed2405aa55cdfb1af7d59c2613aa2"
     },
     "artifacts/architecture/post_p4_4l_pc_upcoming_runtime_migration_v1.json": {
-      "raw_sha256": "02e173cedf8f83a5d3113d4f22f3a90c45df19bc00e2c81c3c738c1c013b0a7a",
+      "raw_sha256": "1e4e302cff57719beca3db3402cc19526bae7bc056515c0b399473855ed14f30",
       "canonical_sha256": "09bbbb0842b0f92c214d5e868ec3fe5e2d047f9de7b5c3e6d620bc147092f6f3"
     },
     "artifacts/architecture/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json": {
-      "raw_sha256": "8522c2071ab77bf008285aa929f761bfcdee6dbf30ffde19b667ffffa2d1ae32",
+      "raw_sha256": "88c7c1423b81251515da0ca145fbbfd26040df4966da10b5a5d322aaf44aacb3",
       "canonical_sha256": "8202845b28abcea6ff8ea0ffb279a924b09ca7b2e5ab1d1918c957b757f345cf"
     }
   },
@@ -96,5 +96,5 @@
   "next_live_proof_authorized": false,
   "p4_4_complete": false,
   "architecture_checkpoint_e_complete": false,
-  "canonical_sha256": "f8a5bbe81b3cdc0737e97e36609e614010aa8ebf2a0757302f4c0c4971c13365"
+  "canonical_sha256": "3f08b29da1cfa782d897d8bad9ea8cb4c05a962e5402144d3982d7f7e3e47ec5"
 }

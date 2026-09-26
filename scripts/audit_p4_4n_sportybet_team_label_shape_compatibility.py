@@ -50,15 +50,15 @@ NEW_VALUES = {
 }
 HISTORICAL_RECEIPTS = {
     "artifacts/architecture/post_p4_4l_international_provider_family_bridge_v1.json": (
-        "8d59b19f7b8391b62de179f1799b7377ebd0c255010efcc4fe85b90667ce9fcc",
+        "8e4c9af2993d7a0a3698176f17b4f73e99177003139d45f7e98d40dfa80fa495",
         "34c183b5274e9e2c3320b5a8d75a123b7ebed2405aa55cdfb1af7d59c2613aa2",
     ),
     "artifacts/architecture/post_p4_4l_pc_upcoming_runtime_migration_v1.json": (
-        "02e173cedf8f83a5d3113d4f22f3a90c45df19bc00e2c81c3c738c1c013b0a7a",
+        "1e4e302cff57719beca3db3402cc19526bae7bc056515c0b399473855ed14f30",
         "09bbbb0842b0f92c214d5e868ec3fe5e2d047f9de7b5c3e6d620bc147092f6f3",
     ),
     "artifacts/architecture/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json": (
-        "8522c2071ab77bf008285aa929f761bfcdee6dbf30ffde19b667ffffa2d1ae32",
+        "88c7c1423b81251515da0ca145fbbfd26040df4966da10b5a5d322aaf44aacb3",
         "8202845b28abcea6ff8ea0ffb279a924b09ca7b2e5ab1d1918c957b757f345cf",
     ),
 }
@@ -161,7 +161,10 @@ def _verify_history_and_workflow(root: Path, receipt: dict[str, Any]) -> None:
     for relative, (raw_sha, canonical_sha) in HISTORICAL_RECEIPTS.items():
         path = root / relative
         try:
-            raw = path.read_bytes()
+            # Git stores the immutable receipt with LF newlines. Windows
+            # checkouts may expand those to CRLF, so normalize only line
+            # endings before comparing the pinned repository-byte SHA.
+            raw = path.read_bytes().replace(b"\r\n", b"\n")
             parsed = json.loads(raw.decode("utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise P44NError(f"immutable historical receipt is unavailable: {relative}") from exc
