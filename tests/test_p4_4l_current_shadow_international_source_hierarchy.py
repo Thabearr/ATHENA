@@ -97,8 +97,11 @@ def test_current_architecture_identity_uses_checked_out_head_in_shallow_checkout
 
     assert ("rev-parse", "HEAD:.github/workflows") in calls
     assert ("ls-tree", "-r", "--name-only", "HEAD", ".github/workflows") in calls
-    assert architecture["workflow_tree_sha1"] == audit.WORKFLOW_TREE_SHA1
+    assert architecture["workflow_tree_sha1"] == original_git(
+        "rev-parse", "HEAD:.github/workflows"
+    ).decode("ascii").strip()
     assert architecture["workflow_count"] == audit.WORKFLOW_COUNT
+    assert architecture["workflow_evolution_transition_count"] == 7
 
 
 def test_source_identity_hashes_committed_blob_bytes_across_checkout_line_endings() -> None:

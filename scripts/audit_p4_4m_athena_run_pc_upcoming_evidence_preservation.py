@@ -43,6 +43,11 @@ TEAM_LABEL_FILES = (
     "docs/current_shadow_sportybet_reviewed_trailing_space_labels.md",
     "tests/test_current_shadow_fixture_identity_alias_wiring.py",
 )
+TEAM_LABEL_FILE_SHA256 = {
+    "domain/current_shadow_sportybet_team_label_compatibility.py": "44827480989d3358faef218b444dc6f5f233dd24b41942931084950077e0549c",
+    "docs/current_shadow_sportybet_reviewed_trailing_space_labels.md": "fec00e498c08a4ac6dd24d9909b90fa4f57e624214c8fa74e28cd282035bd8e8",
+    "tests/test_current_shadow_fixture_identity_alias_wiring.py": "69ce894006e60fa955a26233e7e6532c5f89bc043e4a4c6c4dac7b64bde41e12",
+}
 
 
 class P44MError(AssertionError):
@@ -245,10 +250,26 @@ def check() -> dict[str, Any]:
     if ledger.get("current_workflow_tree_sha1") != receipt.get("workflow_tree_after_sha1"):
         raise P44MError("workflow tree identity differs from the receipt")
 
-    for path, expected in receipt.get("team_label_file_sha256", {}).items():
-        before_bytes = _git_bytes(BASE_MAIN_SHA, path).replace(b"\r\n", b"\n")
+    team_label_hashes = receipt.get("team_label_file_sha256", {})
+    if set(team_label_hashes) != set(TEAM_LABEL_FILES):
+        raise P44MError("team-label preservation evidence has an unexpected file set")
+    for path in TEAM_LABEL_FILES:
+        expected = team_label_hashes[path]
+        baseline_sha = TEAM_LABEL_FILE_SHA256[path]
+        # GitHub's hosted test checkout is shallow and may omit BASE_MAIN_SHA.
+        # The exact base-content hashes are therefore pinned here; when the
+        # base object is present, verify it too, otherwise verify the receipt
+        # pins and the checked-out committed content against the same values.
+        try:
+            before_bytes = _git_bytes(BASE_MAIN_SHA, path).replace(b"\r\n", b"\n")
+        except P44MError:
+            before_bytes = None
         after_bytes = _git_bytes("HEAD", path).replace(b"\r\n", b"\n")
-        if _sha256(before_bytes) != expected["before"] or _sha256(after_bytes) != expected["after"] or expected["before"] != expected["after"]:
+        if (
+            expected != {"before": baseline_sha, "after": baseline_sha}
+            or (before_bytes is not None and _sha256(before_bytes) != baseline_sha)
+            or _sha256(after_bytes) != baseline_sha
+        ):
             raise P44MError(f"team-label source or test changed: {path}")
 
     if receipt.get("team_label_policy_changed") is not False or receipt.get("fixture_identity_policy_changed") is not False or receipt.get("pc_upcoming_source_policy_changed") is not False or receipt.get("runtime_wrapper_policy_changed") is not False:

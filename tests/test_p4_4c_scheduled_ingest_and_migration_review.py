@@ -44,8 +44,11 @@ def test_p4_4c_appends_only_ordinary_ingest_revise_and_preserves_history() -> No
     assert ledger["transitions"][:3] == p44b_snapshot["transitions"]
     assert ledger["transitions"][:4] == snapshot["transitions"]
     assert len(snapshot["transitions"]) == 4
-    assert len(ledger["transitions"]) == 6
+    assert len(ledger["transitions"]) == 7
     assert ledger["transitions"][5]["transition_id"] == p44g.TRANSITION_ID
+    assert ledger["transitions"][6]["transition_id"] == (
+        "P44M_ATHENA_RUN_PC_UPCOMING_EVIDENCE_PRESERVATION_V1"
+    )
     transition = snapshot["transitions"][3]
     assert transition["transition_id"] == "P44C_ATHENA_INGEST_SCHEDULE_REVISE_V1"
     assert transition["operation"] == "REVISE"

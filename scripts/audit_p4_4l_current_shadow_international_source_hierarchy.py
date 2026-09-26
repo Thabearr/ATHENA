@@ -70,6 +70,19 @@ RETIREMENT_COUNT = 3
 P44H_RECEIPT_SHA256 = "0000a5978268909dd07330d59079bc4d7f8d32c0fee161653a4a19eea9b97c64"
 P44I_RECEIPT_SHA256 = "d6f65a382c4ef23318a81261e48b8e717f768864a6e1e5baed61af3c11351a7c"
 P44J_RECEIPT_SHA256 = "335a22e5c73a397d5f3b24605d16a7b9f1220ce831fc378cedd17f4dd1a7ef49"
+P44L_PRIOR_ARCHITECTURE = {
+    "workflow_tree_sha1": WORKFLOW_TREE_SHA1,
+    "workflow_count": WORKFLOW_COUNT,
+    "workflow_evolution_ledger_sha256": EVOLUTION_SHA256,
+    "workflow_evolution_transition_count": EVOLUTION_TRANSITION_COUNT,
+    "p4_3_retirement_ledger_sha256": RETIREMENT_SHA256,
+    "p4_3_retirement_count": RETIREMENT_COUNT,
+    "prior_p4_4_receipts": {
+        "p4_4h": P44H_RECEIPT_SHA256,
+        "p4_4i": P44I_RECEIPT_SHA256,
+        "p4_4j": P44J_RECEIPT_SHA256,
+    },
+}
 PRIMARY_ID_QUALIFICATION_PATH = (
     "artifacts/research-manifests/"
     "fotmob-primary-id-competition-mapping-qualification-v1.json"
@@ -555,7 +568,9 @@ def expected_receipt() -> dict[str, Any]:
             "betting_authority_expanded": False,
             "wager_placed": False,
         },
-        "prior_architecture": _current_architecture_identity(),
+        # This field is a frozen historical observation made at P4.4L.  Later
+        # workflow-evolution transitions must not rewrite that receipt.
+        "prior_architecture": P44L_PRIOR_ARCHITECTURE,
         "implementation_scope": {
             "provider_acquisition": False,
             "provider_request_count": 0,
