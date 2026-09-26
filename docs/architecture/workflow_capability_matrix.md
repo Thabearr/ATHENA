@@ -311,3 +311,10 @@ in the previous source-review cycle; its mandatory architecture/source reread wa
 completed after merge, and the new cycle reset to 0/5. P4.4H is 0/5 while unmerged
 and would become 1/5 if merged. No new mandatory reread is due at 1/5; the next
 mandatory reread is due only when this cycle reaches 5/5.
+
+## P4.4M canonical Shadow evidence retention
+
+Canonical SHADOW artifacts now preserve the active pcUpcoming provider-source
+evidence root when it exists. This does not change the workflow's triggers,
+authority, or runtime source contract and does not establish successor-proof
+equivalence or workflow-retirement eligibility.

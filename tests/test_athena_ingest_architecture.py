@@ -53,9 +53,12 @@ def test_reviewed_add_snapshot_and_receipt_bind_one_new_workflow() -> None:
     assert receipt["workflow_git_blob_sha1"] == ledger["transitions"][2]["after"]["git_blob_sha1"]
     assert receipt["workflow_source_sha256"] == ledger["transitions"][2]["after"]["source_sha256"]
     assert ledger["current_live_workflow_count"] == 38
-    assert len(ledger["transitions"]) == 6
+    assert len(ledger["transitions"]) == 7
     assert ledger["transitions"][4]["transition_id"] == p44f.TRANSITION_ID
     assert ledger["transitions"][5]["transition_id"] == p44g.TRANSITION_ID
+    assert ledger["transitions"][6]["transition_id"] == (
+        "P44M_ATHENA_RUN_PC_UPCOMING_EVIDENCE_PRESERVATION_V1"
+    )
     assert [item["transition_id"] for item in ledger["transitions"][:2]] == list(p44b.OLD_TRANSITION_IDS)
     assert ledger["transitions"][2]["operation"] == "ADD"
     assert ledger["transitions"][2]["before"] is None
