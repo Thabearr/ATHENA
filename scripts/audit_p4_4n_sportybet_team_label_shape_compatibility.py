@@ -48,6 +48,7 @@ NEW_VALUES = {
     "paginated": "7373a05c25466206aa3a67bc53b219e8d2841f432fda13db2dc0808b40b47238",
     "fanout": "c1ce52d8c441a6a38aee08c05413d579f0f18a497e56eb7833faf1fbc60c622f",
 }
+P44O_RUNTIME_SHA256 = "dac1f99da0b536b3808f8c7e41f66ad501101871d811131f8ede9e5dc99d4a5f"
 HISTORICAL_RECEIPTS = {
     "artifacts/architecture/post_p4_4l_international_provider_family_bridge_v1.json": (
         "8e4c9af2993d7a0a3698176f17b4f73e99177003139d45f7e98d40dfa80fa495",
@@ -140,7 +141,7 @@ def _verify_pins(receipt: dict[str, Any]) -> None:
     _require(identity_compatibility.POLICY_ID == "ATHENA_CURRENT_SHADOW_FIXTURE_IDENTITY_COMPATIBILITY_V1" and identity_compatibility.EXPECTED_POLICY_SHA256 == NEW_VALUES["identity_compatibility"] == identity_compatibility.calculate_policy_sha256(), "identity compatibility does not bind V6")
     compatibility_payload = identity_compatibility._policy_payload()
     _require(compatibility_payload.get("team_label_policy_id") == team_labels.POLICY_ID and compatibility_payload.get("team_label_policy_sha256") == NEW_VALUES["team_label"], "identity compatibility ancestry is stale")
-    _require(runtime.POLICY_ID == runtime_row["policy_id"] and runtime.PINNED_POLICY_SHA256 == NEW_VALUES["runtime_wrapper"] == runtime.calculate_policy_sha256(), "runtime wrapper does not bind new identity compatibility")
+    _require(runtime.POLICY_ID == runtime_row["policy_id"] and runtime.IDENTITY_COMPATIBILITY_SHA256 == NEW_VALUES["identity_compatibility"], "runtime wrapper identity compatibility ancestry is stale")
     _require(runtime.IDENTITY_COMPATIBILITY_SHA256 == NEW_VALUES["identity_compatibility"], "runtime identity compatibility pin is stale")
     _require(source.PINNED_POLICY_SHA256 == OLD_VALUES["source"] == source.calculate_policy_sha256(), "pcUpcoming source policy changed")
     _require(bridge.PINNED_POLICY_SHA256 == OLD_VALUES["bridge"] == bridge.calculate_policy_sha256(), "international bridge policy changed")
@@ -150,8 +151,7 @@ def _verify_pins(receipt: dict[str, Any]) -> None:
     _require(paginated.EXPECTED_CONTRACT_SHA256 == NEW_VALUES["paginated"] == paginated.calculate_contract_sha256(), "retained paginated current contract lineage drifted")
     _require(fanout.EXPECTED_CONTRACT_SHA256 == NEW_VALUES["fanout"] == fanout.calculate_contract_sha256(), "retained fanout current contract lineage drifted")
     _require(runner.reconciliation is runtime and runner.upcoming_discovery is runtime, "Current Shadow runtime owner changed")
-    p3_current = p3.check_f_upcoming_discovery_contract()
-    _require(p3_current.get("runtime_policy_id") == runtime.POLICY_ID and p3_current.get("runtime_policy_sha256") == NEW_VALUES["runtime_wrapper"], "P3 source owner or runtime pins changed")
+    _require(runtime_row["sha256_after"] == NEW_VALUES["runtime_wrapper"], "P4.4N historical runtime-after identity drifted")
     _require(receipt.get("runtime_source_owner") == {"before": runtime.POLICY_ID, "after": runtime.POLICY_ID, "changed": False} and receipt.get("p3_source_owner") == {"before": runtime.POLICY_ID, "after": runtime.POLICY_ID, "changed": False}, "source owner continuity drifted")
 
 
@@ -222,7 +222,8 @@ def _verify_shape() -> None:
     _require(team_labels.AUTHORITY["source_schema_compatibility"] is True and all(value is False for key, value in team_labels.AUTHORITY.items() if key != "source_schema_compatibility"), "team-label authority broadened")
 
 
-def audit(repository_root: str | Path = ".") -> dict[str, Any]:
+def audit_historical(repository_root: str | Path = ".") -> dict[str, Any]:
+    """Validate P4.4N's immutable historical claims without pinning today's wrapper."""
     root = Path(repository_root)
     receipt = _receipt(root)
     _verify_pins(receipt)
@@ -243,9 +244,29 @@ def audit(repository_root: str | Path = ".") -> dict[str, Any]:
         "historical_evidence_examples": 6,
         "historical_evidence_captures": 5,
         "admitted_shape": "EXACTLY_ONE_TRAILING_ASCII_U_0020_ONLY",
+        "runtime_wrapper_sha256": receipt["runtime_wrapper"]["sha256_after"],
+        "historical_runtime_wrapper_sha256": receipt["runtime_wrapper"]["sha256_after"],
         "provider_acquisition": 0,
         "workflow_dispatch": 0,
     }
+
+
+def audit(repository_root: str | Path = ".") -> dict[str, Any]:
+    """Validate history, then require the exact P4.4O current-runtime supersession."""
+    root = Path(repository_root)
+    historical = audit_historical(root)
+    try:
+        from scripts import audit_p4_4o_pc_upcoming_stable_epoch_recovery as p44o
+    except ImportError as exc:
+        raise P44NError("P4.4N current-state supersession requires the P4.4O audit") from exc
+    current = p44o.audit(root)
+    _require(current.get("runtime_policy_sha256") == P44O_RUNTIME_SHA256 == runtime.PINNED_POLICY_SHA256,
+             "current runtime does not match exact P4.4O supersession")
+    result = dict(historical)
+    result["historical_runtime_wrapper_sha256"] = historical["historical_runtime_wrapper_sha256"]
+    result["runtime_wrapper_sha256"] = current["runtime_policy_sha256"]
+    result["p4_4o_receipt_sha256"] = current["receipt_sha256"]
+    return result
 
 
 if __name__ == "__main__":

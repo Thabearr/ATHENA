@@ -569,3 +569,19 @@ The old paginated `liveOrPrematchEvents` and tournament-fanout sources remain
 non-runtime because their existing authority limitations are unchanged. The
 historical P3 comparator observations and acceptance history above are not
 rewritten by this source-owner migration.
+
+### P4.4O current source-boundary recovery (2026-09-26)
+
+The shared Current Shadow/P3 runtime owner remains the reviewed
+`pcUpcomingEvents` reconciliation wrapper. PR #405's source V1 remains a strict
+single-capture evidence contract with exact within-capture `totalNum` equality
+and unchanged complete-pagination requirements. P4.4O changes only runtime
+orchestration: after the exact cross-page `totalNum` drift error, one fresh
+capture epoch may begin again at page 1. The new epoch is accepted only if it
+independently passes V1 replay and runtime completeness; no event rows are
+combined across epochs. Failed epoch pages remain evidence only and have no
+provider-absence, reconciliation, pricing, Router, Portfolio, or delivery
+authority. Any non-drift error fails immediately, and there is no third epoch
+or fallback source. No new live proof has run; the successor proof remains
+incomplete until separately authorized. See
+`artifacts/architecture/p4_4o_pc_upcoming_stable_epoch_recovery_v1.json`.

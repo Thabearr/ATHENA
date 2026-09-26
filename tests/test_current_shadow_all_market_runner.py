@@ -182,6 +182,26 @@ def test_timeout_receipt_is_durable_fail_closed_and_identifies_stage(monkeypatch
     assert payload["stake_submitted"] is False
 
 
+def test_pc_upcoming_runtime_source_error_becomes_terminal_source_incomplete_receipt(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+
+    def fail_source(**_kwargs):
+        raise pc_upcoming.PcUpcomingRuntimeReconciliationError(
+            "PC_UPCOMING_RUNTIME_PAGINATION_INCOMPLETE: both allowed capture epochs failed"
+        )
+
+    monkeypatch.setattr(runner, "_acquire_router_inputs", fail_source)
+    result = runner.execute_current_shadow_all_market(target_size=20, output_dir=tmp_path)
+    payload = _receipt_payload(tmp_path / runner.RUN_RECEIPT_FILENAME)
+    assert result.status == runner.STATUS_SOURCE_INCOMPLETE
+    assert len(result.reasons) == 1
+    assert "SOURCE_CHAIN_FAILED:PcUpcomingRuntimeReconciliationError:" in result.reasons[0]
+    assert "PC_UPCOMING_RUNTIME_PAGINATION_INCOMPLETE" in result.reasons[0]
+    assert payload["status"] == runner.STATUS_SOURCE_INCOMPLETE
+    assert payload["reasons"] != ["SOURCE_CHAIN_PENDING:STARTED"]
+    assert payload["wager_placed"] is False
+
+
 def _write_timeout_progress(*, tmp_path, stage, status, counts):
     runner._write_progress_checkpoint(
         output_dir=tmp_path,

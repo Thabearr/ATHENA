@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
+import tempfile
 from types import MappingProxyType, SimpleNamespace
 from typing import Any, Mapping, Sequence
 
@@ -44,8 +46,14 @@ MAX_SOURCE_AGE_SECONDS = legacy.MAX_SOURCE_AGE_SECONDS
 MINIMUM_LEAD_SECONDS = legacy.MINIMUM_LEAD_SECONDS
 MAX_PAGES = source.MAX_PAGES
 PAGE_SIZE = source.PAGE_SIZE
+MAX_CAPTURE_EPOCHS = 2
+MAX_PAGES_PER_EPOCH = MAX_PAGES
+MAX_SUCCESSFUL_PAGE_RESPONSES = MAX_CAPTURE_EPOCHS * MAX_PAGES_PER_EPOCH
+TOTALNUM_DRIFT_ERROR = source.TOTALNUM_DRIFT_ERROR
 EVIDENCE_ROOT = source.EVIDENCE_ROOT
 ALLOWED_OUTPUT_RELATIVE = EVIDENCE_ROOT
+RUNTIME_ATTEMPTS_DIRECTORY = "runtime-attempts"
+STABILIZATION_RECEIPT_FILENAME = "runtime-capture-stabilization.json"
 INCOMPLETE_PAGINATION_STATE = "PC_UPCOMING_RUNTIME_PAGINATION_INCOMPLETE"
 PROSPECTIVE_DISCOVERY_ELIGIBLE = legacy.PROSPECTIVE_DISCOVERY_ELIGIBLE
 PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS = legacy.PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS
@@ -116,6 +124,32 @@ def _policy_payload() -> dict[str, Any]:
             "max_pages": MAX_PAGES,
             "partial_capture_provider_absence_authority": False,
         },
+        "capture_stabilization": {
+            "recovery_semantics": "FRESH_CAPTURE_EPOCH_AFTER_EXACT_CROSS_PAGE_TOTALNUM_DRIFT",
+            "exact_first_epoch_trigger": TOTALNUM_DRIFT_ERROR,
+            "max_capture_epochs": MAX_CAPTURE_EPOCHS,
+            "max_pages_per_epoch": MAX_PAGES_PER_EPOCH,
+            "max_successful_page_responses": MAX_SUCCESSFUL_PAGE_RESPONSES,
+            "each_epoch_starts_at_page": 1,
+            "no_per_page_http_retry": True,
+            "no_third_capture_epoch": True,
+            "failed_epoch_provider_absence_authority": False,
+            "failed_epoch_identity_learning_authority": False,
+            "failed_epoch_reconciliation_authority": False,
+            "failed_epoch_selection_authority": False,
+            "failed_epoch_pricing_authority": False,
+            "failed_epoch_router_authority": False,
+            "failed_epoch_portfolio_authority": False,
+            "failed_epoch_delivery_authority": False,
+            "cross_epoch_event_merge": False,
+            "accepted_epoch_independently_source_v1_verified": True,
+            "accepted_epoch_independently_runtime_complete": True,
+            "source_fallback": False,
+            "all_attempt_evidence_retained_under_source_evidence_root": True,
+            "workflow_retry": False,
+            "per_page_transport_retry": False,
+            "provider_request_upper_bound_is_finite": True,
+        },
         "identity_observation_order": [
             "EXACT_PROVIDER_RAW_PAGE_BYTES",
             "RAW_ANCESTRY_BOUND_ATHENA_PROVIDER_IDENTITY_PROJECTION",
@@ -123,6 +157,7 @@ def _policy_payload() -> dict[str, Any]:
         "provider_identity_source_ancestry": "EXACT_PC_UPCOMING_PAGE_RAW_SHA256",
         "bundle_replay_provenance": [
             "VERIFIED_PC_UPCOMING_MANIFEST_AND_EACH_PAGE_RAW_SHA256",
+            "ACCEPTED_RUNTIME_STABILIZATION_RECEIPT_SHA256",
             "EXACT_FOTMOB_ADMISSION_AND_CAPTURE_IDENTITIES",
             "DIRECT_EVENT_DETAIL_EVENT_IDS_AND_RAW_SHA256S",
             "APPEND_ONLY_IDENTITY_STATE_SNAPSHOT_SHA256",
@@ -142,7 +177,7 @@ def calculate_policy_sha256() -> str:
     return hashlib.sha256(_canonical(_policy_payload())).hexdigest()
 
 
-PINNED_POLICY_SHA256 = "fd203fc4b857bb3c5faa22536e87e1bc214cd4fdcf79ec5b6c4c681cd9d0cf73"
+PINNED_POLICY_SHA256 = "dac1f99da0b536b3808f8c7e41f66ad501101871d811131f8ede9e5dc99d4a5f"
 EXPECTED_CONTRACT_SHA256 = PINNED_POLICY_SHA256
 CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 = PINNED_POLICY_SHA256
 
@@ -173,6 +208,7 @@ def validate_contract() -> Mapping[str, Any]:
         "source_method": DISCOVERY_SOURCE_METHOD,
         "source_path": UPCOMING_PATH,
         "pagination_complete_required": True,
+        "capture_stabilization": MappingProxyType(dict(_policy_payload()["capture_stabilization"])),
     })
 
 
@@ -188,16 +224,629 @@ def _require_complete(manifest: source.PcUpcomingDiscoveryManifest) -> None:
         raise PcUpcomingRuntimeReconciliationError(INCOMPLETE_PAGINATION_STATE)
 
 
+def _seal_document(payload: Mapping[str, Any]) -> dict[str, Any]:
+    sealed = dict(payload)
+    sealed["canonical_sha256"] = hashlib.sha256(_canonical(dict(payload))).hexdigest()
+    return sealed
+
+
+def _read_runtime_json(path: Path, *, max_bytes: int = source.MAX_MANIFEST_BYTES) -> Any:
+    try:
+        raw = source._read_regular(path, max_bytes=max_bytes)
+        return source._strict_json_loads(raw)
+    except source.PcUpcomingDiscoveryError as exc:
+        raise PcUpcomingRuntimeReconciliationError("runtime capture journal is not a regular verified file") from exc
+
+
+def _write_json(path: Path, payload: Mapping[str, Any], *, replace_existing: bool = False) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise PcUpcomingRuntimeReconciliationError(
+            "could not create runtime capture evidence directory"
+        ) from exc
+    raw = _canonical(dict(payload)) + b"\n"
+    if not replace_existing:
+        try:
+            source._write_exclusive(path, raw)
+        except Exception as exc:
+            raise PcUpcomingRuntimeReconciliationError(
+                "could not persist runtime capture evidence"
+            ) from exc
+        return
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f"{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except OSError as exc:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise PcUpcomingRuntimeReconciliationError(
+            "could not persist runtime capture stabilization evidence"
+        ) from exc
+
+
+def _page_observation(page: source.PcUpcomingPageEvidence, attempt_index: int) -> dict[str, Any]:
+    return {
+        "attempt_index": attempt_index,
+        "page_num": page.page_num,
+        "request_target": page.request_target,
+        "request_nonce": page.request_nonce_ms,
+        "observed_at": source._utc_text(page.observed_at),
+        "raw_sha256": page.raw_sha256,
+        "raw_byte_count": page.raw_size,
+        "totalNum": page.total_num,
+        "tournament_count": page.tournament_count,
+        "event_count": page.event_count,
+    }
+
+
+def _read_page_observations(attempt_root: Path) -> list[dict[str, Any]]:
+    path = attempt_root / "page-observations.json"
+    if not path.exists():
+        return []
+    try:
+        value = _read_runtime_json(path)
+    except PcUpcomingRuntimeReconciliationError as exc:
+        raise PcUpcomingRuntimeReconciliationError("runtime page-observation journal is unreadable") from exc
+    if type(value) is not dict:
+        raise PcUpcomingRuntimeReconciliationError("runtime page-observation journal shape is invalid")
+    embedded = value.get("canonical_sha256")
+    semantic = dict(value)
+    semantic.pop("canonical_sha256", None)
+    if embedded != hashlib.sha256(_canonical(semantic)).hexdigest():
+        raise PcUpcomingRuntimeReconciliationError("runtime page-observation journal SHA mismatch")
+    pages = value.get("pages")
+    if value.get("schema_version") != 1 or type(pages) is not list:
+        raise PcUpcomingRuntimeReconciliationError("runtime page-observation journal shape is invalid")
+    return pages
+
+
+def _write_page_observations(attempt_root: Path, attempt_index: int,
+                             pages: Sequence[Mapping[str, Any]]) -> None:
+    payload = _seal_document({
+        "schema_version": 1,
+        "attempt_index": attempt_index,
+        "pages": [dict(item) for item in pages],
+    })
+    _write_json(attempt_root / "page-observations.json", payload, replace_existing=True)
+
+
+def _attempt_receipt(
+    *, attempt_index: int, attempt_root: Path, status: str,
+    failure_class: str | None, failure_message: str | None,
+    observations: Sequence[Mapping[str, Any]], accepted: bool,
+) -> dict[str, Any]:
+    manifest_path = attempt_root / "manifest.json"
+    manifest_sha256: str | None = None
+    if manifest_path.is_file():
+        try:
+            raw_manifest = manifest_path.read_bytes()
+            manifest_value = json.loads(raw_manifest.decode("utf-8"))
+            manifest_sha256 = manifest_value.get("canonical_sha256") if type(manifest_value) is dict else None
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            manifest_sha256 = None
+    observation_document: dict[str, Any] | None = None
+    observation_path = attempt_root / "page-observations.json"
+    if observation_path.is_file():
+        try:
+            observation_document = json.loads(observation_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            observation_document = None
+    payload = {
+        "schema_version": 1,
+        "attempt_index": attempt_index,
+        "status": status,
+        "failure_class": failure_class,
+        "failure_message": failure_message,
+        "successful_page_response_count": len(observations),
+        "observed_totalNum_sequence": [item["totalNum"] for item in observations],
+        "raw_page_sha256s": [item["raw_sha256"] for item in observations],
+        "stable_totalNum": len({item["totalNum"] for item in observations}) <= 1,
+        "manifest_emitted": manifest_path.is_file(),
+        "manifest_canonical_sha256": manifest_sha256,
+        "page_observations_sha256": (
+            observation_document.get("canonical_sha256")
+            if type(observation_document) is dict else None
+        ),
+        "accepted_by_runtime": accepted,
+    }
+    receipt = _seal_document(payload)
+    _write_json(attempt_root / "attempt-receipt.json", receipt, replace_existing=True)
+    return receipt
+
+
+def _stabilization_base() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "runtime_policy_id": POLICY_ID,
+        "runtime_policy_sha256": PINNED_POLICY_SHA256,
+        "source_v1_policy_id": UPSTREAM_SOURCE_POLICY_ID,
+        "source_v1_policy_sha256": UPSTREAM_SOURCE_POLICY_SHA256,
+        "max_capture_epochs": MAX_CAPTURE_EPOCHS,
+        "max_pages_per_epoch": MAX_PAGES_PER_EPOCH,
+        "max_successful_page_responses": MAX_SUCCESSFUL_PAGE_RESPONSES,
+        "attempt_count": 0,
+        "accepted_attempt_index": None,
+        "failed_attempt_indices": [],
+        "attempt_receipts": [],
+        "workflow_retry": False,
+        "per_page_transport_retry": False,
+        "fallback": False,
+        "provider_absence_from_failed_attempt": False,
+        "identity_learning_from_failed_attempt": False,
+        "reconciliation_from_failed_attempt": False,
+        "selection_from_failed_attempt": False,
+        "pricing_from_failed_attempt": False,
+        "router_from_failed_attempt": False,
+        "portfolio_from_failed_attempt": False,
+        "delivery_from_failed_attempt": False,
+        "cross_epoch_event_merge": False,
+        "final_state": "IN_PROGRESS",
+    }
+
+
+def _persist_stabilization(root: Path, state: Mapping[str, Any]) -> dict[str, Any]:
+    receipt = _seal_document(state)
+    _write_json(root / STABILIZATION_RECEIPT_FILENAME, receipt, replace_existing=True)
+    return receipt
+
+
+def _record_attempt(root: Path, state: dict[str, Any], receipt: Mapping[str, Any],
+                    *, failed: bool, final_state: str) -> None:
+    summaries = list(state["attempt_receipts"])
+    summaries.append({
+        "attempt_index": receipt["attempt_index"],
+        "status": receipt["status"],
+        "attempt_receipt_sha256": receipt["canonical_sha256"],
+    })
+    state["attempt_receipts"] = summaries
+    state["attempt_count"] = int(receipt["attempt_index"])
+    failed_indices = list(state["failed_attempt_indices"])
+    if failed:
+        failed_indices.append(int(receipt["attempt_index"]))
+    state["failed_attempt_indices"] = failed_indices
+    state["final_state"] = final_state
+    _persist_stabilization(root, state)
+
+
+def _promote_accepted_epoch(
+    *, repository_root: Path, attempt_root: Path,
+    manifest: source.PcUpcomingDiscoveryManifest,
+) -> source.PcUpcomingDiscoveryManifest:
+    root = repository_root / EVIDENCE_ROOT
+    stage = root / "runtime-promotion-stage"
+    if stage.exists() or (root / "pages").exists() or (root / "manifest.json").exists():
+        raise PcUpcomingRuntimeReconciliationError("canonical pcUpcoming evidence destination already exists")
+    stage.mkdir(parents=False, exist_ok=False)
+    try:
+        stage_pages = stage / "pages"
+        stage_pages.mkdir()
+        for page in manifest.pages:
+            raw = (attempt_root / page.raw_relative_path).read_bytes()
+            if hashlib.sha256(raw).hexdigest() != page.raw_sha256:
+                raise PcUpcomingRuntimeReconciliationError("accepted attempt raw page changed before promotion")
+            source._write_exclusive(stage_pages / Path(page.raw_relative_path).name, raw)
+        manifest_bytes = (attempt_root / "manifest.json").read_bytes()
+        source._write_exclusive(stage / "manifest.json", manifest_bytes)
+        staged = source._verify_manifest_at_root(evidence_root=stage)
+        _require_complete(staged)
+        if staged.to_dict() != manifest.to_dict():
+            raise PcUpcomingRuntimeReconciliationError("staged accepted V1 manifest differs from its capture epoch")
+        stage_pages.rename(root / "pages")
+        (stage / "manifest.json").rename(root / "manifest.json")
+        promoted = source.verify_current_pc_upcoming_discovery(repository_root=repository_root)
+        _require_complete(promoted)
+        if promoted.to_dict() != manifest.to_dict():
+            raise PcUpcomingRuntimeReconciliationError("canonical promoted V1 manifest differs from accepted epoch")
+        stage.rmdir()
+        return promoted
+    except Exception:
+        # Promotion never consumes attempt evidence. If canonical publication is
+        # interrupted, move only these newly-created copies back into staging.
+        try:
+            promoted_manifest = root / "manifest.json"
+            promoted_pages = root / "pages"
+            if promoted_manifest.exists() and not (stage / "manifest.json").exists():
+                promoted_manifest.rename(stage / "manifest.json")
+            if promoted_pages.exists() and not (stage / "pages").exists():
+                promoted_pages.rename(stage / "pages")
+        except OSError:
+            pass
+        raise
+
+
+def verify_runtime_capture_stabilization(
+    *, repository_root: str | Path,
+) -> Mapping[str, Any]:
+    """Offline replay of the bounded runtime capture journal and accepted V1 epoch."""
+    validate_contract()
+    repository = Path(repository_root)
+    root = repository / EVIDENCE_ROOT
+    path = root / STABILIZATION_RECEIPT_FILENAME
+    try:
+        receipt = _read_runtime_json(path)
+    except PcUpcomingRuntimeReconciliationError as exc:
+        raise PcUpcomingRuntimeReconciliationError("runtime stabilization receipt is unavailable") from exc
+    if type(receipt) is not dict:
+        raise PcUpcomingRuntimeReconciliationError("runtime stabilization receipt shape is invalid")
+    embedded = receipt.get("canonical_sha256")
+    semantic = dict(receipt)
+    semantic.pop("canonical_sha256", None)
+    if embedded != hashlib.sha256(_canonical(semantic)).hexdigest():
+        raise PcUpcomingRuntimeReconciliationError("runtime stabilization receipt SHA mismatch")
+    expected_base = _stabilization_base()
+    for key, value in expected_base.items():
+        if key not in receipt and key not in {"attempt_count", "accepted_attempt_index", "failed_attempt_indices", "attempt_receipts", "final_state"}:
+            raise PcUpcomingRuntimeReconciliationError(f"runtime stabilization field is missing: {key}")
+    if (
+        receipt.get("schema_version") != 1
+        or receipt.get("runtime_policy_id") != POLICY_ID
+        or receipt.get("runtime_policy_sha256") != PINNED_POLICY_SHA256
+        or receipt.get("source_v1_policy_id") != UPSTREAM_SOURCE_POLICY_ID
+        or receipt.get("source_v1_policy_sha256") != UPSTREAM_SOURCE_POLICY_SHA256
+        or receipt.get("max_capture_epochs") != MAX_CAPTURE_EPOCHS
+        or receipt.get("max_pages_per_epoch") != MAX_PAGES_PER_EPOCH
+        or receipt.get("max_successful_page_responses") != MAX_SUCCESSFUL_PAGE_RESPONSES
+        or receipt.get("workflow_retry") is not False
+        or receipt.get("per_page_transport_retry") is not False
+        or receipt.get("fallback") is not False
+        or receipt.get("provider_absence_from_failed_attempt") is not False
+        or receipt.get("identity_learning_from_failed_attempt") is not False
+        or receipt.get("reconciliation_from_failed_attempt") is not False
+        or receipt.get("selection_from_failed_attempt") is not False
+        or receipt.get("pricing_from_failed_attempt") is not False
+        or receipt.get("router_from_failed_attempt") is not False
+        or receipt.get("portfolio_from_failed_attempt") is not False
+        or receipt.get("delivery_from_failed_attempt") is not False
+        or receipt.get("cross_epoch_event_merge") is not False
+    ):
+        raise PcUpcomingRuntimeReconciliationError("runtime stabilization policy or authority fields drifted")
+    attempts = receipt.get("attempt_receipts")
+    count = receipt.get("attempt_count")
+    if type(attempts) is not list or type(count) is not int or not 1 <= count <= MAX_CAPTURE_EPOCHS or len(attempts) != count:
+        raise PcUpcomingRuntimeReconciliationError("runtime capture epoch count is outside the pinned bound")
+    attempts_root = root / RUNTIME_ATTEMPTS_DIRECTORY
+    if root.is_symlink() or attempts_root.is_symlink():
+        raise PcUpcomingRuntimeReconciliationError("runtime evidence root must not contain symlinks")
+    failed_indices: list[int] = []
+    attempt_documents: dict[int, dict[str, Any]] = {}
+    total_successful_pages = 0
+    for expected_index, summary in enumerate(attempts, 1):
+        attempt_root = attempts_root / f"attempt-{expected_index:03d}"
+        if attempt_root.is_symlink() or (attempt_root / "pages").is_symlink():
+            raise PcUpcomingRuntimeReconciliationError("runtime attempt evidence must not contain symlinks")
+        receipt_path = attempt_root / "attempt-receipt.json"
+        observations_path = attempt_root / "page-observations.json"
+        try:
+            attempt_doc = _read_runtime_json(receipt_path)
+        except PcUpcomingRuntimeReconciliationError as exc:
+            raise PcUpcomingRuntimeReconciliationError("runtime attempt receipt is missing or malformed") from exc
+        if type(attempt_doc) is not dict:
+            raise PcUpcomingRuntimeReconciliationError("runtime attempt receipt shape is invalid")
+        attempt_sha = attempt_doc.get("canonical_sha256")
+        attempt_semantic = dict(attempt_doc)
+        attempt_semantic.pop("canonical_sha256", None)
+        if attempt_sha != hashlib.sha256(_canonical(attempt_semantic)).hexdigest():
+            raise PcUpcomingRuntimeReconciliationError("runtime attempt receipt SHA mismatch")
+        if summary != {
+            "attempt_index": expected_index,
+            "status": attempt_doc.get("status"),
+            "attempt_receipt_sha256": attempt_sha,
+        } or attempt_doc.get("attempt_index") != expected_index:
+            raise PcUpcomingRuntimeReconciliationError("runtime attempt receipt index/ancestry drifted")
+        observations = _read_page_observations(attempt_root)
+        if any(type(item) is not dict for item in observations):
+            raise PcUpcomingRuntimeReconciliationError("runtime page observation row is malformed")
+        if observations_path.exists():
+            observation_doc = _read_runtime_json(observations_path)
+            if (
+                type(observation_doc) is not dict
+                or observation_doc.get("attempt_index") != expected_index
+                or attempt_doc.get("page_observations_sha256") != observation_doc.get("canonical_sha256")
+            ):
+                raise PcUpcomingRuntimeReconciliationError("runtime attempt page-observation ancestry drifted")
+        elif observations:
+            raise PcUpcomingRuntimeReconciliationError("runtime page observations exist without their journal")
+        elif attempt_doc.get("page_observations_sha256") is not None:
+            raise PcUpcomingRuntimeReconciliationError("attempt receipt claims an absent page-observation journal")
+        if len(observations) > MAX_PAGES_PER_EPOCH:
+            raise PcUpcomingRuntimeReconciliationError("runtime attempt exceeds MAX_PAGES_PER_EPOCH")
+        if tuple(item.get("page_num") for item in observations) != tuple(range(1, len(observations) + 1)):
+            raise PcUpcomingRuntimeReconciliationError("runtime attempt pages are not contiguous from page 1")
+        for item in observations:
+            if type(item) is not dict or item.get("attempt_index") != expected_index:
+                raise PcUpcomingRuntimeReconciliationError("runtime page observation row is malformed")
+            try:
+                raw = source._read_regular(
+                    attempt_root / "pages" / f"page-{item['page_num']:03d}.raw.json",
+                    max_bytes=source.MAX_RESPONSE_BYTES,
+                )
+                observed_at = source._parse_utc_text(item["observed_at"], "page observed_at")
+                page = source.parse_page(
+                    raw, page_num=item["page_num"],
+                    request_nonce_ms=item["request_nonce"], observed_at=observed_at,
+                )
+            except Exception as exc:
+                raise PcUpcomingRuntimeReconciliationError("runtime page observation raw replay failed") from exc
+            if item != _page_observation(page, expected_index):
+                raise PcUpcomingRuntimeReconciliationError("runtime page metadata differs from exact source replay")
+        total_successful_pages += len(observations)
+        if (
+            attempt_doc.get("successful_page_response_count") != len(observations)
+            or attempt_doc.get("observed_totalNum_sequence") != [item["totalNum"] for item in observations]
+            or attempt_doc.get("raw_page_sha256s") != [item["raw_sha256"] for item in observations]
+            or attempt_doc.get("stable_totalNum") is not (len({item["totalNum"] for item in observations}) <= 1)
+            or attempt_doc.get("manifest_emitted") is not (attempt_root / "manifest.json").is_file()
+        ):
+            raise PcUpcomingRuntimeReconciliationError("runtime attempt summary differs from retained evidence")
+        if attempt_doc.get("accepted_by_runtime") is True:
+            if (
+                attempt_doc.get("status") != "ACCEPTED"
+                or attempt_doc.get("failure_class") is not None
+                or attempt_doc.get("failure_message") is not None
+                or attempt_doc.get("manifest_emitted") is not True
+                or attempt_doc.get("stable_totalNum") is not True
+            ):
+                raise PcUpcomingRuntimeReconciliationError("accepted attempt receipt contains failure semantics")
+        elif attempt_doc.get("failure_message") == TOTALNUM_DRIFT_ERROR:
+            if (
+                attempt_doc.get("status") != "FAILED_EXACT_TOTALNUM_DRIFT"
+                or attempt_doc.get("failure_class") != "EXACT_CROSS_PAGE_TOTALNUM_DRIFT"
+                or attempt_doc.get("stable_totalNum") is not False
+            ):
+                raise PcUpcomingRuntimeReconciliationError("exact drift failure classification is inconsistent")
+        elif attempt_doc.get("status") == "FAILED_RUNTIME_INCOMPLETE":
+            if (
+                attempt_doc.get("failure_class") != "RUNTIME_COMPLETENESS_CHECK"
+                or not str(attempt_doc.get("failure_message", "")).startswith(INCOMPLETE_PAGINATION_STATE)
+            ):
+                raise PcUpcomingRuntimeReconciliationError("runtime incompleteness failure classification is inconsistent")
+        elif attempt_doc.get("status") == "FAILED_SOURCE_OR_EVIDENCE_ERROR":
+            if type(attempt_doc.get("failure_class")) is not str or type(attempt_doc.get("failure_message")) is not str:
+                raise PcUpcomingRuntimeReconciliationError("source/evidence failure receipt is incomplete")
+        else:
+            raise PcUpcomingRuntimeReconciliationError("attempt receipt has an unreviewed status")
+        if attempt_doc.get("manifest_emitted") is True:
+            try:
+                attempt_manifest = source._verify_manifest_at_root(evidence_root=attempt_root)
+            except source.PcUpcomingDiscoveryError as exc:
+                raise PcUpcomingRuntimeReconciliationError("attempt V1 manifest failed exact raw replay") from exc
+            if attempt_manifest.canonical_sha256 != attempt_doc.get("manifest_canonical_sha256"):
+                raise PcUpcomingRuntimeReconciliationError("attempt manifest canonical SHA differs from attempt receipt")
+        elif attempt_doc.get("manifest_canonical_sha256") is not None:
+            raise PcUpcomingRuntimeReconciliationError("attempt receipt claims an absent manifest hash")
+        attempt_documents[expected_index] = attempt_doc
+    if total_successful_pages > MAX_SUCCESSFUL_PAGE_RESPONSES:
+        raise PcUpcomingRuntimeReconciliationError("runtime successful page responses exceed the pinned request bound")
+    accepted_index = receipt.get("accepted_attempt_index")
+    if accepted_index is None:
+        if (root / "manifest.json").exists() or (root / "pages").exists():
+            raise PcUpcomingRuntimeReconciliationError("failed capture published a top-level provider manifest/pages")
+        if receipt.get("final_state") == "IN_PROGRESS":
+            raise PcUpcomingRuntimeReconciliationError("runtime stabilization receipt is not terminal")
+        if any(item.get("accepted_by_runtime") is not False for item in attempt_documents.values()):
+            raise PcUpcomingRuntimeReconciliationError("failed capture attempt unexpectedly has runtime authority")
+        if receipt.get("final_state") == "FAILED_AFTER_EXACT_TOTALNUM_DRIFT":
+            if (
+                count != 2
+                or attempt_documents[1].get("failure_message") != TOTALNUM_DRIFT_ERROR
+                or attempt_documents[2].get("failure_message") != TOTALNUM_DRIFT_ERROR
+                or attempt_documents[1].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT"
+                or attempt_documents[2].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT"
+            ):
+                raise PcUpcomingRuntimeReconciliationError("two-epoch drift exhaustion does not match exact trigger semantics")
+        else:
+            if receipt.get("final_state") not in {"FAILED_RUNTIME_INCOMPLETE", "FAILED_SOURCE_OR_EVIDENCE_ERROR"}:
+                raise PcUpcomingRuntimeReconciliationError("failed capture final state is not a reviewed terminal state")
+            if count == 2 and attempt_documents[1].get("failure_message") != TOTALNUM_DRIFT_ERROR:
+                raise PcUpcomingRuntimeReconciliationError("a second epoch exists without exact first-epoch total drift")
+            if any(item.get("failure_message") == TOTALNUM_DRIFT_ERROR for index, item in attempt_documents.items() if index > 1):
+                raise PcUpcomingRuntimeReconciliationError("second epoch drift was not classified as exhausted exact drift")
+        if receipt.get("failed_attempt_indices") != list(range(1, count + 1)):
+            raise PcUpcomingRuntimeReconciliationError("failed terminal state does not identify every failed epoch")
+    else:
+        if type(accepted_index) is not int or accepted_index != count or not 1 <= accepted_index <= MAX_CAPTURE_EPOCHS:
+            raise PcUpcomingRuntimeReconciliationError("accepted epoch index is outside the attempt sequence")
+        if any(attempt_documents[index].get("accepted_by_runtime") for index in attempt_documents if index != accepted_index):
+            raise PcUpcomingRuntimeReconciliationError("more than one capture epoch has runtime authority")
+        accepted_receipt = attempt_documents[accepted_index]
+        if accepted_receipt.get("accepted_by_runtime") is not True or accepted_receipt.get("status") != "ACCEPTED":
+            raise PcUpcomingRuntimeReconciliationError("accepted epoch receipt does not grant the exact runtime acceptance")
+        if receipt.get("final_state") != f"ACCEPTED_ATTEMPT_{accepted_index}":
+            raise PcUpcomingRuntimeReconciliationError("accepted epoch final state is not exact")
+        if receipt.get("failed_attempt_indices") != list(range(1, accepted_index)):
+            raise PcUpcomingRuntimeReconciliationError("accepted epoch failed-attempt ancestry is not exact")
+        if any(
+            attempt_documents[index].get("accepted_by_runtime") is not False
+            for index in range(1, accepted_index)
+        ):
+            raise PcUpcomingRuntimeReconciliationError("failed earlier epoch has runtime authority")
+        try:
+            manifest = verify_current_pc_upcoming_discovery(repository_root=repository)
+        except PcUpcomingRuntimeReconciliationError:
+            raise
+        _require_complete(manifest)
+        accepted_manifest = source._verify_manifest_at_root(
+            evidence_root=attempts_root / f"attempt-{accepted_index:03d}"
+        )
+        accepted_manifest_bytes = (
+            attempts_root / f"attempt-{accepted_index:03d}" / "manifest.json"
+        ).read_bytes()
+        canonical_manifest_bytes = (root / "manifest.json").read_bytes()
+        if manifest.to_dict() != accepted_manifest.to_dict():
+            raise PcUpcomingRuntimeReconciliationError("top-level provider manifest is not the accepted epoch")
+        if canonical_manifest_bytes != accepted_manifest_bytes:
+            raise PcUpcomingRuntimeReconciliationError("top-level manifest bytes differ from the exact accepted epoch bytes")
+        if accepted_index == 2 and attempt_documents[1].get("failure_message") != TOTALNUM_DRIFT_ERROR:
+            raise PcUpcomingRuntimeReconciliationError("epoch 2 lacks exact epoch-1 drift trigger ancestry")
+        if accepted_index == 2 and attempt_documents[1].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT":
+            raise PcUpcomingRuntimeReconciliationError("epoch 2 prior attempt did not fail the exact reviewed drift state")
+        for page in manifest.pages:
+            canonical_raw = (root / page.raw_relative_path).read_bytes()
+            accepted_raw = (attempts_root / f"attempt-{accepted_index:03d}" / page.raw_relative_path).read_bytes()
+            if canonical_raw != accepted_raw or hashlib.sha256(canonical_raw).hexdigest() != page.raw_sha256:
+                raise PcUpcomingRuntimeReconciliationError("promoted page bytes differ from the accepted epoch")
+    expected_failed = [
+        index for index, item in attempt_documents.items()
+        if item.get("accepted_by_runtime") is not True
+    ]
+    if receipt.get("failed_attempt_indices") != expected_failed:
+        raise PcUpcomingRuntimeReconciliationError("failed-attempt index list differs from attempt receipts")
+    return MappingProxyType(receipt)
+
+
 def capture_current_pc_upcoming_discovery(
     *, repository_root: str | Path, execute_live_network: bool
 ) -> tuple[Path, source.PcUpcomingDiscoveryManifest]:
-    """Use the PR #405 source owner verbatim, then require complete runtime scope."""
+    """Orchestrate at most two independent V1 epochs; accept only one complete epoch."""
     validate_contract()
-    manifest = source.capture_current_pc_upcoming_discovery(
-        repository_root=repository_root, execute_live_network=execute_live_network
+    if execute_live_network is not True:
+        raise PcUpcomingRuntimeReconciliationError(
+            "live runtime capture requires exact execute_live_network=True"
+        )
+    repository = Path(repository_root).resolve(strict=True)
+    root = repository / EVIDENCE_ROOT
+    if root.exists():
+        raise PcUpcomingRuntimeReconciliationError(
+            "refusing to overwrite an existing pcUpcoming runtime evidence root"
+        )
+    try:
+        (root / RUNTIME_ATTEMPTS_DIRECTORY).mkdir(parents=True, exist_ok=False)
+    except OSError as exc:
+        raise PcUpcomingRuntimeReconciliationError(
+            "could not create pcUpcoming runtime evidence root"
+        ) from exc
+
+    state = _stabilization_base()
+    _persist_stabilization(root, state)
+    attempt_receipts: dict[int, dict[str, Any]] = {}
+    for attempt_index in range(1, MAX_CAPTURE_EPOCHS + 1):
+        attempt_root = root / RUNTIME_ATTEMPTS_DIRECTORY / f"attempt-{attempt_index:03d}"
+        observations: list[dict[str, Any]] = []
+
+        def observe_page(page: source.PcUpcomingPageEvidence) -> None:
+            observation = _page_observation(page, attempt_index)
+            observations.append(observation)
+            _write_page_observations(attempt_root, attempt_index, observations)
+
+        manifest: source.PcUpcomingDiscoveryManifest | None = None
+        try:
+            manifest = source._capture_current_pc_upcoming_discovery_once(
+                evidence_root=attempt_root,
+                execute_live_network=True,
+                page_observer=observe_page,
+            )
+            verified = source._verify_manifest_at_root(evidence_root=attempt_root)
+            if verified.to_dict() != manifest.to_dict():
+                raise PcUpcomingRuntimeReconciliationError(
+                    "captured source manifest differs from exact attempt replay"
+                )
+            _require_complete(verified)
+            _promote_accepted_epoch(
+                repository_root=repository,
+                attempt_root=attempt_root,
+                manifest=verified,
+            )
+            receipt = _attempt_receipt(
+                attempt_index=attempt_index,
+                attempt_root=attempt_root,
+                status="ACCEPTED",
+                failure_class=None,
+                failure_message=None,
+                observations=observations,
+                accepted=True,
+            )
+            attempt_receipts[attempt_index] = receipt
+            state["accepted_attempt_index"] = attempt_index
+            _record_attempt(
+                root,
+                state,
+                receipt,
+                failed=False,
+                final_state=f"ACCEPTED_ATTEMPT_{attempt_index}",
+            )
+            promoted = verify_current_pc_upcoming_discovery(repository_root=repository)
+            return root, promoted
+        except Exception as exc:
+            exact_drift = (
+                isinstance(exc, source.PcUpcomingDiscoveryError)
+                and str(exc) == TOTALNUM_DRIFT_ERROR
+            )
+            incomplete = isinstance(exc, PcUpcomingRuntimeReconciliationError) and (
+                str(exc) == INCOMPLETE_PAGINATION_STATE
+                or str(exc).startswith(INCOMPLETE_PAGINATION_STATE + ":")
+            )
+            if exact_drift:
+                status = "FAILED_EXACT_TOTALNUM_DRIFT"
+                failure_class = "EXACT_CROSS_PAGE_TOTALNUM_DRIFT"
+            elif incomplete:
+                status = "FAILED_RUNTIME_INCOMPLETE"
+                failure_class = "RUNTIME_COMPLETENESS_CHECK"
+            else:
+                status = "FAILED_SOURCE_OR_EVIDENCE_ERROR"
+                failure_class = type(exc).__name__
+            failure_message = str(exc)
+            # If promotion succeeded but the receipt write failed, retain the
+            # attempt bytes and do not leave a canonical manifest authoritative.
+            # _promote_accepted_epoch itself rolls incomplete promotions back.
+            receipt = _attempt_receipt(
+                attempt_index=attempt_index,
+                attempt_root=attempt_root,
+                status=status,
+                failure_class=failure_class,
+                failure_message=failure_message,
+                observations=observations,
+                accepted=False,
+            )
+            attempt_receipts[attempt_index] = receipt
+            should_start_fresh_epoch = exact_drift and attempt_index == 1
+            final_state = (
+                "WAITING_FOR_ONE_FRESH_EPOCH_AFTER_EXACT_TOTALNUM_DRIFT"
+                if should_start_fresh_epoch
+                else "FAILED_AFTER_EXACT_TOTALNUM_DRIFT"
+                if exact_drift
+                else "FAILED_RUNTIME_INCOMPLETE"
+                if incomplete
+                else "FAILED_SOURCE_OR_EVIDENCE_ERROR"
+            )
+            _record_attempt(
+                root,
+                state,
+                receipt,
+                failed=True,
+                final_state=final_state,
+            )
+            if should_start_fresh_epoch:
+                continue
+            if exact_drift and attempt_index == MAX_CAPTURE_EPOCHS:
+                raise PcUpcomingRuntimeReconciliationError(
+                    f"{INCOMPLETE_PAGINATION_STATE}: both allowed capture epochs failed to produce one internally stable complete V1 manifest; epoch 1 and epoch 2 each ended with exact cross-page totalNum drift"
+                ) from exc
+            if incomplete:
+                raise PcUpcomingRuntimeReconciliationError(
+                    f"{INCOMPLETE_PAGINATION_STATE}: one internally stable V1 epoch did not satisfy runtime completeness"
+                ) from exc
+            if isinstance(exc, source.PcUpcomingDiscoveryError):
+                raise PcUpcomingRuntimeReconciliationError(
+                    f"PC_UPCOMING_RUNTIME_SOURCE_INCOMPLETE:{type(exc).__name__}:{failure_message}"
+                ) from exc
+            if isinstance(exc, PcUpcomingRuntimeReconciliationError):
+                raise
+            raise PcUpcomingRuntimeReconciliationError(
+                f"PC_UPCOMING_RUNTIME_CAPTURE_FAILED:{type(exc).__name__}:{failure_message}"
+            ) from exc
+    raise PcUpcomingRuntimeReconciliationError(
+        "PC_UPCOMING_RUNTIME_PAGINATION_INCOMPLETE: bounded epoch loop ended without an accepted manifest"
     )
-    _require_complete(manifest)
-    return Path(repository_root) / EVIDENCE_ROOT, manifest
 
 
 def capture_current_upcoming_discovery(
@@ -257,6 +906,7 @@ class CurrentShadowPcUpcomingReconciliationBundle:
     _legacy_bundle: Any
     manifest: source.PcUpcomingDiscoveryManifest
     repository_root: Path
+    stabilization_sha256: str
 
     def __init__(self, *_args: Any, **_kwargs: Any) -> None:
         raise PcUpcomingRuntimeReconciliationError("runtime reconciliation bundles are builder-only")
@@ -287,6 +937,7 @@ class CurrentShadowPcUpcomingReconciliationBundle:
             "source_policy_id": UPSTREAM_SOURCE_POLICY_ID,
             "source_policy_sha256": UPSTREAM_SOURCE_POLICY_SHA256,
             "manifest_sha256": self.manifest.canonical_sha256,
+            "runtime_stabilization_receipt_sha256": self.stabilization_sha256,
             "provider_total_num": self.manifest.provider_total_num,
             "captured_event_count": self.manifest.captured_event_count,
             "captured_page_count": self.manifest.captured_page_count,
@@ -452,6 +1103,11 @@ def _build(
     evaluation_time: datetime | None = None,
 ) -> CurrentShadowPcUpcomingReconciliationBundle:
     _require_complete(manifest)
+    stabilization = verify_runtime_capture_stabilization(repository_root=repository_root)
+    if stabilization.get("accepted_attempt_index") is None:
+        raise PcUpcomingRuntimeReconciliationError(
+            "runtime stabilization does not identify one accepted complete epoch"
+        )
     raw_pages = _read_pages(repository_root, manifest)
     _identity_scope(captures, raw_pages, manifest)
     details = _provisional_details(repository_root, manifest, admission,
@@ -483,6 +1139,7 @@ def _build(
     object.__setattr__(bundle, "_legacy_bundle", rebuilt)
     object.__setattr__(bundle, "manifest", manifest)
     object.__setattr__(bundle, "repository_root", repository_root)
+    object.__setattr__(bundle, "stabilization_sha256", stabilization["canonical_sha256"])
     return bundle
 
 
@@ -570,4 +1227,5 @@ __all__ = [
     "reconcile_current_events_from_pc_upcoming_discovery", "reconcile_current_events_from_upcoming_discovery",
     "SportyBetCurrentEventDiscoveryError", "validate_contract", "verify_current_event_discovery_reconciliation_bundle",
     "verify_current_pc_upcoming_discovery", "verify_current_pc_upcoming_reconciliation_bundle",
+    "verify_runtime_capture_stabilization",
 ]
