@@ -854,6 +854,12 @@ def acquire_current_shadow_pre_router_bundle(
             "provider_discovery_source_method": upcoming_discovery.DISCOVERY_SOURCE_METHOD,
             "provider_discovery_strategy_id": upcoming_discovery.CURRENT_SHADOW_UPCOMING_POLICY_ID,
             "provider_discovery_observed_at": None,
+            "provider_discovery_first_observed_at": getattr(
+                discovery_manifest, "first_observed_at", None
+            ),
+            "provider_discovery_last_observed_at": getattr(
+                discovery_manifest, "last_observed_at", None
+            ),
             "source_viability": upcoming_discovery.PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS,
             "captured_page_count": 0,
         }
