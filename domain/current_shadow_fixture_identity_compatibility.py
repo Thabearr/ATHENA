@@ -202,6 +202,7 @@ def begin_identity_scope(
     *,
     provider_raw_bytes: Sequence[bytes] = (),
     historical_page_raw_bytes: Sequence[bytes] = (),
+    provider_identity_projection_bytes: Sequence[bytes] = (),
 ) -> None:
     fixture_identity_v2.reset_runtime_evidence()
     fixture_identity_v2.configure_persistent_state(
@@ -214,6 +215,15 @@ def begin_identity_scope(
                 "verified provider evidence must be non-empty raw bytes"
             )
         fixture_identity_v2.observe_provider_payload(raw)
+    for projection in tuple(provider_identity_projection_bytes):
+        if type(projection) is not bytes or not projection:
+            raise CurrentShadowFixtureIdentityCompatibilityError(
+                "provider identity projection must be non-empty exact bytes"
+            )
+        try:
+            fixture_identity_v2.observe_provider_identity_projection(projection)
+        except fixture_identity_v2.CurrentShadowFixtureIdentityStateError as exc:
+            raise CurrentShadowFixtureIdentityCompatibilityError(str(exc)) from exc
 
 
 def project_event_labels(event: reviewed_discovery.SportyBetDiscoveredEvent) -> Any:
@@ -255,6 +265,16 @@ def match_current_shadow_event(
     reviewed_rows: Sequence[Any],
 ) -> tuple[Any, ...]:
     """Match with the reviewed V3 -> V2 -> alias -> literal identity order."""
+    if fixture_identity_v2.provider_event_requires_international_family_bridge(
+        getattr(event, "event_id", None), reviewed_rows
+    ):
+        result_v2 = fixture_identity_v2.match_event(event, reviewed_rows)
+        if len(result_v2) == 1:
+            _record_observed_provider_match(event, result_v2)
+        # A bridge-owned provider identity never falls through to run199, V3,
+        # aliases, or literal display-name matching, whether it matches zero,
+        # one, or multiple reviewed source fixtures.
+        return result_v2
     result = run199_identity.match_event(event, reviewed_rows)
     if len(result) == 1:
         _record_observed_provider_match(event, result)

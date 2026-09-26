@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "repository": "Thabearr/ATHENA",
+  "base_main_sha": "9e121e8e5022313bf715639a888949a67aa048b1",
+  "bridge_policy_id": "ATHENA_CURRENT_SHADOW_INTERNATIONAL_PROVIDER_FAMILY_BRIDGE_V1",
+  "bridge_policy_sha256": "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb",
+  "source_authority": {
+    "policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
+    "policy_sha256": "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b",
+    "receipt_sha256": "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f"
+  },
+  "provider_source_authority": {
+    "policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
+    "policy_sha256": "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075",
+    "receipt_sha256": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34"
+  },
+  "reviewed_mappings": [
+    {
+      "source_ccode": "INT",
+      "source_primary_id": 9806,
+      "source_canonical_name": "Nations League",
+      "source_priority_band": "INT-D",
+      "source_priority_rank": 40,
+      "source_competition_kind": "INTERNATIONAL_NATIONS_LEAGUE",
+      "provider_category_id": "sr:category:4",
+      "provider_category_name": "International",
+      "provider_tournament_id": "sr:tournament:23755",
+      "provider_tournament_name": "UEFA Nations League",
+      "mapping_cardinality": "MANY_SOURCE_IDENTITIES_TO_ONE_PROVIDER_FAMILY"
+    },
+    {
+      "source_ccode": "INT",
+      "source_primary_id": 9807,
+      "source_canonical_name": "Nations League",
+      "source_priority_band": "INT-D",
+      "source_priority_rank": 40,
+      "source_competition_kind": "INTERNATIONAL_NATIONS_LEAGUE",
+      "provider_category_id": "sr:category:4",
+      "provider_category_name": "International",
+      "provider_tournament_id": "sr:tournament:23755",
+      "provider_tournament_name": "UEFA Nations League",
+      "mapping_cardinality": "MANY_SOURCE_IDENTITIES_TO_ONE_PROVIDER_FAMILY"
+    },
+    {
+      "source_ccode": "INT",
+      "source_primary_id": 9808,
+      "source_canonical_name": "Nations League",
+      "source_priority_band": "INT-D",
+      "source_priority_rank": 40,
+      "source_competition_kind": "INTERNATIONAL_NATIONS_LEAGUE",
+      "provider_category_id": "sr:category:4",
+      "provider_category_name": "International",
+      "provider_tournament_id": "sr:tournament:23755",
+      "provider_tournament_name": "UEFA Nations League",
+      "mapping_cardinality": "MANY_SOURCE_IDENTITIES_TO_ONE_PROVIDER_FAMILY"
+    },
+    {
+      "source_ccode": "INT",
+      "source_primary_id": 9821,
+      "source_canonical_name": "Nations League",
+      "source_priority_band": "INT-D",
+      "source_priority_rank": 40,
+      "source_competition_kind": "INTERNATIONAL_NATIONS_LEAGUE",
+      "provider_category_id": "sr:category:4",
+      "provider_category_name": "International",
+      "provider_tournament_id": "sr:tournament:27420",
+      "provider_tournament_name": "CONCACAF Nations League",
+      "mapping_cardinality": "ONE_SOURCE_IDENTITY_TO_ONE_PROVIDER_FAMILY"
+    },
+    {
+      "source_ccode": "INT",
+      "source_primary_id": 10608,
+      "source_canonical_name": "Continental Championship Qualification",
+      "source_priority_band": "INT-C",
+      "source_priority_rank": 30,
+      "source_competition_kind": "INTERNATIONAL_QUALIFIER",
+      "provider_category_id": "sr:category:4",
+      "provider_category_name": "International",
+      "provider_tournament_id": "sr:tournament:1848",
+      "provider_tournament_name": "Africa Cup of Nations Qualification",
+      "mapping_cardinality": "ONE_SOURCE_IDENTITY_TO_ONE_PROVIDER_FAMILY"
+    },
+    {
+      "source_ccode": "INT",
+      "source_primary_id": 114,
+      "source_canonical_name": "International Friendly",
+      "source_priority_band": "INT-F",
+      "source_priority_rank": 60,
+      "source_competition_kind": "INTERNATIONAL_FRIENDLY",
+      "provider_category_id": "sr:category:4",
+      "provider_category_name": "International",
+      "provider_tournament_id": "sr:tournament:851",
+      "provider_tournament_name": "Int. Friendly Games",
+      "mapping_cardinality": "ONE_SOURCE_IDENTITY_TO_ONE_PROVIDER_FAMILY"
+    }
+  ],
+  "uefa_many_to_one": {
+    "provider_category_id": "sr:category:4",
+    "provider_tournament_id": "sr:tournament:23755",
+    "source_keys": [["INT", 9806], ["INT", 9807], ["INT", 9808]],
+    "cardinality": "MANY_SOURCE_IDENTITIES_TO_ONE_PROVIDER_FAMILY"
+  },
+  "unmapped_source_identities": [
+    {"ccode": "INT", "primary_id": 10437, "state": "QUALIFIED_SOURCE_WITHOUT_PROVIDER_MAPPING"},
+    {"ccode": "INT", "primary_id": 9833, "state": "QUALIFIED_SOURCE_WITHOUT_PROVIDER_MAPPING"},
+    {"ccode": "INT", "primary_id": 13287, "state": "OBSERVED_UNQUALIFIED_SOURCE_IDENTITY"}
+  ],
+  "provider_only_unmapped_observation": {
+    "category_id": "sr:category:4",
+    "category_name": "International",
+    "tournament_id": "sr:tournament:622",
+    "tournament_name": "Gulf Cup",
+    "source_mapping_added": false
+  },
+  "identity_semantics": {
+    "exact_provider_ids_and_reviewed_labels_required": true,
+    "display_name_matching_authority": false,
+    "fuzzy_matching": false,
+    "suffix_stripping": false,
+    "provider_team_seeds_added": false,
+    "bridge_rows_persisted_as_learned_competition_mappings": false
+  },
+  "continuity": {
+    "v2_seed_registry_sha256_before": "7fe662fc91a80daabf1e774ddd5c8ecdb5215eaf63adb03822b3fb05f872df79",
+    "v2_seed_registry_sha256_after": "7fe662fc91a80daabf1e774ddd5c8ecdb5215eaf63adb03822b3fb05f872df79",
+    "v2_registry_sha256_unchanged": "fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f",
+    "identity_state_schema_version": 2,
+    "current_shadow_runtime_source": "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1",
+    "p3_runtime_source": "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1",
+    "pc_upcoming_status": "EVIDENCE_QUALIFIED_CANDIDATE_NOT_RUNTIME_OWNER",
+    "current_shadow_runtime_changed": false,
+    "p3_runtime_changed": false
+  },
+  "authority": {
+    "current_shadow_runtime_discovery": false,
+    "p3_runtime_discovery": false,
+    "provider_acquisition": false,
+    "workflow_dispatch": false,
+    "live_retry": false,
+    "model": false,
+    "pricing": false,
+    "router": false,
+    "portfolio": false,
+    "share_code": false,
+    "login": false,
+    "cookies": false,
+    "wallet": false,
+    "staking": false,
+    "bet": false,
+    "wager_placed": false
+  },
+  "governance": {
+    "source_review_counter_while_unmerged": "1/5",
+    "p4_4_complete": false,
+    "architecture_checkpoint_e_complete": false,
+    "next_live_proof_authorized": false
+  },
+  "canonical_sha256": "dc775e079efc7b47f47b4209c9cffc80bae67ecc863642625d6291bd87be98db"
+}
