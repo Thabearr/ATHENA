@@ -28,6 +28,7 @@ P4_4R_RECEIPT_PATH = Path(
 P4_4R_RECEIPT_SHA256 = (
     "90e2d7e984609ded80c9113a05453628bebadfcb3cede7fc95b9696931016552"
 )
+P4_4S_RECEIPT_SHA256 = "0907272a20b439e6874ee3b3fa399a488e8dd3c9a6e428dafa2aa53202c513c3"
 QUOTE_BINDING_BEFORE_SHA256 = (
     "2706d8e1b689be153cf6b0de545cfed00f7ee953707a7094f70e6df1344557de"
 )
@@ -88,6 +89,7 @@ def _lf_source_sha256(root: Path, relative: str) -> str:
 
 def verify_receipt(value: dict[str, Any], *, root: Path | None = None) -> str:
     digest = _verify_self_hash(value, "P4.4S receipt")
+    _require(digest == P4_4S_RECEIPT_SHA256, "P4.4S receipt identity is not pinned")
     _require(value.get("schema_version") == 1, "P4.4S schema drifted")
     _require(value.get("policy_id") == POLICY_ID, "P4.4S policy identity drifted")
     _require(
@@ -252,6 +254,55 @@ def verify_adapter_wiring() -> None:
     )
 
 
+def _verify_historical_receipts_from_p4_4s_receipt(
+    root: Path, receipt: dict[str, Any]
+) -> dict[str, str]:
+    evidence = receipt.get("historical_receipt_immutability")
+    _require(
+        type(evidence) is dict
+        and evidence.get("base_main_sha") == BASE_MAIN_SHA
+        and evidence.get("compared_receipt_count") == 31,
+        "P4.4S historical-receipt baseline identity drifted",
+    )
+    expected = evidence.get("sha256_by_path")
+    _require(
+        type(expected) is dict
+        and len(expected) == 31
+        and all(
+            type(path) is str
+            and path.startswith("artifacts/architecture/")
+            and type(digest) is str
+            and len(digest) == 64
+            for path, digest in expected.items()
+        ),
+        "P4.4S historical-receipt SHA inventory is malformed",
+    )
+    candidates = {
+        path.relative_to(root).as_posix()
+        for path in (root / "artifacts/architecture").rglob("*.json")
+        if ("p4_4" in path.name or path.name.startswith("post_p4_4"))
+        and "p4_4r" not in path.name
+        and "p4_4s" not in path.name
+    }
+    _require(
+        candidates == set(expected),
+        "P4.4S historical-receipt inventory differs from exact base-main set",
+    )
+    actual: dict[str, str] = {}
+    for relative, expected_sha in expected.items():
+        try:
+            content = (root / relative).read_bytes().replace(b"\r\n", b"\n")
+        except OSError as exc:
+            raise P44SError(f"historical P4.4 receipt disappeared: {relative}") from exc
+        actual_sha = hashlib.sha256(content).hexdigest()
+        _require(
+            actual_sha == expected_sha,
+            f"historical P4.4 receipt was rewritten: {relative}",
+        )
+        actual[relative] = actual_sha
+    return actual
+
+
 def audit(root: Path | None = None) -> dict[str, Any]:
     root = (root or Path.cwd()).resolve()
     receipt = _read_json(root, RECEIPT_PATH)
@@ -269,9 +320,9 @@ def audit(root: Path | None = None) -> dict[str, Any]:
         "P4.4S does not begin at the historical P4.4R context-verifier source",
     )
 
-    # Reuse P4.4R's exact supersession verifier and historical-receipt check.
-    # The complete old audit also reads text fixture files directly; that is
-    # unsuitable on autocrlf worktrees for byte-sensitive retained fixtures.
+    # Reuse P4.4R's exact source-supersession verifier. The immutable historical
+    # receipt inventory is pinned in this self-hashed P4.4S receipt so this
+    # forward audit also works in hosted shallow checkouts lacking the base tree.
     from scripts import audit_p4_4r_shadow_runtime_composition_stabilization as p4_4r_audit
 
     current_verifier_sha = _lf_source_sha256(
@@ -283,7 +334,7 @@ def audit(root: Path | None = None) -> dict[str, Any]:
         ),
         "P4.4R source transition was not superseded by P4.4S",
     )
-    historical_receipts = p4_4r_audit._verify_historical_receipts_unchanged(root)
+    historical_receipts = _verify_historical_receipts_from_p4_4s_receipt(root, receipt)
     return {
         "status": "PASS",
         "receipt_sha256": receipt_sha,

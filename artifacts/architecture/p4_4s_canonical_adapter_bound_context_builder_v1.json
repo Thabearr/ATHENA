@@ -113,5 +113,42 @@
     "canonical_shadow_successor_proof_complete": false,
     "next_live_proof_authorized": false
   },
-  "canonical_sha256": "c54c6a5938b20fa0710d11a69793d19715715550023646faa1278f636f51f6bc"
+  "historical_receipt_immutability": {
+    "base_main_sha": "adc7ee762cb7479a41184863c76fd5d0696ad7e9",
+    "compared_receipt_count": 31,
+    "sha256_by_path": {
+      "artifacts/architecture/p4_4a1_baseline_workflow_maintenance_revision_authority_v1.json": "2c99591a66989d7c7869735fdff4047e142810f0c87bcbf9129320e485a1b0bf",
+      "artifacts/architecture/p4_4a_workflow_evolution_guard_v1.json": "2469edfc56082aa18efa269c6c38f3e0bdcd0b7397ac519cc4ee3089e5b1438f",
+      "artifacts/architecture/p4_4b_athena_ingest_workflow_v1.json": "5c28c66e54b3c0c5c6d86ea7de51e36e016aa0dc2bcc63ed1dfc0851e4be7727",
+      "artifacts/architecture/p4_4c_athena_ingest_schedule_and_migration_review_v1.json": "cf5306d3b8e556503581df7d33450ece94d9fa8b57545d39002cd7f98117533c",
+      "artifacts/architecture/p4_4c_ingest_capability_migration_review_v1.json": "b857c568cf1cad1e9f648e78fc49e9cec13bb308e30ad35291ce641fa61d2077",
+      "artifacts/architecture/p4_4d_current_fotmob_ingest_compatibility_v1.json": "a3f52996fc20d277b14a4b3615b4596697f20b91b53ba7b29e088ff4be11f1cf",
+      "artifacts/architecture/p4_4e_current_fotmob_ingest_issuer_v1.json": "2739085cd35b8f0622ff5e874825c0ee46fa4aaff6a25cd1f55ec53d20e2ef20",
+      "artifacts/architecture/p4_4f_current_fotmob_exact_lane_caller_migration_v1.json": "f05e0828e01e0a4acaeca0a4739d3eae9783dc392e0071daa268d12bc15f5726",
+      "artifacts/architecture/p4_4f_operational_proof_v1.json": "4740158a4b5b51764dbed1cf438544ddb05859dc0a5a353da385d1679c04b873",
+      "artifacts/architecture/p4_4g_current_fotmob_canonical_only_workflow_v1.json": "492c181e99084d985929cdafcec872bd3c5d5b2d56009b4a14d6da8a42abe15b",
+      "artifacts/architecture/p4_4g_current_fotmob_workflow_run_history_v1.json": "5f1b0c3eecf9a2a3ae34d3260c22b7c4c6e8bafe692d87f8640deed6a7258a72",
+      "artifacts/architecture/p4_4h_current_shadow_canonical_run_migration_review_v1.json": "95707fd03a83fa1c20a5128f9ec2b9494c25b24cf8f23c16a77b5fb62d25da15",
+      "artifacts/architecture/p4_4i_shadow_supervisor_failure_evidence_v1.json": "699edcdda6f399315d119450fc15fb3021f7653f572b0e54bd170c7521865ee6",
+      "artifacts/architecture/p4_4j_shadow_selected_source_issuer_network_control_v1.json": "2cd8aa80af55aef948c383b7a23365113e5a2356a4a8caa7ec11f9a3e48218ec",
+      "artifacts/architecture/p4_4l_current_shadow_international_source_hierarchy_v1.json": "f025b2ceda347bf7016179373ee2ec7afef43028f8dc8c7e0dfbc27752557891",
+      "artifacts/architecture/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json": "88c7c1423b81251515da0ca145fbbfd26040df4966da10b5a5d322aaf44aacb3",
+      "artifacts/architecture/p4_4n_sportybet_team_label_shape_compatibility_v1.json": "0cc979b15c7eff7e783563dbed30ea0901bbfc801fec6d419474f1a6f59f6314",
+      "artifacts/architecture/p4_4o_pc_upcoming_stable_epoch_recovery_v1.json": "dd225517d2b0c065c55629e1d01e18ce4bcb2fe012a2e637b6f253f941b8c1ed",
+      "artifacts/architecture/p4_4p_pc_upcoming_preparse_response_evidence_v1.json": "6b10048d3f62a3b97c6baeff79b74913a519446005ae5829c0d1608f86046077",
+      "artifacts/architecture/p4_4q_international_bridge_source_ancestry_v1.json": "8c8a661a8652d338b8f263dab14fff404de5ddd5bcc6ab0f90a39629d7190502",
+      "artifacts/architecture/p4_4q_pc_upcoming_simple_tournament_identity_v1.json": "0bb8f7cc32bc387de49f61f4792e65813ec1933a5030f633488e50e76a13e19c",
+      "artifacts/architecture/p4_4q_pc_upcoming_simple_tournament_source_compatibility_v1.json": "504ff39aab98e36301821d750c120ce2f868fb9b9c1ea8c2108a36efc9e36a97",
+      "artifacts/architecture/p4_workflow_evolution_snapshots/p4_4a_workflow_evolution_ledger_v1.json": "8ea181e1d76ffc53866048a03385eec8206d827296c0e9ab5964b255c8930198",
+      "artifacts/architecture/p4_workflow_evolution_snapshots/p4_4b_athena_ingest_workflow_v1.json": "b82a78e3ad4f81d53c39415829218176a63d8e35b52842c4fb1d74bdbb7c2faf",
+      "artifacts/architecture/p4_workflow_evolution_snapshots/p4_4c_athena_ingest_schedule_v1.json": "a6bed2bd6a44ada8212a3eb5b6525c1e9dc9a8ac3006ec5af8377647dd4b0ba2",
+      "artifacts/architecture/p4_workflow_evolution_snapshots/p4_4f_current_fotmob_exact_lane_caller_migration_v1.json": "7740e1e0edec1e322c7fc53810c4daf5a19a4d8f421e036872b2d7a81cd52f7a",
+      "artifacts/architecture/p4_workflow_evolution_snapshots/p4_4g_current_fotmob_canonical_only_workflow_v1.json": "2b77e1a6800cfcbc8a345eb5e6ebafbeed4c359049628af18915464073084d9f",
+      "artifacts/architecture/p4_workflow_evolution_snapshots/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json": "d3436f6653d0d0c5cd236ccbfecfee033ddad2d92503031142bb643b906d0dfe",
+      "artifacts/architecture/post_p4_4l_international_provider_family_bridge_v1.json": "8e4c9af2993d7a0a3698176f17b4f73e99177003139d45f7e98d40dfa80fa495",
+      "artifacts/architecture/post_p4_4l_pc_upcoming_runtime_migration_v1.json": "1e4e302cff57719beca3db3402cc19526bae7bc056515c0b399473855ed14f30",
+      "artifacts/architecture/post_p4_4l_pc_upcoming_shared_football_source_v1.json": "8754e2e826e6783a85c38394354dcf80af61dafbc4f4ba6a467a3696166bbaff"
+    }
+  },
+  "canonical_sha256": "0907272a20b439e6874ee3b3fa399a488e8dd3c9a6e428dafa2aa53202c513c3"
 }
