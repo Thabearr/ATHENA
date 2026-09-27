@@ -353,15 +353,21 @@ def build_current_shadow_price_context_from_reconciliation(
         | pc_upcoming_reconciliation.CurrentShadowPcUpcomingReconciliationBundle
         | catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle
     ),
+    runtime_bindings: Any = None,
 ) -> CurrentShadowPriceContext:
-    """Public direct-context builder; execution bindings are selected by source."""
+    """Build a direct context using the optional reviewed execution binding.
+
+    Omitting ``runtime_bindings`` preserves the historical default-binding
+    behavior. Canonical SHADOW orchestration may pass its already-reviewed
+    binding through this public construction surface.
+    """
 
     return _build_current_shadow_price_context_from_reconciliation_bound(
         complete_current_history=complete_current_history,
         fixture_identity=fixture_identity,
         provider_event_id=provider_event_id,
         current_reconciliation_bundle=current_reconciliation_bundle,
-        runtime_bindings=None,
+        runtime_bindings=runtime_bindings,
     )
 
 

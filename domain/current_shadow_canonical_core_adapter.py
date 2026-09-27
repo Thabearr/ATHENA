@@ -239,13 +239,6 @@ def build_current_shadow_price_context(*args: Any, **kwargs: Any) -> Any:
 
 def build_current_shadow_price_context_from_reconciliation(*args: Any, **kwargs: Any) -> Any:
     # Source/context construction remains a SHADOW orchestration concern in P2.1.
-    runtime_bindings = kwargs.pop("runtime_bindings", None)
-    if runtime_bindings is not None:
-        return _legacy_price._build_current_shadow_price_context_from_reconciliation_bound(
-            *args,
-            runtime_bindings=runtime_bindings,
-            **kwargs,
-        )
     return _legacy_price.build_current_shadow_price_context_from_reconciliation(
         *args, **kwargs
     )
