@@ -24,10 +24,15 @@ from scripts import verify_p3_0_e1_live_readiness as p3
 RECEIPT_PATH = Path("artifacts/architecture/p4_4q_pc_upcoming_simple_tournament_identity_v1.json")
 SOURCE_RECEIPT_PATH = Path("artifacts/architecture/p4_4q_pc_upcoming_simple_tournament_source_compatibility_v1.json")
 BRIDGE_RECEIPT_PATH = Path("artifacts/architecture/p4_4q_international_bridge_source_ancestry_v1.json")
+HISTORICAL_SOURCE_RECEIPT_PATH = Path("artifacts/architecture/post_p4_4l_pc_upcoming_shared_football_source_v1.json")
 
 POLICY_ID = "ATHENA_P4_4Q_PC_UPCOMING_SIMPLE_TOURNAMENT_IDENTITY_V1"
 SOURCE_RECEIPT_POLICY_ID = "ATHENA_P4_4Q_PC_UPCOMING_SIMPLE_TOURNAMENT_SOURCE_COMPATIBILITY_V1"
 BRIDGE_RECEIPT_POLICY_ID = "ATHENA_P4_4Q_INTERNATIONAL_BRIDGE_SOURCE_ANCESTRY_V1"
+HISTORICAL_SOURCE_POLICY_ID = "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1"
+HISTORICAL_SOURCE_POLICY_SHA256 = "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075"
+HISTORICAL_SOURCE_RECEIPT_SHA256 = "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34"
+SOURCE_SUPERSESSION_RECEIPT_SHA256 = "5b63af742fc96305ec72446ba444ce735f951a8d11c45eb1c9fcbe7725f2f5a9"
 
 BASE_MAIN_SHA = "1c70a32ce16afd633af85922edcda8ac058bed43"
 
@@ -57,7 +62,7 @@ OLD_FANOUT_SHA256 = "c1ce52d8c441a6a38aee08c05413d579f0f18a497e56eb7833faf1fbc60
 NEW_FANOUT_SHA256 = "5da02588ea5ec0fcdb43345af60594a2a22ea2c99886cc7c1b3da1d13d14abe3"
 
 OLD_RUNTIME_SHA256 = "a5c42439e894d33950b5cba608dcd5a031896e7a8e75c6bf613b2314497b1c24"
-NEW_RUNTIME_SHA256 = "308ce60e2a3562d2cf600489075145ecd6a734b71676e5c68d87a8d0737f0d75"
+NEW_RUNTIME_SHA256 = "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
 
 P44M_WORKFLOW_SHA256 = "45f7fe3556f892320a12b15c210637782edca60792ccbf030a714414a32f005a"
 
@@ -101,6 +106,65 @@ def _read_json(root: Path, relative: Path) -> dict[str, Any]:
     return value
 
 
+def _canonical_receipt_sha(value: dict[str, Any], label: str) -> str:
+    semantic = dict(value)
+    embedded = semantic.pop("canonical_sha256", None)
+    _require(type(embedded) is str and embedded == hashlib.sha256(_canonical(semantic)).hexdigest(),
+             f"{label} canonical SHA mismatch")
+    return embedded
+
+
+def _verify_source_ancestry(
+    source_receipt: dict[str, Any],
+    bridge_receipt: dict[str, Any],
+    historical_source_receipt: dict[str, Any],
+) -> None:
+    """Verify current source-supersession links back to immutable qualification evidence."""
+    source_sha = _canonical_receipt_sha(source_receipt, "P4.4Q source supersession receipt")
+    bridge_sha = _canonical_receipt_sha(bridge_receipt, "P4.4Q bridge ancestry receipt")
+    historical_sha = _canonical_receipt_sha(historical_source_receipt, "historical pcUpcoming source receipt")
+
+    qualification = source_receipt.get("historical_source_qualification", {})
+    _require(qualification == {
+        "path": HISTORICAL_SOURCE_RECEIPT_PATH.as_posix(),
+        "policy_id": HISTORICAL_SOURCE_POLICY_ID,
+        "policy_sha256": HISTORICAL_SOURCE_POLICY_SHA256,
+        "receipt_canonical_sha256": HISTORICAL_SOURCE_RECEIPT_SHA256,
+    }, "historical source qualification ancestry drifted")
+    _require(historical_sha == HISTORICAL_SOURCE_RECEIPT_SHA256
+             and historical_source_receipt.get("policy_id") == HISTORICAL_SOURCE_POLICY_ID
+             and historical_source_receipt.get("policy_sha256") == HISTORICAL_SOURCE_POLICY_SHA256,
+             "immutable historical source qualification identity drifted")
+
+    current_source_policy = source_receipt.get("source_policy", {})
+    _require(current_source_policy.get("policy_id_after") == source.POLICY_ID
+             and current_source_policy.get("sha256_after") == source.PINNED_POLICY_SHA256
+             and current_source_policy.get("provider_native_id_grammar")
+             == source.policy_payload().get("provider_native_id_grammar"),
+             "source supersession grammar is not bound to the current source policy")
+    _require(source_receipt.get("policy_id") == SOURCE_RECEIPT_POLICY_ID
+             and source_sha == SOURCE_SUPERSESSION_RECEIPT_SHA256,
+             "source supersession receipt identity drifted")
+
+    _require(bridge.PROVIDER_RECEIPT_SHA256 == HISTORICAL_SOURCE_RECEIPT_SHA256
+             and bridge.PROVIDER_SOURCE_SUPERSESSION_RECEIPT_SHA256 == SOURCE_SUPERSESSION_RECEIPT_SHA256,
+             "bridge module source-receipt ancestry drifted")
+    _require(runtime.UPSTREAM_SOURCE_RECEIPT_SHA256 == HISTORICAL_SOURCE_RECEIPT_SHA256
+             and runtime.UPSTREAM_SOURCE_SUPERSESSION_RECEIPT_SHA256 == SOURCE_SUPERSESSION_RECEIPT_SHA256,
+             "runtime module source-receipt ancestry drifted")
+
+    provider_authority = bridge_receipt.get("provider_source_authority", {})
+    upstream_source = bridge_receipt.get("upstream_source_receipt", {})
+    _require(provider_authority.get("receipt_sha256") == HISTORICAL_SOURCE_RECEIPT_SHA256
+             and provider_authority.get("supersession_receipt_sha256") == SOURCE_SUPERSESSION_RECEIPT_SHA256,
+             "bridge provider-source authority receipt ancestry drifted")
+    _require(upstream_source.get("path") == SOURCE_RECEIPT_PATH.as_posix()
+             and upstream_source.get("policy_id") == SOURCE_RECEIPT_POLICY_ID
+             and upstream_source.get("canonical_sha256") == source_sha
+             and bridge_sha == bridge_receipt.get("canonical_sha256"),
+             "bridge upstream source-supersession receipt ancestry drifted")
+
+
 def _verify_receipt(root: Path) -> dict[str, Any]:
     receipt = _read_json(root, RECEIPT_PATH)
     semantic = dict(receipt)
@@ -134,20 +198,16 @@ def _verify_receipt(root: Path) -> dict[str, Any]:
              "P4.4Q failed proof binding drifted")
 
     source_receipt = _read_json(root, SOURCE_RECEIPT_PATH)
-    source_sem = dict(source_receipt)
-    source_actual = source_sem.pop("canonical_sha256", None)
-    _require(source_actual == hashlib.sha256(_canonical(source_sem)).hexdigest(),
-             "source receipt self-hash drifted")
+    source_actual = _canonical_receipt_sha(source_receipt, "source receipt")
     _require(receipt.get("source_receipt", {}).get("canonical_sha256") == source_actual,
              "source receipt SHA mismatch in final receipt")
 
     bridge_receipt = _read_json(root, BRIDGE_RECEIPT_PATH)
-    bridge_sem = dict(bridge_receipt)
-    bridge_actual = bridge_sem.pop("canonical_sha256", None)
-    _require(bridge_actual == hashlib.sha256(_canonical(bridge_sem)).hexdigest(),
-             "bridge receipt self-hash drifted")
+    bridge_actual = _canonical_receipt_sha(bridge_receipt, "bridge receipt")
     _require(receipt.get("bridge_receipt", {}).get("canonical_sha256") == bridge_actual,
              "bridge receipt SHA mismatch in final receipt")
+    historical_source_receipt = _read_json(root, HISTORICAL_SOURCE_RECEIPT_PATH)
+    _verify_source_ancestry(source_receipt, bridge_receipt, historical_source_receipt)
 
     hashes = receipt.get("lineage_hashes", {})
     _require(hashes == {
@@ -177,7 +237,7 @@ def _verify_receipt(root: Path) -> dict[str, Any]:
         "team_label_v6_sha256": TEAM_LABEL_SHA256,
         "team_label_v6_unchanged": True,
         "p4_4o_stable_epoch_recovery_unchanged": True,
-        "p4_4p_preparse_response_evidence_unchanged": True,
+        "p4_4p_preparse_response_evidence_mechanics_unchanged": True,
         "workflow_sha256": P44M_WORKFLOW_SHA256,
         "workflow_yaml_changed": False,
         "admitted_tournament_grammar": "^sr:(?:tournament|simple_tournament):[1-9][0-9]*$",
@@ -225,6 +285,11 @@ def _verify_current_contract(receipt: dict[str, Any], root: Path) -> dict[str, A
              and runtime.calculate_policy_sha256() == NEW_RUNTIME_SHA256
              and runtime.PINNED_POLICY_SHA256 == NEW_RUNTIME_SHA256,
              "runtime wrapper policy SHA drifted")
+    preparse = runtime._policy_payload().get("preparse_response_evidence", {})
+    _require("source_v1_acceptance_unchanged" not in preparse
+             and preparse.get("source_acceptance_semantics_owned_by_bound_source_policy") is True
+             and preparse.get("preparse_evidence_mechanics_unchanged") is True,
+             "runtime pre-parse/source-acceptance descriptor is semantically false")
 
     _require(source.POLICY_ID == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1"
              and source.calculate_policy_sha256() == NEW_SOURCE_SHA256

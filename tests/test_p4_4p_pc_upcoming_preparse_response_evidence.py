@@ -72,14 +72,18 @@ def _rewrite_sealed(path: Path, value: dict) -> None:
     path.write_bytes(runtime._canonical(runtime._seal_document(semantic)) + b"\n")
 
 
-def test_runtime_contract_binds_evidence_first_semantics_and_immutable_source_v1() -> None:
+def test_runtime_contract_binds_evidence_mechanics_and_bound_source_v1_identity() -> None:
     identities = runtime.validate_contract()
     assert runtime.POLICY_ID == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
     assert runtime.calculate_policy_sha256() == runtime.PINNED_POLICY_SHA256 == (
-        "308ce60e2a3562d2cf600489075145ecd6a734b71676e5c68d87a8d0737f0d75"
+        "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
     )
     assert identities["preparse_response_evidence"]["every_successful_runtime_http_response_persisted_before_semantic_parse"] is True
     assert identities["preparse_response_evidence"]["parse_failure_semantic_acceptance"] is False
+    preparse = identities["preparse_response_evidence"]
+    assert "source_v1_acceptance_unchanged" not in preparse
+    assert preparse["source_acceptance_semantics_owned_by_bound_source_policy"] is True
+    assert preparse["preparse_evidence_mechanics_unchanged"] is True
     assert source.POLICY_ID == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1"
     assert source.calculate_policy_sha256() == source.PINNED_POLICY_SHA256 == (
         "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5"

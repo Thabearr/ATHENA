@@ -239,7 +239,7 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
     ):
         raise P30LiveReadinessError("Check F failed: international bridge ancestry drifted")
     if identities["runtime_policy_id"] != upcoming.POLICY_ID or identities["runtime_policy_sha256"] != (
-        "308ce60e2a3562d2cf600489075145ecd6a734b71676e5c68d87a8d0737f0d75"
+        "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
     ) or identities["pagination_complete_required"] is not True:
         raise P30LiveReadinessError("Check F failed: runtime wrapper or completeness rule drifted")
     stabilization = upcoming._policy_payload().get("capture_stabilization", {})
@@ -287,7 +287,8 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
         "parse_failure_selection_authority": False,
         "parse_failure_delivery_authority": False,
         "non_totalnum_parse_failure_starts_fresh_epoch": False,
-        "source_v1_acceptance_unchanged": True,
+        "source_acceptance_semantics_owned_by_bound_source_policy": True,
+        "preparse_evidence_mechanics_unchanged": True,
     }:
         raise P30LiveReadinessError("Check F failed: pre-parse runtime evidence contract drifted")
     if identities["identity_compatibility_policy_sha256"] != (

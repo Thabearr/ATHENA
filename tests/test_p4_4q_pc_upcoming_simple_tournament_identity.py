@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import copy
 from pathlib import Path
 
 import pytest
@@ -342,8 +343,11 @@ def test_case_g_negative_evidence_preservation_rejects_invalid_namespace(
 # Blocker B Specific Acceptance Tests (Items 1-7)
 # ======================================================================
 
-def test_acceptance_item_1_preserved_failing_payload_accepted() -> None:
-    """Item 1: Preserved failing payload from run 36273291448 attempt 1 page 7 parses without error."""
+def test_acceptance_item_1_reconstructed_observed_wrapper_identity_is_accepted() -> None:
+    """Synthetic offline reconstruction accepts the exact observed wrapper/category/tournament identity.
+
+    This is not byte-for-byte replay of the preserved live page-7 response.
+    """
     tournament_row = {
         "id": "sr:simple_tournament:11141",
         "name": "Premier League, Women",
@@ -525,6 +529,9 @@ def test_acceptance_item_7_recovery_and_negative_evidence_interaction() -> None:
     assert preparse["raw_response_bytes_written_exclusively"] is True
     assert preparse["parse_failure_receipt_binds_exact_raw_response_sha"] is True
     assert preparse["parse_failure_semantic_acceptance"] is False
+    assert "source_v1_acceptance_unchanged" not in preparse
+    assert preparse["source_acceptance_semantics_owned_by_bound_source_policy"] is True
+    assert preparse["preparse_evidence_mechanics_unchanged"] is True
 
 
 # ======================================================================
@@ -535,7 +542,7 @@ def test_all_pinned_policy_hashes_and_receipts_are_validated() -> None:
     assert source.calculate_policy_sha256() == source.PINNED_POLICY_SHA256 == "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5"
 
     runtime_payload = runtime._policy_payload()
-    assert runtime.calculate_policy_sha256() == runtime.PINNED_POLICY_SHA256 == "308ce60e2a3562d2cf600489075145ecd6a734b71676e5c68d87a8d0737f0d75"
+    assert runtime.calculate_policy_sha256() == runtime.PINNED_POLICY_SHA256 == "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
 
     assert bridge.calculate_policy_sha256() == bridge.PINNED_POLICY_SHA256 == "c3f05e5ea6ce08c392ec13d1b39d40dd8dd177e5a73f3660605c359705719858"
     assert identity_v2.REGISTRY_SHA256 == identity_v2.registry_sha256() == "149b7b61213e33ee85f030d3e567966e5f79df6bea4e138d54d638c76d5e8156"
@@ -544,5 +551,22 @@ def test_all_pinned_policy_hashes_and_receipts_are_validated() -> None:
 
     audit_result = audit.audit()
     assert audit_result["status"] == "PASSED"
-    assert audit_result["receipt_sha256"] == "4e47e12bd2ed416ff97d5a4251989b1f747d23a45f53ad1316937deb3fe9201d"
+    assert audit_result["receipt_sha256"] == "24ac836152c945754620bdd15f9c9436cc686e550b65127c88895902ddaebebe"
+
+
+def test_provenance_audit_rejects_resealed_tampered_source_ancestry_link() -> None:
+    root = Path(".")
+    source_receipt = audit._read_json(root, audit.SOURCE_RECEIPT_PATH)
+    bridge_receipt = audit._read_json(root, audit.BRIDGE_RECEIPT_PATH)
+    historical_source_receipt = audit._read_json(root, audit.HISTORICAL_SOURCE_RECEIPT_PATH)
+    audit._verify_source_ancestry(source_receipt, bridge_receipt, historical_source_receipt)
+
+    tampered_bridge = copy.deepcopy(bridge_receipt)
+    tampered_bridge["provider_source_authority"]["supersession_receipt_sha256"] = "0" * 64
+    semantic = dict(tampered_bridge)
+    semantic.pop("canonical_sha256")
+    tampered_bridge["canonical_sha256"] = hashlib.sha256(audit._canonical(semantic)).hexdigest()
+
+    with pytest.raises(audit.P44QError, match="bridge provider-source authority receipt ancestry drifted"):
+        audit._verify_source_ancestry(source_receipt, tampered_bridge, historical_source_receipt)
 

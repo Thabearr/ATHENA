@@ -100,7 +100,7 @@ def _page(page_num: int, *, total: int, count: int, first_number: int):
 def test_runtime_wrapper_policy_and_ancestry_are_pinned() -> None:
     identities = runtime.validate_contract()
     assert runtime.calculate_policy_sha256() == runtime.PINNED_POLICY_SHA256 == (
-        "308ce60e2a3562d2cf600489075145ecd6a734b71676e5c68d87a8d0737f0d75"
+        "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
     )
     assert identities["source_policy_id"] == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1"
     assert identities["source_policy_sha256"] == "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5"

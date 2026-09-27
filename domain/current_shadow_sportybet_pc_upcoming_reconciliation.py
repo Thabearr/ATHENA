@@ -172,7 +172,8 @@ def _policy_payload() -> dict[str, Any]:
             "parse_failure_selection_authority": False,
             "parse_failure_delivery_authority": False,
             "non_totalnum_parse_failure_starts_fresh_epoch": False,
-            "source_v1_acceptance_unchanged": True,
+            "source_acceptance_semantics_owned_by_bound_source_policy": True,
+            "preparse_evidence_mechanics_unchanged": True,
         },
         "identity_observation_order": [
             "EXACT_PROVIDER_RAW_PAGE_BYTES",
@@ -201,7 +202,7 @@ def calculate_policy_sha256() -> str:
     return hashlib.sha256(_canonical(_policy_payload())).hexdigest()
 
 
-PINNED_POLICY_SHA256 = "308ce60e2a3562d2cf600489075145ecd6a734b71676e5c68d87a8d0737f0d75"
+PINNED_POLICY_SHA256 = "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
 EXPECTED_CONTRACT_SHA256 = PINNED_POLICY_SHA256
 CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 = PINNED_POLICY_SHA256
 

@@ -210,7 +210,7 @@ def test_p3_readiness_accepts_new_identity_pins_and_rejects_stale_ones(monkeypat
     accepted = readiness.check_f_upcoming_discovery_contract()
     assert accepted["status"] == "PASSED"
     assert accepted["runtime_policy_id"] == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
-    assert accepted["runtime_policy_sha256"] == "308ce60e2a3562d2cf600489075145ecd6a734b71676e5c68d87a8d0737f0d75"
+    assert accepted["runtime_policy_sha256"] == "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
     assert accepted["runtime_pagination_complete_required"] is True
     actual = upcoming.validate_contract()
     stale = dict(actual)

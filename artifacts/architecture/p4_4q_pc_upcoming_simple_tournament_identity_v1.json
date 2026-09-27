@@ -51,13 +51,13 @@
     "retained_fanout_contract_sha256_before": "c1ce52d8c441a6a38aee08c05413d579f0f18a497e56eb7833faf1fbc60c622f",
     "retained_fanout_contract_sha256_after": "5da02588ea5ec0fcdb43345af60594a2a22ea2c99886cc7c1b3da1d13d14abe3",
     "runtime_policy_sha256_before": "a5c42439e894d33950b5cba608dcd5a031896e7a8e75c6bf613b2314497b1c24",
-    "runtime_policy_sha256_after": "308ce60e2a3562d2cf600489075145ecd6a734b71676e5c68d87a8d0737f0d75"
+    "runtime_policy_sha256_after": "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
   },
   "invariants": {
     "team_label_v6_sha256": "0c382ec8b12d802879a51b766daae8f655dd5b371509653e56a13190a85c6c7b",
     "team_label_v6_unchanged": true,
     "p4_4o_stable_epoch_recovery_unchanged": true,
-    "p4_4p_preparse_response_evidence_unchanged": true,
+    "p4_4p_preparse_response_evidence_mechanics_unchanged": true,
     "workflow_sha256": "45f7fe3556f892320a12b15c210637782edca60792ccbf030a714414a32f005a",
     "workflow_yaml_changed": false,
     "admitted_tournament_grammar": "^sr:(?:tournament|simple_tournament):[1-9][0-9]*$",
@@ -85,5 +85,5 @@
     "p4_4_complete": false,
     "architecture_checkpoint_e_complete": false
   },
-  "canonical_sha256": "4e47e12bd2ed416ff97d5a4251989b1f747d23a45f53ad1316937deb3fe9201d"
+  "canonical_sha256": "24ac836152c945754620bdd15f9c9436cc686e550b65127c88895902ddaebebe"
 }
