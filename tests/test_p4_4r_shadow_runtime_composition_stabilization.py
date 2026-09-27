@@ -62,8 +62,15 @@ PRE_FIX_VERIFIER_FIXTURE_SHA256 = "7547f701e025aa6723b7b0fc181c00347292bca2dfe0a
 KICKOFF = datetime(2026, 9, 27, 2, 30, tzinfo=UTC)
 INITIAL_OBSERVED = datetime(2026, 9, 27, 1, 19, 5, 661325, tzinfo=UTC)
 FRESH_OBSERVED = datetime(2026, 9, 27, 1, 55, 27, 176214, tzinfo=UTC)
-FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "p4_4r_run_36285099805_quote_evidence"
 NETWORK_ATTEMPTS: list[str] = []
+_RETAINED_FIXTURE_FILES = (
+    "initial/event.raw.json",
+    "initial/manifest.json",
+    "fresh/event.raw.json",
+    "fresh/manifest.json",
+    "accepted-source/manifest.json",
+    "accepted-source/page-001.raw.json",
+)
 
 
 def _deny_network(*_args, **_kwargs):
@@ -80,7 +87,21 @@ def _install_network_sentinel(monkeypatch):
     monkeypatch.setattr(pc_source, "_fetch_page", _deny_network)
 
 
-def _copy_evidence(repo_root: Path, monkeypatch):
+def _materialize_exact_fixture_bytes(destination_root: Path) -> Path:
+    """Read immutable fixture blobs from Git to avoid autocrlf rewriting bytes."""
+
+    source_root = Path(__file__).resolve().parents[1]
+    fixture_root = destination_root / "p4-4r-exact-git-fixture-bytes"
+    for relative in _RETAINED_FIXTURE_FILES:
+        git_path = f"HEAD:tests/fixtures/p4_4r_run_36285099805_quote_evidence/{relative}"
+        content = subprocess.check_output(["git", "show", git_path], cwd=source_root)
+        output = fixture_root / relative
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(content)
+    return fixture_root
+
+
+def _copy_evidence(repo_root: Path, monkeypatch, fixture_root: Path):
     evidence_root = repo_root / live.ALLOWED_OUTPUT_RELATIVE
     paths = {}
     for sample, capture_id in (
@@ -89,8 +110,8 @@ def _copy_evidence(repo_root: Path, monkeypatch):
     ):
         destination = evidence_root / capture_id
         destination.mkdir(parents=True)
-        shutil.copyfile(FIXTURE_ROOT / sample / "event.raw.json", destination / "event.raw.json")
-        shutil.copyfile(FIXTURE_ROOT / sample / "manifest.json", destination / "manifest.json")
+        shutil.copyfile(fixture_root / sample / "event.raw.json", destination / "event.raw.json")
+        shutil.copyfile(fixture_root / sample / "manifest.json", destination / "manifest.json")
         paths[sample] = destination
     return paths
 
@@ -98,7 +119,8 @@ def _copy_evidence(repo_root: Path, monkeypatch):
 def _offline_composition(monkeypatch, tmp_path: Path):
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
-    paths = _copy_evidence(repo_root, monkeypatch)
+    fixture_root = _materialize_exact_fixture_bytes(tmp_path)
+    paths = _copy_evidence(repo_root, monkeypatch, fixture_root)
     initial = prb.load_provider_event_evidence(
         paths["initial"],
         repository_root=repo_root,
@@ -118,8 +140,8 @@ def _offline_composition(monkeypatch, tmp_path: Path):
     assert initial.inventory.away_team_name == fresh.inventory.away_team_name == "Portland Timbers"
     assert initial.inventory.kickoff_utc == fresh.inventory.kickoff_utc == KICKOFF
 
-    source_manifest_bytes = (FIXTURE_ROOT / "accepted-source" / "manifest.json").read_bytes()
-    source_page_bytes = (FIXTURE_ROOT / "accepted-source" / "page-001.raw.json").read_bytes()
+    source_manifest_bytes = (fixture_root / "accepted-source" / "manifest.json").read_bytes()
+    source_page_bytes = (fixture_root / "accepted-source" / "page-001.raw.json").read_bytes()
     source_manifest = json.loads(source_manifest_bytes)
     first_page = source_manifest["pages"][0]
     assert hashlib.sha256(source_manifest_bytes).hexdigest() == (

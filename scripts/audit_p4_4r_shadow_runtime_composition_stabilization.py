@@ -366,6 +366,44 @@ def _verify_runtime_composition(root: Path) -> None:
              "source-controlled fresh-reprice binding semantic contract drifted")
 
 
+def verify_context_verifier_source_supersession(
+    root: Path,
+    receipt: dict[str, Any],
+    current_source_sha256: str,
+) -> bool:
+    """Accept a later verifier source only through exact P4.4S ancestry."""
+
+    historical_sha256 = receipt["before_after_contracts"]["context_verifier_source"][
+        "sha256_after"
+    ]
+    if historical_sha256 == current_source_sha256:
+        return False
+    supersession = _read_json(
+        root,
+        "artifacts/architecture/p4_4s_canonical_adapter_bound_context_builder_v1.json",
+    )
+    _verify_self_hash(supersession, "P4.4S forward supersession")
+    source_transition = supersession.get("source_transition")
+    p4_4r_supersession = supersession.get("p4_4r_supersession")
+    _require(
+        supersession.get("policy_id")
+        == "ATHENA_P4_4S_CANONICAL_ADAPTER_BOUND_CONTEXT_BUILDER_V1"
+        and supersession.get("base_main_sha")
+        == "adc7ee762cb7479a41184863c76fd5d0696ad7e9"
+        and type(source_transition) is dict
+        and source_transition.get("context_verifier_source_before_sha256")
+        == historical_sha256
+        and source_transition.get("context_verifier_source_after_sha256")
+        == current_source_sha256
+        and type(p4_4r_supersession) is dict
+        and p4_4r_supersession.get("receipt_canonical_sha256")
+        == receipt.get("canonical_sha256")
+        and p4_4r_supersession.get("historical_receipt_rewritten") is False,
+        "P4.4R current verifier source differs without the exact P4.4S supersession",
+    )
+    return True
+
+
 def audit(root: Path | None = None) -> dict[str, Any]:
     root = (root or Path.cwd()).resolve()
     receipt = _read_json(root, RECEIPT_PATH)
@@ -406,10 +444,7 @@ def audit(root: Path | None = None) -> dict[str, Any]:
         .read_bytes()
         .replace(b"\r\n", b"\n")
     ).hexdigest()
-    _require(
-        contracts["context_verifier_source"]["sha256_after"] == verifier_sha,
-        "P4.4R receipt does not bind the exact current context verifier source",
-    )
+    verify_context_verifier_source_supersession(root, receipt, verifier_sha)
     _require(contracts["runtime_binding_policy"]["policy_id"] == runtime_bindings.POLICY_ID
              and contracts["runtime_binding_policy"]["sha256_after_standard"] == runtime_bindings.policy_sha256(
                  composition=runtime_bindings.STANDARD_COMPOSITION
