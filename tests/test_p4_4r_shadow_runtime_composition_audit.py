@@ -69,5 +69,18 @@ def test_p4_4r_fixture_hashes_fail_closed_on_raw_evidence_drift(tmp_path: Path) 
         audit._verify_fixture_files(tmp_path, expected_shas)
 
 
+def test_p4_4r_receipt_pins_pre_fix_verifier_slice_without_git_history_dependency() -> None:
+    receipt = json.loads((ROOT / audit.RECEIPT_PATH).read_text(encoding="utf-8"))
+    pre = receipt["pre_fix_offline_replay"]
+    assert pre["historical_verifier_fixture_path"] == audit.PRE_FIX_VERIFIER_FIXTURE.as_posix()
+    assert pre["historical_verifier_fixture_sha256"] == audit.PRE_FIX_VERIFIER_FIXTURE_SHA256
+    assert pre["historical_verifier_fixture_source_slice_sha256"] == (
+        audit.PRE_FIX_VERIFIER_SOURCE_SLICE_SHA256
+    )
+    assert pre["historical_verifier_loaded_from_pinned_source_fixture"] is True
+    assert "historical_verifier_loaded_from_exact_base_git_object" not in pre
+    audit._verify_runtime_composition(ROOT)
+
+
 def test_p4_4r_runtime_source_has_no_fresh_semantic_patch_stack() -> None:
     audit._verify_runtime_composition(ROOT)

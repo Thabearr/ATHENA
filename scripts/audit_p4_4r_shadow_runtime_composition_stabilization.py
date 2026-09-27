@@ -32,6 +32,15 @@ ARTIFACT_ZIP_SHA256 = "1e1c1e315d0bafe1cbec5c0fde1be2cba9832cca56e4ce64a582a51b5
 RECEIPT_PATH = Path("artifacts/architecture/p4_4r_shadow_runtime_composition_stabilization_v1.json")
 INVENTORY_PATH = Path("artifacts/architecture/p4_4r_shadow_runtime_composition_inventory_v1.json")
 FIXTURE_ROOT = Path("tests/fixtures/p4_4r_run_36285099805_quote_evidence")
+PRE_FIX_VERIFIER_FIXTURE = Path(
+    "tests/fixtures/p4_4r_pre_fix_quote_context_verifier.py"
+)
+PRE_FIX_VERIFIER_FIXTURE_SHA256 = (
+    "7547f701e025aa6723b7b0fc181c00347292bca2dfe0a15eeeb7a9bb205f2f87"
+)
+PRE_FIX_VERIFIER_SOURCE_SLICE_SHA256 = (
+    "f3a3afc36fee517a776297a6cedd5867379f57877053798e565b4f8548617df1"
+)
 FIXTURE_SHAS = {
     "initial/event.raw.json": "4e42b9b38e33a2d9d7d839f0f6a36c7849a0f4043d4cdfdce40cad59c9de0bc8",
     "initial/manifest.json": "f2515e5f02682a05b6d3e1cd48f03b08085f0567baf56dfce38244a63e99892e",
@@ -138,6 +147,18 @@ def verify_receipt(value: dict[str, Any]) -> None:
              and pre.get("live_boundary", {}).get("fixture_identity") == "FOTMOB:5071393"
              and pre.get("live_boundary", {}).get("provider_event_id") == "sr:match:66299604",
              "P4.4R pre-fix integration reproduction evidence is incomplete")
+    _require(pre.get("historical_verifier_source_sha256") == (
+                 "7f793abebe899c0a05eaf50a56dce6b97a5cb866039993d1e793a39bc97813c1"
+             )
+             and pre.get("historical_verifier_fixture_path") == PRE_FIX_VERIFIER_FIXTURE.as_posix()
+             and pre.get("historical_verifier_fixture_sha256") == PRE_FIX_VERIFIER_FIXTURE_SHA256
+             and pre.get("historical_verifier_fixture_source_slice_sha256") == PRE_FIX_VERIFIER_SOURCE_SLICE_SHA256
+             and pre.get("historical_verifier_fixture_provenance") == (
+                 "VERIFIED_SOURCE_SLICE_FROM_EXACT_BASE_MAIN; LF_TERMINATOR_NORMALIZED"
+             )
+             and pre.get("historical_verifier_loaded_from_pinned_source_fixture") is True
+             and "historical_verifier_loaded_from_exact_base_git_object" not in pre,
+             "P4.4R pre-fix verifier fixture provenance is incomplete or overclaimed")
     post = value.get("post_fix_offline_replay")
     _require(type(post) is dict
              and post.get("result") == "ADVANCED_THROUGH_PORTFOLIO_BOUNDARY"
@@ -219,6 +240,36 @@ def _function_source(tree: ast.Module, name: str) -> ast.FunctionDef | ast.Async
 
 
 def _verify_runtime_composition(root: Path) -> None:
+    try:
+        verifier_fixture = (root / PRE_FIX_VERIFIER_FIXTURE).read_bytes().replace(
+            b"\r\n", b"\n"
+        )
+    except OSError as exc:
+        raise P44RError("pinned P4.4R pre-fix verifier source slice is missing") from exc
+    _require(
+        hashlib.sha256(verifier_fixture).hexdigest() == PRE_FIX_VERIFIER_FIXTURE_SHA256,
+        "pinned P4.4R pre-fix verifier source slice SHA drifted",
+    )
+    try:
+        old_tree = ast.parse(verifier_fixture.decode("utf-8"))
+    except (UnicodeError, SyntaxError) as exc:
+        raise P44RError("pinned P4.4R pre-fix verifier source slice is invalid") from exc
+    old_verifier = _function_source(old_tree, "verify_current_shadow_price_context")
+    old_strings = {
+        node.value for node in ast.walk(old_verifier)
+        if isinstance(node, ast.Constant) and type(node.value) is str
+    }
+    old_names = {
+        node.id for node in ast.walk(old_verifier) if isinstance(node, ast.Name)
+    }
+    _require(
+        "unknown current Shadow source-context mode" in old_strings
+        and "LEGACY_PR253_FIXTURE_BRIDGE" in old_names
+        and "CURRENT_RECONCILIATION_DIRECT" in old_names
+        and "PRF_CURRENT_RECONCILIATION_FRESH_REPRICE" not in old_strings,
+        "pinned P4.4R verifier slice no longer represents the pre-fix mode gate",
+    )
+
     relevant = {
         "scripts/execute_current_shadow_all_market_fresh_reprice.py": {
             "_install_fresh_reprice_worker", "issued_contexts",

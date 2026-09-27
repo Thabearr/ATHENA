@@ -282,7 +282,11 @@
     ],
     "reproduction_test": "tests/test_p4_4r_shadow_runtime_composition_stabilization.py::test_retained_failure_slice_replays_identically_in_two_clean_processes",
     "historical_verifier_source_sha256": "7f793abebe899c0a05eaf50a56dce6b97a5cb866039993d1e793a39bc97813c1",
-    "historical_verifier_loaded_from_exact_base_git_object": true,
+    "historical_verifier_fixture_path": "tests/fixtures/p4_4r_pre_fix_quote_context_verifier.py",
+    "historical_verifier_fixture_sha256": "7547f701e025aa6723b7b0fc181c00347292bca2dfe0a15eeeb7a9bb205f2f87",
+    "historical_verifier_fixture_source_slice_sha256": "f3a3afc36fee517a776297a6cedd5867379f57877053798e565b4f8548617df1",
+    "historical_verifier_fixture_provenance": "VERIFIED_SOURCE_SLICE_FROM_EXACT_BASE_MAIN; LF_TERMINATOR_NORMALIZED",
+    "historical_verifier_loaded_from_pinned_source_fixture": true,
     "reproduced_through_router_price_all_reconstruction": true,
     "rejected_verifier_identity": {
       "module": "domain._current_shadow_quote_binding",
@@ -348,5 +352,5 @@
     "compared_receipt_count": 31,
     "base_main_sha": "47326a934aabe34052c804a6941a702e52710b12"
   },
-  "canonical_sha256": "dcf3a665d568b2105f5f84b62fb26a508a03f260050894fe35e81a366a5b5c7e"
+  "canonical_sha256": "ea064b7e0bfad8cfecb75d04e6ff52323c0e8c9e1a468f2a46e7a1603ea3fc84"
 }

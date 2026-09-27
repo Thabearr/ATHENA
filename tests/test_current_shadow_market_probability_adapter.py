@@ -12,6 +12,7 @@ from domain.current_shadow_market_probability_adapter import (
 from domain.markets import MarketId, OutcomeId
 from domain._current_shadow_price_records import ShadowPriceResult
 from domain._current_shadow_quote_binding import CurrentShadowPriceContext
+from domain.current_shadow_runtime_bindings import default_current_shadow_runtime_bindings
 
 
 FIXTURE = "FOTMOB:P12:PRICEALL:1001"
@@ -75,7 +76,12 @@ def test_current_shadow_price_all_reads_probability_values_through_canonical_bun
     )
     monkeypatch.setattr(price_all, "build_current_shadow_exact_quotes", lambda _context: ())
 
-    priced = price_all._price_context(context)
+    # This private-stage test isolates canonical probability projection. The
+    # complete source-context replay is covered by the runtime composition tests.
+    priced = price_all._price_context(
+        context,
+        runtime_bindings=default_current_shadow_runtime_bindings(),
+    )
     assert calls == [scan]
 
     match_result = expected.market(MarketId.MATCH_RESULT)

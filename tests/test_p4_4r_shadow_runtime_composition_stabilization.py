@@ -45,6 +45,7 @@ EVENT_ID = "sr:match:66299604"
 FIXTURE_ID = "FOTMOB:5071393"
 BASE_MAIN_SHA = "47326a934aabe34052c804a6941a702e52710b12"
 PRE_FIX_QUOTE_BINDING_SHA256 = "7f793abebe899c0a05eaf50a56dce6b97a5cb866039993d1e793a39bc97813c1"
+PRE_FIX_VERIFIER_FIXTURE_SHA256 = "7547f701e025aa6723b7b0fc181c00347292bca2dfe0a15eeeb7a9bb205f2f87"
 KICKOFF = datetime(2026, 9, 27, 2, 30, tzinfo=UTC)
 INITIAL_OBSERVED = datetime(2026, 9, 27, 1, 19, 5, 661325, tzinfo=UTC)
 FRESH_OBSERVED = datetime(2026, 9, 27, 1, 55, 27, 176214, tzinfo=UTC)
@@ -203,15 +204,17 @@ def _clone_context(value, **changes):
     return clone
 
 
-def _load_exact_pre_p4_4r_verifier(repo_root: Path):
-    """Compile only the verifier function from the pinned pre-refactor source."""
+def _load_exact_pre_p4_4r_verifier():
+    """Compile the pinned pre-fix verifier slice copied from exact base main."""
 
-    source = subprocess.check_output(
-        ["git", "show", f"{BASE_MAIN_SHA}:domain/_current_shadow_quote_binding.py"],
-        cwd=repo_root,
-    )
-    assert hashlib.sha256(source).hexdigest() == PRE_FIX_QUOTE_BINDING_SHA256
-    tree = ast.parse(source, filename="pinned-pre-p4-4r/_current_shadow_quote_binding.py")
+    source = (
+        Path(__file__).parent
+        / "fixtures"
+        / "p4_4r_pre_fix_quote_context_verifier.py"
+    ).read_bytes()
+    source = source.replace(b"\r\n", b"\n")
+    assert hashlib.sha256(source).hexdigest() == PRE_FIX_VERIFIER_FIXTURE_SHA256
+    tree = ast.parse(source, filename="pinned-pre-p4-4r/quote_context_verifier.py")
     function = next(
         node
         for node in tree.body
@@ -313,7 +316,7 @@ def _run_single_offline_replay(monkeypatch, tmp_path: Path) -> bytes:
     # reconstruction seam with the exact pre-P4.4R direct/bridge-only verifier
     # function loaded from the pinned main commit. This is the pre-fix failure
     # class, not a direct verifier-only assertion.
-    stale_verifier = _load_exact_pre_p4_4r_verifier(Path(__file__).resolve().parents[1])
+    stale_verifier = _load_exact_pre_p4_4r_verifier()
     stale_binding = _PreP44RRouterReplayBinding(stale_verifier)
     with pytest.raises(ShadowPriceError, match="unknown current Shadow source-context mode"):
         router_module._route_shadow_price_results(

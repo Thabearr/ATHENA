@@ -119,7 +119,19 @@ def _result(
     )
 
 
-def _route(monkeypatch: pytest.MonkeyPatch, *results):
+class _RouterArithmeticTestBinding:
+    """Explicit test-only verifier bypass for isolated Router arithmetic tests."""
+
+    def verify_price_all_bundle(self, value):
+        # These tests exercise ranking/threshold semantics over issued records;
+        # source replay is independently covered by Price-all/Router contract tests.
+        return value
+
+
+_ROUTER_ARITHMETIC_TEST_BINDING = _RouterArithmeticTestBinding()
+
+
+def _route(*results):
     bundle = _issue_shadow_price_all_bundle(
         fixture_identity=FIXTURE,
         evaluation_time=NOW,
@@ -133,8 +145,10 @@ def _route(monkeypatch: pytest.MonkeyPatch, *results):
         authority=AUTHORITY_FLAGS,
         _context=_context(),
     )
-    monkeypatch.setattr(router, "verify_shadow_price_all_bundle", lambda value: value)
-    return router.route_shadow_price_results(bundle)
+    return router._route_shadow_price_results(
+        bundle,
+        runtime_bindings=_ROUTER_ARITHMETIC_TEST_BINDING,
+    )
 
 
 def test_over_0_5_is_audit_only_and_over_1_5_can_select(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -159,7 +173,7 @@ def test_over_0_5_is_audit_only_and_over_1_5_can_select(monkeypatch: pytest.Monk
         fair=0.70,
     )
 
-    decision = _route(monkeypatch, over_05, over_15)
+    decision = _route(over_05, over_15)
     by_id = {row.opportunity_id: row for row in decision.opportunities}
     low = by_id[over_05.opportunity_id]
 
@@ -194,7 +208,7 @@ def test_raw_probability_cannot_outrank_better_settlement_aware_value(
         fair=0.70,
     )
 
-    decision = _route(monkeypatch, high_probability_thin_value, lower_probability_better_value)
+    decision = _route(high_probability_thin_value, lower_probability_better_value)
 
     assert decision.status is ShadowRouterDecisionStatus.SELECTED
     assert decision.selected_opportunity_id == lower_probability_better_value.opportunity_id
@@ -238,7 +252,7 @@ def test_confidence_floor_still_prevents_high_ev_low_quality_ah_privilege(
         fair=0.50,
     )
 
-    decision = _route(monkeypatch, ah, scalar)
+    decision = _route(ah, scalar)
     ah_row = next(row for row in decision.opportunities if row.opportunity_id == ah.opportunity_id)
 
     assert ah_row.prediction_confidence == pytest.approx(0.327)
@@ -278,7 +292,7 @@ def test_settlement_aware_ah_can_win_when_quality_and_value_both_lead(
         fair=0.67,
     )
 
-    decision = _route(monkeypatch, ah, scalar)
+    decision = _route(ah, scalar)
 
     assert decision.selected_opportunity_id == ah.opportunity_id
     assert decision.authority["production_market_router"] is False
