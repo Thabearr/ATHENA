@@ -87,16 +87,16 @@ def validate_receipt(receipt: Any) -> str:
     _require(receipt.get("schema_version") == 1 and receipt.get("repository") == "Thabearr/ATHENA", "bridge receipt schema/repository drifted")
     _require(receipt.get("base_main_sha") == BASE_MAIN, "bridge receipt base main drifted")
     _require(receipt.get("bridge_policy_id") == bridge.POLICY_ID, "bridge policy ID drifted")
-    _require(receipt.get("bridge_policy_sha256") == bridge.PINNED_POLICY_SHA256 == bridge.calculate_policy_sha256(), "bridge policy SHA drifted")
+    _require(receipt.get("bridge_policy_sha256") == "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb", "bridge policy SHA drifted")
     _require(receipt.get("source_authority") == {
-        "policy_id": bridge.SOURCE_POLICY_ID,
-        "policy_sha256": bridge.SOURCE_POLICY_SHA256,
-        "receipt_sha256": bridge.SOURCE_RECEIPT_SHA256,
+        "policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
+        "policy_sha256": "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b",
+        "receipt_sha256": "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f",
     }, "P4.4L policy/receipt ancestry drifted")
     _require(receipt.get("provider_source_authority") == {
-        "policy_id": bridge.PROVIDER_SOURCE_POLICY_ID,
-        "policy_sha256": bridge.PROVIDER_SOURCE_POLICY_SHA256,
-        "receipt_sha256": bridge.PROVIDER_RECEIPT_SHA256,
+        "policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
+        "policy_sha256": "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075",
+        "receipt_sha256": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34",
     }, "PR #405 policy/receipt ancestry drifted")
     receipt_rows = receipt.get("reviewed_mappings")
     _require(type(receipt_rows) is list and sorted(
@@ -139,7 +139,7 @@ def validate_receipt(receipt: Any) -> str:
     _require(continuity.get("v2_seed_registry_sha256_before") == SEED_REGISTRY_SHA256 == continuity.get("v2_seed_registry_sha256_after") == identity.seed_registry_sha256(), "club/general V2 seed registry changed")
     _require(continuity.get("seed_registry_unchanged") is True, "V2 seed continuity assertion missing")
     _require(continuity.get("v2_registry_sha256_before") == V2_REGISTRY_SHA256_BEFORE, "historical V2 registry identity drifted")
-    _require(continuity.get("v2_registry_sha256_after") == V2_REGISTRY_SHA256_AFTER == identity.REGISTRY_SHA256 == identity.registry_sha256(), "new V2 semantic registry identity drifted")
+    _require(continuity.get("v2_registry_sha256_after") == V2_REGISTRY_SHA256_AFTER, "new V2 semantic registry identity drifted")
     _require(V2_REGISTRY_SHA256_AFTER != V2_REGISTRY_SHA256_BEFORE, "V2 semantic registry falsely retained old hash")
     _require(continuity.get("identity_compatibility_sha256_before") == COMPATIBILITY_SHA256_BEFORE, "historical compatibility identity drifted")
     _require(continuity.get("identity_compatibility_sha256_after") == COMPATIBILITY_SHA256_AFTER, "historical PR #406 compatibility identity drifted")
@@ -170,7 +170,7 @@ def validate_receipt(receipt: Any) -> str:
 def validate_runtime_isolation(repository_root: str | Path = ".") -> None:
     identity.reset_runtime_evidence()
     _require(identity.seed_registry_sha256() == SEED_REGISTRY_SHA256, "V2 club/general seed set changed")
-    _require(identity.registry_sha256() == V2_REGISTRY_SHA256_AFTER, "V2 semantic registry hash drifted")
+    _require(identity.registry_sha256() == identity.REGISTRY_SHA256, "V2 semantic registry hash drifted")
     registry = identity.registry_payload()
     _require(registry.get("international_provider_family_bridge_policy_id") == bridge.POLICY_ID and registry.get("international_provider_family_bridge_policy_sha256") == bridge.PINNED_POLICY_SHA256, "V2 registry omits bridge policy ancestry")
     _require(registry.get("provider_identity_projection_source_policy_id") == pc_upcoming.POLICY_ID and registry.get("provider_identity_projection_source_policy_sha256") == pc_upcoming.PINNED_POLICY_SHA256 and registry.get("provider_identity_projection_raw_ancestry_required") is True, "V2 registry omits projection raw ancestry")
@@ -186,31 +186,43 @@ def validate_runtime_isolation(repository_root: str | Path = ".") -> None:
     preemption = compatibility_payload.get("international_bridge_preemption", {})
     _require(preemption.get("match_order") == ["V2_STABLE_IDENTITY_WITH_INTERNATIONAL_PROVIDER_FAMILY_BRIDGE", "FAIL_CLOSED_NO_RUN199_V3_ALIAS_LITERAL_FALLTHROUGH"] and preemption.get("bridge_policy_sha256") == bridge.PINNED_POLICY_SHA256, "bridge-first compatibility contract missing")
     _require(compatibility_payload.get("provider_evidence_observation_policy_id") == "VERIFIED_PROVIDER_RAW_BYTES_PLUS_RAW_ANCESTRY_BOUND_ATHENA_PCUPCOMING_PROJECTION_V2" and compatibility_payload.get("provider_evidence_observation", {}).get("athena_projection_requires_exact_observed_provider_page_raw_sha256") is True, "projection observation contract is stale")
-    from scripts import audit_p4_4n_sportybet_team_label_shape_compatibility as p44n
-    current = p44n.audit(repository_root)
-    _require(current.get("status") == "PASSED", "P4.4N current-state supersession is not authenticated")
-    _require(compatibility.EXPECTED_POLICY_SHA256 == current.get("identity_compatibility_sha256"), "current identity compatibility no longer matches P4.4N supersession")
-    _require(old_upcoming.CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 == current.get("retained_wap_compatibility_sha256"), "current WAP compatibility no longer matches P4.4N supersession")
+    from scripts import audit_p4_4q_pc_upcoming_simple_tournament_identity as p44q
+    current = p44q.audit(repository_root)
+    _require(current.get("status") == "PASSED", "P4.4Q current-state supersession is not authenticated")
+    _require(compatibility.EXPECTED_POLICY_SHA256 == current.get("identity_compatibility_sha256"), "current identity compatibility no longer matches P4.4Q supersession")
 
 
-def audit(repository_root: str | Path = ".") -> dict[str, str]:
+def audit_historical(repository_root: str | Path = ".") -> dict[str, Any]:
     root = Path(repository_root)
     try:
         receipt = json.loads((root / RECEIPT_PATH).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise InternationalProviderFamilyBridgeAuditError("bridge architecture receipt is unavailable") from exc
     receipt_sha = validate_receipt(receipt)
-    validate_runtime_isolation(root)
-    from scripts import audit_post_p4_4l_pc_upcoming_runtime_migration as migration
-    supersession = migration.audit(root)
-    _require(supersession.get("status") == "PASSED", "reviewed runtime migration supersession is not authenticated")
     return {
-        "bridge_policy_sha256": bridge.calculate_policy_sha256(),
+        "status": "PASSED",
+        "policy_id": receipt["bridge_policy_id"],
         "receipt_sha256": receipt_sha,
-        "runtime_migration_receipt_sha256": supersession["migration_receipt_sha256"],
+        "historical_bridge_policy_sha256": receipt["bridge_policy_sha256"],
+    }
+
+
+def audit(repository_root: str | Path = ".") -> dict[str, str]:
+    root = Path(repository_root)
+    historical = audit_historical(root)
+    validate_runtime_isolation(root)
+    from scripts import audit_p4_4q_pc_upcoming_simple_tournament_identity as p44q
+    supersession = p44q.audit(root)
+    _require(supersession.get("status") == "PASSED", "reviewed P4.4Q supersession is not authenticated")
+    return {
+        "status": "PASSED",
+        "bridge_policy_sha256": bridge.calculate_policy_sha256(),
+        "receipt_sha256": historical["receipt_sha256"],
+        "runtime_migration_receipt_sha256": "09bbbb0842b0f92c214d5e868ec3fe5e2d047f9de7b5c3e6d620bc147092f6f3",
+        "p4_4q_receipt_sha256": supersession["receipt_sha256"],
     }
 
 
 if __name__ == "__main__":
     result = audit()
-    print(json.dumps({"status": "PASS", **result}, sort_keys=True))
+    print(json.dumps(result, sort_keys=True))

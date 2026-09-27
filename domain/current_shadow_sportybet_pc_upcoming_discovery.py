@@ -56,7 +56,7 @@ _SHA_RE = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
 _EVENT_ID_RE = re.compile(r"^sr:match:([1-9][0-9]*)$", re.ASCII)
 _COMPETITOR_ID_RE = re.compile(r"^sr:competitor:([1-9][0-9]*)$", re.ASCII)
 _CATEGORY_ID_RE = re.compile(r"^sr:category:([1-9][0-9]*)$", re.ASCII)
-_TOURNAMENT_ID_RE = re.compile(r"^sr:tournament:([1-9][0-9]*)$", re.ASCII)
+_TOURNAMENT_ID_RE = re.compile(r"^sr:(?:tournament|simple_tournament):([1-9][0-9]*)$", re.ASCII)
 
 AUTHORITY = types.MappingProxyType({
     "provider_discovery_evidence": True,
@@ -246,6 +246,29 @@ def policy_payload() -> dict[str, Any]:
         "max_pages": MAX_PAGES,
         "coverage_horizon_hours": TIMELINE_HOURS,
         "identity": "EXACT_PROVIDER_NATIVE_IDS_AND_ENCLOSING_TOURNAMENT_ANCESTRY",
+        "provider_native_id_grammar": {
+            "event": _EVENT_ID_RE.pattern,
+            "competitor": _COMPETITOR_ID_RE.pattern,
+            "category": _CATEGORY_ID_RE.pattern,
+            "tournament": _TOURNAMENT_ID_RE.pattern,
+            "exact_string_only": True,
+            "normalization": "NONE",
+            "coercion": False,
+            "tournament_namespace_rewrite": False,
+        },
+        "provider_native_tournament_id_grammar": _TOURNAMENT_ID_RE.pattern,
+        "provider_native_tournament_id_namespaces": [
+            "sr:tournament",
+            "sr:simple_tournament",
+        ],
+        "provider_native_tournament_id_rules": {
+            "both_namespaces_are_exact_provider_native_identities": True,
+            "numeric_suffix_is_canonical_positive_decimal": True,
+            "no_coercion": True,
+            "no_normalization": True,
+            "no_namespace_projection": True,
+            "raw_value_is_preserved": True,
+        },
         "projection_rule": "OBSERVED_EVENT_FIELDS_AND_WRAPPER_ANCESTRY_ONLY_NO_QUERY_SCOPE_FIELDS_SYNTHESIZED_AS_EVENT_FIELDS",
         "duplicate_event_rule": "IDENTITY_EQUIVALENT_DUPLICATES_DEDUPED_CONFLICTS_REJECTED",
         "captured_event_count_semantics": "UNIQUE_IDENTITY_EQUIVALENT_DEDUPED_EVENT_IDS",
@@ -262,7 +285,7 @@ def calculate_policy_sha256() -> str:
 
 
 # Set to the canonical policy hash after the contract payload is finalized.
-PINNED_POLICY_SHA256 = "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075"
+PINNED_POLICY_SHA256 = "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5"
 
 
 @dataclasses.dataclass(frozen=True)

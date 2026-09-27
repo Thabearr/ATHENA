@@ -229,17 +229,17 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
     historical_identities = historical_upcoming.validate_contract()
     historical = paginated.validate_contract()
     if identities["source_policy_sha256"] != (
-        "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075"
+        "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5"
     ) or identities["source_policy_id"] != (
         "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1"
     ):
         raise P30LiveReadinessError("Check F failed: reviewed pcUpcoming source ancestry drifted")
     if identities["bridge_policy_sha256"] != (
-        "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb"
+        "c3f05e5ea6ce08c392ec13d1b39d40dd8dd177e5a73f3660605c359705719858"
     ):
         raise P30LiveReadinessError("Check F failed: international bridge ancestry drifted")
     if identities["runtime_policy_id"] != upcoming.POLICY_ID or identities["runtime_policy_sha256"] != (
-        "a5c42439e894d33950b5cba608dcd5a031896e7a8e75c6bf613b2314497b1c24"
+        "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
     ) or identities["pagination_complete_required"] is not True:
         raise P30LiveReadinessError("Check F failed: runtime wrapper or completeness rule drifted")
     stabilization = upcoming._policy_payload().get("capture_stabilization", {})
@@ -287,11 +287,12 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
         "parse_failure_selection_authority": False,
         "parse_failure_delivery_authority": False,
         "non_totalnum_parse_failure_starts_fresh_epoch": False,
-        "source_v1_acceptance_unchanged": True,
+        "source_acceptance_semantics_owned_by_bound_source_policy": True,
+        "preparse_evidence_mechanics_unchanged": True,
     }:
         raise P30LiveReadinessError("Check F failed: pre-parse runtime evidence contract drifted")
     if identities["identity_compatibility_policy_sha256"] != (
-        "2fdbb8165262f6e633ee48276aea57c9235699272235798e1cef12fdc714ae04"
+        "e8587d1e99cb7aa6214f65b515ca59f1456443a554a762ba27be204506da7569"
     ):
         raise P30LiveReadinessError("Check F failed: identity compatibility policy SHA drifted")
     if historical_identities["upstream_upcoming_source_contract_sha256"] != (
@@ -307,19 +308,19 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
             "Check F failed: retained historical wap strategy ID drifted"
         )
     if historical_identities["current_shadow_upcoming_compatibility_sha256"] != (
-        "dd1b4366ef2cf4d1e12359c42fbff5cbae8bef60cc06ca40589ec0e8a157f943"
+        "e831850d45b5b40706d53d04f9afb6c06e221a8dbecc7969afc9516fcb99d17e"
     ):
         raise P30LiveReadinessError(
             "Check F failed: historical wap compatibility SHA drifted"
         )
     if identity_compatibility.POLICY_ID != "ATHENA_CURRENT_SHADOW_FIXTURE_IDENTITY_COMPATIBILITY_V1" or identity_compatibility.calculate_policy_sha256() != (
-        "2fdbb8165262f6e633ee48276aea57c9235699272235798e1cef12fdc714ae04"
+        "e8587d1e99cb7aa6214f65b515ca59f1456443a554a762ba27be204506da7569"
     ):
         raise P30LiveReadinessError(
             "Check F failed: shared identity compatibility policy SHA drifted"
         )
     if historical["contract_sha256"] != (
-        "7373a05c25466206aa3a67bc53b219e8d2841f432fda13db2dc0808b40b47238"
+        "baf9d4301d56669abebf8793ecac41aa2f427094dfcf1ee7ebf2aa411996f451"
     ):
         raise P30LiveReadinessError(
             "Check F failed: retained paginated compatibility contract SHA drifted"
@@ -329,7 +330,7 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
     ):
         raise P30LiveReadinessError("Check F failed: alias V3 SHA drifted")
     if stable_identity.REGISTRY_SHA256 != (
-        "fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e"
+        "149b7b61213e33ee85f030d3e567966e5f79df6bea4e138d54d638c76d5e8156"
     ) or stable_identity.STATE_SCHEMA_VERSION != 2:
         raise P30LiveReadinessError(
             "Check F failed: stable identity registry or state schema drifted"

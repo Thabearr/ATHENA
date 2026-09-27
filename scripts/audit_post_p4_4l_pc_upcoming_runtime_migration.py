@@ -24,6 +24,8 @@ RECEIPT_PATH = Path("artifacts/architecture/post_p4_4l_pc_upcoming_runtime_migra
 BASE_MAIN = "34cfe161edd9c3c56d0c284c0eaa6dfe56087336"
 SOURCE_RECEIPT_SHA256 = "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34"
 BRIDGE_RECEIPT_SHA256 = "34c183b5274e9e2c3320b5a8d75a123b7ebed2405aa55cdfb1af7d59c2613aa2"
+HISTORICAL_BRIDGE_POLICY_SHA256 = "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb"
+HISTORICAL_V2_SEMANTIC_REGISTRY_SHA256 = "fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e"
 OLD_WAP_SOURCE_SHA256 = "90c14bd68ed6e8205c16fedfa815d120c53f2af1a3a8f362eee2702a4223b9ff"
 OLD_WAP_COMPATIBILITY_SHA256 = "e0718a5e7c9e0c707ba5cc7369910f3ec371bd1a9f7520ab41aa30df69d0ab12"
 HISTORICAL_IDENTITY_COMPATIBILITY_SHA256 = "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58"
@@ -80,11 +82,11 @@ def validate_receipt(receipt: Any) -> str:
     _require(type(bridge_lineage) is dict, "international bridge lineage missing")
     _require(bridge_lineage == {
         "policy_id": bridge.POLICY_ID,
-        "policy_sha256": bridge.PINNED_POLICY_SHA256,
+        "policy_sha256": HISTORICAL_BRIDGE_POLICY_SHA256,
         "receipt_sha256": BRIDGE_RECEIPT_SHA256,
         "reviewed_source_keys": [list(key) for key in sorted(EXPECTED_SOURCE_KEYS)],
     }, "immutable PR #406 bridge ancestry/mappings drifted")
-    _require(receipt.get("v2_semantic_registry_sha256") == identity.REGISTRY_SHA256 == identity.registry_sha256(), "V2 semantic registry pin drifted")
+    _require(receipt.get("v2_semantic_registry_sha256") == HISTORICAL_V2_SEMANTIC_REGISTRY_SHA256, "V2 semantic registry pin drifted")
     _require(receipt.get("v2_seed_registry_sha256") == identity.SEED_REGISTRY_SHA256 == identity.seed_registry_sha256(), "V2 seed registry changed")
     _require(receipt.get("identity_compatibility_sha256") == HISTORICAL_IDENTITY_COMPATIBILITY_SHA256, "historical identity compatibility pin drifted")
 
@@ -170,9 +172,9 @@ def audit(repository_root: str | Path = ".") -> dict[str, Any]:
     _require(historical_wap.UPSTREAM_UPCOMING_SOURCE_CONTRACT_SHA256 == OLD_WAP_SOURCE_SHA256
              and historical_wap.CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 == p44n_state["retained_wap_compatibility_sha256"],
              "historical WAP source or P4.4N-superseded current compatibility identity drifted")
-    _require(source.PINNED_POLICY_SHA256 == source_lineage_sha(receipt), "PR #405 source contract pin drifted")
-    _require(bridge.PINNED_POLICY_SHA256 == receipt["international_provider_family_bridge"]["policy_sha256"],
-             "PR #406 bridge policy pin drifted")
+    _require(source.PINNED_POLICY_SHA256 == p44n_state["source_policy_sha256"], "active source policy differs from P4.4N/later supersession")
+    _require(bridge.PINNED_POLICY_SHA256 == p44n_state["bridge_policy_sha256"],
+             "active bridge policy differs from P4.4N/later supersession")
 
     source_text = Path(runner.__file__).read_text(encoding="utf-8")
     _require("capture_current_paginated_discovery" not in source_text and "capture_catalog_fanout" not in source_text,

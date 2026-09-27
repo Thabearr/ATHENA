@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "policy_id": "ATHENA_P4_4Q_PC_UPCOMING_SIMPLE_TOURNAMENT_SOURCE_COMPATIBILITY_V1",
+  "repository": "Thabearr/ATHENA",
+  "base_main_sha": "1c70a32ce16afd633af85922edcda8ac058bed43",
+  "source_review_counter_while_unmerged": "2/5",
+  "source_review_counter_if_merged": "3/5",
+  "failing_live_proof": {
+    "run_id": 36273291448,
+    "artifact_id": 10915589630,
+    "artifact_name": "athena-run-36273291448",
+    "artifact_zip_sha256": "cf71cc2b502e2ca9ebfbb6b9da07a8196508e015291ea1c37734a062e8f14b12",
+    "evidence_comment_id": 5850164306,
+    "diagnosis_comment_id": 5850251689,
+    "classification": "POST_P4_4P_CANONICAL_SHADOW_SUCCESSOR_PROOF_INCOMPLETE:PC_UPCOMING_RUNTIME_SOURCE_INCOMPLETE_TOURNAMENT_ID_NOT_EXACT_PROVIDER_NATIVE_ID",
+    "failing_page_num": 7,
+    "failing_page_raw_sha256": "77fc822ef8448e97ec46937fc51d023b2179c39fbf14daa5637a44e23a6664ad",
+    "parse_failure_receipt_sha256": "bb766117f7e3855f515c6d783cb602634c84458f17e9437e686cc2d14a750f5c",
+    "exact_failing_json_path": "$.data.tournaments[8].id",
+    "exact_raw_json_type": "string",
+    "exact_raw_value": "sr:simple_tournament:11141",
+    "category_id": "sr:category:131",
+    "category_name": "Wales",
+    "tournament_name": "Premier League, Women",
+    "events_under_wrapper": [
+      "sr:match:75007230",
+      "sr:match:75007232",
+      "sr:match:75007234"
+    ]
+  },
+  "historical_corroboration": [
+    {
+      "run_id": 35277452572,
+      "artifact_id": 10520479660,
+      "artifact_zip_sha256": "7e97785ce12d1158455fe49138376cfffa7057b294e84c8ff7316479d5949a8c",
+      "observed_exact_value": "sr:simple_tournament:16086",
+      "tournament_name": "Bangalore Super Division"
+    },
+    {
+      "run_id": 35404223536,
+      "artifact_id": 10571711837,
+      "artifact_zip_sha256": "4f5947c2317fb42709001174e72e72d51881f4389f35ebdd8657ec6b2713c959",
+      "observed_exact_value": "sr:simple_tournament:191116",
+      "tournament_name": "K3/K4 Championship"
+    }
+  ],
+  "source_policy": {
+    "policy_id_before": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
+    "policy_id_after": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
+    "sha256_before": "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075",
+    "sha256_after": "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5",
+    "accepted_grammar_before": "^sr:tournament:[1-9][0-9]*$",
+    "accepted_grammar_after": "^sr:(?:tournament|simple_tournament):[1-9][0-9]*$",
+    "provider_native_tournament_id_namespaces": [
+      "sr:tournament",
+      "sr:simple_tournament"
+    ],
+    "provider_native_id_grammar": {
+      "category": "^sr:category:([1-9][0-9]*)$",
+      "coercion": false,
+      "competitor": "^sr:competitor:([1-9][0-9]*)$",
+      "event": "^sr:match:([1-9][0-9]*)$",
+      "exact_string_only": true,
+      "normalization": "NONE",
+      "tournament": "^sr:(?:tournament|simple_tournament):([1-9][0-9]*)$",
+      "tournament_namespace_rewrite": false
+    }
+  },
+  "semantics": {
+    "coercion": false,
+    "trimming": false,
+    "namespace_normalization": false,
+    "name_inference": false,
+    "mapping_authority": false,
+    "provider_absence_authority": false,
+    "fixture_reconciliation_authority": false,
+    "model_authority": false,
+    "pricing_authority": false,
+    "router_authority": false,
+    "portfolio_authority": false,
+    "account_authority": false,
+    "wager_authority": false
+  },
+  "execution_constraints": {
+    "provider_acquisition_during_implementation": 0,
+    "workflow_dispatches_during_implementation": 0,
+    "live_retries": 0,
+    "share_code_actions": 0,
+    "wager_actions": 0
+  },
+  "historical_source_qualification": {
+    "path": "artifacts/architecture/post_p4_4l_pc_upcoming_shared_football_source_v1.json",
+    "policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
+    "policy_sha256": "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075",
+    "receipt_canonical_sha256": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34"
+  },
+  "canonical_sha256": "5b63af742fc96305ec72446ba444ce735f951a8d11c45eb1c9fcbe7725f2f5a9"
+}

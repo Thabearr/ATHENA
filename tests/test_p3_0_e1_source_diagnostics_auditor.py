@@ -163,7 +163,7 @@ def test_runtime_architecture_invariants_preserved():
     - Active strategy is ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1.
     - Paginated source is historical only (paginated_runtime_reconciliation_authority: False).
     - Alias V3 SHA is cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce.
-    - Stable identity SHA is fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e.
+    - Stable identity SHA is d787ace95bcd9e95c8ade0120580f8f42245f2a32bedd1441825cf42a78f67db.
     - State schema version is 2.
     - Zero changes / zero execution authority for Price-All, Router, Portfolio.
     """
@@ -191,7 +191,7 @@ def test_runtime_architecture_invariants_preserved():
     assert identity._REVIEWED_ALIAS_V3["registry_sha256"] == "cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce"
 
     # 4. Stable identity SHA binds the reviewed bridge semantics.
-    assert identity.REGISTRY_SHA256 == "fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e"
+    assert identity.REGISTRY_SHA256 == "149b7b61213e33ee85f030d3e567966e5f79df6bea4e138d54d638c76d5e8156"
 
     # 5. State schema version is 2
     assert identity.STATE_SCHEMA_VERSION == 2
@@ -210,7 +210,7 @@ def test_p3_readiness_accepts_new_identity_pins_and_rejects_stale_ones(monkeypat
     accepted = readiness.check_f_upcoming_discovery_contract()
     assert accepted["status"] == "PASSED"
     assert accepted["runtime_policy_id"] == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
-    assert accepted["runtime_policy_sha256"] == "a5c42439e894d33950b5cba608dcd5a031896e7a8e75c6bf613b2314497b1c24"
+    assert accepted["runtime_policy_sha256"] == "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
     assert accepted["runtime_pagination_complete_required"] is True
     actual = upcoming.validate_contract()
     stale = dict(actual)

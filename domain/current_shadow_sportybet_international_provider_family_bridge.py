@@ -26,8 +26,9 @@ SOURCE_POLICY_ID = "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_
 SOURCE_POLICY_SHA256 = "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b"
 SOURCE_RECEIPT_SHA256 = "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f"
 PROVIDER_SOURCE_POLICY_ID = "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1"
-PROVIDER_SOURCE_POLICY_SHA256 = "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075"
+PROVIDER_SOURCE_POLICY_SHA256 = "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5"
 PROVIDER_RECEIPT_SHA256 = "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34"
+PROVIDER_SOURCE_SUPERSESSION_RECEIPT_SHA256 = "5b63af742fc96305ec72446ba444ce735f951a8d11c45eb1c9fcbe7725f2f5a9"
 
 if (
     source_identity.POLICY_ID != SOURCE_POLICY_ID
@@ -68,6 +69,7 @@ class ReviewedInternationalProviderFamilyMapping:
     provider_source_policy_sha256: str = PROVIDER_SOURCE_POLICY_SHA256
     source_receipt_sha256: str = SOURCE_RECEIPT_SHA256
     provider_receipt_sha256: str = PROVIDER_RECEIPT_SHA256
+    provider_source_supersession_receipt_sha256: str = PROVIDER_SOURCE_SUPERSESSION_RECEIPT_SHA256
 
     @property
     def source_key(self) -> tuple[str, int]:
@@ -96,6 +98,7 @@ class ReviewedInternationalProviderFamilyMapping:
             "provider_source_policy_sha256": self.provider_source_policy_sha256,
             "source_receipt_sha256": self.source_receipt_sha256,
             "provider_receipt_sha256": self.provider_receipt_sha256,
+            "provider_source_supersession_receipt_sha256": self.provider_source_supersession_receipt_sha256,
         }
 
 
@@ -278,6 +281,7 @@ def policy_payload() -> dict[str, Any]:
             "policy_id": PROVIDER_SOURCE_POLICY_ID,
             "policy_sha256": PROVIDER_SOURCE_POLICY_SHA256,
             "receipt_sha256": PROVIDER_RECEIPT_SHA256,
+            "supersession_receipt_sha256": PROVIDER_SOURCE_SUPERSESSION_RECEIPT_SHA256,
         },
         "reviewed_mappings": [row.to_dict() for row in REVIEWED_MAPPINGS],
         "qualified_source_identities_without_provider_mapping": qualified_unmapped,
@@ -331,7 +335,7 @@ def calculate_policy_sha256() -> str:
     return hashlib.sha256(_canonical(policy_payload())).hexdigest()
 
 
-PINNED_POLICY_SHA256 = "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb"
+PINNED_POLICY_SHA256 = "c3f05e5ea6ce08c392ec13d1b39d40dd8dd177e5a73f3660605c359705719858"
 
 
 def _strict_source_key(ccode: Any, primary_id: Any) -> tuple[str, int] | None:
@@ -459,6 +463,7 @@ __all__ = [
     "POLICY_SCHEMA_VERSION",
     "PINNED_POLICY_SHA256",
     "PROVIDER_RECEIPT_SHA256",
+    "PROVIDER_SOURCE_SUPERSESSION_RECEIPT_SHA256",
     "PROVIDER_SOURCE_POLICY_ID",
     "PROVIDER_SOURCE_POLICY_SHA256",
     "REVIEWED_MAPPINGS",

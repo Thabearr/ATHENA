@@ -34,13 +34,14 @@ CURRENT_SHADOW_UPCOMING_POLICY_ID = POLICY_ID
 DISCOVERY_SOURCE_METHOD = source.SOURCE_METHOD
 UPCOMING_PATH = source.SOURCE_PATH
 UPSTREAM_SOURCE_POLICY_ID = source.POLICY_ID
-UPSTREAM_SOURCE_POLICY_SHA256 = "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075"
+UPSTREAM_SOURCE_POLICY_SHA256 = "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5"
 UPSTREAM_SOURCE_RECEIPT_SHA256 = "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34"
+UPSTREAM_SOURCE_SUPERSESSION_RECEIPT_SHA256 = "5b63af742fc96305ec72446ba444ce735f951a8d11c45eb1c9fcbe7725f2f5a9"
 BRIDGE_POLICY_ID = bridge.POLICY_ID
-BRIDGE_POLICY_SHA256 = "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb"
-BRIDGE_RECEIPT_SHA256 = "34c183b5274e9e2c3320b5a8d75a123b7ebed2405aa55cdfb1af7d59c2613aa2"
-V2_REGISTRY_SHA256 = "fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e"
-IDENTITY_COMPATIBILITY_SHA256 = "2fdbb8165262f6e633ee48276aea57c9235699272235798e1cef12fdc714ae04"
+BRIDGE_POLICY_SHA256 = "c3f05e5ea6ce08c392ec13d1b39d40dd8dd177e5a73f3660605c359705719858"
+BRIDGE_RECEIPT_SHA256 = "d27d905977635970f8d37a6f3ad6d26d246543080c0975e62ede0c610d4fe3c2"
+V2_REGISTRY_SHA256 = "149b7b61213e33ee85f030d3e567966e5f79df6bea4e138d54d638c76d5e8156"
+IDENTITY_COMPATIBILITY_SHA256 = "e8587d1e99cb7aa6214f65b515ca59f1456443a554a762ba27be204506da7569"
 DIRECT_EVENT_CONTRACT_SHA256 = live.EXPECTED_CONTRACT_SHA256
 MAX_SOURCE_AGE_SECONDS = legacy.MAX_SOURCE_AGE_SECONDS
 MINIMUM_LEAD_SECONDS = legacy.MINIMUM_LEAD_SECONDS
@@ -103,6 +104,7 @@ def _policy_payload() -> dict[str, Any]:
         "source_policy_id": UPSTREAM_SOURCE_POLICY_ID,
         "source_policy_sha256": UPSTREAM_SOURCE_POLICY_SHA256,
         "source_receipt_sha256": UPSTREAM_SOURCE_RECEIPT_SHA256,
+        "source_supersession_receipt_sha256": UPSTREAM_SOURCE_SUPERSESSION_RECEIPT_SHA256,
         "bridge_policy_id": BRIDGE_POLICY_ID,
         "bridge_policy_sha256": BRIDGE_POLICY_SHA256,
         "bridge_receipt_sha256": BRIDGE_RECEIPT_SHA256,
@@ -170,7 +172,8 @@ def _policy_payload() -> dict[str, Any]:
             "parse_failure_selection_authority": False,
             "parse_failure_delivery_authority": False,
             "non_totalnum_parse_failure_starts_fresh_epoch": False,
-            "source_v1_acceptance_unchanged": True,
+            "source_acceptance_semantics_owned_by_bound_source_policy": True,
+            "preparse_evidence_mechanics_unchanged": True,
         },
         "identity_observation_order": [
             "EXACT_PROVIDER_RAW_PAGE_BYTES",
@@ -199,7 +202,7 @@ def calculate_policy_sha256() -> str:
     return hashlib.sha256(_canonical(_policy_payload())).hexdigest()
 
 
-PINNED_POLICY_SHA256 = "a5c42439e894d33950b5cba608dcd5a031896e7a8e75c6bf613b2314497b1c24"
+PINNED_POLICY_SHA256 = "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
 EXPECTED_CONTRACT_SHA256 = PINNED_POLICY_SHA256
 CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 = PINNED_POLICY_SHA256
 

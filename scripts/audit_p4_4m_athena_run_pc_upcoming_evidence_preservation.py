@@ -134,17 +134,17 @@ def check() -> dict[str, Any]:
         raise P44MError("active pcUpcoming evidence root drifted")
     if (
         pc_upcoming.POLICY_ID != "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1"
-        or pc_upcoming.PINNED_POLICY_SHA256 != "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075"
         or pc_upcoming.calculate_policy_sha256() != pc_upcoming.PINNED_POLICY_SHA256
+        or pc_upcoming.PINNED_POLICY_SHA256 != p44n_state["source_policy_sha256"]
     ):
         raise P44MError("pcUpcoming source contract changed")
     if (
         runtime.POLICY_ID != "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
         or runtime.PINNED_POLICY_SHA256 != p44n_state["runtime_wrapper_sha256"]
         or runtime.calculate_policy_sha256() != runtime.PINNED_POLICY_SHA256
-        or bridge.PINNED_POLICY_SHA256 != "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb"
+        or bridge.PINNED_POLICY_SHA256 != p44n_state["bridge_policy_sha256"]
         or bridge.calculate_policy_sha256() != bridge.PINNED_POLICY_SHA256
-        or identity_v2.REGISTRY_SHA256 != "fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e"
+        or identity_v2.REGISTRY_SHA256 != p44n_state["v2_semantic_registry_sha256"]
         or identity_v2.registry_sha256() != identity_v2.REGISTRY_SHA256
         or identity_compatibility.EXPECTED_POLICY_SHA256 != p44n_state["identity_compatibility_sha256"]
         or identity_compatibility.calculate_policy_sha256() != identity_compatibility.EXPECTED_POLICY_SHA256

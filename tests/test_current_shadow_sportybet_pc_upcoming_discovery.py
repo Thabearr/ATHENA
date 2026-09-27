@@ -259,3 +259,72 @@ def test_capture_requires_explicit_network_boolean_without_calling_transport(mon
 def test_policy_hash_is_pinned() -> None:
     assert pc.PINNED_POLICY_SHA256
     assert pc.calculate_policy_sha256() == pc.PINNED_POLICY_SHA256
+
+
+def test_exact_simple_tournament_identity_admitted() -> None:
+    for admitted in ("sr:tournament:242", "sr:simple_tournament:11141", "sr:tournament:1", "sr:simple_tournament:1"):
+        tournament = {
+            "id": admitted,
+            "name": "Admitted Tournament",
+            "categoryId": "sr:category:4",
+            "categoryName": "International",
+            "events": [_event(1)],
+        }
+        raw = json.dumps({"bizCode": 10000, "data": {"totalNum": 1, "tournaments": [tournament]}}, separators=(",", ":")).encode()
+        page = _page(1, raw)
+        assert page.events[0].tournament_id == admitted
+        assert page.events[0].category_id == "sr:category:4"
+
+
+def test_tournament_id_rejection_of_invalid_and_adversarial_strings() -> None:
+    adversarial_ids = (
+        "sr:tournament:0",
+        "sr:simple_tournament:0",
+        "sr:tournament:01",
+        "sr:simple_tournament:011141",
+        "sr:tournament:-1",
+        "sr:simple_tournament:-1",
+        "sr:simple_tournament:11141.0",
+        " sr:simple_tournament:11141",
+        "sr:simple_tournament:11141 ",
+        "sr:simple_tournament:",
+        "sr:tournament:",
+        "sr:simple_tournament",
+        "simple_tournament:11141",
+        "sr:super_tournament:11141",
+        "sr:category:11141",
+        "sr:match:11141",
+        "11141",
+    )
+    for invalid_id in adversarial_ids:
+        tournament = {
+            "id": invalid_id,
+            "name": "Adversarial Tournament",
+            "categoryId": "sr:category:4",
+            "categoryName": "International",
+            "events": [_event(1)],
+        }
+        raw = json.dumps({"bizCode": 10000, "data": {"totalNum": 1, "tournaments": [tournament]}}, separators=(",", ":")).encode()
+        with pytest.raises(pc.PcUpcomingDiscoveryError):
+            _page(1, raw)
+
+
+def test_verbatim_preservation_without_normalization_or_trimming() -> None:
+    raw_id = "sr:simple_tournament:11141"
+    tournament = {
+        "id": raw_id,
+        "name": "Gulf Cup",
+        "categoryId": "sr:category:4",
+        "categoryName": "International",
+        "events": [_event(1)],
+    }
+    raw = json.dumps({"bizCode": 10000, "data": {"totalNum": 1, "tournaments": [tournament]}}, separators=(",", ":")).encode()
+    page = _page(1, raw)
+    event = page.events[0]
+    # Preserved verbatim without normalization or trimming
+    assert event.tournament_id == "sr:simple_tournament:11141"
+    assert event.tournament_id != "sr:tournament:11141"
+    assert not event.tournament_id.startswith("sr:tournament:")
+    assert event.tournament_id.startswith("sr:simple_tournament:")
+    projection = json.loads(pc.provider_identity_projection_bytes(page))
+    assert projection["events"][0]["sport"]["category"]["tournament"]["id"] == "sr:simple_tournament:11141"
