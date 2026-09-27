@@ -12,7 +12,7 @@ from domain.current_direct_provider_live_quote_mapping_consumption import Curren
 from domain.markets import MarketId,OutcomeId
 from domain._current_shadow_price_core import ShadowPriceError
 from domain._current_shadow_price_records import ShadowExactQuote,ShadowPriceResult,ShadowPriceAllBundle,ShadowMarketRouterDecision
-from domain._current_shadow_quote_binding import CurrentShadowPriceContext,build_current_shadow_exact_quotes,build_current_shadow_price_context
+from domain._current_shadow_quote_binding import CurrentShadowPriceContext,build_current_shadow_exact_quotes,build_current_shadow_price_context,SOURCE_CONTEXT_POLICY_ID
 from domain import current_shadow_all_market_price_all as price_all
 from domain import current_shadow_all_market_router as router
 
@@ -27,7 +27,8 @@ def test_prd_does_not_modify_prc_canonical_scan_schema():
     assert "source_lane" not in source and "CURRENT_SOURCE_BOUND" not in source
 
 def test_current_api_has_no_raw_scan_quote_or_subset_escape_hatch():
-    assert set(inspect.signature(build_current_shadow_price_context).parameters)=={"complete_current_history","fixture_identity","provider_event_evidence","fixture_quote_bridge"}
+    assert set(inspect.signature(build_current_shadow_price_context).parameters)=={"complete_current_history","fixture_identity","provider_event_evidence","fixture_quote_bridge","runtime_bindings"}
+    assert inspect.signature(build_current_shadow_price_context).parameters["runtime_bindings"].default is None
     assert tuple(inspect.signature(price_all.price_all_shadow_fixture).parameters)==("context",)
     assert tuple(inspect.signature(router.route_shadow_price_results).parameters)==("price_all",)
 
@@ -62,9 +63,9 @@ def _retained_evidence(tmp_path:Path):
 def test_quotes_are_derived_from_typed_prb_semantics_over_replayed_inventory(tmp_path,monkeypatch):
     evidence=_retained_evidence(tmp_path); registry=prb.build_registry((evidence,),evaluation_time=NOW,scan_cap=1,scan_attempts=1)
     context=object.__new__(CurrentShadowPriceContext)
-    fields={"fixture_identity":FIXTURE,"provider_event_id":EVENT,"evaluation_time":NOW,"prc_scan_sha256":C,"provider_registry":registry,"provider_registry_sha256":registry.canonical_sha256,"provider_inventory":evidence.inventory,"source_raw_sha256":evidence.inventory.source_raw_sha256,"source_manifest_sha256":evidence.inventory.source_manifest_sha256,"source_inventory_sha256":evidence.inventory.canonical_sha256,"fixture_reconciliation_sha256":D,"current_mapping_rebind_sha256":E,"bridge_bundle_sha256":F,"source_context_mode":"LEGACY_PR253_FIXTURE_BRIDGE","source_context_policy_id":"synthetic-test-policy"}
+    fields={"fixture_identity":FIXTURE,"provider_event_id":EVENT,"evaluation_time":NOW,"prc_scan_sha256":C,"provider_registry":registry,"provider_registry_sha256":registry.canonical_sha256,"provider_inventory":evidence.inventory,"source_raw_sha256":evidence.inventory.source_raw_sha256,"source_manifest_sha256":evidence.inventory.source_manifest_sha256,"source_inventory_sha256":evidence.inventory.canonical_sha256,"fixture_reconciliation_sha256":D,"current_mapping_rebind_sha256":E,"bridge_bundle_sha256":F,"source_context_mode":"LEGACY_PR253_FIXTURE_BRIDGE","source_context_policy_id":SOURCE_CONTEXT_POLICY_ID}
     for k,v in fields.items(): object.__setattr__(context,k,v)
-    monkeypatch.setattr("domain._current_shadow_quote_binding.verify_current_shadow_price_context",lambda value:value)
+    monkeypatch.setattr("domain.current_shadow_runtime_bindings.runtime_bindings_for_context",lambda _value:SimpleNamespace(verify_context=lambda value:value))
     quotes=build_current_shadow_exact_quotes(context)
     assert {(q.market_id,q.outcome_id) for q in quotes}=={(MarketId.MATCH_RESULT,OutcomeId.HOME),(MarketId.MATCH_RESULT,OutcomeId.DRAW),(MarketId.MATCH_RESULT,OutcomeId.AWAY)}
     assert all(q.source_inventory_sha256==evidence.inventory.canonical_sha256 for q in quotes)

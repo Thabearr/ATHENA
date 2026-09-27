@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import inspect
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from domain import current_shadow_sportybet_pc_upcoming_discovery as pc_source
@@ -16,6 +18,7 @@ from domain import current_shadow_fixture_identity_compatibility as identity_com
 from domain import current_shadow_fixture_identity_v2 as identity_v2
 from domain import current_shadow_sportybet_international_provider_family_bridge as bridge
 from domain import current_shadow_sportybet_team_label_compatibility as team_labels
+from domain import _current_shadow_quote_binding as quote_binding
 
 
 BASE_MAIN_SHA = "47326a934aabe34052c804a6941a702e52710b12"
@@ -173,6 +176,17 @@ def verify_receipt(value: dict[str, Any]) -> None:
              "P4.4R deterministic replay evidence is incomplete")
     _require(value.get("composition_inventory_path") == INVENTORY_PATH.as_posix(),
              "P4.4R composition inventory path drifted")
+    corrections = value.get("review_corrections")
+    _require(corrections == {
+        "reviewed_head_before_correction": "61c711cfbe8f543251970d6e257531f450a149f9",
+        "legacy_builder_preserves_explicit_runtime_binding": True,
+        "legacy_bridge_exact_replay_regression": True,
+        "mode_correct_verifier_policy_memo_identity": True,
+        "policy_mismatch_rejected_before_memo": True,
+        "unknown_mode_fails_closed_before_memo": True,
+        "binding_identity_remains_a_memo_key_dimension": True,
+        "source_controlled_runtime_binding_policy_unchanged": True,
+    }, "P4.4R corrective review evidence is incomplete")
 
 
 def _verify_fixture_files(root: Path, expected_shas: dict[str, str] | None = None) -> None:
@@ -240,6 +254,43 @@ def _function_source(tree: ast.Module, name: str) -> ast.FunctionDef | ast.Async
 
 
 def _verify_runtime_composition(root: Path) -> None:
+    builder_parameters = inspect.signature(
+        quote_binding.build_current_shadow_price_context
+    ).parameters
+    _require(
+        "runtime_bindings" in builder_parameters
+        and builder_parameters["runtime_bindings"].default is None,
+        "legacy context builder must preserve an optional reviewed runtime binding",
+    )
+    mode_policies = {
+        quote_binding.LEGACY_PR253_FIXTURE_BRIDGE: quote_binding.SOURCE_CONTEXT_POLICY_ID,
+        quote_binding.CURRENT_RECONCILIATION_DIRECT: (
+            quote_binding.CURRENT_RECONCILIATION_SOURCE_CONTEXT_POLICY_ID
+        ),
+        quote_binding.FRESH_REPRICE_MODE: quote_binding.FRESH_REPRICE_SOURCE_CONTEXT_POLICY_ID,
+    }
+    for mode, expected_policy in mode_policies.items():
+        _require(
+            runtime_bindings._expected_verifier_policy_id(SimpleNamespace(
+                source_context_mode=mode,
+                source_context_policy_id=expected_policy,
+            )) == expected_policy,
+            f"runtime binding uses an incorrect verifier policy identity for {mode}",
+        )
+    try:
+        runtime_bindings._expected_verifier_policy_id(SimpleNamespace(
+            source_context_mode="UNKNOWN_REVIEWED_MODE",
+            source_context_policy_id="unreviewed",
+        ))
+    except Exception as exc:
+        _require(
+            type(exc).__name__ == "ShadowPriceError"
+            and "unknown current Shadow source-context mode" in str(exc),
+            "unknown source-context mode no longer fails closed with the reviewed error",
+        )
+    else:
+        raise P44RError("unknown source-context mode gained memo policy authority")
+
     try:
         verifier_fixture = (root / PRE_FIX_VERIFIER_FIXTURE).read_bytes().replace(
             b"\r\n", b"\n"
@@ -350,6 +401,15 @@ def audit(root: Path | None = None) -> dict[str, Any]:
              and identity_v2.SEED_REGISTRY_SHA256 == V2_SEED_SHA256,
              "P4.4R changed a frozen provider/identity source policy")
     contracts = receipt["before_after_contracts"]
+    verifier_sha = hashlib.sha256(
+        (root / "domain/_current_shadow_quote_binding.py")
+        .read_bytes()
+        .replace(b"\r\n", b"\n")
+    ).hexdigest()
+    _require(
+        contracts["context_verifier_source"]["sha256_after"] == verifier_sha,
+        "P4.4R receipt does not bind the exact current context verifier source",
+    )
     _require(contracts["runtime_binding_policy"]["policy_id"] == runtime_bindings.POLICY_ID
              and contracts["runtime_binding_policy"]["sha256_after_standard"] == runtime_bindings.policy_sha256(
                  composition=runtime_bindings.STANDARD_COMPOSITION

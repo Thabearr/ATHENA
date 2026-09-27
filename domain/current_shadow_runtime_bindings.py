@@ -150,6 +150,30 @@ class _VerifiedContextMemo:
             self._rows[key] = row
 
 
+def _expected_verifier_policy_id(value: Any) -> str:
+    """Resolve the reviewed verifier identity for the exact source-context mode."""
+
+    from domain import _current_shadow_quote_binding as quote_binding
+
+    mode_to_policy = {
+        quote_binding.LEGACY_PR253_FIXTURE_BRIDGE: quote_binding.SOURCE_CONTEXT_POLICY_ID,
+        quote_binding.CURRENT_RECONCILIATION_DIRECT: (
+            quote_binding.CURRENT_RECONCILIATION_SOURCE_CONTEXT_POLICY_ID
+        ),
+        quote_binding.FRESH_REPRICE_MODE: quote_binding.FRESH_REPRICE_SOURCE_CONTEXT_POLICY_ID,
+    }
+    try:
+        mode = value.source_context_mode
+        if type(mode) is not str:
+            raise TypeError("source-context mode must be an exact string")
+        expected = mode_to_policy[mode]
+    except (AttributeError, KeyError, TypeError) as exc:
+        raise ShadowPriceError("unknown current Shadow source-context mode") from exc
+    if type(value.source_context_policy_id) is not str or value.source_context_policy_id != expected:
+        raise ShadowPriceError("Current Shadow source-context policy does not match its mode")
+    return expected
+
+
 @dataclass(frozen=True, init=False)
 class CurrentShadowRuntimeBindings:
     """One immutable execution binding selected by the Current Shadow root."""
@@ -181,9 +205,9 @@ class CurrentShadowRuntimeBindings:
 
         if type(value) is not quote_binding.CurrentShadowPriceContext:
             return quote_binding.verify_current_shadow_price_context(value)
+        verifier_policy_id = _expected_verifier_policy_id(value)
         canonical_bytes = quote_binding._canonical_bytes(value.to_dict())
         canonical_sha256 = hashlib.sha256(canonical_bytes).hexdigest()
-        verifier_policy_id = quote_binding.CURRENT_RECONCILIATION_SOURCE_CONTEXT_POLICY_ID
         cached = self._verified_contexts.get(
             source=value,
             canonical_bytes=canonical_bytes,

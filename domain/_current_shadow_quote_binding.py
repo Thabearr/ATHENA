@@ -199,6 +199,7 @@ def build_current_shadow_price_context(
     fixture_identity: str,
     provider_event_evidence: prb.ProviderEventEvidence,
     fixture_quote_bridge: current_quotes.CurrentDirectProviderMappedQuoteBundle,
+    runtime_bindings: Any = None,
 ) -> CurrentShadowPriceContext:
     """Compatibility path from exact PR151 + PR253 fixture bridge + PR-B evidence."""
     if type(complete_current_history) is not CurrentLatestDurableFreshHistoryHandoff:
@@ -245,6 +246,7 @@ def build_current_shadow_price_context(
         source_context_policy_id=SOURCE_CONTEXT_POLICY_ID,
         bridge_bundle=bridge,
         reconciliation_bundle=None,
+        runtime_bindings=runtime_bindings,
     )
 
 

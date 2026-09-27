@@ -215,8 +215,8 @@
     "context_verifier_source": {
       "path": "domain/_current_shadow_quote_binding.py",
       "sha256_before": "7f793abebe899c0a05eaf50a56dce6b97a5cb866039993d1e793a39bc97813c1",
-      "sha256_after": "bee3e0010362753ee35b72091502e74d8fb112173bde87e7a2bad2a0789ca1aa",
-      "semantic_change": "The single stable verifier now replays an explicit fresh-direct context variant in addition to retained direct and PR253 bridge modes."
+      "sha256_after": "2706d8e1b689be153cf6b0de545cfed00f7ee953707a7094f70e6df1344557de",
+      "semantic_change": "The repository-canonical context-verifier source now preserves the reviewed execution binding while rebuilding legacy PR253 bridge contexts; direct, legacy, and fresh modes remain supported."
     },
     "runtime_binding_policy": {
       "policy_id": "ATHENA_CURRENT_SHADOW_RUNTIME_COMPOSITION_BINDINGS_V1",
@@ -260,6 +260,16 @@
       "team_label_v6_sha256": "0c382ec8b12d802879a51b766daae8f655dd5b371509653e56a13190a85c6c7b",
       "workflow_bytes_unchanged": true
     }
+  },
+  "review_corrections": {
+    "reviewed_head_before_correction": "61c711cfbe8f543251970d6e257531f450a149f9",
+    "legacy_builder_preserves_explicit_runtime_binding": true,
+    "legacy_bridge_exact_replay_regression": true,
+    "mode_correct_verifier_policy_memo_identity": true,
+    "policy_mismatch_rejected_before_memo": true,
+    "unknown_mode_fails_closed_before_memo": true,
+    "binding_identity_remains_a_memo_key_dimension": true,
+    "source_controlled_runtime_binding_policy_unchanged": true
   },
   "pre_fix_offline_replay": {
     "result": "REPRODUCED",
@@ -352,5 +362,5 @@
     "compared_receipt_count": 31,
     "base_main_sha": "47326a934aabe34052c804a6941a702e52710b12"
   },
-  "canonical_sha256": "ea064b7e0bfad8cfecb75d04e6ff52323c0e8c9e1a468f2a46e7a1603ea3fc84"
+  "canonical_sha256": "90e2d7e984609ded80c9113a05453628bebadfcb3cede7fc95b9696931016552"
 }

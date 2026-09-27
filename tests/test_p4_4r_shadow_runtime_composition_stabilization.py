@@ -19,20 +19,33 @@ import pytest
 from domain import current_all_market_shadow_probability_settlement as prc
 from domain import current_shadow_all_market_runner as runner
 from domain import current_shadow_all_market_router as router_module
+from domain import current_direct_provider_live_quote_mapping_consumption as current_quotes
 from domain import current_shadow_sportybet_pc_upcoming_reconciliation as pc_upcoming
 from domain import current_shadow_sportybet_pc_upcoming_discovery as pc_source
 from domain import current_sportybet_semantic_registry as prb
 from domain import sportybet_live_event_quote_evidence as live
 from domain._current_shadow_price_core import (
+    SOURCE_CONTEXT_POLICY_ID,
     ShadowPriceError,
     ShadowRouterDecisionStatus,
 )
+from domain import _current_shadow_quote_binding as quote_binding
 from domain._current_shadow_quote_binding import (
     CURRENT_RECONCILIATION_DIRECT,
     CURRENT_RECONCILIATION_SOURCE_CONTEXT_POLICY_ID,
+    FRESH_REPRICE_MODE,
+    FRESH_REPRICE_SOURCE_CONTEXT_POLICY_ID,
+    LEGACY_PR253_FIXTURE_BRIDGE,
+    build_current_shadow_price_context,
     build_current_shadow_price_context_from_reconciliation,
+    build_current_shadow_price_context_for_fresh_reprice,
 )
-from domain.current_shadow_runtime_bindings import fresh_reprice_current_shadow_runtime_bindings
+from domain.current_shadow_runtime_bindings import (
+    CurrentShadowRuntimeBindings,
+    _VerifiedContextMemo,
+    default_current_shadow_runtime_bindings,
+    fresh_reprice_current_shadow_runtime_bindings,
+)
 from domain.current_shadow_fresh_reprice_runtime import _refresh_selected_inputs
 from domain.current_fotmob_latest_durable_fresh_history import (
     CurrentLatestDurableFreshHistoryHandoff,
@@ -204,6 +217,76 @@ def _clone_context(value, **changes):
     return clone
 
 
+def _synthetic_legacy_bridge_context(monkeypatch, prior_context, runtime_bindings):
+    """Attach a reviewed-shape PR253 bridge to retained provider event evidence."""
+
+    bridge_input = object.__new__(current_quotes.CurrentDirectProviderMappedQuoteBundle)
+    bridge = object.__new__(current_quotes.CurrentDirectProviderMappedQuoteBundle)
+    inventory = prior_context.provider_inventory
+    bridge_fields = {
+        "schema_version": current_quotes.SCHEMA_VERSION,
+        "dataset_name": current_quotes.DATASET_NAME,
+        "status": current_quotes.STATUS_LIVE,
+        "proof_mode": current_quotes.LIVE_CURRENT,
+        "fixture_id": prior_context.fixture_identity,
+        "event_id": prior_context.provider_event_id,
+        "home_team_name": inventory.home_team_name,
+        "away_team_name": inventory.away_team_name,
+        "kickoff_utc": inventory.kickoff_utc,
+        "discovery_observed_at": prior_context.evaluation_time,
+        "direct_event_observed_at": inventory.observed_at,
+        "discovery_age_seconds": 0.0,
+        "direct_event_age_seconds": 0.0,
+        "kickoff_lead_seconds": (inventory.kickoff_utc - prior_context.evaluation_time).total_seconds(),
+        "max_source_age_seconds": current_quotes.MAX_SOURCE_AGE_SECONDS,
+        "minimum_lead_seconds": current_quotes.MINIMUM_LEAD_SECONDS,
+        "current_mapping_rebind_sha256": "e" * 64,
+        "current_mapping_contract_sha256": current_quotes.PR252_CONTRACT_SHA256,
+        "source_current_reconciliation_sha256": "c" * 64,
+        "source_legacy_mapping_sha256": "b" * 64,
+        "current_inventory_sha256": inventory.canonical_sha256,
+        "current_manifest_sha256": prior_context.source_manifest_sha256,
+        "current_raw_sha256": prior_context.source_raw_sha256,
+        "evaluation_time": prior_context.evaluation_time,
+        "quotes": (),
+        "quote_audits": (),
+        "source_mapping_audits": (),
+        "authority": {
+            "current_mapping_source_replay": True,
+            "direct_event_source_replay": True,
+            "current_provider_mapped_quote_evidence": True,
+            "price_all": False,
+            "market_router": False,
+            "portfolio_optimization": False,
+            "final_selection": False,
+            "accumulator_slip_construction": False,
+            "sportybet_execution": False,
+            "staking": False,
+            "bet": False,
+        },
+        "next_boundary": current_quotes.NEXT_BOUNDARY,
+        "contract_sha256": current_quotes.EXPECTED_CONTRACT_SHA256,
+        "_source_mapping": None,
+    }
+    for name, value in bridge_fields.items():
+        object.__setattr__(bridge, name, value)
+    monkeypatch.setattr(
+        current_quotes,
+        "verify_current_direct_provider_mapped_quote_bundle",
+        lambda value: bridge if value is bridge_input or value is bridge else pytest.fail(
+            "unexpected PR253 bridge replay input"
+        ),
+    )
+    context = build_current_shadow_price_context(
+        complete_current_history=prior_context._complete_current_history,
+        fixture_identity=prior_context.fixture_identity,
+        provider_event_evidence=prior_context._event_evidence,
+        fixture_quote_bridge=bridge_input,
+        runtime_bindings=runtime_bindings,
+    )
+    return context, bridge
+
+
 def _load_exact_pre_p4_4r_verifier():
     """Compile the pinned pre-fix verifier slice copied from exact base main."""
 
@@ -353,7 +436,7 @@ def _run_single_offline_replay(monkeypatch, tmp_path: Path) -> bytes:
         ("source_inventory_sha256", "3" * 64, "evidence ancestry drifted"),
         ("fixture_reconciliation_sha256", "4" * 64, "evidence ancestry drifted"),
         ("current_mapping_rebind_sha256", "5" * 64, "bridge or source authority"),
-        ("source_context_policy_id", "UNREVIEWED", "bridge or source authority"),
+        ("source_context_policy_id", "UNREVIEWED", "policy does not match its mode"),
     )
     assert fresh_context.source_context_mode == FRESH_REPRICE_MODE
     for field_name, replacement, error in tamper_cases:
@@ -441,3 +524,146 @@ def test_retained_failure_slice_replays_identically_in_two_clean_processes():
         outputs.append(marker)
     assert outputs[0] == outputs[1]
     print("P4_4R_DETERMINISM_SHA256=" + outputs[0])
+
+
+def test_legacy_pr253_context_replays_through_price_all_without_network(
+    monkeypatch, tmp_path
+):
+    """The retained legacy bridge remains a working mode under the stable verifier."""
+
+    NETWORK_ATTEMPTS.clear()
+    _install_network_sentinel(monkeypatch)
+    _repo, _paths, _bundle, _reconciled, direct_context, _fresh = _offline_composition(
+        monkeypatch, tmp_path
+    )
+    binding = default_current_shadow_runtime_bindings()
+    context, bridge = _synthetic_legacy_bridge_context(
+        monkeypatch, direct_context, binding
+    )
+
+    assert context.source_context_mode == LEGACY_PR253_FIXTURE_BRIDGE
+    assert context._runtime_bindings is binding
+    assert context.bridge_bundle_sha256 == bridge.canonical_sha256
+    assert len(context.bridge_bundle_sha256) == 64
+    assert context.current_mapping_rebind_sha256 == bridge.current_mapping_rebind_sha256 == "e" * 64
+    checked = quote_binding.verify_current_shadow_price_context(context)
+    assert checked.source_context_mode == LEGACY_PR253_FIXTURE_BRIDGE
+    assert checked.bridge_bundle_sha256 == bridge.canonical_sha256
+    assert checked.current_mapping_rebind_sha256 == bridge.current_mapping_rebind_sha256
+
+    price_bundle = binding.price_all(checked)
+    replayed_price_bundle = binding.verify_price_all_bundle(price_bundle)
+    assert replayed_price_bundle.to_dict() == price_bundle.to_dict()
+    assert replayed_price_bundle._context.source_context_mode == LEGACY_PR253_FIXTURE_BRIDGE
+
+    tampered = _clone_context(
+        context,
+        current_mapping_rebind_sha256="f" * 64,
+    )
+    with pytest.raises(ShadowPriceError, match="differs on source replay"):
+        binding.verify_context(tampered)
+    assert NETWORK_ATTEMPTS == []
+
+
+def test_runtime_binding_memo_uses_exact_policy_identity_for_each_mode(
+    monkeypatch, tmp_path
+):
+    NETWORK_ATTEMPTS.clear()
+    _install_network_sentinel(monkeypatch)
+    _repo, _paths, _bundle, _reconciled, direct_context, fresh_evidence = _offline_composition(
+        monkeypatch, tmp_path
+    )
+    direct_binding = default_current_shadow_runtime_bindings()
+    direct_binding.verify_context(direct_context)
+
+    fresh_binding = fresh_reprice_current_shadow_runtime_bindings()
+    fresh_context = build_current_shadow_price_context_for_fresh_reprice(
+        prior_context=direct_context,
+        fresh_provider_event_evidence=fresh_evidence,
+        runtime_bindings=fresh_binding,
+    )
+    fresh_binding.verify_context(fresh_context)
+
+    legacy_context, _bridge = _synthetic_legacy_bridge_context(
+        monkeypatch, direct_context, direct_binding
+    )
+    direct_binding.verify_context(legacy_context)
+
+    expected = {
+        LEGACY_PR253_FIXTURE_BRIDGE: SOURCE_CONTEXT_POLICY_ID,
+        CURRENT_RECONCILIATION_DIRECT: CURRENT_RECONCILIATION_SOURCE_CONTEXT_POLICY_ID,
+        FRESH_REPRICE_MODE: FRESH_REPRICE_SOURCE_CONTEXT_POLICY_ID,
+    }
+    contexts = (legacy_context, direct_context, fresh_context)
+    bindings = (direct_binding, direct_binding, fresh_binding)
+    for context, binding in zip(contexts, bindings, strict=True):
+        assert binding._verified_contexts._rows[
+            (
+                context.canonical_sha256,
+                expected[context.source_context_mode],
+                binding.canonical_sha256,
+            )
+        ].source is context
+        assert binding._verified_contexts._rows[
+            (
+                context.canonical_sha256,
+                expected[context.source_context_mode],
+                binding.canonical_sha256,
+            )
+        ].verifier_policy_id == expected[context.source_context_mode]
+    assert NETWORK_ATTEMPTS == []
+
+
+def test_context_memo_rejects_mode_policy_mismatch_unknown_mode_and_other_binding(
+    monkeypatch, tmp_path
+):
+    NETWORK_ATTEMPTS.clear()
+    _install_network_sentinel(monkeypatch)
+    _repo, _paths, _bundle, _reconciled, direct_context, _fresh = _offline_composition(
+        monkeypatch, tmp_path
+    )
+    binding = default_current_shadow_runtime_bindings()
+    binding.verify_context(direct_context)
+
+    wrong_policy = _clone_context(
+        direct_context,
+        source_context_policy_id=FRESH_REPRICE_SOURCE_CONTEXT_POLICY_ID,
+    )
+    original_get = binding._verified_contexts.get
+    monkeypatch.setattr(
+        binding._verified_contexts,
+        "get",
+        lambda **_kwargs: pytest.fail("policy mismatch reached the memo"),
+    )
+    with pytest.raises(ShadowPriceError, match="policy does not match its mode"):
+        binding.verify_context(wrong_policy)
+    monkeypatch.setattr(binding._verified_contexts, "get", original_get)
+
+    unknown = _clone_context(
+        direct_context,
+        source_context_mode="UNKNOWN_REVIEWED_MODE",
+        source_context_policy_id="unreviewed-policy",
+    )
+    with pytest.raises(ShadowPriceError, match="unknown current Shadow source-context mode"):
+        binding.verify_context(unknown)
+
+    # Deliberately share the cache object between two otherwise valid bindings
+    # to prove the binding identity is a distinct memo-key dimension.
+    other_binding = fresh_reprice_current_shadow_runtime_bindings()
+    object.__setattr__(other_binding, "_verified_contexts", binding._verified_contexts)
+    canonical_bytes = quote_binding._canonical_bytes(direct_context.to_dict())
+    canonical_sha = hashlib.sha256(canonical_bytes).hexdigest()
+    assert binding._verified_contexts.get(
+        source=direct_context,
+        canonical_bytes=canonical_bytes,
+        canonical_sha256=canonical_sha,
+        verifier_policy_id=CURRENT_RECONCILIATION_SOURCE_CONTEXT_POLICY_ID,
+        binding_identity=other_binding.canonical_sha256,
+    ) is None
+    other_binding.verify_context(direct_context)
+    assert (
+        canonical_sha,
+        CURRENT_RECONCILIATION_SOURCE_CONTEXT_POLICY_ID,
+        other_binding.canonical_sha256,
+    ) in binding._verified_contexts._rows
+    assert NETWORK_ATTEMPTS == []
