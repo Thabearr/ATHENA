@@ -735,6 +735,7 @@ def acquire_current_shadow_pre_router_bundle(
     stage_callback: Callable[[str], None] | None = None,
     progress_callback: Callable[[str, str, Mapping[str, int], Mapping[str, Any]], None] | None = None,
     execute_live_network: bool = True,
+    runtime_bindings: Any = None,
 ) -> CurrentShadowRunnerSourceBundle:
     if capture_mode not in {"SUPPORTED_REQUEST", "P3_E1_PRE_ROUTER_CAPTURE"}:
         raise CurrentShadowAllMarketRunnerError(
@@ -1016,6 +1017,7 @@ def acquire_current_shadow_pre_router_bundle(
                 fixture_identity=fixture_identity,
                 provider_event_id=row.event_id,
                 current_reconciliation_bundle=current_events,
+                runtime_bindings=runtime_bindings,
             )
             priced_bundle = price_module.price_all_shadow_fixture(context)
             decision = router_module.route_shadow_price_results(priced_bundle)
@@ -1076,6 +1078,7 @@ def _acquire_router_inputs(
     stage_callback: Callable[[str], None] | None = None,
     progress_callback: Callable[[str, str, Mapping[str, int], Mapping[str, Any]], None] | None = None,
     execute_live_network: bool = True,
+    runtime_bindings: Any = None,
 ) -> CurrentShadowRunnerSourceBundle:
     return acquire_current_shadow_pre_router_bundle(
         repository_root=repository_root,
@@ -1085,6 +1088,7 @@ def _acquire_router_inputs(
         stage_callback=stage_callback,
         progress_callback=progress_callback,
         execute_live_network=execute_live_network,
+        runtime_bindings=runtime_bindings,
     )
 
 
@@ -1204,14 +1208,21 @@ def write_current_shadow_timeout_receipt(
     return result
 
 
-def execute_current_shadow_all_market(
-    *, target_size: int, output_dir: Path,
+def _execute_current_shadow_all_market_with_bindings(
+    *, target_size: int, output_dir: Path, runtime_bindings: Any,
 ) -> CurrentShadowAllMarketRunReceipt:
     if type(target_size) is not int or not 1 <= target_size <= 50:
         raise CurrentShadowAllMarketRunnerError("target_size must be an integer from 1 through 50")
     if not isinstance(output_dir, Path):
         raise CurrentShadowAllMarketRunnerError("output_dir must be Path")
     repository_root = Path(__file__).resolve().parents[1]
+    from domain.current_shadow_runtime_bindings import (
+        CurrentShadowRuntimeBindings,
+    )
+
+    if type(runtime_bindings) is not CurrentShadowRuntimeBindings:
+        raise CurrentShadowAllMarketRunnerError("unreviewed Current Shadow execution binding")
+    runtime_bindings._validate_self()
     exact_commit_sha = _git_head(repository_root)
     lineage_main_sha = _expected_lineage_main_sha()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1263,6 +1274,11 @@ def execute_current_shadow_all_market(
             lineage_main_sha=lineage_main_sha,
             stage_callback=checkpoint,
             progress_callback=progress,
+            runtime_bindings=runtime_bindings,
+        )
+        sources = runtime_bindings.refresh_selected_inputs(
+            sources,
+            repository_root=repository_root,
         )
         if sources.reconciled_fixture_count == 0:
             result = _receipt(
@@ -1414,6 +1430,20 @@ def execute_current_shadow_all_market(
         checkpoint(STAGE_COMPLETE)
     _write(receipt_path, result.to_dict())
     return result
+
+
+def execute_current_shadow_all_market(
+    *, target_size: int, output_dir: Path,
+) -> CurrentShadowAllMarketRunReceipt:
+    """Public supported runner API with source-selected standard composition."""
+
+    from domain.current_shadow_runtime_bindings import default_current_shadow_runtime_bindings
+
+    return _execute_current_shadow_all_market_with_bindings(
+        target_size=target_size,
+        output_dir=output_dir,
+        runtime_bindings=default_current_shadow_runtime_bindings(),
+    )
 
 
 __all__ = [

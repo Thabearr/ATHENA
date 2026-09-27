@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 from types import SimpleNamespace
@@ -79,6 +80,12 @@ def _temporary_environment(updates: Mapping[str, str | None]) -> Iterator[None]:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+def _verify_exact_synthetic_reconciliation(value: Any, bundle: Any) -> Any:
+    if value is not bundle:
+        raise RuntimeReachabilityError("unexpected synthetic reconciliation object")
+    return bundle
 
 
 def _resolve_ref(ref: str) -> str:
@@ -370,13 +377,69 @@ def _probe_historical_prediction_service(
 
 def _make_shadow_context_and_quotes():
     from domain import current_all_market_shadow_probability_settlement as prc
+    from domain import current_shadow_sportybet_pc_upcoming_reconciliation as pc_upcoming
+    from domain import current_sportybet_semantic_registry as prb
+    from domain import sportybet_live_event_quote_evidence as live
     from domain._current_shadow_price_records import _issue_shadow_exact_quote
-    from domain._current_shadow_quote_binding import CurrentShadowPriceContext
+    from domain._current_shadow_quote_binding import build_current_shadow_price_context_from_reconciliation
+    from domain.current_fotmob_latest_durable_fresh_history import CurrentLatestDurableFreshHistoryHandoff
     from domain.markets import MarketId, OutcomeId
 
-    fixture = "FOTMOB:P05-RUNTIME-1"
-    event = "sr:match:905001"
-    a, b, c, d, e, f = (ch * 64 for ch in "abcdef")
+    fixture = "FOTMOB:5071393"
+    event = "sr:match:66299604"
+    evidence_fixture_root = REPOSITORY_ROOT / "tests/fixtures/p4_4r_run_36285099805_quote_evidence"
+    temporary_root = tempfile.TemporaryDirectory(prefix="p05-current-shadow-evidence-")
+    repository_root = Path(temporary_root.name)
+    capture_id = "1aec7fa77430c1f7ab99b957"
+    evidence_directory = repository_root / live.ALLOWED_OUTPUT_RELATIVE / capture_id
+    evidence_directory.mkdir(parents=True)
+    shutil.copyfile(evidence_fixture_root / "initial/event.raw.json", evidence_directory / live.RAW_FILENAME)
+    shutil.copyfile(evidence_fixture_root / "initial/manifest.json", evidence_directory / live.MANIFEST_FILENAME)
+    evidence = prb.load_provider_event_evidence(
+        evidence_directory,
+        repository_root=repository_root,
+        fixture_identity=event,
+        fixture_identity_basis="PCUPCOMING_RUNTIME_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION",
+    )
+    inventory = evidence.inventory
+    from types import SimpleNamespace
+
+    row = SimpleNamespace(
+        event_id=event,
+        fixture_reconciliation_authorized=True,
+        matched_fotmob_fixture_id="5071393",
+        competition_name="MLS",
+        home_team_name=inventory.home_team_name,
+        away_team_name=inventory.away_team_name,
+        kickoff_utc=inventory.kickoff_utc,
+        direct_event_observed_at=inventory.observed_at,
+        direct_event_manifest_sha256=inventory.source_manifest_sha256,
+        direct_event_inventory_sha256=inventory.canonical_sha256,
+        direct_event_raw_sha256=inventory.source_raw_sha256,
+    )
+    reconciled = SimpleNamespace(
+        rows=(row,),
+        _detail_directories=((event, evidence_directory),),
+        _repository_root=repository_root,
+        canonical_sha256="c" * 64,
+        evaluation_time=inventory.observed_at,
+        source_fotmob_admission_sha256="e" * 64,
+        fotmob_capture_identities=(),
+        _fixture_stable_identity_state_sha256=None,
+        _fixture_stable_identity_state_snapshot={},
+        to_dict=lambda: {"synthetic_p05_reconciliation_for_exact_retained_event": event},
+    )
+    bundle = object.__new__(pc_upcoming.CurrentShadowPcUpcomingReconciliationBundle)
+    object.__setattr__(bundle, "_legacy_bundle", reconciled)
+    object.__setattr__(bundle, "manifest", SimpleNamespace(canonical_sha256="f" * 64))
+    object.__setattr__(bundle, "repository_root", repository_root)
+    object.__setattr__(bundle, "stabilization_sha256", "d" * 64)
+    def verify_synthetic_bundle(value):
+        if value is not bundle:
+            raise RuntimeReachabilityError("unexpected synthetic reconciliation object")
+        return bundle
+
+    a, b = (character * 64 for character in "ab")
     research_xg = prc.ResearchXGRates(
         calibrated_home=2.8,
         calibrated_away=0.4,
@@ -387,35 +450,30 @@ def _make_shadow_context_and_quotes():
     scan = prc.scan_fixture_all_markets(
         fixture_identity=fixture,
         research_xg=research_xg,
+        kickoff_utc_iso=inventory.kickoff_utc.isoformat(timespec="microseconds").replace("+00:00", "Z"),
         total_goals_lines=(1.5, 2.5),
         asian_handicap_home_lines=(-0.5, 0.0),
         provider_semantic_by_market={market: "SUPPORTED" for market in MarketId},
     )
-    context = object.__new__(CurrentShadowPriceContext)
-    fields = {
-        "fixture_identity": fixture,
-        "provider_event_id": event,
-        "evaluation_time": FIXED_NOW,
-        "scan": scan,
-        "prc_scan_sha256": c,
-        "provider_registry": None,
-        "provider_registry_sha256": d,
-        "provider_inventory": None,
-        "source_raw_sha256": a,
-        "source_manifest_sha256": b,
-        "source_inventory_sha256": c,
-        "fixture_reconciliation_sha256": d,
-        "current_mapping_rebind_sha256": e,
-        "bridge_bundle_sha256": f,
-        "source_context_policy_id": "P0.5_RUNTIME_SYNTHETIC_CONTEXT_V1",
-        "_bridge_bundle": None,
-        "_event_evidence": None,
-        "_complete_current_history": None,
-    }
-    for key, value in fields.items():
-        object.__setattr__(context, key, value)
+    history = object.__new__(CurrentLatestDurableFreshHistoryHandoff)
+    with _temporary_attribute(
+        pc_upcoming,
+        "verify_current_event_discovery_reconciliation_bundle",
+        verify_synthetic_bundle,
+    ), _temporary_attribute(
+        prc,
+        "scan_current_fixture_all_markets",
+        lambda **_kwargs: scan,
+    ):
+        context = build_current_shadow_price_context_from_reconciliation(
+            complete_current_history=history,
+            fixture_identity=fixture,
+            provider_event_id=event,
+            current_reconciliation_bundle=bundle,
+        )
+    object.__setattr__(context, "_p05_temporary_evidence_root", temporary_root)
 
-    kickoff = FIXED_NOW + timedelta(hours=3)
+    kickoff = inventory.kickoff_utc
 
     def quote(outcome: OutcomeId, odds: float, oid: str):
         return _issue_shadow_exact_quote(
@@ -432,17 +490,17 @@ def _make_shadow_context_and_quotes():
             provider_outcome_name=outcome.value,
             odds_raw=str(odds),
             decimal_odds=odds,
-            observed_at=FIXED_NOW,
+            observed_at=inventory.observed_at,
             kickoff_utc=kickoff,
-            source_raw_sha256=a,
-            source_manifest_sha256=b,
-            source_inventory_sha256=c,
+            source_raw_sha256=context.source_raw_sha256,
+            source_manifest_sha256=context.source_manifest_sha256,
+            source_inventory_sha256=context.source_inventory_sha256,
             provider_semantic_status="SUPPORTED",
-            provider_registry_sha256=d,
-            provider_observation_sha256=e,
-            fixture_reconciliation_sha256=d,
-            current_mapping_rebind_sha256=e,
-            bridge_bundle_sha256=f,
+            provider_registry_sha256=context.provider_registry_sha256,
+            provider_observation_sha256=hashlib.sha256(b"P0.5 exact fixture quote projection").hexdigest(),
+            fixture_reconciliation_sha256=context.fixture_reconciliation_sha256,
+            current_mapping_rebind_sha256=None,
+            bridge_bundle_sha256=None,
             bookable=True,
         )
 
@@ -451,7 +509,7 @@ def _make_shadow_context_and_quotes():
         quote(OutcomeId.DRAW, 5.0, "2"),
         quote(OutcomeId.AWAY, 10.0, "3"),
     )
-    return context, quotes
+    return context, quotes, pc_upcoming, bundle, prc, scan
 
 
 def _make_portfolio_source_and_leg(bundle: Any, decision: Any):
@@ -573,7 +631,7 @@ def _probe_current_shadow(source_commit: str, profile: str) -> tuple[dict[str, A
         root_authority_profile=profile,
         synthetic_case_id="CURRENT_SHADOW_SYNTHETIC_DECISION_CHAIN_V1",
     )
-    context, quotes = _make_shadow_context_and_quotes()
+    context, quotes, pc_upcoming, reconciliation_bundle, prc, scan = _make_shadow_context_and_quotes()
     observations: dict[str, Any] = {}
     guard_calls: list[str] = []
 
@@ -601,7 +659,7 @@ def _probe_current_shadow(source_commit: str, profile: str) -> tuple[dict[str, A
             optimized = portfolio.optimize_shadow_portfolio(
                 (source,),
                 target_size=1,
-                evaluation_time=FIXED_NOW,
+                evaluation_time=context.evaluation_time,
             )
         observations.update({
             "router_status": decision.status.value,
@@ -630,6 +688,19 @@ def _probe_current_shadow(source_commit: str, profile: str) -> tuple[dict[str, A
     )
 
     with ExitStack() as stack:
+        # The synthetic reconciliation is explicit test evidence only. The
+        # Current Shadow context verifier, Price-all replay and Router replay
+        # remain the source-controlled production implementations.
+        stack.enter_context(_temporary_attribute(
+            pc_upcoming,
+            "verify_current_event_discovery_reconciliation_bundle",
+            lambda value: _verify_exact_synthetic_reconciliation(value, reconciliation_bundle),
+        ))
+        stack.enter_context(_temporary_attribute(
+            prc,
+            "scan_current_fixture_all_markets",
+            lambda **_kwargs: scan,
+        ))
         # Actual supported request wrapper and actual daily wrapper execute.  Their
         # external worker is replaced by the deterministic decision worker above.
         stack.enter_context(scoped_callable_checkpoint(
@@ -679,22 +750,12 @@ def _probe_current_shadow(source_commit: str, profile: str) -> tuple[dict[str, A
             authority_category="PORTFOLIO_CONSTRUCTION",
         ))
 
-        # Only replay/verifier and external boundaries are replaced.  Price-all,
-        # Router and Portfolio algorithms above are not mocked.
-        stack.enter_context(_temporary_attribute(
-            price_all,
-            "verify_current_shadow_price_context",
-            lambda value: value,
-        ))
+        # Only synthetic quote inputs and side-effect boundaries are replaced.
+        # Source-context, Price-all bundle, and Router verification remain real.
         stack.enter_context(_temporary_attribute(
             price_all,
             "build_current_shadow_exact_quotes",
             lambda value: tuple(quotes),
-        ))
-        stack.enter_context(_temporary_attribute(
-            router,
-            "verify_shadow_price_all_bundle",
-            lambda value: value,
         ))
         stack.enter_context(_temporary_attribute(
             daily.bound,

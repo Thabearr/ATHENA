@@ -11,8 +11,8 @@ import pytest
 
 from domain import current_shadow_all_market_runner as runner
 from domain import current_shadow_sportybet_pc_upcoming_reconciliation as pc_upcoming
+from domain import current_shadow_all_market_portfolio as portfolio
 from scripts import execute_current_shadow_all_market as cli
-from scripts import execute_current_shadow_all_market_fresh_reprice as fresh_reprice
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 29, 12, 0, tzinfo=UTC)
@@ -103,18 +103,13 @@ def test_current_shadow_runtime_owner_is_the_reviewed_pc_upcoming_wrapper():
     )
 
 
-def test_existing_portfolio_and_fresh_reprice_seams_accept_exact_pc_bundle(monkeypatch):
+def test_portfolio_source_dispatch_accepts_exact_pc_bundle_without_runtime_patch(monkeypatch):
     bundle = object.__new__(pc_upcoming.CurrentShadowPcUpcomingReconciliationBundle)
     sentinel = object()
     monkeypatch.setattr(pc_upcoming, "verify_current_event_discovery_reconciliation_bundle",
                         lambda value: sentinel if value is bundle else None)
-    assert cli._PortfolioReconciliationFacade.verify_current_event_discovery_reconciliation_bundle(
-        bundle
-    ) is sentinel
-    verifier, error, basis = fresh_reprice._reconciliation_verifier_and_basis(bundle)
-    assert verifier is pc_upcoming.verify_current_event_discovery_reconciliation_bundle
-    assert error is pc_upcoming.PcUpcomingRuntimeReconciliationError
-    assert basis == "PCUPCOMING_RUNTIME_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION"
+    assert portfolio._verify_current_reconciliation_bundle(bundle) is sentinel
+    assert portfolio.reconciliation is not sentinel
 
 
 def test_provisional_receipt_exists_before_source_work(monkeypatch, tmp_path):

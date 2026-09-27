@@ -8,6 +8,11 @@ import pytest
 
 from domain import _all_market_shadow_current_binding as current_binding
 from domain import current_shadow_all_market_runner as runner
+from domain import current_shadow_all_market_portfolio as portfolio
+from domain import sportybet_current_event_discovery_reconciliation as pr251
+from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming
+from domain import current_shadow_sportybet_pc_upcoming_reconciliation as pc_upcoming
+from domain import current_shadow_sportybet_catalog_fanout_reconciliation as fanout
 from scripts import execute_current_shadow_all_market as cli
 
 
@@ -61,9 +66,10 @@ def test_worker_reuses_first_exact_pr151_lineage_snapshot(monkeypatch, tmp_path,
     )
     monkeypatch.setattr(runner.latest_history, "_build_with_readers", replay_builder)
 
-    def execute(*, target_size, output_dir):
+    def execute(*, target_size, output_dir, runtime_bindings):
         assert target_size == 20
         assert output_dir == tmp_path
+        assert runtime_bindings.policy_id == "ATHENA_CURRENT_SHADOW_RUNTIME_COMPOSITION_BINDINGS_V1"
         common = {
             "current_bootstrap": object(),
             "source_raw_json": b"source",
@@ -82,7 +88,7 @@ def test_worker_reuses_first_exact_pr151_lineage_snapshot(monkeypatch, tmp_path,
         assert second is second_history
         return SimpleNamespace(to_dict=lambda: {"status": "test", "wager_placed": False})
 
-    monkeypatch.setattr(runner, "execute_current_shadow_all_market", execute)
+    monkeypatch.setattr(runner, "_execute_current_shadow_all_market_with_bindings", execute)
 
     rc = cli._execute_once(Namespace(target_size=20, output_dir=tmp_path))
 
@@ -235,133 +241,31 @@ def test_worker_reuses_builder_issued_history_without_second_deep_replay(monkeyp
     assert fallback_calls == [(unknown_history, "FOTMOB:3")]
 
 
-def test_worker_reuses_only_a_successfully_verified_price_context(monkeypatch):
-    calls = []
-    source = SimpleNamespace(canonical_sha256="c" * 64)
-    verified = SimpleNamespace(canonical_sha256="c" * 64)
-
-    def exact_verify(value):
-        calls.append(value)
-        return verified
-
-    monkeypatch.setattr(
-        runner.price_module,
-        "verify_current_shadow_price_context",
-        exact_verify,
+def test_portfolio_reconciliation_dispatch_uses_exact_reviewed_verifiers(monkeypatch):
+    bundle_types = (
+        (pr251, pr251.SportyBetCurrentEventDiscoveryReconciliationBundle),
+        (upcoming, upcoming.CurrentShadowSportyBetUpcomingReconciliationBundle),
+        (pc_upcoming, pc_upcoming.CurrentShadowPcUpcomingReconciliationBundle),
+        (fanout, fanout.CurrentShadowSportyBetCatalogFanoutReconciliationBundle),
     )
-    monkeypatch.setattr(
-        cli.quote_binding,
-        "verify_current_shadow_price_context",
-        exact_verify,
-    )
-
-    original_price, original_quote = cli._install_price_context_verification_reuse()
-    try:
-        first = runner.price_module.verify_current_shadow_price_context(source)
-        second = cli.quote_binding.verify_current_shadow_price_context(source)
-        third = runner.price_module.verify_current_shadow_price_context(verified)
-    finally:
-        runner.price_module.verify_current_shadow_price_context = original_price
-        cli.quote_binding.verify_current_shadow_price_context = original_quote
-
-    assert first is verified
-    assert second is verified
-    assert third is verified
-    assert calls == [source]
-
-
-def test_worker_price_context_reuse_fails_closed_on_identity_drift(monkeypatch):
-    source = SimpleNamespace(canonical_sha256="c" * 64)
-    changed = SimpleNamespace(canonical_sha256="d" * 64)
-
-    monkeypatch.setattr(
-        runner.price_module,
-        "verify_current_shadow_price_context",
-        lambda _value: changed,
-    )
-    monkeypatch.setattr(
-        cli.quote_binding,
-        "verify_current_shadow_price_context",
-        lambda _value: changed,
-    )
-
-    original_price, original_quote = cli._install_price_context_verification_reuse()
-    try:
-        with pytest.raises(
-            runner.CurrentShadowAllMarketRunnerError,
-            match="verified Shadow price context identity drifted",
-        ):
-            runner.price_module.verify_current_shadow_price_context(source)
-    finally:
-        runner.price_module.verify_current_shadow_price_context = original_price
-        cli.quote_binding.verify_current_shadow_price_context = original_quote
-
-
-def test_worker_portfolio_reconciliation_dispatch_uses_exact_reviewed_verifier(monkeypatch):
-    pr251_bundle = object.__new__(
-        cli.pr251_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle
-    )
-    upcoming_bundle = object.__new__(
-        cli.upcoming_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle
-    )
-    catalog_bundle = object.__new__(
-        cli.catalog_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle
-    )
-    pr251_checked = object()
-    upcoming_checked = object()
-    catalog_checked = object()
-
-    monkeypatch.setattr(
-        cli.pr251_reconciliation,
-        "verify_current_event_discovery_reconciliation_bundle",
-        lambda value: pr251_checked if value is pr251_bundle else None,
-    )
-    monkeypatch.setattr(
-        cli.upcoming_reconciliation,
-        "verify_current_event_discovery_reconciliation_bundle",
-        lambda value: upcoming_checked if value is upcoming_bundle else None,
-    )
-    monkeypatch.setattr(
-        cli.catalog_reconciliation,
-        "verify_current_event_discovery_reconciliation_bundle",
-        lambda value: catalog_checked if value is catalog_bundle else None,
-    )
-
-    assert (
-        cli._PortfolioReconciliationFacade.verify_current_event_discovery_reconciliation_bundle(
-            pr251_bundle
+    original_module = portfolio.reconciliation
+    for module, bundle_type in bundle_types:
+        value = object.__new__(bundle_type)
+        expected = object()
+        monkeypatch.setattr(
+            module,
+            "verify_current_event_discovery_reconciliation_bundle",
+            lambda item, _value=value, _expected=expected: _expected if item is _value else None,
         )
-        is pr251_checked
-    )
-    assert (
-        cli._PortfolioReconciliationFacade.verify_current_event_discovery_reconciliation_bundle(
-            upcoming_bundle
-        )
-        is upcoming_checked
-    )
-    assert (
-        cli._PortfolioReconciliationFacade.verify_current_event_discovery_reconciliation_bundle(
-            catalog_bundle
-        )
-        is catalog_checked
-    )
+        assert portfolio._verify_current_reconciliation_bundle(value) is expected
+    assert portfolio.reconciliation is original_module
 
 
-def test_worker_portfolio_reconciliation_dispatch_rejects_unknown_type():
-    with pytest.raises(
-        cli.pr251_reconciliation.SportyBetCurrentEventDiscoveryError,
-        match="exact reviewed current reconciliation bundle",
-    ):
-        cli._PortfolioReconciliationFacade.verify_current_event_discovery_reconciliation_bundle(
-            object()
-        )
+def test_portfolio_reconciliation_dispatch_rejects_unknown_type():
+    with pytest.raises(portfolio.CurrentShadowPortfolioError, match="exact reviewed"):
+        portfolio._verify_current_reconciliation_bundle(object())
 
 
-def test_worker_installs_and_restores_portfolio_reconciliation_dispatch():
-    original = runner.portfolio_module.reconciliation
-    installed_over = cli._install_portfolio_reconciliation_dispatch()
-    try:
-        assert installed_over is original
-        assert runner.portfolio_module.reconciliation is cli._PortfolioReconciliationFacade
-    finally:
-        runner.portfolio_module.reconciliation = original
+def test_semantic_verifier_and_portfolio_runtime_installers_are_removed():
+    assert not hasattr(cli, "_install_price_context_verification_reuse")
+    assert not hasattr(cli, "_install_portfolio_reconciliation_dispatch")

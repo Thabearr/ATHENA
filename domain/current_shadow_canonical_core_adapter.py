@@ -239,6 +239,13 @@ def build_current_shadow_price_context(*args: Any, **kwargs: Any) -> Any:
 
 def build_current_shadow_price_context_from_reconciliation(*args: Any, **kwargs: Any) -> Any:
     # Source/context construction remains a SHADOW orchestration concern in P2.1.
+    runtime_bindings = kwargs.pop("runtime_bindings", None)
+    if runtime_bindings is not None:
+        return _legacy_price._build_current_shadow_price_context_from_reconciliation_bound(
+            *args,
+            runtime_bindings=runtime_bindings,
+            **kwargs,
+        )
     return _legacy_price.build_current_shadow_price_context_from_reconciliation(
         *args, **kwargs
     )
@@ -248,34 +255,16 @@ def verify_current_shadow_price_context(value: Any) -> Any:
     return _underlying_verify_current_shadow_price_context(value)
 
 
-def _with_price_context_verifier(callable_obj: Any, *args: Any, **kwargs: Any) -> Any:
-    """Honor the worker's exact price-context verification reuse seam.
-
-    Before P2.1 the runner exported the legacy Price-all module directly, so a
-    worker monkeypatch of ``runner.price_module.verify_current_shadow_price_context``
-    also changed the verifier used internally by ``price_all_shadow_fixture``.
-    The compatibility adapter preserves that behavior by installing the current
-    adapter-level verifier only for the duration of the delegated call.
-    """
-
-    original = _legacy_price.verify_current_shadow_price_context
-    _legacy_price.verify_current_shadow_price_context = verify_current_shadow_price_context
-    try:
-        return callable_obj(*args, **kwargs)
-    finally:
-        _legacy_price.verify_current_shadow_price_context = original
-
-
 def price_all_shadow_fixture(context: Any) -> Any:
     """Compatibility execution guarded by the canonical Price-all owner."""
 
     _require_price_or_shadow_error()
-    return _with_price_context_verifier(_legacy_price.price_all_shadow_fixture, context)
+    return _legacy_price.price_all_shadow_fixture(context)
 
 
 def verify_shadow_price_all_bundle(value: Any) -> Any:
     _require_price_or_shadow_error()
-    return _with_price_context_verifier(_legacy_price.verify_shadow_price_all_bundle, value)
+    return _legacy_price.verify_shadow_price_all_bundle(value)
 
 
 def route_shadow_price_results(value: Any) -> Any:
@@ -285,38 +274,21 @@ def route_shadow_price_results(value: Any) -> Any:
     return _legacy_router.route_shadow_price_results(value)
 
 
-def _with_portfolio_reconciliation(callable_obj: Any, *args: Any, **kwargs: Any) -> Any:
-    """Honor the existing worker's bounded reconciliation monkeypatch seam."""
-
-    original = _legacy_portfolio.reconciliation
-    _legacy_portfolio.reconciliation = reconciliation
-    try:
-        return callable_obj(*args, **kwargs)
-    finally:
-        _legacy_portfolio.reconciliation = original
-
-
 def build_shadow_portfolio_router_input(*args: Any, **kwargs: Any) -> Any:
     _require_portfolio_or_legacy_error()
-    return _with_portfolio_reconciliation(
-        _legacy_portfolio.build_shadow_portfolio_router_input, *args, **kwargs
-    )
+    return _legacy_portfolio.build_shadow_portfolio_router_input(*args, **kwargs)
 
 
 def verify_shadow_portfolio_router_input(value: Any) -> Any:
     _require_portfolio_or_legacy_error()
-    return _with_portfolio_reconciliation(
-        _legacy_portfolio.verify_shadow_portfolio_router_input, value
-    )
+    return _legacy_portfolio.verify_shadow_portfolio_router_input(value)
 
 
 def optimize_shadow_portfolio(*args: Any, **kwargs: Any) -> Any:
     """Compatibility execution guarded by the canonical Portfolio owner."""
 
     _require_portfolio_or_legacy_error()
-    return _with_portfolio_reconciliation(
-        _legacy_portfolio.optimize_shadow_portfolio, *args, **kwargs
-    )
+    return _legacy_portfolio.optimize_shadow_portfolio(*args, **kwargs)
 
 
 def _diagnostics(*args: Any, **kwargs: Any) -> Any:

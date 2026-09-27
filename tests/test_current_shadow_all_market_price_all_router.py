@@ -62,7 +62,7 @@ def _retained_evidence(tmp_path:Path):
 def test_quotes_are_derived_from_typed_prb_semantics_over_replayed_inventory(tmp_path,monkeypatch):
     evidence=_retained_evidence(tmp_path); registry=prb.build_registry((evidence,),evaluation_time=NOW,scan_cap=1,scan_attempts=1)
     context=object.__new__(CurrentShadowPriceContext)
-    fields={"fixture_identity":FIXTURE,"provider_event_id":EVENT,"provider_registry":registry,"provider_registry_sha256":registry.canonical_sha256,"provider_inventory":evidence.inventory,"source_raw_sha256":evidence.inventory.source_raw_sha256,"source_manifest_sha256":evidence.inventory.source_manifest_sha256,"source_inventory_sha256":evidence.inventory.canonical_sha256,"fixture_reconciliation_sha256":D,"current_mapping_rebind_sha256":E,"bridge_bundle_sha256":F}
+    fields={"fixture_identity":FIXTURE,"provider_event_id":EVENT,"evaluation_time":NOW,"prc_scan_sha256":C,"provider_registry":registry,"provider_registry_sha256":registry.canonical_sha256,"provider_inventory":evidence.inventory,"source_raw_sha256":evidence.inventory.source_raw_sha256,"source_manifest_sha256":evidence.inventory.source_manifest_sha256,"source_inventory_sha256":evidence.inventory.canonical_sha256,"fixture_reconciliation_sha256":D,"current_mapping_rebind_sha256":E,"bridge_bundle_sha256":F,"source_context_mode":"LEGACY_PR253_FIXTURE_BRIDGE","source_context_policy_id":"synthetic-test-policy"}
     for k,v in fields.items(): object.__setattr__(context,k,v)
     monkeypatch.setattr("domain._current_shadow_quote_binding.verify_current_shadow_price_context",lambda value:value)
     quotes=build_current_shadow_exact_quotes(context)

@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""PR-F wrapper binding fresh reprice contexts into Price-all verification.
+"""PR-F process supervisor for the explicit Current Shadow runtime binding.
 
-The fresh-reprice worker patches the quote-binding verifier so same-process
-fresh direct-event contexts remain replay-checkable.  ``current_shadow_all_market_price_all``
-imports that verifier by value, so its module-local alias must delegate to the
-currently installed quote-binding verifier while the worker runs.
+This wrapper owns only the reviewed bounded supervisor timeout. Fresh-reprice
+context validity is source-controlled domain semantics and does not depend on
+verifier relay mutation.
 
 Run #32 proved that the fresh-reprice path could reach the reviewed
 SHARE_CODE_CREATE_RELOAD boundary only at the end of the generic 50-minute
@@ -24,7 +23,6 @@ import os
 import subprocess
 import sys
 
-from domain import _current_shadow_quote_binding as quote_binding
 from domain import current_shadow_all_market_runner as runner
 from scripts import execute_current_shadow_all_market as cli
 from scripts import execute_current_shadow_all_market_fresh_reprice as fresh_cli
@@ -59,18 +57,7 @@ def _write_timeout_receipt(*, target_size: int, output_dir):
 
 
 def _execute_worker(args) -> int:
-    original = runner.price_module.verify_current_shadow_price_context
-
-    def current_quote_binding_verifier(value):
-        return quote_binding.verify_current_shadow_price_context(value)
-
-    runner.price_module.verify_current_shadow_price_context = (
-        current_quote_binding_verifier
-    )
-    try:
-        return fresh_cli._execute_worker(args)
-    finally:
-        runner.price_module.verify_current_shadow_price_context = original
+    return fresh_cli._execute_worker(args)
 
 
 def main(argv: list[str] | None = None) -> int:

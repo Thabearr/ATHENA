@@ -11,35 +11,25 @@ from scripts import execute_current_shadow_all_market_fresh_reprice as fresh_cli
 from scripts import execute_current_shadow_all_market_fresh_reprice_bound as bound
 
 
-def test_bound_worker_delegates_price_all_verification_to_installed_quote_binding(monkeypatch):
+def test_bound_worker_does_not_relay_semantic_verifier_mutations(monkeypatch):
     original_price_verify = runner.price_module.verify_current_shadow_price_context
     original_quote_verify = quote_binding.verify_current_shadow_price_context
-    seen = []
 
     def fake_fresh_worker(_args):
-        def installed(value):
-            seen.append(value)
-            return ("fresh", value)
-
-        quote_binding.verify_current_shadow_price_context = installed
-        try:
-            assert runner.price_module.verify_current_shadow_price_context("context") == (
-                "fresh",
-                "context",
-            )
-            return 17
-        finally:
-            quote_binding.verify_current_shadow_price_context = original_quote_verify
+        assert quote_binding.verify_current_shadow_price_context is original_quote_verify
+        assert runner.price_module.verify_current_shadow_price_context is original_price_verify
+        return 17
 
     monkeypatch.setattr(fresh_cli, "_execute_worker", fake_fresh_worker)
 
     assert bound._execute_worker(SimpleNamespace()) == 17
-    assert seen == ["context"]
+    assert quote_binding.verify_current_shadow_price_context is original_quote_verify
     assert runner.price_module.verify_current_shadow_price_context is original_price_verify
 
 
-def test_bound_worker_restores_price_all_verifier_after_failure(monkeypatch):
+def test_bound_worker_leaves_semantic_verifiers_unchanged_after_failure(monkeypatch):
     original_price_verify = runner.price_module.verify_current_shadow_price_context
+    original_quote_verify = quote_binding.verify_current_shadow_price_context
 
     def boom(_args):
         raise RuntimeError("worker failed")
@@ -49,6 +39,7 @@ def test_bound_worker_restores_price_all_verifier_after_failure(monkeypatch):
     with pytest.raises(RuntimeError, match="worker failed"):
         bound._execute_worker(SimpleNamespace())
 
+    assert quote_binding.verify_current_shadow_price_context is original_quote_verify
     assert runner.price_module.verify_current_shadow_price_context is original_price_verify
 
 

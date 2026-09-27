@@ -36,7 +36,7 @@ from domain._current_shadow_quote_binding import (
 )
 
 
-def _price_context(context: CurrentShadowPriceContext) -> ShadowPriceAllBundle:
+def _price_context(context: CurrentShadowPriceContext, *, runtime_bindings: Any) -> ShadowPriceAllBundle:
     quotes = build_current_shadow_exact_quotes(context)
     probability_bundle = market_probability_bundle_from_current_shadow_fixture_scan(
         context.scan
@@ -115,18 +115,36 @@ def _price_context(context: CurrentShadowPriceContext) -> ShadowPriceAllBundle:
     )
 
 
+def _price_all_shadow_fixture(
+    context: CurrentShadowPriceContext,
+    *,
+    runtime_bindings: Any,
+) -> ShadowPriceAllBundle:
+    verified = runtime_bindings.verify_context(context)
+    return _price_context(verified, runtime_bindings=runtime_bindings)
+
+
 def price_all_shadow_fixture(context: CurrentShadowPriceContext) -> ShadowPriceAllBundle:
-    verified = verify_current_shadow_price_context(context)
-    return _price_context(verified)
+    from domain.current_shadow_runtime_bindings import runtime_bindings_for_context
+
+    return runtime_bindings_for_context(context).price_all(context)
+
+
+def _verify_shadow_price_all_bundle(value: Any, *, runtime_bindings: Any) -> ShadowPriceAllBundle:
+    if type(value) is not ShadowPriceAllBundle:
+        raise ShadowPriceError("value must be exact ShadowPriceAllBundle")
+    rebuilt = runtime_bindings.price_all(value._context)
+    if _canonical_bytes(value.to_dict()) != _canonical_bytes(rebuilt.to_dict()):
+        raise ShadowPriceError("Shadow Price-all bundle differs on exact source replay")
+    return rebuilt
 
 
 def verify_shadow_price_all_bundle(value: Any) -> ShadowPriceAllBundle:
     if type(value) is not ShadowPriceAllBundle:
         raise ShadowPriceError("value must be exact ShadowPriceAllBundle")
-    rebuilt = price_all_shadow_fixture(value._context)
-    if _canonical_bytes(value.to_dict()) != _canonical_bytes(rebuilt.to_dict()):
-        raise ShadowPriceError("Shadow Price-all bundle differs on exact source replay")
-    return rebuilt
+    from domain.current_shadow_runtime_bindings import runtime_bindings_for_context
+
+    return runtime_bindings_for_context(value._context).verify_price_all_bundle(value)
 
 
 __all__ = [

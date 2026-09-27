@@ -55,6 +55,7 @@ from domain._current_shadow_price_records import (
 )
 from domain._current_shadow_quote_binding import (
     CURRENT_RECONCILIATION_DIRECT,
+    FRESH_REPRICE_MODE,
     build_current_shadow_exact_quotes,
 )
 from domain.markets import MARKET_REGISTRY, MarketFamily, MarketId, OutcomeId
@@ -203,18 +204,39 @@ class ShadowPortfolioRouterInput:
         }
 
 
-def build_shadow_portfolio_router_input(
+def _verify_current_reconciliation_bundle(value: Any) -> Any:
+    """Dispatch only exact reviewed reconciliation bundle types."""
+
+    from domain import current_shadow_sportybet_catalog_fanout_reconciliation as fanout
+    from domain import current_shadow_sportybet_pc_upcoming_reconciliation as pc_upcoming
+    from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming
+
+    if type(value) is reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle:
+        return reconciliation.verify_current_event_discovery_reconciliation_bundle(value)
+    if type(value) is upcoming.CurrentShadowSportyBetUpcomingReconciliationBundle:
+        return upcoming.verify_current_event_discovery_reconciliation_bundle(value)
+    if type(value) is pc_upcoming.CurrentShadowPcUpcomingReconciliationBundle:
+        return pc_upcoming.verify_current_event_discovery_reconciliation_bundle(value)
+    if type(value) is fanout.CurrentShadowSportyBetCatalogFanoutReconciliationBundle:
+        return fanout.verify_current_event_discovery_reconciliation_bundle(value)
+    raise CurrentShadowPortfolioError(
+        "value must be an exact reviewed current reconciliation bundle"
+    )
+
+
+def _build_shadow_portfolio_router_input(
     *,
     price_all_bundle: ShadowPriceAllBundle,
     router_decision: ShadowMarketRouterDecision,
+    runtime_bindings: Any,
 ) -> ShadowPortfolioRouterInput:
     if type(price_all_bundle) is not ShadowPriceAllBundle:
         raise CurrentShadowPortfolioError("price_all_bundle must be exact ShadowPriceAllBundle")
     if type(router_decision) is not ShadowMarketRouterDecision:
         raise CurrentShadowPortfolioError("router_decision must be exact ShadowMarketRouterDecision")
     try:
-        checked_bundle = price_all.verify_shadow_price_all_bundle(price_all_bundle)
-        rebuilt_decision = router.route_shadow_price_results(checked_bundle)
+        checked_bundle = runtime_bindings.verify_price_all_bundle(price_all_bundle)
+        rebuilt_decision = runtime_bindings.route(checked_bundle)
     except ShadowPriceError as exc:
         raise CurrentShadowPortfolioError("PR-D exact source/Router reconstruction failed") from exc
     if _canonical(rebuilt_decision.to_dict()) != _canonical(router_decision.to_dict()):
@@ -223,28 +245,28 @@ def build_shadow_portfolio_router_input(
         raise CurrentShadowPortfolioError("Router/Price-all SHA identity mismatch")
 
     context = checked_bundle._context
-    if context.source_context_mode != CURRENT_RECONCILIATION_DIRECT:
+    fresh_reprice = context.source_context_mode == FRESH_REPRICE_MODE
+    if context.source_context_mode != CURRENT_RECONCILIATION_DIRECT and not fresh_reprice:
         raise CurrentShadowPortfolioError(
-            "PR-E current Portfolio requires direct current-reconciliation PR-D context"
+            "Portfolio requires a reviewed current-reconciliation source context"
         )
+    if fresh_reprice and not runtime_bindings.fresh_reprice_enabled:
+        raise CurrentShadowPortfolioError("fresh-reprice Portfolio requires its explicit runtime binding")
+    if (
+        fresh_reprice
+        and (context._bridge_bundle is not None
+             or context.current_mapping_rebind_sha256 is not None
+             or context.bridge_bundle_sha256 is not None)
+    ):
+        raise CurrentShadowPortfolioError("fresh-reprice Portfolio cannot fabricate legacy bridge identity")
     if context._current_reconciliation_bundle is None:
         raise CurrentShadowPortfolioError("PR-D context omitted retained current reconciliation")
     bundle = context._current_reconciliation_bundle
-    from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming_reconciliation
-    from domain import current_shadow_sportybet_pc_upcoming_reconciliation as pc_upcoming_reconciliation
-
-    if type(bundle) is upcoming_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle:
-        verifier = upcoming_reconciliation.verify_current_event_discovery_reconciliation_bundle
-        error_cls = upcoming_reconciliation.CurrentShadowSportyBetUpcomingReconciliationError
-    elif type(bundle) is pc_upcoming_reconciliation.CurrentShadowPcUpcomingReconciliationBundle:
-        verifier = pc_upcoming_reconciliation.verify_current_event_discovery_reconciliation_bundle
-        error_cls = pc_upcoming_reconciliation.PcUpcomingRuntimeReconciliationError
-    else:
-        verifier = reconciliation.verify_current_event_discovery_reconciliation_bundle
-        error_cls = reconciliation.SportyBetCurrentEventDiscoveryError
     try:
-        reconciled = verifier(bundle)
-    except error_cls as exc:
+        reconciled = _verify_current_reconciliation_bundle(bundle)
+    except Exception as exc:
+        if isinstance(exc, CurrentShadowPortfolioError):
+            raise
         raise CurrentShadowPortfolioError("current reconciliation source replay failed") from exc
     if reconciled.canonical_sha256 != context.fixture_reconciliation_sha256:
         raise CurrentShadowPortfolioError("retained reconciliation SHA differs from PR-D context")
@@ -265,11 +287,21 @@ def build_shadow_portfolio_router_input(
     if row.competition_name is None:
         raise CurrentShadowPortfolioError("Portfolio exposure requires source-proven competition")
     inventory = context.provider_inventory
-    if (
+    identity_facts_differ = (
         row.home_team_name != inventory.home_team_name
         or row.away_team_name != inventory.away_team_name
         or row.kickoff_utc != inventory.kickoff_utc
-        or row.direct_event_observed_at != inventory.observed_at
+    )
+    if identity_facts_differ:
+        raise CurrentShadowPortfolioError("Portfolio exposure differs from retained exact provider evidence")
+    if fresh_reprice:
+        if (
+            inventory.observed_at <= row.direct_event_observed_at
+            or context.evaluation_time != inventory.observed_at
+        ):
+            raise CurrentShadowPortfolioError("fresh Portfolio quote is not strictly newer than reconciliation")
+    elif (
+        row.direct_event_observed_at != inventory.observed_at
         or row.direct_event_raw_sha256 != inventory.source_raw_sha256
         or row.direct_event_manifest_sha256 != inventory.source_manifest_sha256
         or row.direct_event_inventory_sha256 != inventory.canonical_sha256
@@ -298,10 +330,29 @@ def build_shadow_portfolio_router_input(
     return value
 
 
+def build_shadow_portfolio_router_input(
+    *,
+    price_all_bundle: ShadowPriceAllBundle,
+    router_decision: ShadowMarketRouterDecision,
+) -> ShadowPortfolioRouterInput:
+    if type(price_all_bundle) is not ShadowPriceAllBundle:
+        raise CurrentShadowPortfolioError("price_all_bundle must be exact ShadowPriceAllBundle")
+    from domain.current_shadow_runtime_bindings import runtime_bindings_for_context
+
+    bindings = runtime_bindings_for_context(price_all_bundle._context)
+    return bindings.build_portfolio_router_input(
+        price_all_bundle=price_all_bundle,
+        router_decision=router_decision,
+    )
+
+
 def verify_shadow_portfolio_router_input(value: Any) -> ShadowPortfolioRouterInput:
     if type(value) is not ShadowPortfolioRouterInput:
         raise CurrentShadowPortfolioError("value must be exact ShadowPortfolioRouterInput")
-    rebuilt = build_shadow_portfolio_router_input(
+    from domain.current_shadow_runtime_bindings import runtime_bindings_for_context
+
+    bindings = runtime_bindings_for_context(value.price_all_bundle._context)
+    rebuilt = bindings.build_portfolio_router_input(
         price_all_bundle=value.price_all_bundle,
         router_decision=value.router_decision,
     )
@@ -896,11 +947,12 @@ def _diagnostics(
     return tuple(market_rows), tuple(family_rows), fixture_funnel, opportunity_funnel
 
 
-def optimize_shadow_portfolio(
+def _optimize_shadow_portfolio(
     router_inputs: Iterable[ShadowPortfolioRouterInput],
     *,
     target_size: int,
     evaluation_time: datetime,
+    runtime_bindings: Any = None,
 ) -> ShadowPortfolioOptimization:
     frozen_contract = _validate_frozen_policy()
     now = _utc(evaluation_time, "evaluation_time")
@@ -911,7 +963,21 @@ def optimize_shadow_portfolio(
     supplied = tuple(router_inputs)
     if any(type(item) is not ShadowPortfolioRouterInput for item in supplied):
         raise CurrentShadowPortfolioError("router_inputs must contain exact ShadowPortfolioRouterInput values")
-    verified = tuple(verify_shadow_portfolio_router_input(item) for item in supplied)
+    verified_rows = []
+    for item in supplied:
+        if runtime_bindings is not None:
+            from domain.current_shadow_runtime_bindings import runtime_bindings_for_context
+
+            item_bindings = runtime_bindings_for_context(item.price_all_bundle._context)
+            if (
+                item_bindings.policy_id != runtime_bindings.policy_id
+                or item_bindings.canonical_sha256 != runtime_bindings.canonical_sha256
+            ):
+                raise CurrentShadowPortfolioError(
+                    "Portfolio input execution binding differs from the run composition"
+                )
+        verified_rows.append(verify_shadow_portfolio_router_input(item))
+    verified = tuple(verified_rows)
     fixture_ids = [item.fixture_identity for item in verified]
     event_ids = [item.provider_event_id for item in verified]
     if len(fixture_ids) != len(set(fixture_ids)):
@@ -1012,6 +1078,20 @@ def optimize_shadow_portfolio(
     }.items():
         object.__setattr__(value, name, item)
     return value
+
+
+def optimize_shadow_portfolio(
+    router_inputs: Iterable[ShadowPortfolioRouterInput],
+    *,
+    target_size: int,
+    evaluation_time: datetime,
+) -> ShadowPortfolioOptimization:
+    return _optimize_shadow_portfolio(
+        router_inputs,
+        target_size=target_size,
+        evaluation_time=evaluation_time,
+        runtime_bindings=None,
+    )
 
 
 def verify_shadow_portfolio_optimization(value: Any) -> ShadowPortfolioOptimization:
