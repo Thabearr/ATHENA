@@ -1,0 +1,366 @@
+{
+  "schema_version": 1,
+  "policy_id": "ATHENA_P4_4R_SHADOW_RUNTIME_COMPOSITION_STABILIZATION_V1",
+  "repository": "Thabearr/ATHENA",
+  "base_main_sha": "47326a934aabe34052c804a6941a702e52710b12",
+  "source_review_counter_while_unmerged": "3/5",
+  "p4_4_complete": false,
+  "architecture_checkpoint_e_complete": false,
+  "canonical_shadow_successor_proof_complete": false,
+  "trigger": {
+    "run_id": 36285099805,
+    "workflow_event": "workflow_dispatch",
+    "attempt": 1,
+    "head_sha": "47326a934aabe34052c804a6941a702e52710b12",
+    "workflow_conclusion": "success",
+    "business_status": "RESEARCH_NO_CODE_SOURCE_INCOMPLETE",
+    "business_reason": "SOURCE_CHAIN_FAILED:ShadowPriceError:unknown current Shadow source-context mode",
+    "artifact_id": 10920404872,
+    "artifact_name": "athena-run-36285099805",
+    "artifact_zip_sha256": "1e1c1e315d0bafe1cbec5c0fde1be2cba9832cca56e4ce64a582a51b57662ace",
+    "canonical_run_receipt_sha256": "ac61df7db771239adaee2468ba6e5ae36152aa24b9dff53290f792048a3bc612",
+    "inner_current_shadow_receipt_sha256": "01ea33d43138e178079b4279c983eb2bb46b91bc05a7247ee9e33f988dfb1718",
+    "price_stage_diagnostic_sha256": "af2826dbee57caf9ea1e80d0d82e535c72dabf8676a1300057efe063c7e2e1dd",
+    "last_durable_stage": "ROUTER_STARTED",
+    "failure_fixture_identity": "FOTMOB:5071393",
+    "failure_provider_event_id": "sr:match:66299604",
+    "initial_event_observed_at": "2026-09-27T01:19:05.661325Z",
+    "initial_event_raw_sha256": "4e42b9b38e33a2d9d7d839f0f6a36c7849a0f4043d4cdfdce40cad59c9de0bc8",
+    "fresh_event_observed_at": "2026-09-27T01:55:27.176214Z",
+    "fresh_event_raw_sha256": "d4f08a6f7293943e99a4a2db94d545714dee55e3d14335ad593a16f5154ff33a",
+    "known_counts": {
+      "provider_event_count": 692,
+      "reviewed_fixture_count": 21,
+      "reconciled_fixture_count": 12,
+      "priced_fixture_count": 12,
+      "router_selected_count": 10,
+      "router_no_bet_count": 2,
+      "selected_leg_count": 0,
+      "shortfall": 20,
+      "wager_placed": false
+    }
+  },
+  "retained_artifact_qualification": {
+    "retrieved_from_github_artifact_id": 10920404872,
+    "retrieved_once": true,
+    "published_digest_matched_local_zip": true,
+    "zip_entry_count": 70,
+    "exact_live_provider_bytes_used": true,
+    "synthetic_model_history_context_used_for_offline_composition": true,
+    "byte_for_byte_full_live_run_replay_claimed": false,
+    "retained_files": [
+      {
+        "artifact_path": "athena-run-workflow/resolved-run-request.json",
+        "bytes": 277,
+        "sha256": "0142610f7c9fd1eec15b00da8ca13ecf4d2efc107b6b6d60e6e32e0841aaf3c4",
+        "role": "Exact resolved request identity; provenance only.",
+        "sufficient_for_offline_reconstruction": false
+      },
+      {
+        "artifact_path": "athena-runs/0142610f7c9fd1eec15b00da8ca13ecf4d2efc107b6b6d60e6e32e0841aaf3c4/athena-run-receipt.json",
+        "bytes": 2963567,
+        "sha256": "ac61df7db771239adaee2468ba6e5ae36152aa24b9dff53290f792048a3bc612",
+        "role": "Canonical run receipt, terminal business status, source/runtime lineage.",
+        "sufficient_for_offline_reconstruction": false
+      },
+      {
+        "artifact_path": "athena-runs/0142610f7c9fd1eec15b00da8ca13ecf4d2efc107b6b6d60e6e32e0841aaf3c4/current-shadow/current-shadow-all-market-run-receipt.json",
+        "bytes": 1177761,
+        "sha256": "01ea33d43138e178079b4279c983eb2bb46b91bc05a7247ee9e33f988dfb1718",
+        "role": "Inner Current Shadow receipt and source/pricing stage record.",
+        "sufficient_for_offline_reconstruction": false
+      },
+      {
+        "artifact_path": "athena-runs/0142610f7c9fd1eec15b00da8ca13ecf4d2efc107b6b6d60e6e32e0841aaf3c4/current-shadow/current-shadow-price-stage-diagnostic.json",
+        "bytes": 265,
+        "sha256": "af2826dbee57caf9ea1e80d0d82e535c72dabf8676a1300057efe063c7e2e1dd",
+        "role": "Durable failure boundary: Router started for FOTMOB:5071393 / sr:match:66299604.",
+        "sufficient_for_offline_reconstruction": true
+      },
+      {
+        "artifact_path": "athena-run-workflow/source-evidence/current-shadow-sportybet-pc-upcoming-discovery/manifest.json",
+        "bytes": 480860,
+        "sha256": "17436da36f2e39c3d041cb487160dffbf3a7c68115985ce83576b4e432cf2594",
+        "role": "Accepted complete pcUpcoming manifest; page ancestry and total count.",
+        "sufficient_for_offline_reconstruction": "proves artifact ancestry; full seven-page semantic replay requires the retained pages"
+      },
+      {
+        "artifact_path": "athena-run-workflow/source-evidence/current-shadow-sportybet-pc-upcoming-discovery/pages/page-001.raw.json",
+        "bytes": 203764,
+        "sha256": "a525f072d0648a5110e85da1d970f8e773348cee8a15c091969f6bb4452857ea",
+        "role": "Exact retained source page containing the failed fixture's provider-native event row.",
+        "sufficient_for_offline_reconstruction": true
+      },
+      {
+        "artifact_path": "athena-run-workflow/source-evidence/sportybet-live-event-quote-evidence/1aec7fa77430c1f7ab99b957/event.raw.json",
+        "bytes": 634211,
+        "sha256": "4e42b9b38e33a2d9d7d839f0f6a36c7849a0f4043d4cdfdce40cad59c9de0bc8",
+        "role": "Exact initial direct-event bytes for sr:match:66299604.",
+        "sufficient_for_offline_reconstruction": true
+      },
+      {
+        "artifact_path": "athena-run-workflow/source-evidence/sportybet-live-event-quote-evidence/1aec7fa77430c1f7ab99b957/manifest.json",
+        "bytes": 1374,
+        "sha256": "f2515e5f02682a05b6d3e1cd48f03b08085f0567baf56dfce38244a63e99892e",
+        "role": "Exact initial event response request/time/hash ancestry.",
+        "sufficient_for_offline_reconstruction": true
+      },
+      {
+        "artifact_path": "athena-run-workflow/source-evidence/sportybet-live-event-quote-evidence/70e9dad393d0b396357753c2/event.raw.json",
+        "bytes": 628901,
+        "sha256": "d4f08a6f7293943e99a4a2db94d545714dee55e3d14335ad593a16f5154ff33a",
+        "role": "Exact fresh direct-event bytes for sr:match:66299604.",
+        "sufficient_for_offline_reconstruction": true
+      },
+      {
+        "artifact_path": "athena-run-workflow/source-evidence/sportybet-live-event-quote-evidence/70e9dad393d0b396357753c2/manifest.json",
+        "bytes": 1374,
+        "sha256": "83a0f4b1a6240f2e21ab6d97ef4e4d1863dc7b5ee49953f9efaf9aed64bb5bd6",
+        "role": "Exact fresh event response request/time/hash ancestry.",
+        "sufficient_for_offline_reconstruction": true
+      },
+      {
+        "artifact_path": "athena-run-workflow/source-evidence/current-shadow-sportybet-pc-upcoming-discovery/runtime-capture-stabilization.json",
+        "bytes": 1396,
+        "sha256": "e904cb27f9a465da536ee31d94f3714f43e24220193589fdbfe81a87bfc914d1",
+        "role": "P4.4O accepted-attempt and one-epoch stabilization identity.",
+        "sufficient_for_offline_reconstruction": false
+      },
+      {
+        "artifact_path": "athena-run-workflow/source-evidence/fotmob-data-matches-captures/20260927/ab339104c9ab7c428ad2d2c0/response.json",
+        "bytes": 156173,
+        "sha256": "7df217a0db5635cfea7fd458708e4bcdaf9460b399549b2c69ba2ecb059d7dac",
+        "role": "Exact retained FotMob capture associated with the live proof request.",
+        "sufficient_for_offline_reconstruction": "candidate/source evidence only; full history handoff is not embedded"
+      }
+    ],
+    "explicit_exclusions": [
+      "Full live durable-history/model handoff cannot be reconstructed solely from this artifact without GitHub history evidence; synthetic history/model inputs are labeled synthetic in replay tests.",
+      "No missing provider response or source row is reacquired or backfilled.",
+      "A complete byte-for-byte replay of the whole live run is not claimed."
+    ]
+  },
+  "composition_inventory_path": "artifacts/architecture/p4_4r_shadow_runtime_composition_inventory_v1.json",
+  "composition_inventory_sha256": "d1e1bb524c01f723fffc5cebe6133a1696f953c636e746a65054d10b33a57ca1",
+  "evidence_classification": "REAL_RETAINED_PROVIDER_EVIDENCE_PLUS_SYNTHETIC_MODEL_HISTORY_COMPOSITION",
+  "offline_only_authority": {
+    "provider_acquisition_during_implementation": 0,
+    "workflow_dispatches_during_implementation": 0,
+    "live_retries": 0,
+    "share_code_network_actions": 0,
+    "email_network_actions": 0,
+    "login": false,
+    "cookies": false,
+    "wallet": false,
+    "staking": false,
+    "bet": false,
+    "wager_placed": false,
+    "main_authority_expansion": false,
+    "caller_migration": false,
+    "workflow_retirement": false,
+    "next_live_proof_authorized": false
+  },
+  "offline_fixture_files": [
+    {
+      "artifact_path": "athena-run-workflow/source-evidence/sportybet-live-event-quote-evidence/1aec7fa77430c1f7ab99b957/event.raw.json",
+      "repository_path": "tests/fixtures/p4_4r_run_36285099805_quote_evidence/initial/event.raw.json",
+      "bytes": 634211,
+      "sha256": "4e42b9b38e33a2d9d7d839f0f6a36c7849a0f4043d4cdfdce40cad59c9de0bc8",
+      "role": "Exact retained initial direct-event response bytes; provider semantic replay input."
+    },
+    {
+      "artifact_path": "athena-run-workflow/source-evidence/sportybet-live-event-quote-evidence/1aec7fa77430c1f7ab99b957/manifest.json",
+      "repository_path": "tests/fixtures/p4_4r_run_36285099805_quote_evidence/initial/manifest.json",
+      "bytes": 1374,
+      "sha256": "f2515e5f02682a05b6d3e1cd48f03b08085f0567baf56dfce38244a63e99892e",
+      "role": "Exact initial request/time/raw-hash ancestry."
+    },
+    {
+      "artifact_path": "athena-run-workflow/source-evidence/sportybet-live-event-quote-evidence/70e9dad393d0b396357753c2/event.raw.json",
+      "repository_path": "tests/fixtures/p4_4r_run_36285099805_quote_evidence/fresh/event.raw.json",
+      "bytes": 628901,
+      "sha256": "d4f08a6f7293943e99a4a2db94d545714dee55e3d14335ad593a16f5154ff33a",
+      "role": "Exact retained fresh direct-event response bytes; fresh reprice input."
+    },
+    {
+      "artifact_path": "athena-run-workflow/source-evidence/sportybet-live-event-quote-evidence/70e9dad393d0b396357753c2/manifest.json",
+      "repository_path": "tests/fixtures/p4_4r_run_36285099805_quote_evidence/fresh/manifest.json",
+      "bytes": 1374,
+      "sha256": "83a0f4b1a6240f2e21ab6d97ef4e4d1863dc7b5ee49953f9efaf9aed64bb5bd6",
+      "role": "Exact fresh request/time/raw-hash ancestry."
+    },
+    {
+      "artifact_path": "athena-run-workflow/source-evidence/current-shadow-sportybet-pc-upcoming-discovery/manifest.json",
+      "repository_path": "tests/fixtures/p4_4r_run_36285099805_quote_evidence/accepted-source/manifest.json",
+      "bytes": 480860,
+      "sha256": "17436da36f2e39c3d041cb487160dffbf3a7c68115985ce83576b4e432cf2594",
+      "role": "Exact accepted one-epoch global source manifest and page ancestry."
+    },
+    {
+      "artifact_path": "athena-run-workflow/source-evidence/current-shadow-sportybet-pc-upcoming-discovery/pages/page-001.raw.json",
+      "repository_path": "tests/fixtures/p4_4r_run_36285099805_quote_evidence/accepted-source/page-001.raw.json",
+      "bytes": 203764,
+      "sha256": "a525f072d0648a5110e85da1d970f8e773348cee8a15c091969f6bb4452857ea",
+      "role": "Exact accepted provider page proving the same native event/team/kickoff row."
+    },
+    {
+      "artifact_path": "athena-runs/0142610f7c9fd1eec15b00da8ca13ecf4d2efc107b6b6d60e6e32e0841aaf3c4/current-shadow/current-shadow-price-stage-diagnostic.json",
+      "repository_path": "tests/fixtures/p4_4r_run_36285099805_quote_evidence/run-diagnostic/current-shadow-price-stage-diagnostic.json",
+      "bytes": 265,
+      "sha256": "af2826dbee57caf9ea1e80d0d82e535c72dabf8676a1300057efe063c7e2e1dd",
+      "role": "Exact durable ROUTER_STARTED failure boundary and fixture/event identity."
+    }
+  ],
+  "before_after_contracts": {
+    "context_verifier_source": {
+      "path": "domain/_current_shadow_quote_binding.py",
+      "sha256_before": "7f793abebe899c0a05eaf50a56dce6b97a5cb866039993d1e793a39bc97813c1",
+      "sha256_after": "2706d8e1b689be153cf6b0de545cfed00f7ee953707a7094f70e6df1344557de",
+      "semantic_change": "The repository-canonical context-verifier source now preserves the reviewed execution binding while rebuilding legacy PR253 bridge contexts; direct, legacy, and fresh modes remain supported."
+    },
+    "runtime_binding_policy": {
+      "policy_id": "ATHENA_CURRENT_SHADOW_RUNTIME_COMPOSITION_BINDINGS_V1",
+      "sha256_before": null,
+      "sha256_after_standard": "81c5df66d8d6a29b1ba559b1e224c37f1d557516025e6a151a9bd924e7cba8c1",
+      "sha256_after_fresh_reprice": "b7ce9948fb95abf889d64a65b3eb06f30b89050fbe8252cb4b837125d5bb2ed2",
+      "semantic_change": "New immutable explicit binding unifies Price-all, Router, fresh reprice, and Portfolio replay; memoization remains non-authoritative."
+    },
+    "price_all_source": {
+      "path": "domain/current_shadow_all_market_price_all.py",
+      "sha256_before": "ba67e11bd69297a7395e6c3503183ee94af0abbfa84134940ce087d36dd4a6cf",
+      "sha256_after": "5c71543d1ec0ed54264e9fd9332a5cf89f80d013620bea6c4102c08db6c6014a"
+    },
+    "router_source": {
+      "path": "domain/current_shadow_all_market_router.py",
+      "sha256_before": "400df5759eeb4ba78a09a4ff7b11551cfc87eacaf46b8ebdf8b145e9a1065a54",
+      "sha256_after": "9c936f26f5958ec893bdf5dbf54c523840f630874858594745af3993ffa633e8"
+    },
+    "portfolio_source": {
+      "path": "domain/current_shadow_all_market_portfolio.py",
+      "sha256_before": "483bbffe43d356ff95c60c1cfff2d829cf40e83be7516a0f3dbd371a6db26a78",
+      "sha256_after": "0bb34ce5930f5da400fdd5343a33aa2fda840bf9dbb795c33fb381a0863abb95"
+    },
+    "canonical_adapter_source": {
+      "path": "domain/current_shadow_canonical_core_adapter.py",
+      "sha256_before": "3d5a2f31cb2993df9fc478df9f88dbda8366ab8d09355ec8a9d07b13c9be3a9d",
+      "sha256_after": "0f8485060e68b2f8a25808375a0ee8a002f5e16780fe5d1ef20f6b41edca695e"
+    },
+    "canonical_workflow": {
+      "path": ".github/workflows/athena-run.yml",
+      "base_main_git_blob_sha256": "45f7fe3556f892320a12b15c210637782edca60792ccbf030a714414a32f005a",
+      "after_git_blob_sha256": "45f7fe3556f892320a12b15c210637782edca60792ccbf030a714414a32f005a",
+      "worktree_bytes_sha256_after_autocrlf": "27c085e47ae9a215d1396d1b871d8b2bfe3c5bc1758509b4c288e0aebfe7c03d",
+      "unchanged": true
+    },
+    "frozen_external_source_and_pricing_policies_unchanged": {
+      "pcUpcoming_source_sha256": "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5",
+      "international_bridge_sha256": "c3f05e5ea6ce08c392ec13d1b39d40dd8dd177e5a73f3660605c359705719858",
+      "v2_semantic_sha256": "149b7b61213e33ee85f030d3e567966e5f79df6bea4e138d54d638c76d5e8156",
+      "v2_seed_sha256": "7fe662fc91a80daabf1e774ddd5c8ecdb5215eaf63adb03822b3fb05f872df79",
+      "team_label_v6_sha256": "0c382ec8b12d802879a51b766daae8f655dd5b371509653e56a13190a85c6c7b",
+      "workflow_bytes_unchanged": true
+    }
+  },
+  "review_corrections": {
+    "reviewed_head_before_correction": "61c711cfbe8f543251970d6e257531f450a149f9",
+    "legacy_builder_preserves_explicit_runtime_binding": true,
+    "legacy_bridge_exact_replay_regression": true,
+    "mode_correct_verifier_policy_memo_identity": true,
+    "policy_mismatch_rejected_before_memo": true,
+    "unknown_mode_fails_closed_before_memo": true,
+    "binding_identity_remains_a_memo_key_dimension": true,
+    "source_controlled_runtime_binding_policy_unchanged": true
+  },
+  "pre_fix_offline_replay": {
+    "result": "REPRODUCED",
+    "classification": "P4_4R_PRE_FIX_STALE_IMPORTED_VERIFIER_REJECTS_FRESH_MODE",
+    "evidence_classification": "REAL_RETAINED_PROVIDER_EVIDENCE_PLUS_SYNTHETIC_RECONCILIATION_AND_MODEL_HISTORY_COMPOSITION",
+    "same_live_failure_class": "ShadowPriceError: unknown current Shadow source-context mode",
+    "live_boundary": {
+      "stage": "ROUTER_STARTED",
+      "fixture_identity": "FOTMOB:5071393",
+      "provider_event_id": "sr:match:66299604",
+      "observed_at": "2026-09-27T01:55:46.408869Z"
+    },
+    "offline_call_trace": [
+      "canonical-adapter.price_all_shadow_fixture",
+      "legacy-price-all.price_all_shadow_fixture.reconstruction",
+      "canonical-adapter.route_shadow_price_results",
+      "legacy-router.imported-verify_shadow_price_all_bundle",
+      "legacy-price-all.price_all_shadow_fixture.reconstruction",
+      "legacy-price-all.verify_current_shadow_price_context:PRF_CURRENT_RECONCILIATION_FRESH_REPRICE"
+    ],
+    "reproduction_test": "tests/test_p4_4r_shadow_runtime_composition_stabilization.py::test_retained_failure_slice_replays_identically_in_two_clean_processes",
+    "historical_verifier_source_sha256": "7f793abebe899c0a05eaf50a56dce6b97a5cb866039993d1e793a39bc97813c1",
+    "historical_verifier_fixture_path": "tests/fixtures/p4_4r_pre_fix_quote_context_verifier.py",
+    "historical_verifier_fixture_sha256": "7547f701e025aa6723b7b0fc181c00347292bca2dfe0a15eeeb7a9bb205f2f87",
+    "historical_verifier_fixture_source_slice_sha256": "f3a3afc36fee517a776297a6cedd5867379f57877053798e565b4f8548617df1",
+    "historical_verifier_fixture_provenance": "VERIFIED_SOURCE_SLICE_FROM_EXACT_BASE_MAIN; LF_TERMINATOR_NORMALIZED",
+    "historical_verifier_loaded_from_pinned_source_fixture": true,
+    "reproduced_through_router_price_all_reconstruction": true,
+    "rejected_verifier_identity": {
+      "module": "domain._current_shadow_quote_binding",
+      "qualname": "verify_current_shadow_price_context",
+      "captured_by_value_in": [
+        "domain.current_shadow_all_market_price_all",
+        "domain.current_shadow_canonical_core_adapter"
+      ]
+    },
+    "failure_location": "Router exact Price-all reconstruction uses legacy Price-all's restored direct-only context verifier after the temporary adapter/fresh verifier relay is restored.",
+    "fresh_mode": "PRF_CURRENT_RECONCILIATION_FRESH_REPRICE",
+    "initial_direct_price_router_completed": true,
+    "network_sentinel": "PASS; zero socket/HTTP/provider calls",
+    "not_claimed": "synthetic reconciliation selection and model/history inputs; not a byte-for-byte complete live run replay"
+  },
+  "post_fix_offline_replay": {
+    "result": "ADVANCED_THROUGH_PORTFOLIO_BOUNDARY",
+    "evidence_classification": "REAL_RETAINED_PROVIDER_EVIDENCE_PLUS_SYNTHETIC_MODEL_HISTORY_COMPOSITION",
+    "same_live_fixture_event": ["FOTMOB:5071393", "sr:match:66299604"],
+    "fresh_context_mode": "PRF_CURRENT_RECONCILIATION_FRESH_REPRICE",
+    "stages_replayed": [
+      "initial direct Price-all",
+      "initial Router",
+      "retained fresh exact provider response replay",
+      "first-class fresh context verification",
+      "fresh Price-all",
+      "fresh Router exact reconstruction",
+      "Portfolio router-input build and exact verification",
+      "Portfolio optimization terminal non-wager boundary"
+    ],
+    "runtime_semantic_monkeypatches_used": false,
+    "synthetic_model_history_and_selection_used": true,
+    "network_sentinel": "PASS_ZERO_OUTBOUND_CALLS",
+    "provider_acquisition": 0,
+    "share_code_actions": 0,
+    "wager_actions": 0,
+    "not_claimed": "No byte-for-byte full-live-run replay; no external share-code transport replay."
+  },
+  "determinism": {
+    "replay_count": 2,
+    "process_isolation": "two clean Python processes",
+    "import_order_perturbation": "forward and reverse legal import order",
+    "canonical_outputs_byte_identical": true,
+    "canonical_output_sha256": "142f73a3e03aa4ff1cadce3abcd3749fd9ff0bc5aa501bfdaf0405f4ad889935",
+    "terminal_internal_classification_identical": true,
+    "network_sentinel_calls": 0
+  },
+  "network_sentinel": {
+    "pre_fix_offline_replay": "PASS",
+    "provider_acquisition": 0,
+    "workflow_dispatch": 0,
+    "share_code_network": 0,
+    "email_network": 0,
+    "login": false,
+    "cookies": false,
+    "wallet": false,
+    "staking": false,
+    "bet": false,
+    "wager_placed": false
+  },
+  "historical_receipt_immutability": {
+    "verified": true,
+    "compared_receipt_count": 31,
+    "base_main_sha": "47326a934aabe34052c804a6941a702e52710b12"
+  },
+  "canonical_sha256": "90e2d7e984609ded80c9113a05453628bebadfcb3cede7fc95b9696931016552"
+}

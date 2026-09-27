@@ -200,7 +200,7 @@ def test_stage_compatibility_calls_are_guarded_by_exact_canonical_owner(
     ]
 
 
-def test_price_context_verifier_monkeypatch_seam_reaches_delegated_price_all(
+def test_price_all_delegation_does_not_install_or_relay_a_verifier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original_legacy_verifier = adapter._legacy_price.verify_current_shadow_price_context
@@ -215,16 +215,12 @@ def test_price_context_verifier_monkeypatch_seam_reaches_delegated_price_all(
                 main_authority=False,
             )
 
-    def installed_verifier(value):
+    def legacy_price(value):
         seen.append(value)
+        assert adapter._legacy_price.verify_current_shadow_price_context is original_legacy_verifier
         return value
 
-    def legacy_price(value):
-        assert adapter._legacy_price.verify_current_shadow_price_context is installed_verifier
-        return adapter._legacy_price.verify_current_shadow_price_context(value)
-
     monkeypatch.setattr(adapter, "resolve_shadow_canonical_core", lambda: FakeBindings())
-    monkeypatch.setattr(adapter, "verify_current_shadow_price_context", installed_verifier)
     monkeypatch.setattr(adapter._legacy_price, "price_all_shadow_fixture", legacy_price)
 
     context = object()
@@ -233,11 +229,10 @@ def test_price_context_verifier_monkeypatch_seam_reaches_delegated_price_all(
     assert adapter._legacy_price.verify_current_shadow_price_context is original_legacy_verifier
 
 
-def test_portfolio_reconciliation_monkeypatch_seam_is_preserved(
+def test_portfolio_delegation_does_not_mutate_reconciliation_dispatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original = adapter._legacy_portfolio.reconciliation
-    replacement = object()
     observed: list[object] = []
 
     class FakeBindings:
@@ -250,8 +245,6 @@ def test_portfolio_reconciliation_monkeypatch_seam_is_preserved(
             )
 
     monkeypatch.setattr(adapter, "resolve_shadow_canonical_core", lambda: FakeBindings())
-    monkeypatch.setattr(adapter, "reconciliation", replacement)
-
     def legacy(**kwargs):
         observed.append(adapter._legacy_portfolio.reconciliation)
         return "ok"
@@ -265,7 +258,7 @@ def test_portfolio_reconciliation_monkeypatch_seam_is_preserved(
         )
         == "ok"
     )
-    assert observed == [replacement]
+    assert observed == [original]
     assert adapter._legacy_portfolio.reconciliation is original
 
 

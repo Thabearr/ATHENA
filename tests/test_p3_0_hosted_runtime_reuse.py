@@ -47,7 +47,6 @@ def test_hosted_wrapper_is_reuse_only_and_has_no_delivery_or_wager_calls():
         "_install_builder_issued_history_tracking",
         "_install_builder_issued_history_xg_reuse",
         "_install_builder_issued_history_summary_sha_reuse",
-        "_install_price_context_verification_reuse",
         "collector.main",
     ):
         assert required in source
@@ -55,6 +54,7 @@ def test_hosted_wrapper_is_reuse_only_and_has_no_delivery_or_wager_calls():
     for forbidden in (
         "execute_current_shadow_all_market(",
         "portfolio_module.optimize",
+        "_install_price_context_verification_reuse",
         "send_current_shadow_email",
         "sportybet_share_code",
         "share_code_generation",
@@ -92,7 +92,6 @@ def test_history_cache_worker_marker_is_installer_scoped(monkeypatch):
 def test_runtime_reuse_restores_direct_monkeypatches(monkeypatch):
     latest = hosted.runner.latest_history
     quote = hosted.quote_binding
-    price = hosted.runner.price_module
 
     original_replay = latest._replay_audit_from_evidence
     original_success = latest._success_materials
@@ -100,8 +99,6 @@ def test_runtime_reuse_restores_direct_monkeypatches(monkeypatch):
     original_builder = latest.build_current_fotmob_latest_durable_fresh_history_handoff
     original_xg = quote.prc._research_xg_from_complete_current_history
     original_history_sha = latest.sha256_current_fotmob_latest_durable_fresh_history_handoff
-    original_price_verify = price.verify_current_shadow_price_context
-    original_quote_verify = quote.verify_current_shadow_price_context
 
     patched_replay = object()
     patched_success = object()
@@ -110,8 +107,6 @@ def test_runtime_reuse_restores_direct_monkeypatches(monkeypatch):
     tracking_builder = object()
     patched_xg = object()
     patched_history_sha = object()
-    patched_price_verify = object()
-    patched_quote_verify = object()
     restore_events: list[str] = []
 
     monkeypatch.setattr(
@@ -179,11 +174,6 @@ def test_runtime_reuse_restores_direct_monkeypatches(monkeypatch):
         )
         return original_history_sha
 
-    def install_price_verification():
-        price.verify_current_shadow_price_context = patched_price_verify
-        quote.verify_current_shadow_price_context = patched_quote_verify
-        return original_price_verify, original_quote_verify
-
     monkeypatch.setattr(
         hosted.all_market_cli,
         "_install_history_validation_reuse",
@@ -209,12 +199,6 @@ def test_runtime_reuse_restores_direct_monkeypatches(monkeypatch):
         "_install_builder_issued_history_summary_sha_reuse",
         install_history_sha,
     )
-    monkeypatch.setattr(
-        hosted.all_market_cli,
-        "_install_price_context_verification_reuse",
-        install_price_verification,
-    )
-
     with hosted._current_shadow_runtime_reuse():
         assert latest._replay_audit_from_evidence is patched_replay
         assert latest._success_materials is patched_success
@@ -222,8 +206,6 @@ def test_runtime_reuse_restores_direct_monkeypatches(monkeypatch):
         assert latest.build_current_fotmob_latest_durable_fresh_history_handoff is tracking_builder
         assert quote.prc._research_xg_from_complete_current_history is patched_xg
         assert latest.sha256_current_fotmob_latest_durable_fresh_history_handoff is patched_history_sha
-        assert price.verify_current_shadow_price_context is patched_price_verify
-        assert quote.verify_current_shadow_price_context is patched_quote_verify
 
     assert latest._replay_audit_from_evidence is original_replay
     assert latest._success_materials is original_success
@@ -231,8 +213,6 @@ def test_runtime_reuse_restores_direct_monkeypatches(monkeypatch):
     assert latest.build_current_fotmob_latest_durable_fresh_history_handoff is original_builder
     assert quote.prc._research_xg_from_complete_current_history is original_xg
     assert latest.sha256_current_fotmob_latest_durable_fresh_history_handoff is original_history_sha
-    assert price.verify_current_shadow_price_context is original_price_verify
-    assert quote.verify_current_shadow_price_context is original_quote_verify
     assert restore_events == [
         "verification_install",
         "builder_audit_install",

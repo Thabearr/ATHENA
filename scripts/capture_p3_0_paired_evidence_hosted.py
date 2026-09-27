@@ -62,12 +62,6 @@ def _restore_history_sha(original: object) -> None:
     runner.latest_history.sha256_current_fotmob_latest_durable_fresh_history_handoff = original
 
 
-def _restore_price_verification(originals: tuple[object, object]) -> None:
-    original_price_verify, original_quote_verify = originals
-    runner.price_module.verify_current_shadow_price_context = original_price_verify
-    quote_binding.verify_current_shadow_price_context = original_quote_verify
-
-
 def _install_history_cache_with_worker_reuse():
     """Activate only the cache layer's reviewed worker-local computation reuses.
 
@@ -133,9 +127,6 @@ def _current_shadow_runtime_reuse() -> Iterator[None]:
             issued_histories
         )
         stack.callback(_restore_history_sha, original_history_sha)
-
-        price_originals = all_market_cli._install_price_context_verification_reuse()
-        stack.callback(_restore_price_verification, price_originals)
 
         yield
 

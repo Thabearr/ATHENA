@@ -418,10 +418,14 @@ def _apply_ranks(
     return ranked, selection_eligible, value_eligible, value_rejected
 
 
-def route_shadow_price_results(price_all: ShadowPriceAllBundle) -> ShadowMarketRouterDecision:
-    """Choose one source-aligned settlement-aware market after complete Price-all."""
+def _route_shadow_price_results(
+    price_all: ShadowPriceAllBundle,
+    *,
+    runtime_bindings: Any,
+) -> ShadowMarketRouterDecision:
+    """Internal replay using the execution's exact semantic binding."""
 
-    verified = verify_shadow_price_all_bundle(price_all)
+    verified = runtime_bindings.verify_price_all_bundle(price_all)
     opportunities: list[ShadowRoutedOpportunity] = []
     for result in verified.results:
         confidence, confidence_method, confidence_reasons = _prediction_confidence(result)
@@ -498,6 +502,16 @@ def route_shadow_price_results(price_all: ShadowPriceAllBundle) -> ShadowMarketR
     )
 
 
+def route_shadow_price_results(price_all: ShadowPriceAllBundle) -> ShadowMarketRouterDecision:
+    """Choose one source-aligned settlement-aware market after complete Price-all."""
+
+    from domain.current_shadow_runtime_bindings import runtime_bindings_for_context
+
+    if type(price_all) is not ShadowPriceAllBundle:
+        raise ShadowPriceError("price_all must be exact ShadowPriceAllBundle")
+    return runtime_bindings_for_context(price_all._context).route(price_all)
+
+
 def verify_shadow_router_decision(
     price_all: ShadowPriceAllBundle,
     decision: ShadowMarketRouterDecision,
@@ -506,7 +520,9 @@ def verify_shadow_router_decision(
 
     if type(decision) is not ShadowMarketRouterDecision:
         raise ShadowPriceError("decision must be an exact ShadowMarketRouterDecision")
-    rebuilt = route_shadow_price_results(price_all)
+    from domain.current_shadow_runtime_bindings import runtime_bindings_for_context
+
+    rebuilt = runtime_bindings_for_context(price_all._context).route(price_all)
     if rebuilt.to_dict() != decision.to_dict():
         raise ShadowPriceError("Router decision differs from exact source reconstruction")
     return rebuilt

@@ -171,14 +171,14 @@ def _install_xg_and_summary_reuse(issued_by_identity: dict[int, object]):
     return original_xg
 
 
-def _execute_worker(args) -> int:
+def _execute_worker(args, *, runtime_bindings=None) -> int:
     global _original_history_sha
     original_installer = cli._install_builder_issued_history_xg_reuse
     original_lineage_installer = cli._install_history_lineage_reuse
     cli._install_builder_issued_history_xg_reuse = _install_xg_and_summary_reuse
     cli._install_history_lineage_reuse = _install_captured_history_lineage_reuse
     try:
-        return cli._execute_once(args)
+        return cli._execute_once(args, runtime_bindings=runtime_bindings)
     finally:
         cli._install_builder_issued_history_xg_reuse = original_installer
         cli._install_history_lineage_reuse = original_lineage_installer

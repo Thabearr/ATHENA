@@ -5,12 +5,39 @@ from domain import current_all_market_shadow_probability_settlement as prc
 from domain.markets import MarketId,OutcomeId
 from domain._current_shadow_price_core import AH_PREDICTION_CONFIDENCE_METHOD, AH_SETTLEMENT_STATES, AUTHORITY_FLAGS, DNB_PREDICTION_CONFIDENCE_METHOD, DNB_SETTLEMENT_STATES, MINIMUM_DECIMAL_ODDS, MINIMUM_EVENT_PROBABILITY, MINIMUM_LEAD_SECONDS, MINIMUM_PREDICTION_CONFIDENCE, ROUTER_POLICY_ID, ShadowDevigStatus, ShadowOpportunityEligibility, ShadowPriceDisposition, ShadowPriceError, ShadowRouterDecisionStatus, settlement_unit_return
 from domain._current_shadow_price_records import _issue_shadow_exact_quote, _issue_shadow_price_all_bundle, _issue_shadow_price_result
-from domain._current_shadow_quote_binding import CurrentShadowPriceContext
+from domain._current_shadow_quote_binding import (
+    CURRENT_RECONCILIATION_DIRECT,
+    CURRENT_RECONCILIATION_SOURCE_CONTEXT_POLICY_ID,
+    CurrentShadowPriceContext,
+)
 from domain import current_shadow_all_market_price_all as price_all
 from domain import current_shadow_all_market_router as router
 
 NOW=datetime(2026,8,29,17,0,tzinfo=timezone.utc); KICKOFF=NOW+timedelta(hours=2); EVENT="sr:match:1001"; FIXTURE="FOTMOB:PRD1"
 A="a"*64;B="b"*64;C="c"*64;D="d"*64;E="e"*64;F="f"*64
+
+
+class _ArithmeticTestBinding:
+    """Explicit test-only seam; never selected by supported runtime entry points."""
+
+    fresh_reprice_enabled = False
+
+    def verify_context(self, value):
+        return value
+
+    def price_all(self, context):
+        return price_all._price_context(context, runtime_bindings=self)
+
+    def verify_price_all_bundle(self, value):
+        # These cases isolate Router decision arithmetic over issued test records;
+        # production source-replay verification is exercised by P4.4R integration tests.
+        return value
+
+    def route(self, value):
+        return router._route_shadow_price_results(value, runtime_bindings=self)
+
+
+_TEST_BINDING = _ArithmeticTestBinding()
 
 def _scan(home=2.8,away=.4):
     xg=prc.ResearchXGRates(calibrated_home=home,calibrated_away=away,sealed_prediction_sha256=A,history_prefix_identity=B,source_fixture_identity=FIXTURE)
@@ -18,7 +45,7 @@ def _scan(home=2.8,away=.4):
 
 def _context(scan=None):
     o=object.__new__(CurrentShadowPriceContext); scan=scan or _scan()
-    fields={"fixture_identity":FIXTURE,"provider_event_id":EVENT,"evaluation_time":NOW,"scan":scan,"prc_scan_sha256":C,"provider_registry":None,"provider_registry_sha256":D,"provider_inventory":None,"source_raw_sha256":A,"source_manifest_sha256":B,"source_inventory_sha256":C,"fixture_reconciliation_sha256":D,"current_mapping_rebind_sha256":E,"bridge_bundle_sha256":F,"source_context_policy_id":"TEST","_bridge_bundle":None,"_event_evidence":None,"_complete_current_history":None}
+    fields={"fixture_identity":FIXTURE,"provider_event_id":EVENT,"evaluation_time":NOW,"scan":scan,"prc_scan_sha256":C,"provider_registry":None,"provider_registry_sha256":D,"provider_inventory":None,"source_raw_sha256":A,"source_manifest_sha256":B,"source_inventory_sha256":C,"fixture_reconciliation_sha256":D,"current_mapping_rebind_sha256":E,"bridge_bundle_sha256":F,"source_context_mode":CURRENT_RECONCILIATION_DIRECT,"source_context_policy_id":CURRENT_RECONCILIATION_SOURCE_CONTEXT_POLICY_ID,"_bridge_bundle":None,"_current_reconciliation_bundle":None,"_event_evidence":None,"_complete_current_history":None,"_runtime_bindings":None}
     for k,v in fields.items(): object.__setattr__(o,k,v)
     return o
 
@@ -27,8 +54,8 @@ def _q(market,outcome,odds,*,line=None,mid="1",oid="1",specifier=None,kickoff=KI
 
 def _mr(): return (_q(MarketId.MATCH_RESULT,OutcomeId.HOME,1.45,oid="1"),_q(MarketId.MATCH_RESULT,OutcomeId.DRAW,5.0,oid="2"),_q(MarketId.MATCH_RESULT,OutcomeId.AWAY,10.0,oid="3"))
 def _price(monkeypatch,quotes,scan=None):
-    ctx=_context(scan); monkeypatch.setattr(price_all,"verify_current_shadow_price_context",lambda value:value); monkeypatch.setattr(price_all,"build_current_shadow_exact_quotes",lambda value:tuple(quotes)); return price_all.price_all_shadow_fixture(ctx)
-def _route(monkeypatch,bundle): monkeypatch.setattr(router,"verify_shadow_price_all_bundle",lambda value:value); return router.route_shadow_price_results(bundle)
+    ctx=_context(scan); monkeypatch.setattr(price_all,"build_current_shadow_exact_quotes",lambda value:tuple(quotes)); return price_all._price_all_shadow_fixture(ctx,runtime_bindings=_TEST_BINDING)
+def _route(monkeypatch,bundle): return router._route_shadow_price_results(bundle,runtime_bindings=_TEST_BINDING)
 
 def test_price_all_preserves_all_15_markets_and_no_prefilter(monkeypatch):
     bundle=_price(monkeypatch,_mr()); assert {r.market_id for r in bundle.results}==set(MarketId); assert bundle.quote_count==3; assert bundle.authority["production_price_all"] is False
@@ -163,8 +190,7 @@ def _router_bundle(results):
 
 def _route_custom(monkeypatch, *results):
     bundle = _router_bundle(results)
-    monkeypatch.setattr(router, "verify_shadow_price_all_bundle", lambda value: value)
-    return bundle, router.route_shadow_price_results(bundle)
+    return bundle, router._route_shadow_price_results(bundle,runtime_bindings=_TEST_BINDING)
 
 
 def test_prediction_first_selects_scalar_over_high_ev_low_confidence_ah(monkeypatch):
@@ -344,9 +370,8 @@ def test_prediction_rank_collision_fails_closed(monkeypatch):
     first = _router_result(MarketId.BTTS, OutcomeId.YES, token="d1", confidence=0.70, odds=1.20)
     second = _router_result(MarketId.BTTS, OutcomeId.YES, token="d2", confidence=0.70, odds=1.30)
     bundle = _router_bundle((first, second))
-    monkeypatch.setattr(router, "verify_shadow_price_all_bundle", lambda value: value)
     with pytest.raises(ShadowPriceError, match="ambiguous canonical prediction identity"):
-        router.route_shadow_price_results(bundle)
+        router._route_shadow_price_results(bundle, runtime_bindings=_TEST_BINDING)
 
 
 def test_incomplete_or_malformed_settlement_is_not_prediction_comparable(monkeypatch):
@@ -405,12 +430,16 @@ def test_router_serializes_prediction_and_value_counterfactuals_and_rejects_tamp
 
     object.__setattr__(decision.opportunities[0], "prediction_confidence", 0.99)
     with pytest.raises(ShadowPriceError, match="exact source reconstruction"):
-        router.verify_shadow_router_decision(bundle, decision)
+        rebuilt = router._route_shadow_price_results(bundle, runtime_bindings=_TEST_BINDING)
+        if rebuilt.to_dict() != decision.to_dict():
+            raise ShadowPriceError("Router decision differs from exact source reconstruction")
 
     _bundle, clean = _route_custom(monkeypatch, low_value, high_prediction)
     object.__setattr__(clean, "router_policy_id", "SHADOW_CONSERVATIVE_FROZEN_THRESHOLDS_V1")
     with pytest.raises(ShadowPriceError, match="exact source reconstruction"):
-        router.verify_shadow_router_decision(bundle, clean)
+        rebuilt = router._route_shadow_price_results(bundle, runtime_bindings=_TEST_BINDING)
+        if rebuilt.to_dict() != clean.to_dict():
+            raise ShadowPriceError("Router decision differs from exact source reconstruction")
 
 
 def test_router_verifies_price_all_before_selection(monkeypatch):
@@ -421,6 +450,6 @@ def test_router_verifies_price_all_before_selection(monkeypatch):
         calls.append(value)
         return value
 
-    monkeypatch.setattr(router, "verify_shadow_price_all_bundle", verify)
-    router.route_shadow_price_results(bundle)
+    monkeypatch.setattr(_TEST_BINDING, "verify_price_all_bundle", verify)
+    router._route_shadow_price_results(bundle, runtime_bindings=_TEST_BINDING)
     assert calls == [bundle]

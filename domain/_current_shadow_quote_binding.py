@@ -4,7 +4,9 @@ PR D originally admitted the reviewed PR253 mapped-quote bundle as its fixture
 bridge. PR E preserves that compatibility path and adds the real current-runner
 path: exact PR251 current-event reconciliation + retained event-detail evidence.
 No PR252 mapping identity is fabricated on the direct path; legacy-only mapping
-and bridge identities are explicitly ``None``.
+and bridge identities are explicitly ``None``. P4.4R adds a typed fresh-direct
+variant that replays the same retained reconciliation while binding a strictly
+newer exact provider observation.
 """
 from __future__ import annotations
 
@@ -30,6 +32,10 @@ LEGACY_PR253_FIXTURE_BRIDGE = "LEGACY_PR253_FIXTURE_BRIDGE"
 CURRENT_RECONCILIATION_DIRECT = "CURRENT_RECONCILIATION_DIRECT"
 CURRENT_RECONCILIATION_SOURCE_CONTEXT_POLICY_ID = (
     "PRC_CURRENT_SCAN_PLUS_PR251_CURRENT_RECONCILIATION_PLUS_PRB_REPLAY_V1"
+)
+FRESH_REPRICE_MODE = "PRF_CURRENT_RECONCILIATION_FRESH_REPRICE"
+FRESH_REPRICE_SOURCE_CONTEXT_POLICY_ID = (
+    "PRF_RETAINED_EXACT_RECONCILIATION_PLUS_FRESH_DIRECT_EVENT_REPRICE_V1"
 )
 
 
@@ -61,6 +67,7 @@ class CurrentShadowPriceContext:
     )
     _event_evidence: prb.ProviderEventEvidence
     _complete_current_history: CurrentLatestDurableFreshHistoryHandoff
+    _runtime_bindings: Any
 
     def __init__(self, *_args: Any, **_kwargs: Any) -> None:
         raise ShadowPriceError("CurrentShadowPriceContext is builder-only")
@@ -138,6 +145,7 @@ def _compose(
         | catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle
         | None
     ),
+    runtime_bindings: Any = None,
 ) -> CurrentShadowPriceContext:
     try:
         checked_evidence = prb.replay_event_evidence(evidence)
@@ -156,6 +164,10 @@ def _compose(
     if scan_kickoff is not None and scan_kickoff != inventory.kickoff_utc:
         raise ShadowPriceError("PR-C and SportyBet fixture kickoff differ")
     value = object.__new__(CurrentShadowPriceContext)
+    if runtime_bindings is None:
+        from domain.current_shadow_runtime_bindings import default_current_shadow_runtime_bindings
+
+        runtime_bindings = default_current_shadow_runtime_bindings()
     return _set(value, {
         "fixture_identity": fixture_identity,
         "provider_event_id": inventory.event_id,
@@ -177,6 +189,7 @@ def _compose(
         "_current_reconciliation_bundle": reconciliation_bundle,
         "_event_evidence": checked_evidence,
         "_complete_current_history": complete_current_history,
+        "_runtime_bindings": runtime_bindings,
     })
 
 
@@ -186,6 +199,7 @@ def build_current_shadow_price_context(
     fixture_identity: str,
     provider_event_evidence: prb.ProviderEventEvidence,
     fixture_quote_bridge: current_quotes.CurrentDirectProviderMappedQuoteBundle,
+    runtime_bindings: Any = None,
 ) -> CurrentShadowPriceContext:
     """Compatibility path from exact PR151 + PR253 fixture bridge + PR-B evidence."""
     if type(complete_current_history) is not CurrentLatestDurableFreshHistoryHandoff:
@@ -232,10 +246,11 @@ def build_current_shadow_price_context(
         source_context_policy_id=SOURCE_CONTEXT_POLICY_ID,
         bridge_bundle=bridge,
         reconciliation_bundle=None,
+        runtime_bindings=runtime_bindings,
     )
 
 
-def build_current_shadow_price_context_from_reconciliation(
+def _build_current_shadow_price_context_from_reconciliation_bound(
     *,
     complete_current_history: CurrentLatestDurableFreshHistoryHandoff,
     fixture_identity: str,
@@ -246,6 +261,7 @@ def build_current_shadow_price_context_from_reconciliation(
         | pc_upcoming_reconciliation.CurrentShadowPcUpcomingReconciliationBundle
         | catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle
     ),
+    runtime_bindings: Any,
 ) -> CurrentShadowPriceContext:
     """Current runner path from exact reviewed reconciliation + retained PR-B evidence."""
     if type(complete_current_history) is not CurrentLatestDurableFreshHistoryHandoff:
@@ -322,12 +338,147 @@ def build_current_shadow_price_context_from_reconciliation(
         source_context_policy_id=CURRENT_RECONCILIATION_SOURCE_CONTEXT_POLICY_ID,
         bridge_bundle=None,
         reconciliation_bundle=reconciled,
+        runtime_bindings=runtime_bindings,
+    )
+
+
+def build_current_shadow_price_context_from_reconciliation(
+    *,
+    complete_current_history: CurrentLatestDurableFreshHistoryHandoff,
+    fixture_identity: str,
+    provider_event_id: str,
+    current_reconciliation_bundle: (
+        current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle
+        | shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle
+        | pc_upcoming_reconciliation.CurrentShadowPcUpcomingReconciliationBundle
+        | catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle
+    ),
+) -> CurrentShadowPriceContext:
+    """Public direct-context builder; execution bindings are selected by source."""
+
+    return _build_current_shadow_price_context_from_reconciliation_bound(
+        complete_current_history=complete_current_history,
+        fixture_identity=fixture_identity,
+        provider_event_id=provider_event_id,
+        current_reconciliation_bundle=current_reconciliation_bundle,
+        runtime_bindings=None,
+    )
+
+
+def _verified_reconciliation_row(
+    bundle: Any,
+    *,
+    provider_event_id: str,
+    fixture_identity: str,
+) -> tuple[Any, Any, str]:
+    """Replay one exact supported reconciliation type and select its event row."""
+
+    if type(bundle) is current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle:
+        verifier = current_reconciliation.verify_current_event_discovery_reconciliation_bundle
+        error_type = current_reconciliation.SportyBetCurrentEventDiscoveryError
+        basis = "PR251_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION"
+    elif type(bundle) is shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle:
+        verifier = shadow_reconciliation.verify_current_event_discovery_reconciliation_bundle
+        error_type = shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationError
+        basis = "PRF_PR258_UPCOMING_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION"
+    elif type(bundle) is pc_upcoming_reconciliation.CurrentShadowPcUpcomingReconciliationBundle:
+        verifier = pc_upcoming_reconciliation.verify_current_event_discovery_reconciliation_bundle
+        error_type = pc_upcoming_reconciliation.PcUpcomingRuntimeReconciliationError
+        basis = "PCUPCOMING_RUNTIME_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION"
+    elif type(bundle) is catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle:
+        verifier = catalog_fanout_reconciliation.verify_current_event_discovery_reconciliation_bundle
+        error_type = catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationError
+        basis = "PRF_PROVIDER_CATALOG_FANOUT_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION"
+    else:
+        raise ShadowPriceError("current reconciliation bundle type is not reviewed")
+    try:
+        reconciled = verifier(bundle)
+    except error_type as exc:
+        raise ShadowPriceError("current reconciliation source replay failed") from exc
+    if reconciled.canonical_sha256 == "":
+        raise ShadowPriceError("current reconciliation canonical identity is missing")
+    rows = [row for row in reconciled.rows if row.event_id == provider_event_id]
+    if len(rows) != 1 or rows[0].fixture_reconciliation_authorized is not True:
+        raise ShadowPriceError("provider event lacks one exact current fixture reconciliation")
+    row = rows[0]
+    if row.matched_fotmob_fixture_id is None or row.competition_name is None:
+        raise ShadowPriceError("current reconciliation omitted required source fixture identity")
+    if fixture_identity != _canonical_fixture_identity(row.matched_fotmob_fixture_id):
+        raise ShadowPriceError("fixture identity differs from exact current reconciliation")
+    return reconciled, row, basis
+
+
+def build_current_shadow_price_context_for_fresh_reprice(
+    *,
+    prior_context: CurrentShadowPriceContext,
+    fresh_provider_event_evidence: prb.ProviderEventEvidence,
+    runtime_bindings: Any = None,
+) -> CurrentShadowPriceContext:
+    """Build an immutable, replayable fresh quote context for the same fixture.
+
+    The direct reconciliation remains the identity authority. Only the exact
+    direct quote observation/inventory ancestry and evaluation time may advance.
+    This function performs no transport; callers must supply retained event
+    evidence acquired through the reviewed runtime path.
+    """
+
+    prior = verify_current_shadow_price_context(prior_context)
+    if prior.source_context_mode != CURRENT_RECONCILIATION_DIRECT:
+        raise ShadowPriceError("fresh reprice accepts only a direct reconciliation context")
+    if prior._current_reconciliation_bundle is None:
+        raise ShadowPriceError("fresh reprice prior context omitted retained reconciliation")
+    reconciled, row, basis = _verified_reconciliation_row(
+        prior._current_reconciliation_bundle,
+        provider_event_id=prior.provider_event_id,
+        fixture_identity=prior.fixture_identity,
+    )
+    if type(fresh_provider_event_evidence) is not prb.ProviderEventEvidence:
+        raise ShadowPriceError("fresh reprice evidence must be exact ProviderEventEvidence")
+    try:
+        evidence = prb.replay_event_evidence(fresh_provider_event_evidence)
+    except prb.CurrentSportyBetSemanticRegistryError as exc:
+        raise ShadowPriceError("fresh reprice PR-B evidence replay failed") from exc
+    inventory = evidence.inventory
+    if evidence.fixture_identity != prior.provider_event_id or evidence.fixture_identity_basis != basis:
+        raise ShadowPriceError("fresh reprice provider event ancestry differs from reconciliation")
+    if inventory.event_id != prior.provider_event_id:
+        raise ShadowPriceError("fresh reprice provider event identity changed")
+    if (
+        inventory.home_team_name != row.home_team_name
+        or inventory.away_team_name != row.away_team_name
+        or inventory.kickoff_utc != row.kickoff_utc
+    ):
+        raise ShadowPriceError("fresh reprice provider fixture identity changed")
+    if inventory.observed_at <= row.direct_event_observed_at:
+        raise ShadowPriceError("fresh reprice evidence is not strictly newer than reconciliation")
+    if inventory.observed_at <= prior.provider_inventory.observed_at:
+        raise ShadowPriceError("fresh reprice evidence is not strictly newer than prior direct evidence")
+    if runtime_bindings is None:
+        from domain.current_shadow_runtime_bindings import fresh_reprice_current_shadow_runtime_bindings
+
+        runtime_bindings = fresh_reprice_current_shadow_runtime_bindings()
+    return _compose(
+        complete_current_history=prior._complete_current_history,
+        fixture_identity=prior.fixture_identity,
+        evidence=evidence,
+        evaluation=inventory.observed_at,
+        fixture_reconciliation_sha256=reconciled.canonical_sha256,
+        current_mapping_rebind_sha256=None,
+        bridge_bundle_sha256=None,
+        source_context_mode=FRESH_REPRICE_MODE,
+        source_context_policy_id=FRESH_REPRICE_SOURCE_CONTEXT_POLICY_ID,
+        bridge_bundle=None,
+        reconciliation_bundle=reconciled,
+        runtime_bindings=runtime_bindings,
     )
 
 
 def verify_current_shadow_price_context(value: Any) -> CurrentShadowPriceContext:
     if type(value) is not CurrentShadowPriceContext:
         raise ShadowPriceError("value must be exact CurrentShadowPriceContext")
+    from domain.current_shadow_runtime_bindings import runtime_bindings_for_context
+
+    runtime_bindings = runtime_bindings_for_context(value)
     if value.source_context_mode == LEGACY_PR253_FIXTURE_BRIDGE:
         if value._bridge_bundle is None:
             raise ShadowPriceError("legacy context omitted retained fixture bridge")
@@ -336,16 +487,72 @@ def verify_current_shadow_price_context(value: Any) -> CurrentShadowPriceContext
             fixture_identity=value.fixture_identity,
             provider_event_evidence=value._event_evidence,
             fixture_quote_bridge=value._bridge_bundle,
+            runtime_bindings=runtime_bindings,
         )
     elif value.source_context_mode == CURRENT_RECONCILIATION_DIRECT:
         if value._current_reconciliation_bundle is None:
             raise ShadowPriceError("direct current context omitted retained reconciliation")
-        rebuilt = build_current_shadow_price_context_from_reconciliation(
+        rebuilt = _build_current_shadow_price_context_from_reconciliation_bound(
             complete_current_history=value._complete_current_history,
             fixture_identity=value.fixture_identity,
             provider_event_id=value.provider_event_id,
             current_reconciliation_bundle=value._current_reconciliation_bundle,
+            runtime_bindings=runtime_bindings,
         )
+    elif value.source_context_mode == FRESH_REPRICE_MODE:
+        if (
+            value.source_context_policy_id != FRESH_REPRICE_SOURCE_CONTEXT_POLICY_ID
+            or value._bridge_bundle is not None
+            or value.current_mapping_rebind_sha256 is not None
+            or value.bridge_bundle_sha256 is not None
+            or value._current_reconciliation_bundle is None
+        ):
+            raise ShadowPriceError("fresh reprice context has unreviewed bridge or source authority")
+        reconciled, row, basis = _verified_reconciliation_row(
+            value._current_reconciliation_bundle,
+            provider_event_id=value.provider_event_id,
+            fixture_identity=value.fixture_identity,
+        )
+        try:
+            evidence = prb.replay_event_evidence(value._event_evidence)
+        except prb.CurrentSportyBetSemanticRegistryError as exc:
+            raise ShadowPriceError("fresh reprice PR-B evidence replay failed") from exc
+        inventory = evidence.inventory
+        if evidence.fixture_identity != value.provider_event_id or evidence.fixture_identity_basis != basis:
+            raise ShadowPriceError("fresh reprice provider event ancestry differs from reconciliation")
+        if (
+            inventory.event_id != value.provider_event_id
+            or inventory.home_team_name != row.home_team_name
+            or inventory.away_team_name != row.away_team_name
+            or inventory.kickoff_utc != row.kickoff_utc
+            or inventory.observed_at <= row.direct_event_observed_at
+            or value.evaluation_time != inventory.observed_at
+        ):
+            raise ShadowPriceError("fresh reprice observation differs from exact reconciliation facts")
+        rebuilt = _compose(
+            complete_current_history=value._complete_current_history,
+            fixture_identity=value.fixture_identity,
+            evidence=evidence,
+            evaluation=inventory.observed_at,
+            fixture_reconciliation_sha256=reconciled.canonical_sha256,
+            current_mapping_rebind_sha256=None,
+            bridge_bundle_sha256=None,
+            source_context_mode=FRESH_REPRICE_MODE,
+            source_context_policy_id=FRESH_REPRICE_SOURCE_CONTEXT_POLICY_ID,
+            bridge_bundle=None,
+            reconciliation_bundle=reconciled,
+            runtime_bindings=runtime_bindings,
+        )
+        if (
+            value.source_raw_sha256 != inventory.source_raw_sha256
+            or value.source_manifest_sha256 != inventory.source_manifest_sha256
+            or value.source_inventory_sha256 != inventory.canonical_sha256
+            or value.provider_inventory.canonical_sha256 != inventory.canonical_sha256
+            or value.provider_registry.canonical_sha256 != value.provider_registry_sha256
+            or _sha256(value.scan.to_dict()) != value.prc_scan_sha256
+            or value.fixture_reconciliation_sha256 != reconciled.canonical_sha256
+        ):
+            raise ShadowPriceError("fresh reprice evidence ancestry drifted")
     else:
         raise ShadowPriceError("unknown current Shadow source-context mode")
     if _canonical_bytes(value.to_dict()) != _canonical_bytes(rebuilt.to_dict()):
@@ -372,7 +579,9 @@ def build_current_shadow_exact_quotes(context: CurrentShadowPriceContext) -> tup
     """Issue exact current quotes only from replayed typed PR-B observations."""
     if type(context) is not CurrentShadowPriceContext:
         raise ShadowPriceError("context type mismatch")
-    checked = verify_current_shadow_price_context(context)
+    from domain.current_shadow_runtime_bindings import runtime_bindings_for_context
+
+    checked = runtime_bindings_for_context(context).verify_context(context)
     inventory = checked.provider_inventory
     by_native = {selection.selection_identity: selection for selection in inventory.selections}
     if len(by_native) != len(inventory.selections):
@@ -459,9 +668,12 @@ __all__ = [
     "CURRENT_RECONCILIATION_DIRECT",
     "CURRENT_RECONCILIATION_SOURCE_CONTEXT_POLICY_ID",
     "CurrentShadowPriceContext",
+    "FRESH_REPRICE_MODE",
+    "FRESH_REPRICE_SOURCE_CONTEXT_POLICY_ID",
     "LEGACY_PR253_FIXTURE_BRIDGE",
     "build_current_shadow_exact_quotes",
     "build_current_shadow_price_context",
     "build_current_shadow_price_context_from_reconciliation",
+    "build_current_shadow_price_context_for_fresh_reprice",
     "verify_current_shadow_price_context",
 ]
