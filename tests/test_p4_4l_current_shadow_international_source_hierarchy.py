@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import copy
+import json
+import socket
+import urllib.request
 
 import pytest
 
 from scripts import audit_p4_4l_current_shadow_international_source_hierarchy as audit
+from scripts import audit_p4_4g_current_fotmob_canonical_only_workflow as p44g
+from scripts import audit_p4_workflow_evolution_ledger as evolution
 
 
 def test_p4_4l_receipt_audits_full_hierarchy_and_p4_4k_replay() -> None:
@@ -101,7 +106,11 @@ def test_current_architecture_identity_uses_checked_out_head_in_shallow_checkout
         "rev-parse", "HEAD:.github/workflows"
     ).decode("ascii").strip()
     assert architecture["workflow_count"] == audit.WORKFLOW_COUNT
-    assert architecture["workflow_evolution_transition_count"] == 7
+    ledger = evolution.validate_current_state()
+    assert architecture["workflow_evolution_transition_count"] == len(ledger["transitions"])
+    assert architecture["workflow_evolution_ledger_sha256"] == ledger["canonical_sha256"]
+    assert architecture["workflow_tree_sha1"] == ledger["current_workflow_tree_sha1"]
+    assert architecture["workflow_count"] == ledger["current_live_workflow_count"]
 
 
 def test_source_identity_hashes_committed_blob_bytes_across_checkout_line_endings() -> None:
@@ -114,6 +123,245 @@ def test_source_identity_hashes_committed_blob_bytes_across_checkout_line_ending
         "rev-parse", f"HEAD:{path}"
     ).decode("ascii").strip()
     assert source_identity["source_sha256"] == audit._sha256(committed_bytes)
+
+
+def test_historical_p44l_source_identities_are_not_derived_from_current_head() -> None:
+    receipt = audit.audit(check_live=False)
+    assert receipt["canonical_sha256"] == (
+        "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f"
+    )
+    assert receipt["source_identity"] == audit.P44L_HISTORICAL_SOURCE_IDENTITIES
+    for path, expected in audit.P44L_HISTORICAL_SOURCE_IDENTITIES.items():
+        assert audit._source_identity(path, audit.P44L_REVIEWED_HEAD) == expected
+
+
+def test_current_source_change_does_not_rewrite_historical_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        audit,
+        "_source_identity",
+        lambda *_args: pytest.fail("historical receipt must not be rebuilt from current source"),
+    )
+    receipt = audit.expected_receipt()
+    assert receipt["canonical_sha256"] == (
+        "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f"
+    )
+
+
+def test_historical_six_transition_checkpoint_is_an_exact_prefix_with_later_revisions() -> None:
+    historical = p44g._load_json(p44g.SNAPSHOT_PATH)
+    current = evolution.validate_current_state()
+    later = copy.deepcopy(current)
+    later["transitions"].append({"transition_id": "synthetic-later-reviewed-revision"})
+
+    audit._verify_historical_evolution_prefix(later, historical)
+
+    rewritten = copy.deepcopy(later)
+    rewritten["transitions"][0]["transition_id"] = "rewritten-history"
+    with pytest.raises(audit.P44LReviewError, match="exact P4.4L prefix"):
+        audit._verify_historical_evolution_prefix(rewritten, historical)
+
+
+def test_historical_evolution_checkpoint_hash_and_count_remain_exact() -> None:
+    historical = p44g._load_json(p44g.SNAPSHOT_PATH)
+    current = evolution.validate_current_state()
+    wrong_hash = copy.deepcopy(historical)
+    wrong_hash["canonical_sha256"] = "0" * 64
+    with pytest.raises(audit.P44LReviewError, match="checkpoint identity"):
+        audit._verify_historical_evolution_prefix(current, wrong_hash)
+
+    wrong_count = copy.deepcopy(historical)
+    wrong_count["transitions"].pop()
+    with pytest.raises(audit.P44LReviewError, match="checkpoint identity"):
+        audit._verify_historical_evolution_prefix(current, wrong_count)
+
+
+def test_current_workflow_tree_and_count_are_bound_to_cumulative_ledger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = evolution.validate_current_state()
+    calls: list[tuple[str, ...]] = []
+
+    def git(*args: str) -> bytes:
+        calls.append(args)
+        if args == ("rev-parse", "HEAD:.github/workflows"):
+            return (current["current_workflow_tree_sha1"] + "\n").encode()
+        if args[:4] == ("ls-tree", "-r", "--name-only", "HEAD"):
+            return b"\n".join(
+                [b".github/workflows/workflow.yml"] * current["current_live_workflow_count"]
+            )
+        raise AssertionError(args)
+
+    monkeypatch.setattr(audit, "_git", git)
+    audit._verify_current_workflow_state(current)
+    assert ("rev-parse", "HEAD:.github/workflows") in calls
+
+    with pytest.raises(audit.P44LReviewError, match="current workflow tree"):
+        audit._verify_current_workflow_state(
+            {**current, "current_workflow_tree_sha1": "0" * 40}
+        )
+
+
+def test_historical_workflow_tree_is_checked_at_reviewed_revision_not_current_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        audit, "_commit_object_available", lambda ref: ref == audit.P44L_REVIEWED_HEAD
+    )
+    monkeypatch.setattr(
+        audit,
+        "_git",
+        lambda *args: (audit.WORKFLOW_TREE_SHA1 + "\n").encode()
+        if args == ("rev-parse", f"{audit.P44L_REVIEWED_HEAD}:.github/workflows")
+        else pytest.fail(f"unexpected Git command {args}"),
+    )
+    audit._verify_historical_workflow_tree(trusted_current_ci=False)
+
+    monkeypatch.setattr(
+        audit,
+        "_git",
+        lambda *_args: ("0" * 40 + "\n").encode(),
+    )
+    with pytest.raises(audit.P44LReviewError, match="historical workflow tree differs"):
+        audit._verify_historical_workflow_tree(trusted_current_ci=False)
+
+
+def test_historical_source_mutation_fails_without_substituting_current_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, expected = next(iter(audit.P44L_HISTORICAL_SOURCE_IDENTITIES.items()))
+    monkeypatch.setattr(
+        audit, "_commit_object_available", lambda ref: ref == audit.P44L_REVIEWED_HEAD
+    )
+    seen_refs: list[str] = []
+
+    def historical_identity(source_path: str, ref: str) -> dict[str, str]:
+        assert source_path == path
+        seen_refs.append(ref)
+        return dict(expected)
+
+    monkeypatch.setattr(audit, "_source_identity", historical_identity)
+    audit._verify_historical_source_identity(
+        path,
+        expected,
+        trusted_current_ci=False,
+        receipt={"source_identity": {path: expected}},
+    )
+    assert seen_refs == [audit.P44L_REVIEWED_HEAD]
+
+    monkeypatch.setattr(audit, "_source_identity", lambda *_args: {**expected, "source_sha256": "0" * 64})
+    with pytest.raises(audit.P44LReviewError, match="historical source identity differs"):
+        audit._verify_historical_source_identity(
+            path,
+            expected,
+            trusted_current_ci=False,
+            receipt={"source_identity": {path: expected}},
+        )
+
+
+def test_trusted_shallow_pull_request_does_not_bind_to_historical_base(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    event_path = tmp_path / "event.json"
+    event_path.write_text(
+        json.dumps(
+            {
+                "repository": {"full_name": "Thabearr/ATHENA"},
+                "pull_request": {
+                    "base": {"ref": "main", "sha": "a" * 40},
+                    "head": {"sha": "b" * 40},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setenv("GITHUB_REPOSITORY", "Thabearr/ATHENA")
+    monkeypatch.setenv("GITHUB_SHA", "c" * 40)
+    monkeypatch.setattr(audit, "_git", lambda *args: ("c" * 40 + "\n").encode())
+
+    audit._require_trusted_current_ci_context()
+
+
+def test_untrusted_missing_historical_ancestry_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _ref: False)
+    with pytest.raises(audit.P44LReviewError, match="unavailable outside trusted shallow CI"):
+        audit._verify_historical_review_ancestry(trusted_current_ci=False)
+
+
+def test_historical_changed_file_scope_uses_reviewed_head_not_current_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _ref: True)
+    seen: list[tuple[str, ...]] = []
+
+    def git(*args: str) -> bytes:
+        seen.append(args)
+        assert args == ("diff", "--name-only", f"{audit.BASE_MAIN}...{audit.P44L_REVIEWED_HEAD}")
+        return ("\n".join(sorted(audit.EXPECTED_CHANGED_PATHS)) + "\n").encode()
+
+    monkeypatch.setattr(audit, "_git", git)
+    audit._verify_historical_changed_paths(trusted_current_ci=False)
+    assert seen == [("diff", "--name-only", f"{audit.BASE_MAIN}...{audit.P44L_REVIEWED_HEAD}")]
+
+    monkeypatch.setattr(audit, "_git", lambda *_args: b"unexpected.py\n")
+    with pytest.raises(audit.P44LReviewError, match="historical changed-file scope"):
+        audit._verify_historical_changed_paths(trusted_current_ci=False)
+
+
+def test_historical_merge_parents_and_current_ancestry_are_exact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        audit,
+        "_commit_object_available",
+        lambda ref: ref == audit.P44L_MERGE_COMMIT,
+    )
+    monkeypatch.setattr(
+        audit,
+        "_git",
+        lambda *args: f"{audit.BASE_MAIN} {audit.P44L_REVIEWED_HEAD}\n".encode()
+        if args == ("show", "-s", "--format=%P", audit.P44L_MERGE_COMMIT)
+        else pytest.fail(f"unexpected Git command {args}"),
+    )
+    monkeypatch.setattr(
+        audit.subprocess,
+        "run",
+        lambda args, **_kwargs: type("Result", (), {"returncode": 0})()
+        if args == ["git", "merge-base", "--is-ancestor", audit.P44L_MERGE_COMMIT, "HEAD"]
+        else pytest.fail(f"unexpected subprocess {args}"),
+    )
+    audit._verify_historical_review_ancestry(trusted_current_ci=False)
+
+    monkeypatch.setattr(
+        audit,
+        "_git",
+        lambda *_args: f"{audit.BASE_MAIN} {'0' * 40}\n".encode(),
+    )
+    with pytest.raises(audit.P44LReviewError, match="exact reviewed base/head"):
+        audit._verify_historical_review_ancestry(trusted_current_ci=False)
+
+
+def test_p44l_offline_audit_performs_no_network_activity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def denied(*_args, **_kwargs):
+        calls.append("network")
+        raise AssertionError("P4.4L audit attempted network access")
+
+    monkeypatch.setattr(socket, "create_connection", denied)
+    monkeypatch.setattr(urllib.request, "urlopen", denied)
+    assert audit.audit(check_live=False)["canonical_sha256"] == (
+        "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f"
+    )
+    assert calls == []
 
 
 def test_qualification_evidence_hash_uses_committed_blob_bytes() -> None:

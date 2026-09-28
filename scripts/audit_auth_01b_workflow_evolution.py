@@ -5,7 +5,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
+import re
 import subprocess
 from typing import Any
 
@@ -28,6 +30,12 @@ P44M_RECEIPT_PATH = Path("artifacts/architecture/p4_4m_athena_run_pc_upcoming_ev
 P44M_SNAPSHOT_PATH = Path(
     "artifacts/architecture/p4_workflow_evolution_snapshots/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json"
 )
+P44M_RECEIPT_BASE_BLOB_SHA1 = "b79f610bfe06c550584a7c305bf721b94c5efba9"
+P44M_SNAPSHOT_BASE_BLOB_SHA1 = "6ff917a00a600f1c785a681328e92aad61b8c3df"
+P44M_BASE_BLOB_IDENTITIES = {
+    P44M_RECEIPT_PATH.as_posix(): P44M_RECEIPT_BASE_BLOB_SHA1,
+    P44M_SNAPSHOT_PATH.as_posix(): P44M_SNAPSHOT_BASE_BLOB_SHA1,
+}
 POLICY_ID = "ATHENA_AUTH_01B_WORKFLOW_EVOLUTION_EVIDENCE_V1"
 EXPECTED_BEFORE = {
     "git_blob_sha1": "9bb6312dbe50e11c836fb5a0bd4270a537e850c1",
@@ -125,18 +133,79 @@ def verify_workflow_revision(
     return summary, handoff_count
 
 
-def _verify_historical_file_unchanged(path: Path) -> str:
+def _commit_object_available(commit: str) -> bool:
+    return subprocess.run(
+        ["git", "cat-file", "-e", f"{commit}^{{commit}}"], capture_output=True
+    ).returncode == 0
+
+
+def _git_blob_sha(revision: str, path: Path) -> str:
     try:
-        before = subprocess.check_output(
-            ["git", "rev-parse", f"{BASE_MAIN_SHA}:{path.as_posix()}"], text=True
-        ).strip()
-        after = subprocess.check_output(
-            ["git", "rev-parse", f"HEAD:{path.as_posix()}"], text=True
+        return subprocess.check_output(
+            ["git", "rev-parse", f"{revision}:{path.as_posix()}"], text=True
         ).strip()
     except (OSError, subprocess.CalledProcessError) as exc:
-        raise Auth01BWorkflowEvolutionError(f"cannot verify immutable historical file: {path}") from exc
-    _require(before == after, f"historical P4.4 file changed: {path}")
-    return before
+        raise Auth01BWorkflowEvolutionError(
+            f"cannot resolve immutable historical file blob: {revision}:{path}"
+        ) from exc
+
+
+def _require_trusted_current_pr_context() -> None:
+    try:
+        event_name = os.environ.get("GITHUB_EVENT_NAME")
+        event_path = os.environ.get("GITHUB_EVENT_PATH")
+        if event_name != "pull_request" or not event_path:
+            raise ValueError("current event is not a pull_request")
+        event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+        if type(event) is not dict:
+            raise ValueError("event is not an object")
+        repository = event.get("repository")
+        pull_request = event.get("pull_request")
+        if type(repository) is not dict or repository.get("full_name") != "Thabearr/ATHENA":
+            raise ValueError("repository identity differs")
+        if os.environ.get("GITHUB_REPOSITORY") not in (None, "Thabearr/ATHENA"):
+            raise ValueError("GITHUB_REPOSITORY differs")
+        if type(pull_request) is not dict:
+            raise ValueError("pull_request metadata is missing")
+        base = pull_request.get("base")
+        head = pull_request.get("head")
+        if type(base) is not dict or type(head) is not dict or base.get("ref") != "main":
+            raise ValueError("pull_request base/head metadata differs")
+        if re.fullmatch(r"[0-9a-f]{40}", str(base.get("sha", ""))) is None:
+            raise ValueError("pull_request base SHA is malformed")
+        event_head = str(head.get("sha", ""))
+        github_sha = os.environ.get("GITHUB_SHA", "")
+        if (
+            re.fullmatch(r"[0-9a-f]{40}", event_head) is None
+            or re.fullmatch(r"[0-9a-f]{40}", github_sha) is None
+        ):
+            raise ValueError("pull_request head or checked-out SHA is malformed")
+        current = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        if current != github_sha:
+            raise ValueError("checked-out HEAD differs from GITHUB_SHA")
+    except (OSError, json.JSONDecodeError, UnicodeError, ValueError, subprocess.CalledProcessError) as exc:
+        raise Auth01BWorkflowEvolutionError(
+            "shallow historical artifact verification lacks a trusted current PR context"
+        ) from exc
+
+
+def _verify_historical_file_unchanged(path: Path) -> str:
+    normalized = path.as_posix()
+    expected_base_blob = P44M_BASE_BLOB_IDENTITIES.get(normalized)
+    _require(expected_base_blob is not None, f"unrecognized immutable historical file: {normalized}")
+    head_blob = _git_blob_sha("HEAD", path)
+    if _commit_object_available(BASE_MAIN_SHA):
+        base_blob = _git_blob_sha(BASE_MAIN_SHA, path)
+        _require(
+            base_blob == expected_base_blob,
+            f"historical base blob identity differs for {normalized}",
+        )
+        _require(head_blob == base_blob, f"historical P4.4 file changed: {normalized}")
+        return base_blob
+
+    _require_trusted_current_pr_context()
+    _require(head_blob == expected_base_blob, f"historical P4.4 file changed: {normalized}")
+    return expected_base_blob
 
 
 def audit() -> dict[str, Any]:
@@ -145,6 +214,15 @@ def audit() -> dict[str, Any]:
     receipt = _read_json(RECEIPT_PATH)
     p44m_snapshot = _read_json(P44M_SNAPSHOT_PATH)
     p44m_receipt = _read_json(P44M_RECEIPT_PATH)
+
+    _require(
+        p44m_snapshot.get("canonical_sha256") == evolution.canonical_sha256(p44m_snapshot),
+        "P4.4M immutable snapshot canonical hash is invalid",
+    )
+    _require(
+        p44m_receipt.get("canonical_sha256") == evolution.canonical_sha256(p44m_receipt),
+        "P4.4M immutable receipt canonical hash is invalid",
+    )
 
     transitions = ledger["transitions"]
     _require(len(p44m_snapshot.get("transitions", [])) == 7, "P4.4M immutable snapshot is not seven transitions")

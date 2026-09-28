@@ -22,8 +22,80 @@ def test_auth_01b_workflow_transition_is_exact_and_historical_prefix_is_immutabl
     assert result["network_provider_side_effects"] == 0
     assert len(result["checkpoint_sha256"]) == 64
     assert len(result["receipt_sha256"]) == 64
-    assert result["p44m_receipt_blob_unchanged"]
-    assert result["p44m_snapshot_blob_unchanged"]
+    assert result["p44m_receipt_blob_unchanged"] == audit.P44M_RECEIPT_BASE_BLOB_SHA1
+    assert result["p44m_snapshot_blob_unchanged"] == audit.P44M_SNAPSHOT_BASE_BLOB_SHA1
+
+
+def test_historical_p44m_base_blob_is_verified_with_full_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    expected = audit.P44M_RECEIPT_BASE_BLOB_SHA1
+    blobs = {
+        ("HEAD", audit.P44M_RECEIPT_PATH.as_posix()): expected,
+        (audit.BASE_MAIN_SHA, audit.P44M_RECEIPT_PATH.as_posix()): expected,
+    }
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _commit: True)
+    monkeypatch.setattr(audit, "_git_blob_sha", lambda revision, path: blobs[(revision, path.as_posix())])
+    assert audit._verify_historical_file_unchanged(audit.P44M_RECEIPT_PATH) == expected
+
+
+def test_historical_p44m_base_blob_is_verified_in_trusted_shallow_pr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = audit.P44M_SNAPSHOT_BASE_BLOB_SHA1
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _commit: False)
+    monkeypatch.setattr(audit, "_require_trusted_current_pr_context", lambda: None)
+    monkeypatch.setattr(audit, "_git_blob_sha", lambda revision, _path: expected if revision == "HEAD" else pytest.fail("base lookup in shallow checkout"))
+    assert audit._verify_historical_file_unchanged(audit.P44M_SNAPSHOT_PATH) == expected
+
+
+def test_historical_p44m_shallow_blob_mismatch_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _commit: False)
+    monkeypatch.setattr(audit, "_require_trusted_current_pr_context", lambda: None)
+    monkeypatch.setattr(audit, "_git_blob_sha", lambda _revision, _path: "0" * 40)
+    with pytest.raises(audit.Auth01BWorkflowEvolutionError, match="historical P4.4 file changed"):
+        audit._verify_historical_file_unchanged(audit.P44M_RECEIPT_PATH)
+
+
+def test_historical_p44m_unknown_path_fails_closed() -> None:
+    with pytest.raises(audit.Auth01BWorkflowEvolutionError, match="unrecognized immutable historical file"):
+        audit._verify_historical_file_unchanged(Path("artifacts/unknown.json"))
+
+
+def test_historical_p44m_wrong_base_blob_constant_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _commit: True)
+    monkeypatch.setattr(audit, "_git_blob_sha", lambda revision, _path: "0" * 40 if revision == audit.BASE_MAIN_SHA else audit.P44M_RECEIPT_BASE_BLOB_SHA1)
+    with pytest.raises(audit.Auth01BWorkflowEvolutionError, match="historical base blob identity differs"):
+        audit._verify_historical_file_unchanged(audit.P44M_RECEIPT_PATH)
+
+
+def test_trusted_shallow_pr_binding_accepts_synthetic_merge_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    event_path = tmp_path / "event.json"
+    event_path.write_text(
+        json.dumps(
+            {
+                "repository": {"full_name": "Thabearr/ATHENA"},
+                "pull_request": {
+                    "base": {"ref": "main", "sha": "a" * 40},
+                    "head": {"sha": "b" * 40},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setenv("GITHUB_REPOSITORY", "Thabearr/ATHENA")
+    monkeypatch.setenv("GITHUB_SHA", "c" * 40)
+    monkeypatch.setattr(
+        audit.subprocess,
+        "check_output",
+        lambda args, **_kwargs: "c" * 40 + "\n"
+        if args == ["git", "rev-parse", "HEAD"]
+        else pytest.fail(f"unexpected subprocess {args}"),
+    )
+
+    audit._require_trusted_current_pr_context()
 
 
 def test_auth_01b_receipt_is_offline_safe_under_network_sentinels(monkeypatch: pytest.MonkeyPatch) -> None:
