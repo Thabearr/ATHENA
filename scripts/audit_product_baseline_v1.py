@@ -15,6 +15,7 @@ import ast
 import hashlib
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -146,6 +147,18 @@ def file_sha256(path: Path) -> str:
 def normalized_source_bytes(path: Path) -> bytes:
     """Canonicalize text checkout EOLs so source identity is host-independent."""
     return path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def normalized_bytes(value: bytes) -> bytes:
+    """Canonicalize text EOLs in bytes without changing the pinned Git blob."""
+    return value.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def git_head_blob_bytes(root: Path, rel: str) -> bytes:
+    """Read a tracked file from HEAD without fetching or requiring parent history."""
+    return subprocess.run(
+        ["git", "show", f"HEAD:{rel}"], cwd=root, check=True, capture_output=True
+    ).stdout
 
 
 def normalized_source_sha256(path: Path) -> str:
@@ -521,10 +534,22 @@ def _receipt_anchors(root: Path) -> dict[str, Any]:
     }
     result = {}
     for key, rel in names.items():
-        raw = _read(root, rel)
-        parsed = json.loads(raw)
-        result[key] = {"path":rel,"file_sha256":sha256_bytes(raw),"canonical_sha256":parsed.get("canonical_sha256"),"policy_id":parsed.get("policy_id"),"evidence_class":"SOURCE_CONTROLLED_HISTORICAL_RECEIPT"}
-    transition = json.loads(_read(root, names["p4_4s_receipt"])).get("source_transition", {})
+        blob = git_head_blob_bytes(root, rel)
+        normalized_worktree = normalized_source_bytes(root / rel)
+        if normalized_worktree != normalized_bytes(blob):
+            raise ValueError(f"historical receipt worktree differs from HEAD content: {rel}")
+        parsed = json.loads(blob)
+        result[key] = {
+            "path":rel,
+            "file_sha256":sha256_bytes(blob),
+            "file_hash_kind":"GIT_HEAD_BLOB_RAW_SHA256",
+            "portable_worktree_sha256":sha256_bytes(normalized_worktree),
+            "worktree_hash_kind":"LF_NORMALIZED_WORKTREE_SHA256",
+            "canonical_sha256":parsed.get("canonical_sha256"),
+            "policy_id":parsed.get("policy_id"),
+            "evidence_class":"SOURCE_CONTROLLED_HISTORICAL_RECEIPT",
+        }
+    transition = json.loads(git_head_blob_bytes(root, names["p4_4s_receipt"])).get("source_transition", {})
     result["p4_4s_source_transition"] = transition
     return result
 
@@ -615,7 +640,7 @@ def build_baseline(root: Path = ROOT) -> dict[str, Any]:
         "governance":{"source_review_counter":"0/5","mandatory_5_of_5_reread_completed":True,"reread_issue_337_comment_id":5859231125,"p4_4":"INCOMPLETE","architecture_checkpoint_e":"INCOMPLETE","clean_canonical_shadow_successor_proof":"INCOMPLETE","next_live_proof":"NOT_AUTHORIZED","caller_migration":"NOT_AUTHORIZED","workflow_retirement":"NOT_AUTHORIZED","next_mission":"AUTH-01A","next_mission_authorized":False},
         "postmerge_gates":[{"gate_id":"EVID-POSTMERGE-TESTS","run_id":36344862612,"head_sha":BASE_COMMIT,"status":"completed","conclusion":"success","required_jobs":"all successful"},{"gate_id":"EVID-POSTMERGE-CATALOG","run_id":36344862576,"head_sha":BASE_COMMIT,"status":"completed","conclusion":"success"}],
         "latest_live_evidence":run,
-        "source_snapshot":{"evidence_class":"SOURCE_CONTROLLED_AT_BASELINE_COMMIT","source_commit_sha":BASE_COMMIT,"source_tree_sha":BASE_TREE,"files":sources,"canonical_sha256":source_inventory_digest,"source_hash_policy":"UTF-8 source text hashes use LF-normalized bytes so the same Git content has identical Windows/Linux snapshot identity; historical receipt hashes remain raw byte hashes.","reproduction":{"method":"static source inspection; Python AST/text/YAML-source parsing only; no application/provider modules imported","assertions":static,"result":"PASS","reproduction_sha256":sha256_bytes(canonical_bytes(static)),"future_safe_rule":"Historical audit verifies stored snapshot integrity; current source comparison is optional and skips when any pinned source file changes."}},
+        "source_snapshot":{"evidence_class":"SOURCE_CONTROLLED_AT_BASELINE_COMMIT","source_commit_sha":BASE_COMMIT,"source_tree_sha":BASE_TREE,"files":sources,"canonical_sha256":source_inventory_digest,"source_hash_policy":"UTF-8 source text hashes use LF-normalized bytes so the same Git content has identical Windows/Linux snapshot identity; historical receipt file_sha256 values bind exact raw Git HEAD blobs, with a separate LF-normalized worktree digest for checkout portability.","reproduction":{"method":"static source inspection; Python AST/text/YAML-source parsing only; no application/provider modules imported","assertions":static,"result":"PASS","reproduction_sha256":sha256_bytes(canonical_bytes(static)),"future_safe_rule":"Historical audit verifies stored snapshot integrity; current source comparison is optional and skips when any pinned source file changes."}},
         "evidence_records":evidence_records,"entrypoints":entrypoints,"workflows":workflow_records,"capabilities":capabilities,"product_debt":debts,"unresolved_gates":gates,
         "platform_debt":[
             {"platform_debt_id":"PLAT-WINDOWS-11-X64","target":"Windows 11 x86-64","state":"NOT_QUALIFIED","details":"10 Windows CRLF/canonical-fixture failures were reported in PR #414; no exact-head Windows qualification is recorded.","evidence_ids":["EVID-P4-4S-RECEIPT"],"next_mission":"PORT-01 / PKG-WINDOWS"},
@@ -687,7 +712,7 @@ def render_markdown(data: dict[str, Any]) -> str:
         "## D. Governance snapshot", "",
         *_table(["Item","State"],[["SOURCE_REVIEW_COUNTER","0/5; mandatory reread after the previous 5/5 completed (comment 5859231125)"],["P4.4","INCOMPLETE"],["Architecture Checkpoint E","INCOMPLETE"],["Clean canonical SHADOW successor proof","INCOMPLETE"],["Next live proof","NOT_AUTHORIZED"],["Caller migration","NOT_AUTHORIZED"],["Workflow retirement","NOT_AUTHORIZED"],["Next mission","AUTH-01A — NOT STARTED and not authorized by BASE-00"]]), "",
         "## E. Entrypoint inventory", "",
-        "Static census includes canonical service/workflow paths, legacy desktop HTTP routes and every Python CLI command referenced by repository Markdown/RST/TXT. Source evidence stores repository-relative paths, line identities and LF-normalized source SHA-256 values for cross-platform identity; historical receipt hashes remain byte-exact. Entrypoints were not executed.", "",
+        "Static census includes canonical service/workflow paths, legacy desktop HTTP routes and every Python CLI command referenced by repository Markdown/RST/TXT. Source evidence stores repository-relative paths, line identities and LF-normalized source SHA-256 values for cross-platform identity. Historical receipt SHA-256 values bind the exact raw Git blobs at HEAD; a separate LF-normalized worktree digest tolerates checkout-only CRLF conversion while detecting content changes. The audit reads HEAD blobs locally and performs no fetch. Entrypoints were not executed.", "",
         *_table(["ID","Kind / path","Caller → downstream","External effects / authority","Class / limitation"],[[e['entrypoint_id'],e['kind']+" · "+e['source_path'],str(e['caller_surface'])+" → "+str(e['downstream_targets']),str(e['external_side_effects'])+" · "+e['authority_profile_behavior'],e['current_classification']+" · "+e['support_status']] for e in data['entrypoints']]), "",
         "The legacy API defines `/`, `/ui`, `/styles.css`, `/app.js`, `/api/status`, `/api/leagues`, `/api/fixtures`, `/api/generate`, `/vet`, `/split`, `/merge`, `/api/export`, and deprecated `/api/export_code`. `/api/generate` imports and invokes `legacy_acca_builder_compat.AccaBuilder`; fixture routes acquire FotMob on cache misses. Wildcard CORS is configured with credentials. The legacy route inventory is not the canonical product API.", "",
         "`run_desktop.py` launches a pywebview shell on fixed `127.0.0.1:8500`, starts a daemon server thread, polls `/api/status`, and loads the UI from the repository-relative path. It does not prove the responder belongs to that launch. `/api/status` reports basic liveness/weights-file status, not canonical source/model readiness.", "",
@@ -880,9 +905,15 @@ def validate_baseline(data: dict[str, Any], root: Path = ROOT, *, verify_receipt
     if verify_receipts:
         for receipt in data.get("historical_receipt_immutability",[]):
             try:
-                rel=relative_path(receipt["path"]); actual=file_sha256(root/rel)
-                require(actual==receipt.get("file_sha256"),f"historical receipt bytes changed: {rel}")
-            except (OSError,KeyError,ValueError) as exc:errors.append(f"historical receipt unavailable/unsafe: {exc}")
+                rel=relative_path(receipt["path"])
+                blob=git_head_blob_bytes(root,rel)
+                worktree=normalized_source_bytes(root/rel)
+                require(sha256_bytes(blob)==receipt.get("file_sha256"),f"historical receipt Git blob changed: {rel}")
+                require(receipt.get("file_hash_kind")=="GIT_HEAD_BLOB_RAW_SHA256",f"historical receipt raw hash kind missing: {rel}")
+                require(sha256_bytes(worktree)==receipt.get("portable_worktree_sha256"),f"historical receipt worktree content changed: {rel}")
+                require(receipt.get("worktree_hash_kind")=="LF_NORMALIZED_WORKTREE_SHA256",f"historical receipt worktree hash kind missing: {rel}")
+                require(normalized_bytes(blob)==worktree,f"historical receipt worktree content differs from Git blob: {rel}")
+            except (OSError,KeyError,ValueError,subprocess.CalledProcessError) as exc:errors.append(f"historical receipt unavailable/unsafe: {exc}")
     return errors
 
 

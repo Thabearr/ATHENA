@@ -16,7 +16,7 @@
   "baseline_id": "ATHENA_PRODUCT_BASELINE_V1",
   "baseline_source_commit_sha": "eae938a268707f07db3da2d551ea589782902b1c",
   "baseline_source_tree_sha": "c00e98b0a4b2d5c5f211e6c4f929a08b8e79639b",
-  "canonical_sha256": "ff39d614e214e796f5303ee4ab12ad5c6ceab308357236cbb0215f14b2f63a3a",
+  "canonical_sha256": "d3db092eb890f45cae9eccfefb7134a59bf4d1b9f43e43160421c4210832b27f",
   "capabilities": [
     {
       "blocker_or_reason": "Live/provider reads are excluded; each replay contract is bounded.",
@@ -4236,21 +4236,21 @@
       "canonical_sha256": null,
       "evidence_class": "SOURCE_CONTROLLED",
       "evidence_id": "EVID-P4-4R-INVENTORY",
-      "file_sha256": "f811c43a292b40565a2db61f412bf0f0abb390dddda9b0383ade7d1804a619bd",
+      "file_sha256": "1bc82c35ee072a17e2a9edf10224241ce948769c374f9c779fc6059234d63c11",
       "path": "artifacts/architecture/p4_4r_shadow_runtime_composition_inventory_v1.json"
     },
     {
       "canonical_sha256": "90e2d7e984609ded80c9113a05453628bebadfcb3cede7fc95b9696931016552",
       "evidence_class": "SOURCE_CONTROLLED_HISTORICAL",
       "evidence_id": "EVID-P4-4R-RECEIPT",
-      "file_sha256": "2842b7906f2f40b82426a3f5b18dafa71494935f2840ad0feed027385432750a",
+      "file_sha256": "965f42e56823de78013c40a5b839ea81d0d5c79aadb4a02bc122110014a51eab",
       "path": "artifacts/architecture/p4_4r_shadow_runtime_composition_stabilization_v1.json"
     },
     {
       "canonical_sha256": "0907272a20b439e6874ee3b3fa399a488e8dd3c9a6e428dafa2aa53202c513c3",
       "evidence_class": "SOURCE_CONTROLLED_HISTORICAL",
       "evidence_id": "EVID-P4-4S-RECEIPT",
-      "file_sha256": "f7d22163716fbd84572e20d349dbbf6069fb17744560daab1e81ce20d8b86774",
+      "file_sha256": "78ee27a58dff7c9c22ca7aee6740d9aa35bcc7d655aa9e2ad0a6ff4047ad8d8e",
       "path": "artifacts/architecture/p4_4s_canonical_adapter_bound_context_builder_v1.json"
     },
     {
@@ -5711,7 +5711,7 @@
       "canonical_sha256": "d1e1bb524c01f723fffc5cebe6133a1696f953c636e746a65054d10b33a57ca1",
       "evidence_class": "SOURCE_CONTROLLED_HISTORICAL_RECEIPT",
       "evidence_id": "EVID-P4-4R-INVENTORY",
-      "file_sha256": "f811c43a292b40565a2db61f412bf0f0abb390dddda9b0383ade7d1804a619bd",
+      "file_sha256": "1bc82c35ee072a17e2a9edf10224241ce948769c374f9c779fc6059234d63c11",
       "kind": "HISTORICAL_ARCHITECTURE_RECEIPT",
       "path": "artifacts/architecture/p4_4r_shadow_runtime_composition_inventory_v1.json",
       "policy_id": "ATHENA_P4_4R_SHADOW_RUNTIME_COMPOSITION_INVENTORY_V1"
@@ -5720,7 +5720,7 @@
       "canonical_sha256": "90e2d7e984609ded80c9113a05453628bebadfcb3cede7fc95b9696931016552",
       "evidence_class": "SOURCE_CONTROLLED_HISTORICAL_RECEIPT",
       "evidence_id": "EVID-P4-4R-RECEIPT",
-      "file_sha256": "2842b7906f2f40b82426a3f5b18dafa71494935f2840ad0feed027385432750a",
+      "file_sha256": "965f42e56823de78013c40a5b839ea81d0d5c79aadb4a02bc122110014a51eab",
       "kind": "HISTORICAL_ARCHITECTURE_RECEIPT",
       "path": "artifacts/architecture/p4_4r_shadow_runtime_composition_stabilization_v1.json",
       "policy_id": "ATHENA_P4_4R_SHADOW_RUNTIME_COMPOSITION_STABILIZATION_V1"
@@ -5729,7 +5729,7 @@
       "canonical_sha256": "0907272a20b439e6874ee3b3fa399a488e8dd3c9a6e428dafa2aa53202c513c3",
       "evidence_class": "SOURCE_CONTROLLED_HISTORICAL_RECEIPT",
       "evidence_id": "EVID-P4-4S-RECEIPT",
-      "file_sha256": "f7d22163716fbd84572e20d349dbbf6069fb17744560daab1e81ce20d8b86774",
+      "file_sha256": "78ee27a58dff7c9c22ca7aee6740d9aa35bcc7d655aa9e2ad0a6ff4047ad8d8e",
       "kind": "HISTORICAL_ARCHITECTURE_RECEIPT",
       "path": "artifacts/architecture/p4_4s_canonical_adapter_bound_context_builder_v1.json",
       "policy_id": "ATHENA_P4_4S_CANONICAL_ADAPTER_BOUND_CONTEXT_BUILDER_V1"
@@ -5752,23 +5752,32 @@
     {
       "canonical_sha256": "d1e1bb524c01f723fffc5cebe6133a1696f953c636e746a65054d10b33a57ca1",
       "evidence_class": "SOURCE_CONTROLLED_HISTORICAL_RECEIPT",
-      "file_sha256": "f811c43a292b40565a2db61f412bf0f0abb390dddda9b0383ade7d1804a619bd",
+      "file_hash_kind": "GIT_HEAD_BLOB_RAW_SHA256",
+      "file_sha256": "1bc82c35ee072a17e2a9edf10224241ce948769c374f9c779fc6059234d63c11",
       "path": "artifacts/architecture/p4_4r_shadow_runtime_composition_inventory_v1.json",
-      "policy_id": "ATHENA_P4_4R_SHADOW_RUNTIME_COMPOSITION_INVENTORY_V1"
+      "policy_id": "ATHENA_P4_4R_SHADOW_RUNTIME_COMPOSITION_INVENTORY_V1",
+      "portable_worktree_sha256": "1bc82c35ee072a17e2a9edf10224241ce948769c374f9c779fc6059234d63c11",
+      "worktree_hash_kind": "LF_NORMALIZED_WORKTREE_SHA256"
     },
     {
       "canonical_sha256": "90e2d7e984609ded80c9113a05453628bebadfcb3cede7fc95b9696931016552",
       "evidence_class": "SOURCE_CONTROLLED_HISTORICAL_RECEIPT",
-      "file_sha256": "2842b7906f2f40b82426a3f5b18dafa71494935f2840ad0feed027385432750a",
+      "file_hash_kind": "GIT_HEAD_BLOB_RAW_SHA256",
+      "file_sha256": "965f42e56823de78013c40a5b839ea81d0d5c79aadb4a02bc122110014a51eab",
       "path": "artifacts/architecture/p4_4r_shadow_runtime_composition_stabilization_v1.json",
-      "policy_id": "ATHENA_P4_4R_SHADOW_RUNTIME_COMPOSITION_STABILIZATION_V1"
+      "policy_id": "ATHENA_P4_4R_SHADOW_RUNTIME_COMPOSITION_STABILIZATION_V1",
+      "portable_worktree_sha256": "965f42e56823de78013c40a5b839ea81d0d5c79aadb4a02bc122110014a51eab",
+      "worktree_hash_kind": "LF_NORMALIZED_WORKTREE_SHA256"
     },
     {
       "canonical_sha256": "0907272a20b439e6874ee3b3fa399a488e8dd3c9a6e428dafa2aa53202c513c3",
       "evidence_class": "SOURCE_CONTROLLED_HISTORICAL_RECEIPT",
-      "file_sha256": "f7d22163716fbd84572e20d349dbbf6069fb17744560daab1e81ce20d8b86774",
+      "file_hash_kind": "GIT_HEAD_BLOB_RAW_SHA256",
+      "file_sha256": "78ee27a58dff7c9c22ca7aee6740d9aa35bcc7d655aa9e2ad0a6ff4047ad8d8e",
       "path": "artifacts/architecture/p4_4s_canonical_adapter_bound_context_builder_v1.json",
-      "policy_id": "ATHENA_P4_4S_CANONICAL_ADAPTER_BOUND_CONTEXT_BUILDER_V1"
+      "policy_id": "ATHENA_P4_4S_CANONICAL_ADAPTER_BOUND_CONTEXT_BUILDER_V1",
+      "portable_worktree_sha256": "78ee27a58dff7c9c22ca7aee6740d9aa35bcc7d655aa9e2ad0a6ff4047ad8d8e",
+      "worktree_hash_kind": "LF_NORMALIZED_WORKTREE_SHA256"
     }
   ],
   "historical_run_classification": "POST_P4_4S_INTERNAL_SUCCESS_AUTHORIZATION_NONCOMPLIANT_SHARE_CODE_SIDE_EFFECT",
@@ -8064,7 +8073,7 @@
       "result": "PASS"
     },
     "source_commit_sha": "eae938a268707f07db3da2d551ea589782902b1c",
-    "source_hash_policy": "UTF-8 source text hashes use LF-normalized bytes so the same Git content has identical Windows/Linux snapshot identity; historical receipt hashes remain raw byte hashes.",
+    "source_hash_policy": "UTF-8 source text hashes use LF-normalized bytes so the same Git content has identical Windows/Linux snapshot identity; historical receipt file_sha256 values bind exact raw Git HEAD blobs, with a separate LF-normalized worktree digest for checkout portability.",
     "source_tree_sha": "c00e98b0a4b2d5c5f211e6c4f929a08b8e79639b"
   },
   "superseded_plans": [

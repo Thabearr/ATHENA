@@ -221,7 +221,7 @@ def test_latest_run_is_exactly_authorization_noncompliant_and_hash_anchored():
 def test_baseline_contains_p44r_p44s_and_reread_anchors_without_rewriting_history():
     data = load_baseline()
     anchors = {x["evidence_id"]: x for x in data["evidence_anchors"]}
-    assert anchors["EVID-P4-4R-INVENTORY"]["file_sha256"] == "f811c43a292b40565a2db61f412bf0f0abb390dddda9b0383ade7d1804a619bd"
+    assert anchors["EVID-P4-4R-INVENTORY"]["file_sha256"] == "1bc82c35ee072a17e2a9edf10224241ce948769c374f9c779fc6059234d63c11"
     assert anchors["EVID-P4-4R-RECEIPT"]["canonical_sha256"] == "90e2d7e984609ded80c9113a05453628bebadfcb3cede7fc95b9696931016552"
     assert anchors["EVID-P4-4S-RECEIPT"]["canonical_sha256"] == "0907272a20b439e6874ee3b3fa399a488e8dd3c9a6e428dafa2aa53202c513c3"
     assert anchors["EVID-P4-4S-CONTEXT-SOURCE-BEFORE"]["sha256"] == "2706d8e1b689be153cf6b0de545cfed00f7ee953707a7094f70e6df1344557de"
@@ -229,7 +229,25 @@ def test_baseline_contains_p44r_p44s_and_reread_anchors_without_rewriting_histor
     assert anchors["EVID-P4-4S-ADAPTER-SOURCE-BEFORE"]["sha256"] == "777ab4b88ae0c761f17e96d6904e74e94b61deffaf50a51861dcb8162a47cc71"
     assert anchors["EVID-P4-4S-ADAPTER-SOURCE-AFTER"]["sha256"] == "bf1a9acff635a378f81bafa73f8274a4b9806e34d8d7c3ca13bad1729e205ce2"
     assert data["historical_receipt_immutability"] and len(data["historical_receipt_immutability"]) == 3
+    for receipt in data["historical_receipt_immutability"]:
+        assert receipt["file_hash_kind"] == "GIT_HEAD_BLOB_RAW_SHA256"
+        assert receipt["worktree_hash_kind"] == "LF_NORMALIZED_WORKTREE_SHA256"
     assert audit.validate_baseline(data, ROOT, verify_receipts=True) == []
+
+
+def test_historical_receipt_audit_rejects_changed_git_blob(monkeypatch):
+    data = load_baseline()
+    original = audit.git_head_blob_bytes
+
+    def tampered(root, rel):
+        blob = original(root, rel)
+        if rel == "artifacts/architecture/p4_4r_shadow_runtime_composition_inventory_v1.json":
+            return blob + b" "
+        return blob
+
+    monkeypatch.setattr(audit, "git_head_blob_bytes", tampered)
+    errors = audit.validate_baseline(data, ROOT, verify_receipts=True)
+    assert any("historical receipt Git blob changed" in error for error in errors)
 
 
 def test_no_actual_share_code_url_or_secret_material_is_stored():

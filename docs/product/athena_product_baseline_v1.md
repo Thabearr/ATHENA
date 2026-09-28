@@ -52,7 +52,7 @@ The main commit/tree remain the frozen product source identity. PR metadata is a
 
 ## E. Entrypoint inventory
 
-Static census includes canonical service/workflow paths, legacy desktop HTTP routes and every Python CLI command referenced by repository Markdown/RST/TXT. Source evidence stores repository-relative paths, line identities and LF-normalized source SHA-256 values for cross-platform identity; historical receipt hashes remain byte-exact. Entrypoints were not executed.
+Static census includes canonical service/workflow paths, legacy desktop HTTP routes and every Python CLI command referenced by repository Markdown/RST/TXT. Source evidence stores repository-relative paths, line identities and LF-normalized source SHA-256 values for cross-platform identity. Historical receipt SHA-256 values bind the exact raw Git blobs at HEAD; a separate LF-normalized worktree digest tolerates checkout-only CRLF conversion while detecting content changes. The audit reads HEAD blobs locally and performs no fetch. Entrypoints were not executed.
 
 | ID | Kind / path | Caller → downstream | External effects / authority | Class / limitation |
 |---|---|---|---|---|
@@ -255,9 +255,9 @@ Targets are Windows 11 x86-64 and Ubuntu 24.04 LTS x86-64. Hosted Linux Tests ar
 
 | Evidence ID | Path / identity | SHA-256 | Class |
 |---|---|---|---|
-| EVID-P4-4R-INVENTORY | artifacts/architecture/p4_4r_shadow_runtime_composition_inventory_v1.json | f811c43a292b40565a2db61f412bf0f0abb390dddda9b0383ade7d1804a619bd | SOURCE_CONTROLLED |
-| EVID-P4-4R-RECEIPT | artifacts/architecture/p4_4r_shadow_runtime_composition_stabilization_v1.json | 2842b7906f2f40b82426a3f5b18dafa71494935f2840ad0feed027385432750a | SOURCE_CONTROLLED_HISTORICAL |
-| EVID-P4-4S-RECEIPT | artifacts/architecture/p4_4s_canonical_adapter_bound_context_builder_v1.json | f7d22163716fbd84572e20d349dbbf6069fb17744560daab1e81ce20d8b86774 | SOURCE_CONTROLLED_HISTORICAL |
+| EVID-P4-4R-INVENTORY | artifacts/architecture/p4_4r_shadow_runtime_composition_inventory_v1.json | 1bc82c35ee072a17e2a9edf10224241ce948769c374f9c779fc6059234d63c11 | SOURCE_CONTROLLED |
+| EVID-P4-4R-RECEIPT | artifacts/architecture/p4_4r_shadow_runtime_composition_stabilization_v1.json | 965f42e56823de78013c40a5b839ea81d0d5c79aadb4a02bc122110014a51eab | SOURCE_CONTROLLED_HISTORICAL |
+| EVID-P4-4S-RECEIPT | artifacts/architecture/p4_4s_canonical_adapter_bound_context_builder_v1.json | 78ee27a58dff7c9c22ca7aee6740d9aa35bcc7d655aa9e2ad0a6ff4047ad8d8e | SOURCE_CONTROLLED_HISTORICAL |
 | EVID-P4-4S-CONTEXT-SOURCE-BEFORE | domain/_current_shadow_quote_binding.py | 2706d8e1b689be153cf6b0de545cfed00f7ee953707a7094f70e6df1344557de | SOURCE_HASH_BOUND_BY_P4_4S_RECEIPT |
 | EVID-P4-4S-CONTEXT-SOURCE-AFTER | domain/_current_shadow_quote_binding.py | 689193a9b9f50229b38e7a024189f6aaa9a5c85235e5575895bb398a535e76ff | SOURCE_HASH_BOUND_BY_P4_4S_RECEIPT |
 | EVID-P4-4S-ADAPTER-SOURCE-BEFORE | domain/current_shadow_canonical_core_adapter.py | 777ab4b88ae0c761f17e96d6904e74e94b61deffaf50a51861dcb8162a47cc71 | SOURCE_HASH_BOUND_BY_P4_4S_RECEIPT |
@@ -333,7 +333,7 @@ Next mission: `AUTH-01A`. BASE-00 does not authorize or start it; it becomes eli
 
 This PR may change only the product baseline Markdown/JSON, its offline audit, and focused tests. It does not change runtime, provider, model, pricing, Router, Portfolio, workflow, caller, delivery or account behavior.
 
-**Snapshot canonical SHA-256:** `ff39d614e214e796f5303ee4ab12ad5c6ceab308357236cbb0215f14b2f63a3a`
+**Snapshot canonical SHA-256:** `d3db092eb890f45cae9eccfefb7134a59bf4d1b9f43e43160421c4210832b27f`
 
 **Static source-inventory canonical SHA-256:** `afc366502f9f9b4d621f8e7810bcbc9cb90a15bf5a44c184c2e9b66820fbdd59`
 **Governance:** SOURCE_REVIEW_COUNTER 0/5 while unmerged; P4.4 and Checkpoint E incomplete; no live proof, migration or retirement authorized.
