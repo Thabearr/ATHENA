@@ -232,22 +232,9 @@ class _ShadowSupervisorExecutor:
             or authority_manifest != _manifest_for(request)
         ):
             raise AthenaRunServiceError("SHADOW executor received wrong profile")
-        if request.create_share_code is False and authority_manifest.share_code_generation is False:
-            # AUTH-01C will thread explicit no-delivery intent through the
-            # Current Shadow wrapper chain. Until then, stop before importing
-            # its date/runtime modules or starting the provider-capable child.
-            return ExecutorResult(
-                status="SHADOW_NO_DELIVERY_RUNTIME_NOT_YET_AVAILABLE",
-                evidence={
-                    "reason": "Current Shadow does not yet propagate no-delivery intent; AUTH-01C runtime propagation is required.",
-                    "runtime_readiness": "AUTH_01C_REQUIRED",
-                    "current_shadow_triggered": False,
-                    "current_shadow_subprocess_started": False,
-                    "provider_acquisition": False,
-                    "share_code_operation": False,
-                },
-            )
-        if request.create_share_code is not True or authority_manifest.share_code_generation is not True:
+        if type(request.create_share_code) is not bool or (
+            authority_manifest.share_code_generation is not request.create_share_code
+        ):
             raise AthenaRunServiceError("SHADOW executor received inconsistent delivery authority")
         from domain import current_shadow_fixture_date_request as date_policy
 
@@ -294,6 +281,8 @@ class _ShadowSupervisorExecutor:
             ",".join(representable),
             "--output-dir",
             str(shadow_output_dir),
+            "--create-share-code",
+            "true" if request.create_share_code else "false",
         ]
         # This code path is only reached by an actual SHADOW run request. Tests
         # and audits inject synthetic executors and never call this supervisor.
@@ -389,6 +378,7 @@ class _ShadowSupervisorExecutor:
                 target_size=request.target_legs,
                 request_policy=request_policy,
                 resolved_dates=request.dates,
+                expected_create_share_code=request.create_share_code,
             )
             if adapted_request.canonical_sha256 != request.canonical_sha256:
                 raise AthenaRunServiceError(
@@ -401,6 +391,32 @@ class _ShadowSupervisorExecutor:
                 stage_payload=stage_payload,
                 progress_payload=progress_payload,
             )
+            capability_fields = (
+                "authority_profile",
+                "mode",
+                "provider_acquisition",
+                "share_code_generation",
+                "login",
+                "cookies",
+                "wallet",
+                "staking",
+                "wager",
+            )
+            if any(
+                getattr(adapted.authority_manifest, field)
+                != getattr(authority_manifest, field)
+                for field in capability_fields
+            ):
+                raise AthenaRunServiceError(
+                    "Current Shadow per-run authority differs from the service-bound manifest"
+                )
+            if request.create_share_code is False and (
+                adapted.share_code_result is not None
+                or adapted.authority_manifest.share_code_generation is not False
+            ):
+                raise AthenaRunServiceError(
+                    "Current Shadow no-delivery request returned delivery authority or evidence"
+                )
             if adapted.exact_commit_sha != exact_commit_sha:
                 raise AthenaRunServiceError("Current Shadow receipt commit differs from the service-bound Git HEAD")
             if adapted.wager_placed is not False:

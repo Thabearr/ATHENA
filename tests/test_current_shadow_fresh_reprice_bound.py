@@ -102,10 +102,11 @@ def test_timeout_receipt_reports_exact_prf_budget_and_restores_generic_budget(
     observed = {}
     sentinel = SimpleNamespace(to_dict=lambda: {"status": "timeout"})
 
-    def fake_timeout_receipt(*, target_size, output_dir):
+    def fake_timeout_receipt(*, target_size, output_dir, create_share_code):
         observed["target_size"] = target_size
         observed["output_dir"] = output_dir
         observed["budget"] = runner.CURRENT_SHADOW_RUN_TIMEOUT_SECONDS
+        observed["create_share_code"] = create_share_code
         return sentinel
 
     monkeypatch.setattr(
@@ -121,5 +122,6 @@ def test_timeout_receipt_reports_exact_prf_budget_and_restores_generic_budget(
         "target_size": 20,
         "output_dir": tmp_path,
         "budget": 75 * 60,
+        "create_share_code": True,
     }
     assert runner.CURRENT_SHADOW_RUN_TIMEOUT_SECONDS == original

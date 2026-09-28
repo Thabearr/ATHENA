@@ -15,6 +15,7 @@ def _args(tmp_path: Path) -> argparse.Namespace:
         fixture_scope=daily.SCOPE_TODAY,
         fixture_dates=None,
         output_dir=tmp_path,
+        create_share_code=True,
     )
 
 

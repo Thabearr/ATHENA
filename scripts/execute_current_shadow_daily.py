@@ -115,6 +115,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="1..7 unique comma-separated UTC dates inside today..today+6",
     )
     parser.add_argument(
+        "--create-share-code",
+        type=runner.parse_create_share_code_text,
+        default=runner.LEGACY_CREATE_SHARE_CODE_DEFAULT,
+        metavar="true|false",
+        help="explicit delivery intent; omission preserves legacy delivery-enabled behavior",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("artifacts/current-shadow-all-market"),
@@ -164,6 +171,7 @@ def _finalize_source_adapter_failure(
     stage = runner._read_checkpoint_stage(output_dir)
     result = runner._receipt(
         status=runner.STATUS_SOURCE_INCOMPLETE,
+        create_share_code=args.create_share_code,
         exact_commit_sha=exact_commit_sha,
         target_size=args.target_size,
         sources=None,
@@ -285,6 +293,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         command.extend(("--fixture-dates", ",".join(args.fixture_dates)))
     command.extend(("--output-dir", str(args.output_dir)))
+    command.extend((
+        "--create-share-code",
+        runner.create_share_code_cli_text(args.create_share_code),
+    ))
     try:
         completed = subprocess.run(
             command,
@@ -296,6 +308,7 @@ def main(argv: list[str] | None = None) -> int:
         result = bound._write_timeout_receipt(
             target_size=args.target_size,
             output_dir=args.output_dir,
+            create_share_code=args.create_share_code,
         )
         print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
         return 0

@@ -52,6 +52,33 @@ STATUS_INSUFFICIENT_SUPPORTED_MARKETS = "RESEARCH_NO_CODE_INSUFFICIENT_SUPPORTED
 STATUS_REPRICE_REQUIRED = "RESEARCH_NO_CODE_REPRICE_REQUIRED"
 STATUS_PROVIDER_CHANGED = "RESEARCH_NO_CODE_PROVIDER_CHANGED"
 STATUS_SOURCE_INCOMPLETE = "RESEARCH_NO_CODE_SOURCE_INCOMPLETE"
+STATUS_PORTFOLIO_READY = "RESEARCH_SHADOW_PORTFOLIO_READY"
+STATUS_PORTFOLIO_READY_WITH_SHORTFALL = "RESEARCH_SHADOW_PORTFOLIO_READY_WITH_SHORTFALL"
+
+# Direct retained Current Shadow CLI invocations historically created and
+# verified a share code.  This is a compatibility default only; canonical
+# AthenaRunService callers always pass the request's exact bool explicitly.
+LEGACY_CREATE_SHARE_CODE_DEFAULT = True
+
+
+def parse_create_share_code_text(value: str) -> bool:
+    """Parse the strict CLI vocabulary without consulting profile or environment."""
+
+    if type(value) is not str:
+        raise ValueError("--create-share-code must be exact lowercase 'true' or 'false'")
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise ValueError("--create-share-code must be exact lowercase 'true' or 'false'")
+
+
+def create_share_code_cli_text(value: bool) -> str:
+    """Serialize an already-resolved exact bool for a child process boundary."""
+
+    if type(value) is not bool:
+        raise CurrentShadowAllMarketRunnerError("create_share_code must be exact bool")
+    return "true" if value else "false"
 
 PR119_BOOTSTRAP_ASSET_SHA256 = "e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2"
 PR119_BOOTSTRAP_ENV = "ATHENA_PR119_BOOTSTRAP_PATH"
@@ -103,6 +130,15 @@ AUTHORITY = MappingProxyType({
     "wager_placed": False,
 })
 
+
+def _authority_for(create_share_code: bool) -> Mapping[str, bool]:
+    if type(create_share_code) is not bool:
+        raise CurrentShadowAllMarketRunnerError("create_share_code must be exact bool")
+    authority = dict(AUTHORITY)
+    authority["research_anonymous_share_code_generation"] = create_share_code
+    authority["provider_create_reload_verification"] = create_share_code
+    return MappingProxyType(authority)
+
 _ALLOWED_STATUSES = frozenset({
     STATUS_CODE_VERIFIED,
     STATUS_CODE_VERIFIED_WITH_SHORTFALL,
@@ -111,6 +147,8 @@ _ALLOWED_STATUSES = frozenset({
     STATUS_REPRICE_REQUIRED,
     STATUS_PROVIDER_CHANGED,
     STATUS_SOURCE_INCOMPLETE,
+    STATUS_PORTFOLIO_READY,
+    STATUS_PORTFOLIO_READY_WITH_SHORTFALL,
 })
 
 _PROGRESS_STATUSES = frozenset({"STARTED", "IN_PROGRESS", "COMPLETED"})
@@ -503,6 +541,7 @@ class CurrentShadowRunnerSourceBundle:
 @dataclass(frozen=True)
 class CurrentShadowAllMarketRunReceipt:
     status: str
+    create_share_code: bool
     observed_at: datetime
     exact_commit_sha: str
     requested_target_size: int
@@ -526,6 +565,8 @@ class CurrentShadowAllMarketRunReceipt:
     def __post_init__(self) -> None:
         if self.status not in _ALLOWED_STATUSES:
             raise CurrentShadowAllMarketRunnerError("runner status escaped reviewed vocabulary")
+        if type(self.create_share_code) is not bool:
+            raise CurrentShadowAllMarketRunnerError("create_share_code must be exact bool")
         if type(self.requested_target_size) is not int or not 1 <= self.requested_target_size <= 50:
             raise CurrentShadowAllMarketRunnerError("requested_target_size is invalid")
         _progress_counts(
@@ -539,8 +580,35 @@ class CurrentShadowAllMarketRunReceipt:
         if type(self.reasons) is not tuple or tuple(sorted(set(self.reasons))) != self.reasons:
             raise CurrentShadowAllMarketRunnerError("reasons must be sorted unique tuple")
         verified = self.status in {STATUS_CODE_VERIFIED, STATUS_CODE_VERIFIED_WITH_SHORTFALL}
+        portfolio_ready = self.status in {
+            STATUS_PORTFOLIO_READY,
+            STATUS_PORTFOLIO_READY_WITH_SHORTFALL,
+        }
+        if verified and self.create_share_code is not True:
+            raise CurrentShadowAllMarketRunnerError("verified share status requires delivery intent")
         if verified != (self.share_code is not None and self.share_url is not None):
             raise CurrentShadowAllMarketRunnerError("share-code exposure does not match verified terminal state")
+        if self.create_share_code is False and any(
+            value is not None
+            for value in (self.share_code_receipt, self.share_code, self.share_url)
+        ):
+            raise CurrentShadowAllMarketRunnerError("no-delivery receipt cannot contain share evidence")
+        if portfolio_ready:
+            if self.create_share_code is not False or self.selected_leg_count <= 0:
+                raise CurrentShadowAllMarketRunnerError("portfolio-ready status requires selected no-delivery legs")
+            if self.shortfall != self.requested_target_size - self.selected_leg_count:
+                raise CurrentShadowAllMarketRunnerError(
+                    "portfolio-ready shortfall differs from selected-leg truth"
+                )
+            if self.status == STATUS_PORTFOLIO_READY and self.shortfall != 0:
+                raise CurrentShadowAllMarketRunnerError("portfolio-ready status cannot carry shortfall")
+            if self.status == STATUS_PORTFOLIO_READY_WITH_SHORTFALL and self.shortfall <= 0:
+                raise CurrentShadowAllMarketRunnerError("portfolio-ready shortfall status requires positive shortfall")
+        elif self.create_share_code is True and self.status in {
+            STATUS_PORTFOLIO_READY,
+            STATUS_PORTFOLIO_READY_WITH_SHORTFALL,
+        }:
+            raise CurrentShadowAllMarketRunnerError("no-delivery portfolio status contradicts delivery intent")
         if self.status == STATUS_CODE_VERIFIED and self.shortfall != 0:
             raise CurrentShadowAllMarketRunnerError("fully verified code cannot carry shortfall")
         if self.status == STATUS_CODE_VERIFIED_WITH_SHORTFALL and self.shortfall <= 0:
@@ -595,6 +663,7 @@ class CurrentShadowAllMarketRunReceipt:
             "schema_version": SCHEMA_VERSION,
             "dataset_name": DATASET_NAME,
             "status": self.status,
+            "create_share_code": self.create_share_code,
             "observed_at": self.observed_at.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z"),
             "exact_commit_sha": self.exact_commit_sha,
             "requested_target_size": self.requested_target_size,
@@ -620,7 +689,7 @@ class CurrentShadowAllMarketRunReceipt:
             "shareCode": self.share_code,
             "shareURL": self.share_url,
             "reasons": list(self.reasons),
-            "authority": dict(AUTHORITY),
+            "authority": dict(_authority_for(self.create_share_code)),
             "sportybet_login_used": False,
             "sportybet_cookie_used": False,
             "sportybet_wallet_used": False,
@@ -1095,6 +1164,7 @@ def _acquire_router_inputs(
 def _receipt(
     *,
     status: str,
+    create_share_code: bool,
     exact_commit_sha: str,
     target_size: int,
     sources: CurrentShadowRunnerSourceBundle | None,
@@ -1104,6 +1174,8 @@ def _receipt(
     source_summary: Mapping[str, Any] | None = None,
     partial_counts: Mapping[str, int] | None = None,
 ) -> CurrentShadowAllMarketRunReceipt:
+    if type(create_share_code) is not bool:
+        raise CurrentShadowAllMarketRunnerError("create_share_code must be exact bool")
     if sources is None:
         if partial_counts is None:
             counts = _progress_counts(
@@ -1129,6 +1201,7 @@ def _receipt(
         )
     return CurrentShadowAllMarketRunReceipt(
         status=status,
+        create_share_code=create_share_code,
         observed_at=_now(),
         exact_commit_sha=exact_commit_sha,
         requested_target_size=target_size,
@@ -1160,13 +1233,18 @@ def _receipt(
 
 
 def write_current_shadow_timeout_receipt(
-    *, target_size: int, output_dir: Path,
+    *,
+    target_size: int,
+    output_dir: Path,
+    create_share_code: bool = LEGACY_CREATE_SHARE_CODE_DEFAULT,
 ) -> CurrentShadowAllMarketRunReceipt:
     """Persist a fail-closed receipt after the CLI supervisor exhausts its budget."""
     if type(target_size) is not int or not 1 <= target_size <= 50:
         raise CurrentShadowAllMarketRunnerError("target_size must be an integer from 1 through 50")
     if not isinstance(output_dir, Path):
         raise CurrentShadowAllMarketRunnerError("output_dir must be Path")
+    if type(create_share_code) is not bool:
+        raise CurrentShadowAllMarketRunnerError("create_share_code must be exact bool")
     repository_root = Path(__file__).resolve().parents[1]
     exact_commit_sha = _git_head(repository_root)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1193,6 +1271,7 @@ def write_current_shadow_timeout_receipt(
         partial_counts = progress["counts"]
     result = _receipt(
         status=STATUS_SOURCE_INCOMPLETE,
+        create_share_code=create_share_code,
         exact_commit_sha=exact_commit_sha,
         target_size=target_size,
         sources=None,
@@ -1209,12 +1288,18 @@ def write_current_shadow_timeout_receipt(
 
 
 def _execute_current_shadow_all_market_with_bindings(
-    *, target_size: int, output_dir: Path, runtime_bindings: Any,
+    *,
+    target_size: int,
+    output_dir: Path,
+    runtime_bindings: Any,
+    create_share_code: bool,
 ) -> CurrentShadowAllMarketRunReceipt:
     if type(target_size) is not int or not 1 <= target_size <= 50:
         raise CurrentShadowAllMarketRunnerError("target_size must be an integer from 1 through 50")
     if not isinstance(output_dir, Path):
         raise CurrentShadowAllMarketRunnerError("output_dir must be Path")
+    if type(create_share_code) is not bool:
+        raise CurrentShadowAllMarketRunnerError("create_share_code must be exact bool")
     repository_root = Path(__file__).resolve().parents[1]
     from domain.current_shadow_runtime_bindings import (
         CurrentShadowRuntimeBindings,
@@ -1232,6 +1317,7 @@ def _execute_current_shadow_all_market_with_bindings(
     share_receipt: share_module.ShadowAllMarketShareCodeReceipt | None = None
     provisional = _receipt(
         status=STATUS_SOURCE_INCOMPLETE,
+        create_share_code=create_share_code,
         exact_commit_sha=exact_commit_sha,
         target_size=target_size,
         sources=None,
@@ -1283,6 +1369,7 @@ def _execute_current_shadow_all_market_with_bindings(
         if sources.reconciled_fixture_count == 0:
             result = _receipt(
                 status=STATUS_INSUFFICIENT_SUPPORTED_MARKETS,
+                create_share_code=create_share_code,
                 exact_commit_sha=exact_commit_sha,
                 target_size=target_size,
                 sources=sources,
@@ -1312,6 +1399,7 @@ def _execute_current_shadow_all_market_with_bindings(
             )
             result = _receipt(
                 status=STATUS_NO_BET,
+                create_share_code=create_share_code,
                 exact_commit_sha=exact_commit_sha,
                 target_size=target_size,
                 sources=sources,
@@ -1348,6 +1436,7 @@ def _execute_current_shadow_all_market_with_bindings(
                 stale = bool(blocked_reasons & {"PORTFOLIO_TIME_STALE", "TOO_CLOSE_TO_KICKOFF"})
                 result = _receipt(
                     status=STATUS_REPRICE_REQUIRED if stale else STATUS_INSUFFICIENT_SUPPORTED_MARKETS,
+                    create_share_code=create_share_code,
                     exact_commit_sha=exact_commit_sha,
                     target_size=target_size,
                     sources=sources,
@@ -1356,39 +1445,57 @@ def _execute_current_shadow_all_market_with_bindings(
                     reasons=tuple(sorted(blocked_reasons or {"NO_PORTFOLIO_LEGS_SURVIVED_FROZEN_CONSTRAINTS"})),
                 )
             else:
-                checkpoint(STAGE_SHARE_CODE_CREATE_RELOAD)
-                progress(
-                    STAGE_SHARE_CODE_CREATE_RELOAD,
-                    "STARTED",
-                    _progress_counts(
-                        reviewed_fixture_count=sources.reviewed_fixture_count,
-                        reconciled_fixture_count=sources.reconciled_fixture_count,
-                        provider_event_count=sources.provider_event_count,
-                        priced_fixture_count=sources.priced_fixture_count,
-                        router_selected_count=sources.router_selected_count,
-                        router_no_bet_count=sources.router_no_bet_count,
-                    ),
-                    sources.source_summary,
-                )
-                share_receipt = share_module.create_verified_shadow_all_market_share_code(
-                    portfolio=portfolio,
-                    output_dir=output_dir / "provider-verification",
-                )
-                mapped_status = {
-                    share_module.STATUS_CODE_VERIFIED: STATUS_CODE_VERIFIED,
-                    share_module.STATUS_CODE_VERIFIED_WITH_SHORTFALL: STATUS_CODE_VERIFIED_WITH_SHORTFALL,
-                    share_module.STATUS_REPRICE_REQUIRED: STATUS_REPRICE_REQUIRED,
-                    share_module.STATUS_PROVIDER_CHANGED: STATUS_PROVIDER_CHANGED,
-                }[share_receipt.status]
-                result = _receipt(
-                    status=mapped_status,
-                    exact_commit_sha=exact_commit_sha,
-                    target_size=target_size,
-                    sources=sources,
-                    portfolio=portfolio,
-                    share_receipt=share_receipt,
-                    reasons=share_receipt.reasons,
-                )
+                if create_share_code is False:
+                    status = (
+                        STATUS_PORTFOLIO_READY
+                        if portfolio.shortfall == 0
+                        else STATUS_PORTFOLIO_READY_WITH_SHORTFALL
+                    )
+                    result = _receipt(
+                        status=status,
+                        create_share_code=False,
+                        exact_commit_sha=exact_commit_sha,
+                        target_size=target_size,
+                        sources=sources,
+                        portfolio=portfolio,
+                        share_receipt=None,
+                        reasons=(),
+                    )
+                else:
+                    checkpoint(STAGE_SHARE_CODE_CREATE_RELOAD)
+                    progress(
+                        STAGE_SHARE_CODE_CREATE_RELOAD,
+                        "STARTED",
+                        _progress_counts(
+                            reviewed_fixture_count=sources.reviewed_fixture_count,
+                            reconciled_fixture_count=sources.reconciled_fixture_count,
+                            provider_event_count=sources.provider_event_count,
+                            priced_fixture_count=sources.priced_fixture_count,
+                            router_selected_count=sources.router_selected_count,
+                            router_no_bet_count=sources.router_no_bet_count,
+                        ),
+                        sources.source_summary,
+                    )
+                    share_receipt = share_module.create_verified_shadow_all_market_share_code(
+                        portfolio=portfolio,
+                        output_dir=output_dir / "provider-verification",
+                    )
+                    mapped_status = {
+                        share_module.STATUS_CODE_VERIFIED: STATUS_CODE_VERIFIED,
+                        share_module.STATUS_CODE_VERIFIED_WITH_SHORTFALL: STATUS_CODE_VERIFIED_WITH_SHORTFALL,
+                        share_module.STATUS_REPRICE_REQUIRED: STATUS_REPRICE_REQUIRED,
+                        share_module.STATUS_PROVIDER_CHANGED: STATUS_PROVIDER_CHANGED,
+                    }[share_receipt.status]
+                    result = _receipt(
+                        status=mapped_status,
+                        create_share_code=True,
+                        exact_commit_sha=exact_commit_sha,
+                        target_size=target_size,
+                        sources=sources,
+                        portfolio=portfolio,
+                        share_receipt=share_receipt,
+                        reasons=share_receipt.reasons,
+                    )
     except (
         CurrentShadowAllMarketRunnerError,
         current_fotmob_source.CurrentFotMobReviewedSourceError,
@@ -1417,6 +1524,7 @@ def _execute_current_shadow_all_market_with_bindings(
                 })
         result = _receipt(
             status=STATUS_SOURCE_INCOMPLETE,
+            create_share_code=create_share_code,
             exact_commit_sha=exact_commit_sha,
             target_size=target_size,
             sources=sources,
@@ -1433,7 +1541,10 @@ def _execute_current_shadow_all_market_with_bindings(
 
 
 def execute_current_shadow_all_market(
-    *, target_size: int, output_dir: Path,
+    *,
+    target_size: int,
+    output_dir: Path,
+    create_share_code: bool = LEGACY_CREATE_SHARE_CODE_DEFAULT,
 ) -> CurrentShadowAllMarketRunReceipt:
     """Public supported runner API with source-selected standard composition."""
 
@@ -1443,6 +1554,7 @@ def execute_current_shadow_all_market(
         target_size=target_size,
         output_dir=output_dir,
         runtime_bindings=default_current_shadow_runtime_bindings(),
+        create_share_code=create_share_code,
     )
 
 
@@ -1460,6 +1572,11 @@ __all__ = [
     "STATUS_PROVIDER_CHANGED",
     "STATUS_REPRICE_REQUIRED",
     "STATUS_SOURCE_INCOMPLETE",
+    "STATUS_PORTFOLIO_READY",
+    "STATUS_PORTFOLIO_READY_WITH_SHORTFALL",
+    "LEGACY_CREATE_SHARE_CODE_DEFAULT",
+    "parse_create_share_code_text",
+    "create_share_code_cli_text",
     "acquire_current_shadow_pre_router_bundle",
     "execute_current_shadow_all_market",
 ]
