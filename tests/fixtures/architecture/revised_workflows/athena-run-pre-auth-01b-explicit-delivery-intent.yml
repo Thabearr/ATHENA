@@ -35,14 +35,6 @@ on:
         options:
           - main
           - shadow
-      create_share_code:
-        description: Explicit external share-code delivery intent
-        required: true
-        default: "false"
-        type: choice
-        options:
-          - "false"
-          - "true"
 
 permissions:
   contents: read
@@ -80,7 +72,6 @@ jobs:
           INPUT_TARGET_TOTAL_ODDS: ${{ inputs.target_total_odds }}
           INPUT_BOOKIE: ${{ inputs.bookie }}
           INPUT_PROFILE: ${{ inputs.profile }}
-          INPUT_CREATE_SHARE_CODE: ${{ inputs.create_share_code }}
           PYTHONPATH: ${{ github.workspace }}
         shell: bash
         run: python -m scripts.resolve_athena_run_workflow_request --output-root artifacts/athena-run-workflow

@@ -452,29 +452,46 @@ def audit(root: Path | None = None) -> dict[str, Any]:
              and contracts["runtime_binding_policy"]["sha256_after_fresh_reprice"] == runtime_bindings.policy_sha256(
                  composition=runtime_bindings.FRESH_REPRICE_COMPOSITION
              ), "P4.4R runtime binding policy hash drifted")
-    workflow_path = root / ".github/workflows/athena-run.yml"
-    workflow = workflow_path.read_bytes()
     try:
         base_workflow = subprocess.check_output(
             ["git", "show", f"{BASE_MAIN_SHA}:.github/workflows/athena-run.yml"], cwd=root
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         raise P44RError("exact-main workflow bytes are unavailable") from exc
-    # The Windows worktree applies autocrlf; compare the repository-canonical
-    # content while preserving every other byte for the workflow immutability gate.
+    base_workflow = base_workflow.replace(b"\r\n", b"\n")
+    canonical_workflow = receipt["before_after_contracts"]["canonical_workflow"]
     _require(
-        workflow.replace(b"\r\n", b"\n") == base_workflow.replace(b"\r\n", b"\n"),
-        "P4.4R changed canonical workflow bytes",
+        hashlib.sha256(base_workflow).hexdigest()
+        == canonical_workflow.get("base_main_git_blob_sha256")
+        == canonical_workflow.get("after_git_blob_sha256")
+        and canonical_workflow.get("workflow_bytes_unchanged") is True,
+        "P4.4R exact-base workflow evidence differs from its immutable receipt",
     )
     workflow_paths = subprocess.check_output(
         ["git", "ls-tree", "-r", "--name-only", "HEAD", "--", ".github/workflows"], cwd=root
     ).decode("utf-8").splitlines()
     _require(len([item for item in workflow_paths if item.endswith((".yml", ".yaml"))]) == 38,
              "P4.4R changed the workflow count")
-    ledger = _read_json(root, "artifacts/architecture/p4_workflow_evolution_ledger_v1.json")
+    from scripts import audit_p4_workflow_evolution_ledger as evolution
+    try:
+        ledger = evolution.validate_current_state()
+    except evolution.WorkflowEvolutionError as exc:
+        raise P44RError("current workflow evolution is not authenticated") from exc
     _require(ledger.get("current_live_workflow_count") == 38
              and ledger.get("current_p4_3_retired_workflow_count") == 3,
              "P4.4R changed workflow/retirement governance counts")
+    try:
+        evolved_workflow = evolution.resolve_reviewed_transition_after_source(
+            ".github/workflows/athena-run.yml",
+            "P44M_ATHENA_RUN_PC_UPCOMING_EVIDENCE_PRESERVATION_V1",
+        )
+    except evolution.WorkflowEvolutionError as exc:
+        raise P44RError("historical P4.4M workflow revision is not authenticated") from exc
+    _require(
+        hashlib.sha256(evolved_workflow).hexdigest()
+        == canonical_workflow.get("base_main_git_blob_sha256"),
+        "P4.4R base workflow no longer chains through the reviewed evolution history",
+    )
     historical = _verify_historical_receipts_unchanged(root)
     _require(receipt.get("historical_receipt_immutability") == {
         "verified": True,

@@ -225,6 +225,7 @@ def test_explicit_seven_day_horizon_and_target_bounds() -> None:
             "target_total_odds": "",
             "bookie": "sportybet",
             "profile": "shadow",
+            "create_share_code": "true",
         },
         now=now,
     )
@@ -239,6 +240,7 @@ def test_explicit_seven_day_horizon_and_target_bounds() -> None:
                     "target_total_odds": "",
                     "bookie": "sportybet",
                     "profile": "shadow",
+                    "create_share_code": "true",
                 },
                 now=now,
             )
@@ -341,6 +343,7 @@ def test_issue_comment_forms_map_offline_without_changing_calendar_dates(
             "target_total_odds": "",
             "bookie": "sportybet",
             "profile": "shadow",
+            "create_share_code": "true",
         },
         now=datetime(2026, 9, 24, 9, tzinfo=timezone.utc),
     )

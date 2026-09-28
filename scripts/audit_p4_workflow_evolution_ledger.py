@@ -42,6 +42,28 @@ MAINTENANCE_CONTRACT = {
     "betting_authority_changed": False,
 }
 MAINTENANCE_CONTRACT_FIELDS = frozenset(MAINTENANCE_CONTRACT)
+AUTHORITY_SURFACE_MAINTENANCE_CONTRACT_V2 = {
+    "policy_id": "ATHENA_P4_BASELINE_WORKFLOW_MAINTENANCE_REVISE_V2",
+    "baseline_origin": "P4_3A_SURVIVOR",
+    "path_presence_changed": False,
+    "retirement_authority_granted": False,
+    "event_trigger_kinds_changed": False,
+    "workflow_dispatch_input_surface_changed": True,
+    "schedule_surface_changed": False,
+    "permissions_changed": False,
+    "concurrency_changed": False,
+    "provider_step_added": False,
+    "delivery_step_added": False,
+    "secret_surface_changed": False,
+    "model_authority_changed": False,
+    "pricing_authority_changed": False,
+    "selection_authority_changed": False,
+    "betting_authority_changed": False,
+}
+MAINTENANCE_CONTRACTS = {
+    MAINTENANCE_CONTRACT_POLICY: MAINTENANCE_CONTRACT,
+    AUTHORITY_SURFACE_MAINTENANCE_CONTRACT_V2["policy_id"]: AUTHORITY_SURFACE_MAINTENANCE_CONTRACT_V2,
+}
 REVISED_WORKFLOW_FIXTURE_ROOT = "tests/fixtures/architecture/revised_workflows/"
 PROTECTED = retirement.PROTECTED_LIVE | {".github/workflows/current-shadow-sportybet-source-diagnostic.yml"}
 IDENTITY_KEYS = {"git_blob_sha1", "source_sha256"}
@@ -159,9 +181,12 @@ def _historical_before_fixture_path(value: Any) -> str:
 
 
 def _validate_maintenance_contract(contract: Any) -> None:
-    if not isinstance(contract, dict) or set(contract) != MAINTENANCE_CONTRACT_FIELDS:
-        raise WorkflowEvolutionError("MAINTENANCE_REVISE contract schema must match the exact v1 fields")
-    if contract != MAINTENANCE_CONTRACT:
+    if not isinstance(contract, dict) or not isinstance(contract.get("policy_id"), str):
+        raise WorkflowEvolutionError("MAINTENANCE_REVISE contract requires an exact reviewed policy identity")
+    expected = MAINTENANCE_CONTRACTS.get(contract["policy_id"])
+    if expected is None or set(contract) != set(expected):
+        raise WorkflowEvolutionError("MAINTENANCE_REVISE contract schema/version is not reviewed")
+    if contract != expected:
         raise WorkflowEvolutionError("MAINTENANCE_REVISE contract grants or misstates maintenance authority")
 
 
@@ -397,7 +422,9 @@ def apply_transitions(
             raise WorkflowEvolutionError(f"duplicate or invalid workflow transition identifier: {identifier}")
         identifiers.add(identifier)
         phase = transition["phase_id"]
-        if not isinstance(phase, str) or not re.fullmatch(r"P[0-9]+(?:\.[0-9]+)?[A-Z0-9_.-]*", phase):
+        if not isinstance(phase, str) or not re.fullmatch(
+            r"(?:P[0-9]+(?:\.[0-9]+)?[A-Z0-9_.-]*|AUTH-01B)", phase
+        ):
             raise WorkflowEvolutionError(f"workflow transition phase is invalid: {path}")
         if operation == "MAINTENANCE_REVISE":
             if baseline_families is None or path not in baseline_families:
@@ -405,6 +432,12 @@ def apply_transitions(
             if transition["canonical_family"] != baseline_families[path]:
                 raise WorkflowEvolutionError(f"MAINTENANCE_REVISE canonical family differs from P4.3A: {path}")
             _validate_maintenance_contract(transition["maintenance_contract"])
+            if transition["maintenance_contract"].get("policy_id") == AUTHORITY_SURFACE_MAINTENANCE_CONTRACT_V2["policy_id"] and (
+                phase != "AUTH-01B"
+                or path != ".github/workflows/athena-run.yml"
+                or transition["canonical_family"] != "ATHENA_RUN"
+            ):
+                raise WorkflowEvolutionError("authority-surface maintenance V2 is reserved for the AUTH-01B ATHENA_RUN workflow")
         elif transition["canonical_family"] not in FAMILIES:
             raise WorkflowEvolutionError(f"workflow transition canonical family is invalid: {path}")
         _checkpoint_path(transition["checkpoint_snapshot_path"])
@@ -550,6 +583,126 @@ def resolve_p43a_historical_workflow_source(
     if source_identity(raw) != expected:
         raise WorkflowEvolutionError(f"P4.3A historical fixture bytes differ from frozen matrix: {fixture_path}")
     return raw
+
+
+def _resolve_reviewed_transition_after_source(
+    workflow_path: str,
+    transition_id: str,
+    ledger: dict[str, Any],
+    *,
+    historical_fixture_bytes: Mapping[str, bytes],
+    current_workflow_bytes: bytes,
+) -> bytes:
+    """Resolve a workflow's reviewed after-bytes without confusing history with HEAD.
+
+    The caller supplies a ledger already accepted by ``validate_current_state``.
+    This pure seam is also exercised with adversarial synthetic chains.
+    """
+    path = _workflow_path(workflow_path)
+    transitions = ledger.get("transitions")
+    if not isinstance(transitions, list):
+        raise WorkflowEvolutionError("reviewed workflow transition ledger is malformed")
+    identifiers = [item.get("transition_id") for item in transitions if isinstance(item, dict)]
+    if len(identifiers) != len(transitions) or len(set(identifiers)) != len(identifiers):
+        raise WorkflowEvolutionError("reviewed workflow transition ledger has ambiguous identifiers")
+    matches = [
+        index for index, item in enumerate(transitions)
+        if item.get("transition_id") == transition_id
+    ]
+    if len(matches) != 1:
+        raise WorkflowEvolutionError("reviewed workflow transition id is missing or ambiguous")
+    index = matches[0]
+    selected = transitions[index]
+    if selected.get("workflow_path") != path:
+        raise WorkflowEvolutionError("reviewed workflow transition path does not match request")
+    after = _identity(selected.get("after"), label=f"reviewed after {path}")
+
+    later = [
+        item for item in transitions[index + 1:]
+        if item.get("workflow_path") == path
+    ]
+    if later:
+        first_raw: bytes | None = None
+        used_fixtures: set[str] = set()
+        prior = after
+        for revision in later:
+            if revision.get("operation") != "MAINTENANCE_REVISE":
+                raise WorkflowEvolutionError("later workflow ancestry is not a reviewed maintenance revision")
+            before = _identity(revision.get("before"), label=f"later revision before {path}")
+            if before != prior:
+                raise WorkflowEvolutionError("later workflow revision does not chain from requested after identity")
+            fixture = revision.get("historical_before_fixture")
+            if not isinstance(fixture, dict):
+                raise WorkflowEvolutionError("later workflow revision lacks its historical-before fixture")
+            fixture_path = _historical_before_fixture_path(fixture.get("path"))
+            if fixture_path in used_fixtures:
+                raise WorkflowEvolutionError("workflow revision ancestry reuses a historical-before fixture")
+            used_fixtures.add(fixture_path)
+            fixture_identity = _identity(
+                {key: fixture.get(key) for key in IDENTITY_KEYS},
+                label=f"later revision fixture {fixture_path}",
+            )
+            if fixture_identity != prior:
+                raise WorkflowEvolutionError("later revision fixture identity differs from chained before identity")
+            raw = historical_fixture_bytes.get(fixture_path)
+            if not isinstance(raw, bytes):
+                raise WorkflowEvolutionError(f"later workflow revision fixture is missing: {fixture_path}")
+            if source_identity(raw) != prior:
+                raise WorkflowEvolutionError("later workflow revision fixture bytes do not match chained identity")
+            if first_raw is None:
+                first_raw = raw
+            prior = _identity(revision.get("after"), label=f"later revision after {path}")
+        assert first_raw is not None
+        return first_raw
+
+    normalized_current = current_workflow_bytes.replace(b"\r\n", b"\n")
+    if source_identity(normalized_current) != after:
+        raise WorkflowEvolutionError("current workflow differs from reviewed transition after identity")
+    return normalized_current
+
+
+def resolve_reviewed_transition_after_source(
+    workflow_path: str,
+    transition_id: str,
+) -> bytes:
+    """Return exact reviewed bytes for a transition, even after later revisions.
+
+    Current cumulative evolution is fully validated first. If a later maintenance
+    revision exists for the same workflow, its immutable before-fixture is the
+    reviewed bytes for this checkpoint; otherwise current HEAD must match exactly.
+    """
+    ledger = validate_current_state()
+    path = _workflow_path(workflow_path)
+    transitions = ledger["transitions"]
+    matches = [index for index, item in enumerate(transitions) if item.get("transition_id") == transition_id]
+    if len(matches) != 1 or transitions[matches[0]].get("workflow_path") != path:
+        raise WorkflowEvolutionError("reviewed workflow transition id/path is missing or ambiguous")
+    later = [
+        item for item in transitions[matches[0] + 1:]
+        if item.get("workflow_path") == path
+    ]
+    fixture_bytes: dict[str, bytes] = {}
+    if later:
+        for revision in later:
+            fixture = revision.get("historical_before_fixture")
+            if not isinstance(fixture, dict):
+                raise WorkflowEvolutionError("later workflow revision lacks its historical-before fixture")
+            fixture_path = _historical_before_fixture_path(fixture.get("path"))
+            try:
+                fixture_bytes[fixture_path] = Path(fixture_path).read_bytes().replace(b"\r\n", b"\n")
+            except OSError as exc:
+                raise WorkflowEvolutionError(f"later workflow revision fixture is unavailable: {fixture_path}") from exc
+    try:
+        current = Path(path).read_bytes().replace(b"\r\n", b"\n")
+    except OSError as exc:
+        raise WorkflowEvolutionError(f"current workflow is unavailable: {path}") from exc
+    return _resolve_reviewed_transition_after_source(
+        path,
+        transition_id,
+        ledger,
+        historical_fixture_bytes=fixture_bytes,
+        current_workflow_bytes=current,
+    )
 
 
 def validate_derived_tree(expected: Mapping[str, dict[str, str]], observed: Mapping[str, dict[str, str]]) -> None:

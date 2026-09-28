@@ -173,7 +173,7 @@ def _synthetic_evolution_after_p43_extension(current_p43):
 
 def test_current_ledger_preserves_prior_history_and_appends_p44m_after_p44g() -> None:
     ledger = audit.validate_current_state()
-    assert [item["transition_id"] for item in ledger["transitions"]] == [
+    assert [item["transition_id"] for item in ledger["transitions"][:8]] == [
         "P44A1_FH_VISIBILITY_BRIDGE_V1",
         "P44A1_FH_VISIBILITY_RELEASE_RECEIPTS_V1",
         "P44B_ATHENA_INGEST_ADD_V1",
@@ -181,12 +181,18 @@ def test_current_ledger_preserves_prior_history_and_appends_p44m_after_p44g() ->
         p44f.TRANSITION_ID,
         p44g.TRANSITION_ID,
         p44m.TRANSITION_ID,
+        "AUTH01B_ATHENA_RUN_EXPLICIT_DELIVERY_INTENT_V1",
     ]
     assert ledger["current_live_workflow_count"] == 38
-    assert len(ledger["transitions"]) == 7
+    assert len(ledger["transitions"]) >= 8
     p44g_receipt = json.loads(Path(p44g.RECEIPT_PATH).read_text(encoding="utf-8"))
     p44m_receipt = json.loads(Path("artifacts/architecture/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json").read_text(encoding="utf-8"))
-    assert ledger["current_workflow_tree_sha1"] == p44m_receipt["workflow_tree_after_sha1"]
+    p44m_snapshot = json.loads(Path(
+        "artifacts/architecture/p4_workflow_evolution_snapshots/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json"
+    ).read_text(encoding="utf-8"))
+    assert ledger["transitions"][:7] == p44m_snapshot["transitions"]
+    audit.validate_evolution_snapshot_extension(p44m_snapshot, ledger)
+    assert p44m_snapshot["current_workflow_tree_sha1"] == p44m_receipt["workflow_tree_after_sha1"]
     assert p44g_receipt["workflow_tree_sha1_after"] == "d58f71b9ac653c8762f1d9b18eede15755ee1a76"
     assert ledger["canonical_sha256"] == audit.canonical_sha256(ledger)
     assert Path(NEW_PATH).exists()
@@ -460,7 +466,7 @@ def test_maintenance_revise_requires_exact_before_after_and_fixture_identity() -
         ({"retirement_authority_granted": True}, "grants or misstates"),
         ({"trigger_surface_changed": True}, "grants or misstates"),
         ({"concurrency_changed": True}, "grants or misstates"),
-        ({"unexpected": False}, "exact v1 fields"),
+        ({"unexpected": False}, "schema/version is not reviewed"),
     ],
 )
 def test_maintenance_contract_is_exact_and_authority_neutral(contract_change, message) -> None:
@@ -505,6 +511,128 @@ def test_maintenance_revise_preserves_protected_research_family() -> None:
     )
     with pytest.raises(audit.WorkflowEvolutionError, match="family differs from P4.3A"):
         _evaluate([wrong_family], {EVIDENCE_PATH: wrong_family_receipt})
+
+
+def test_auth_01b_v2_maintenance_contract_is_exact_and_input_surface_only() -> None:
+    contract = copy.deepcopy(audit.AUTHORITY_SURFACE_MAINTENANCE_CONTRACT_V2)
+    audit._validate_maintenance_contract(contract)
+    for key in (
+        "event_trigger_kinds_changed", "workflow_dispatch_input_surface_changed",
+        "schedule_surface_changed", "permissions_changed",
+        "concurrency_changed", "provider_step_added", "delivery_step_added",
+        "secret_surface_changed", "model_authority_changed", "pricing_authority_changed",
+        "selection_authority_changed", "betting_authority_changed", "retirement_authority_granted",
+    ):
+        altered = copy.deepcopy(contract)
+        altered[key] = True
+        with pytest.raises(audit.WorkflowEvolutionError, match="grants or misstates"):
+            audit._validate_maintenance_contract(altered)
+    with pytest.raises(audit.WorkflowEvolutionError, match="schema/version"):
+        audit._validate_maintenance_contract({**contract, "trigger_surface_changed": False})
+
+
+def test_auth_01b_phase_and_v2_contract_are_accepted_without_relabeling() -> None:
+    path = ".github/workflows/athena-run.yml"
+    before_raw = retirement.resolve_reviewed_workflow_source(path)
+    after_raw = before_raw + b"\n# AUTH-01B synthetic contract test\n"
+    transition, receipt = _maintenance_transition(
+        path,
+        before_raw=before_raw,
+        after_raw=after_raw,
+        identifier="AUTH01B_SYNTHETIC_PHASE_TEST",
+        fixture_path="tests/fixtures/architecture/revised_workflows/auth-01b-synthetic-before.yml",
+        contract=audit.AUTHORITY_SURFACE_MAINTENANCE_CONTRACT_V2,
+    )
+    transition["phase_id"] = "AUTH-01B"
+    _refresh_maintenance_receipt(transition, receipt)
+    assert _evaluate([transition], {EVIDENCE_PATH: receipt})[path] == audit.source_identity(after_raw)
+
+    wrong_phase = copy.deepcopy(transition)
+    wrong_phase_receipt = copy.deepcopy(receipt)
+    wrong_phase["phase_id"] = "P4.4C"
+    _refresh_maintenance_receipt(wrong_phase, wrong_phase_receipt)
+    with pytest.raises(audit.WorkflowEvolutionError, match="reserved for the AUTH-01B"):
+        _evaluate([wrong_phase], {EVIDENCE_PATH: wrong_phase_receipt})
+
+
+def test_reviewed_transition_resolver_uses_the_next_revision_historical_fixture() -> None:
+    ledger = json.loads(audit.LEDGER_PATH.read_text(encoding="utf-8"))
+    p44m_snapshot = json.loads(Path(
+        "artifacts/architecture/p4_workflow_evolution_snapshots/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json"
+    ).read_text(encoding="utf-8"))
+    auth_transition = ledger["transitions"][7]
+    fixture = auth_transition["historical_before_fixture"]
+    raw = Path(fixture["path"]).read_bytes().replace(b"\r\n", b"\n")
+    resolved = audit._resolve_reviewed_transition_after_source(
+        ".github/workflows/athena-run.yml",
+        "P44M_ATHENA_RUN_PC_UPCOMING_EVIDENCE_PRESERVATION_V1",
+        ledger,
+        historical_fixture_bytes={fixture["path"]: raw},
+        current_workflow_bytes=Path(".github/workflows/athena-run.yml").read_bytes(),
+    )
+    assert resolved == raw
+    assert audit.source_identity(resolved) == p44m_snapshot["transitions"][6]["after"]
+
+
+def test_reviewed_transition_resolver_rejects_gaps_ambiguous_ids_and_rewrites() -> None:
+    ledger = json.loads(audit.LEDGER_PATH.read_text(encoding="utf-8"))
+    transition_id = "P44M_ATHENA_RUN_PC_UPCOMING_EVIDENCE_PRESERVATION_V1"
+    auth_transition = ledger["transitions"][7]
+    fixture = auth_transition["historical_before_fixture"]
+    raw = Path(fixture["path"]).read_bytes().replace(b"\r\n", b"\n")
+    kwargs = {
+        "historical_fixture_bytes": {fixture["path"]: raw},
+        "current_workflow_bytes": Path(".github/workflows/athena-run.yml").read_bytes(),
+    }
+
+    changed_before = copy.deepcopy(ledger)
+    changed_before["transitions"][7]["before"] = {"git_blob_sha1": "1" * 40, "source_sha256": "2" * 64}
+    with pytest.raises(audit.WorkflowEvolutionError, match="does not chain"):
+        audit._resolve_reviewed_transition_after_source(".github/workflows/athena-run.yml", transition_id, changed_before, **kwargs)
+
+    missing_fixture = copy.deepcopy(ledger)
+    missing_fixture["transitions"][7]["historical_before_fixture"]["path"] = (
+        "tests/fixtures/architecture/revised_workflows/missing-auth-before.yml"
+    )
+    with pytest.raises(audit.WorkflowEvolutionError, match="fixture is missing"):
+        audit._resolve_reviewed_transition_after_source(".github/workflows/athena-run.yml", transition_id, missing_fixture, **kwargs)
+
+    wrong_fixture = copy.deepcopy(ledger)
+    with pytest.raises(audit.WorkflowEvolutionError, match="fixture bytes do not match"):
+        audit._resolve_reviewed_transition_after_source(
+            ".github/workflows/athena-run.yml",
+            transition_id,
+            wrong_fixture,
+            historical_fixture_bytes={fixture["path"]: b"different historical workflow bytes"},
+            current_workflow_bytes=kwargs["current_workflow_bytes"],
+        )
+
+    ambiguous = copy.deepcopy(ledger)
+    ambiguous["transitions"].append(copy.deepcopy(ambiguous["transitions"][7]))
+    with pytest.raises(audit.WorkflowEvolutionError, match="ambiguous identifiers"):
+        audit._resolve_reviewed_transition_after_source(".github/workflows/athena-run.yml", transition_id, ambiguous, **kwargs)
+
+    rewritten = copy.deepcopy(ledger)
+    rewritten["transitions"][6]["after"] = {"git_blob_sha1": "3" * 40, "source_sha256": "4" * 64}
+    with pytest.raises(audit.WorkflowEvolutionError, match="does not chain"):
+        audit._resolve_reviewed_transition_after_source(".github/workflows/athena-run.yml", transition_id, rewritten, **kwargs)
+
+
+def test_reviewed_transition_resolver_requires_current_bytes_when_no_later_revision() -> None:
+    ledger = json.loads(audit.LEDGER_PATH.read_text(encoding="utf-8"))
+    p44m_snapshot = json.loads(Path(
+        "artifacts/architecture/p4_workflow_evolution_snapshots/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json"
+    ).read_text(encoding="utf-8"))
+    historical = copy.deepcopy(ledger)
+    historical["transitions"] = p44m_snapshot["transitions"]
+    with pytest.raises(audit.WorkflowEvolutionError, match="current workflow differs"):
+        audit._resolve_reviewed_transition_after_source(
+            ".github/workflows/athena-run.yml",
+            "P44M_ATHENA_RUN_PC_UPCOMING_EVIDENCE_PRESERVATION_V1",
+            historical,
+            historical_fixture_bytes={},
+            current_workflow_bytes=Path(".github/workflows/athena-run.yml").read_bytes(),
+        )
 
 
 def test_chained_maintenance_revisions_require_exact_immediate_before_versions() -> None:

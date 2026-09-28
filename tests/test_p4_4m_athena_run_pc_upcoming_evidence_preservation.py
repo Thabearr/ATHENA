@@ -24,10 +24,17 @@ def _step(workflow: dict, step_id: str) -> dict:
     )
 
 
+def _p44m_after() -> bytes:
+    return evolution.resolve_reviewed_transition_after_source(
+        audit.WORKFLOW_PATH,
+        audit.TRANSITION_ID,
+    )
+
+
 def test_active_pc_upcoming_root_is_added_only_to_existing_optional_preservation_loop() -> None:
     assert source.EVIDENCE_ROOT.as_posix() == audit.PC_ROOT
     before = audit._workflow_bytes(Path(audit.FIXTURE_PATH))
-    current = audit._workflow_bytes(Path(audit.WORKFLOW_PATH))
+    current = _p44m_after()
     before_run = _step(_workflow(before), "preserve_shadow_evidence")["run"]
     current_run = _step(_workflow(current), "preserve_shadow_evidence")["run"]
     assert audit.PC_ROOT not in before_run
@@ -42,7 +49,7 @@ def test_active_pc_upcoming_root_is_added_only_to_existing_optional_preservation
 
 def test_workflow_contract_is_identical_except_the_single_evidence_root() -> None:
     before = _workflow(audit._workflow_bytes(Path(audit.FIXTURE_PATH)))
-    current = _workflow(audit._workflow_bytes(Path(audit.WORKFLOW_PATH)))
+    current = _workflow(_p44m_after())
     restored = copy.deepcopy(current)
     _step(restored, "preserve_shadow_evidence")["run"] = _step(before, "preserve_shadow_evidence")["run"]
     assert restored == before
@@ -70,9 +77,11 @@ def test_evolution_ledger_appends_exactly_one_maintenance_revision() -> None:
     prior = json.loads(audit.PREVIOUS_SNAPSHOT_PATH.read_text(encoding="utf-8"))
     snapshot = json.loads(audit.SNAPSHOT_PATH.read_text(encoding="utf-8"))
     assert ledger["transitions"][:6] == prior["transitions"]
-    assert len(ledger["transitions"]) == 7
-    assert snapshot == ledger
-    transition = ledger["transitions"][-1]
+    assert len(snapshot["transitions"]) == 7
+    assert snapshot["canonical_sha256"] == evolution.canonical_sha256(snapshot)
+    assert ledger["transitions"][:7] == snapshot["transitions"]
+    evolution.validate_evolution_snapshot_extension(snapshot, ledger)
+    transition = snapshot["transitions"][6]
     assert transition["phase_id"] == "P4.4M"
     assert transition["transition_id"] == "P44M_ATHENA_RUN_PC_UPCOMING_EVIDENCE_PRESERVATION_V1"
     assert transition["operation"] == "MAINTENANCE_REVISE"
@@ -81,6 +90,7 @@ def test_evolution_ledger_appends_exactly_one_maintenance_revision() -> None:
     assert transition["maintenance_contract"] == evolution.MAINTENANCE_CONTRACT
     assert ledger["current_live_workflow_count"] == 38
     assert ledger["current_p4_3_retired_workflow_count"] == 3
+    assert ledger["transitions"][7]["phase_id"] == "AUTH-01B"
 
 
 def test_receipt_hash_is_canonical_and_runtime_team_label_contracts_are_unchanged() -> None:

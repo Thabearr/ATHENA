@@ -124,6 +124,7 @@ def _pair_case(name: str, dates: tuple[date, ...], *, scope: str = "today", targ
             "target_total_odds": "",
             "bookie": "sportybet",
             "profile": "shadow",
+            "create_share_code": "true",
         },
         now=now or datetime(dates[0].year, dates[0].month, dates[0].day, 9, tzinfo=timezone.utc),
     )

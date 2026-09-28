@@ -108,20 +108,13 @@ def _write_new_atomically(path: Path, payload: bytes) -> None:
 
 
 def _manifest_for(request: RunRequest) -> AuthorityManifest:
-    if (
-        request.authority_profile,
-        request.mode,
-        request.bookie,
-        request.create_share_code,
-    ) == ("MAIN", "main_application", "sportybet", False):
+    identity = (request.authority_profile, request.mode, request.bookie)
+    if identity == ("MAIN", "main_application", "sportybet"):
         acquisition, share_code = False, False
-    elif (
-        request.authority_profile,
-        request.mode,
-        request.bookie,
-        request.create_share_code,
-    ) == ("SHADOW", "research_shadow", "sportybet", True):
-        acquisition, share_code = True, True
+    elif identity == ("SHADOW", "research_shadow", "sportybet"):
+        # SHADOW source acquisition remains a reviewed profile capability;
+        # delivery is independently limited to the exact request intent.
+        acquisition, share_code = True, request.create_share_code
     else:
         # Unsupported profile/mode combinations receive no capabilities.
         acquisition, share_code = False, False
@@ -151,17 +144,24 @@ def _contains_true_wager_flag(value: Any) -> bool:
 
 
 def _check_request_authority(request: RunRequest, manifest: AuthorityManifest) -> str | None:
-    if request.bookie != "sportybet":
+    identity = (request.authority_profile, request.mode, request.bookie)
+    if identity not in {
+        ("MAIN", "main_application", "sportybet"),
+        ("SHADOW", "research_shadow", "sportybet"),
+    }:
         return "EXECUTOR_UNAVAILABLE"
-    if (request.authority_profile, request.mode) == ("MAIN", "main_application"):
-        if request.create_share_code is not False:
-            return "REQUEST_AUTHORITY_MISMATCH"
-        return None
-    if (request.authority_profile, request.mode) == ("SHADOW", "research_shadow"):
-        if request.create_share_code is not True:
-            return "REQUEST_AUTHORITY_MISMATCH"
-        return None
-    return "EXECUTOR_UNAVAILABLE"
+    if type(request.create_share_code) is not bool or request.place_wager is not False:
+        return "REQUEST_AUTHORITY_MISMATCH"
+    try:
+        expected_manifest = _manifest_for(request)
+    except Exception:
+        return "REQUEST_AUTHORITY_MISMATCH"
+    # The request may narrow reviewed capability but may never widen it. This
+    # exact comparison also rejects identity drift, sensitive capabilities, or
+    # caller-added capability material before any executor is considered.
+    if manifest != expected_manifest:
+        return "REQUEST_AUTHORITY_MISMATCH"
+    return None
 
 
 class _MainFailClosedExecutor:
@@ -224,8 +224,29 @@ class _ShadowSupervisorExecutor:
         exact_commit_sha: str,
         observed_at: datetime,
     ) -> ExecutorResult:
-        if authority_manifest.authority_profile != "SHADOW":
+        if (
+            request.authority_profile != "SHADOW"
+            or request.mode != "research_shadow"
+            or authority_manifest != _manifest_for(request)
+        ):
             raise AthenaRunServiceError("SHADOW executor received wrong profile")
+        if request.create_share_code is False and authority_manifest.share_code_generation is False:
+            # AUTH-01C will thread explicit no-delivery intent through the
+            # Current Shadow wrapper chain. Until then, stop before importing
+            # its date/runtime modules or starting the provider-capable child.
+            return ExecutorResult(
+                status="SHADOW_NO_DELIVERY_RUNTIME_NOT_YET_AVAILABLE",
+                evidence={
+                    "reason": "Current Shadow does not yet propagate no-delivery intent; AUTH-01C runtime propagation is required.",
+                    "runtime_readiness": "AUTH_01C_REQUIRED",
+                    "current_shadow_triggered": False,
+                    "current_shadow_subprocess_started": False,
+                    "provider_acquisition": False,
+                    "share_code_operation": False,
+                },
+            )
+        if request.create_share_code is not True or authority_manifest.share_code_generation is not True:
+            raise AthenaRunServiceError("SHADOW executor received inconsistent delivery authority")
         from domain import current_shadow_fixture_date_request as date_policy
 
         requested_text = tuple(day.strftime("%Y%m%d") for day in request.dates)
@@ -666,18 +687,25 @@ class AthenaRunService:
 
         terminal_status = _check_request_authority(request, manifest)
         executor = self._executors.get((request.authority_profile, request.mode, request.bookie))
-        if request.target_total_odds is not None:
+        if terminal_status is not None:
+            outcome = ExecutorResult(
+                status=terminal_status,
+                evidence={
+                    "executor_invoked": False,
+                    "reason": (
+                        "Request capability does not authorize the requested operation."
+                        if terminal_status == "REQUEST_AUTHORITY_MISMATCH"
+                        else "No reviewed executor identity is available for this request."
+                    ),
+                },
+            )
+        elif request.target_total_odds is not None:
             outcome = ExecutorResult(
                 status="TARGET_TOTAL_ODDS_NOT_SUPPORTED",
                 evidence={
                     "reason": "No reviewed canonical target-total-odds objective is available.",
                     "executor_invoked": False,
                 },
-            )
-        elif terminal_status is not None:
-            outcome = ExecutorResult(
-                status=terminal_status,
-                evidence={"executor_invoked": False, "reason": "Request authority/profile is unsupported."},
             )
         elif executor is None:
             outcome = ExecutorResult(

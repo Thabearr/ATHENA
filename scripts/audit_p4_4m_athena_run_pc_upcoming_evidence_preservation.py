@@ -170,19 +170,20 @@ def check() -> dict[str, Any]:
         raise P44MError("runtime/source identity-contract hashes changed")
 
     before = _workflow_bytes(Path(FIXTURE_PATH))
-    current = _workflow_bytes(Path(WORKFLOW_PATH))
+    historical_after = evolution.resolve_reviewed_transition_after_source(
+        WORKFLOW_PATH,
+        TRANSITION_ID,
+    )
     before_identity = _identity(before)
-    after_identity = _identity(current)
+    after_identity = _identity(historical_after)
     if receipt.get("workflow_before_identity") != before_identity or receipt.get("workflow_after_identity") != after_identity:
         raise P44MError("workflow before/after identity differs from the receipt")
     if subprocess.run(["git", "rev-parse", f"HEAD:{FIXTURE_PATH}"], capture_output=True, text=True).stdout.strip() != before_identity["git_blob_sha1"]:
         raise P44MError("immutable before fixture is not source-controlled at HEAD")
-    if subprocess.run(["git", "rev-parse", f"HEAD:{WORKFLOW_PATH}"], capture_output=True, text=True).stdout.strip() != after_identity["git_blob_sha1"]:
-        raise P44MError("current workflow identity differs from HEAD")
 
     before_step = _preservation_step(_yaml(before))
-    current_yaml = _yaml(current)
-    current_step = _preservation_step(current_yaml)
+    historical_after_yaml = _yaml(historical_after)
+    current_step = _preservation_step(historical_after_yaml)
     before_run = before_step.get("run", "")
     current_run = current_step.get("run", "")
     root_line = f"  '{PC_ROOT}' \\\n"
@@ -200,12 +201,12 @@ def check() -> dict[str, Any]:
     if "identity_path=\"${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH:-}\"" not in current_run:
         raise P44MError("identity-state preservation block disappeared")
 
-    restored = copy.deepcopy(current_yaml)
+    restored = copy.deepcopy(historical_after_yaml)
     _preservation_step(restored)["run"] = before_run
     if restored != _yaml(before):
         raise P44MError("workflow triggers, inputs, permissions, concurrency, timeout, execution, or upload contract changed")
     upload = [
-        step for job in current_yaml["jobs"].values() for step in job.get("steps", [])
+        step for job in historical_after_yaml["jobs"].values() for step in job.get("steps", [])
         if step.get("id") == "upload_evidence"
     ]
     if len(upload) != 1:
@@ -220,15 +221,25 @@ def check() -> dict[str, Any]:
     if receipt.get("pre_fix_preservation_list") != list(PREVIOUS_ROOTS) or receipt.get("post_fix_preservation_list") != list(AFTER_ROOTS):
         raise P44MError("receipt preservation-list lineage drifted")
 
-    transition_id = "P44M_ATHENA_RUN_PC_UPCOMING_EVIDENCE_PRESERVATION_V1"
     ledger = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
     previous = json.loads(PREVIOUS_SNAPSHOT_PATH.read_text(encoding="utf-8"))
     snapshot = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
     if previous.get("canonical_sha256") != "b9ee60aa5cfa63080159cae839ca82b5662fdfbfe70a91055392a1728ed05f7a":
         raise P44MError("immutable six-transition ledger snapshot changed")
-    if ledger.get("transitions", [])[:6] != previous.get("transitions") or len(ledger.get("transitions", [])) != 7:
-        raise P44MError("P4.4M must append exactly one transition after the immutable six-transition prefix")
-    transition = ledger["transitions"][-1]
+    if ledger.get("transitions", [])[:6] != previous.get("transitions"):
+        raise P44MError("current workflow evolution rewrote the immutable six-transition prefix")
+    if (
+        snapshot.get("canonical_sha256") != _canonical_sha256(snapshot)
+        or len(snapshot.get("transitions", [])) != 7
+        or snapshot.get("transitions", [])[:6] != previous.get("transitions")
+        or ledger.get("transitions", [])[:7] != snapshot.get("transitions")
+    ):
+        raise P44MError("P4.4M historical snapshot is not the exact immutable seven-transition prefix")
+    try:
+        evolution.validate_evolution_snapshot_extension(snapshot, ledger)
+    except evolution.WorkflowEvolutionError as exc:
+        raise P44MError("current evolution ledger is not a valid extension of the P4.4M checkpoint") from exc
+    transition = snapshot["transitions"][6]
     if (
         transition.get("transition_id") != transition_id
         or transition.get("phase_id") != "P4.4M"
@@ -243,11 +254,9 @@ def check() -> dict[str, Any]:
         raise P44MError("P4.4M evolution transition is not the exact reviewed maintenance revision")
     if (
         ledger.get("canonical_sha256") != _canonical_sha256(ledger)
-        or snapshot != ledger
-        or snapshot.get("canonical_sha256") != _canonical_sha256(snapshot)
-        or receipt.get("workflow_evolution_ledger_sha256") != ledger.get("canonical_sha256")
+        or receipt.get("workflow_evolution_ledger_sha256") != snapshot.get("canonical_sha256")
     ):
-        raise P44MError("ledger/snapshot/receipt canonical lineage is inconsistent")
+        raise P44MError("current ledger or historical P4.4M snapshot lineage is inconsistent")
     if transition.get("evidence_receipt_path") != RECEIPT_PATH.as_posix() or transition.get("checkpoint_snapshot_path") != SNAPSHOT_PATH.as_posix():
         raise P44MError("P4.4M transition receipt or snapshot path drifted")
     if receipt.get("reviewed_workflow_transition") != {k: v for k, v in transition.items() if k != "evidence_body_sha256"}:
@@ -256,7 +265,7 @@ def check() -> dict[str, Any]:
         raise P44MError("architecture receipt evidence body hash mismatch")
     if ledger.get("current_live_workflow_count") != 38 or ledger.get("current_p4_3_retired_workflow_count") != 3:
         raise P44MError("workflow or retirement count changed")
-    if ledger.get("current_workflow_tree_sha1") != receipt.get("workflow_tree_after_sha1"):
+    if snapshot.get("current_workflow_tree_sha1") != receipt.get("workflow_tree_after_sha1"):
         raise P44MError("workflow tree identity differs from the receipt")
 
     team_label_hashes = receipt.get("team_label_file_sha256", {})

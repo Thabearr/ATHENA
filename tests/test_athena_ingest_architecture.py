@@ -53,7 +53,12 @@ def test_reviewed_add_snapshot_and_receipt_bind_one_new_workflow() -> None:
     assert receipt["workflow_git_blob_sha1"] == ledger["transitions"][2]["after"]["git_blob_sha1"]
     assert receipt["workflow_source_sha256"] == ledger["transitions"][2]["after"]["source_sha256"]
     assert ledger["current_live_workflow_count"] == 38
-    assert len(ledger["transitions"]) == 7
+    p44m_snapshot = json.loads(Path(
+        "artifacts/architecture/p4_workflow_evolution_snapshots/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json"
+    ).read_text(encoding="utf-8"))
+    assert ledger["transitions"][:7] == p44m_snapshot["transitions"]
+    evolution.validate_evolution_snapshot_extension(p44m_snapshot, ledger)
+    assert ledger["transitions"][7]["transition_id"] == "AUTH01B_ATHENA_RUN_EXPLICIT_DELIVERY_INTENT_V1"
     assert ledger["transitions"][4]["transition_id"] == p44f.TRANSITION_ID
     assert ledger["transitions"][5]["transition_id"] == p44g.TRANSITION_ID
     assert ledger["transitions"][6]["transition_id"] == (

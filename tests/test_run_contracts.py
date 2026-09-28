@@ -163,6 +163,14 @@ def test_run_request_v1_main_and_shadow_bytes_match_pre_auth_01a_vectors():
             b'{"authority_profile":"SHADOW","bookie":"sportybet","contract":"RunRequest","create_share_code":true,"dates":["2026-09-23","2026-09-24"],"mode":"research_shadow","place_wager":false,"policy_id":"ATHENA_CANONICAL_RUN_CONTRACT_V1","schema_version":1,"target_legs":20,"target_total_odds":null}\n',
             "79f028851287bf512e48974a0874d3407312d2499fee0f8e3248b61e3d804f5b",
         ),
+        (
+            contracts.RunRequest(
+                **shared, mode="research_shadow", authority_profile="SHADOW",
+                create_share_code=False,
+            ),
+            b'{"authority_profile":"SHADOW","bookie":"sportybet","contract":"RunRequest","create_share_code":false,"dates":["2026-09-23","2026-09-24"],"mode":"research_shadow","place_wager":false,"policy_id":"ATHENA_CANONICAL_RUN_CONTRACT_V1","schema_version":1,"target_legs":20,"target_total_odds":null}\n',
+            "8012b46ff52faf3e6b7128877a84efcdb7c36ecc4c04b15d725db8b43ef4dfd8",
+        ),
     )
     for request, expected_bytes, expected_sha256 in vectors:
         assert contracts.canonical_json_bytes(request) == expected_bytes
