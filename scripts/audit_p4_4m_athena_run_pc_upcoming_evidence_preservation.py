@@ -241,7 +241,7 @@ def check() -> dict[str, Any]:
         raise P44MError("current evolution ledger is not a valid extension of the P4.4M checkpoint") from exc
     transition = snapshot["transitions"][6]
     if (
-        transition.get("transition_id") != transition_id
+        transition.get("transition_id") != TRANSITION_ID
         or transition.get("phase_id") != "P4.4M"
         or transition.get("workflow_path") != WORKFLOW_PATH
         or transition.get("operation") != "MAINTENANCE_REVISE"
