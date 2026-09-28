@@ -16,7 +16,7 @@
   "baseline_id": "ATHENA_PRODUCT_BASELINE_V1",
   "baseline_source_commit_sha": "eae938a268707f07db3da2d551ea589782902b1c",
   "baseline_source_tree_sha": "c00e98b0a4b2d5c5f211e6c4f929a08b8e79639b",
-  "canonical_sha256": "2f876eb038b4dc99cc1d962848ad52c081e050fb72a75538ea696e343bded909",
+  "canonical_sha256": "ff39d614e214e796f5303ee4ab12ad5c6ceab308357236cbb0215f14b2f63a3a",
   "capabilities": [
     {
       "blocker_or_reason": "Live/provider reads are excluded; each replay contract is bounded.",
@@ -5774,9 +5774,9 @@
   "historical_run_classification": "POST_P4_4S_INTERNAL_SUCCESS_AUTHORIZATION_NONCOMPLIANT_SHARE_CODE_SIDE_EFFECT",
   "implementation_branch": "feat/base-00-product-capability-closure-baseline",
   "implementation_review": {
-    "head_sha_at_pr_creation": null,
-    "pull_request_number": null,
-    "state_at_capture": "NOT_CREATED_AT_BASELINE_FREEZE"
+    "head_sha_at_pr_creation": "739f80a2dccf0b99f0620377e308e3d4abcc338b",
+    "pull_request_number": 415,
+    "state_at_capture": "OPEN_UNMERGED_AT_REVIEW_BIND"
   },
   "latest_live_evidence": {
     "artifact_digest_class": "GITHUB_ARTIFACT_API_DIGEST_VERIFIED",

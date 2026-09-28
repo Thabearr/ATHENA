@@ -29,9 +29,9 @@ Owner-supplied PDF identities without an available source file are recorded as r
 | Branch at baseline capture | main |
 | Implementation branch | feat/base-00-product-capability-closure-baseline |
 | Open PRs at preflight | 0 |
-| BASE-00 PR number | NOT_CREATED_AT_FREEZE |
-| PR head when first opened | NOT_CREATED_AT_FREEZE |
-| PR state when review metadata was bound | NOT_CREATED_AT_BASELINE_FREEZE |
+| BASE-00 PR number | 415 |
+| PR head when first opened | 739f80a2dccf0b99f0620377e308e3d4abcc338b |
+| PR state when review metadata was bound | OPEN_UNMERGED_AT_REVIEW_BIND |
 | Post-merge Tests | 36344862612: completed/success; syntax, shards 1–8, aggregate all success |
 | Reviewed Fixture Catalog | 36344862576: completed/success |
 
@@ -333,7 +333,7 @@ Next mission: `AUTH-01A`. BASE-00 does not authorize or start it; it becomes eli
 
 This PR may change only the product baseline Markdown/JSON, its offline audit, and focused tests. It does not change runtime, provider, model, pricing, Router, Portfolio, workflow, caller, delivery or account behavior.
 
-**Snapshot canonical SHA-256:** `2f876eb038b4dc99cc1d962848ad52c081e050fb72a75538ea696e343bded909`
+**Snapshot canonical SHA-256:** `ff39d614e214e796f5303ee4ab12ad5c6ceab308357236cbb0215f14b2f63a3a`
 
 **Static source-inventory canonical SHA-256:** `afc366502f9f9b4d621f8e7810bcbc9cb90a15bf5a44c184c2e9b66820fbdd59`
 **Governance:** SOURCE_REVIEW_COUNTER 0/5 while unmerged; P4.4 and Checkpoint E incomplete; no live proof, migration or retirement authorized.
