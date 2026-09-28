@@ -193,7 +193,12 @@ def _verify_fixture_files(root: Path, expected_shas: dict[str, str] | None = Non
     for relative, expected in (expected_shas or FIXTURE_SHAS).items():
         path = root / FIXTURE_ROOT / relative
         try:
-            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            # Git's core.autocrlf may materialize these reviewed text fixtures
+            # with CRLF on Windows. Their pinned identities are over the LF
+            # Git/source bytes, so normalize only checkout line endings before
+            # checking the historical source identity.
+            fixture_bytes = path.read_bytes().replace(b"\r\n", b"\n")
+            actual = hashlib.sha256(fixture_bytes).hexdigest()
         except OSError as exc:
             raise P44RError(f"retained P4.4R fixture is missing: {relative}") from exc
         _require(actual == expected, f"retained P4.4R fixture SHA drifted: {relative}")
@@ -464,7 +469,7 @@ def audit(root: Path | None = None) -> dict[str, Any]:
         hashlib.sha256(base_workflow).hexdigest()
         == canonical_workflow.get("base_main_git_blob_sha256")
         == canonical_workflow.get("after_git_blob_sha256")
-        and canonical_workflow.get("workflow_bytes_unchanged") is True,
+        and canonical_workflow.get("unchanged") is True,
         "P4.4R exact-base workflow evidence differs from its immutable receipt",
     )
     workflow_paths = subprocess.check_output(

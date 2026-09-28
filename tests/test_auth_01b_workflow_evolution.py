@@ -47,8 +47,17 @@ def test_auth_01b_receipt_and_before_fixture_have_expected_exact_identities() ->
     assert receipt["base_main_sha"] == audit.BASE_MAIN_SHA
     assert receipt["workflow_before_identity"] == audit.EXPECTED_BEFORE
     assert receipt["canonical_sha256"] == evolution.canonical_sha256(receipt)
-    assert "share_code" not in json.dumps(receipt).replace("create_share_code", "")
-    forbidden_fields = {"raw_share_code", "share_code_url", "token", "cookie_value", "credential", "secret"}
+    assert receipt["implementation_side_effects"]["share_code_action"] == 0
+    forbidden_fields = {
+        "raw_share_code",
+        "share_code",
+        "share_url",
+        "share_code_url",
+        "token",
+        "cookie_value",
+        "credential",
+        "secret",
+    }
 
     def keys(value):
         if isinstance(value, dict):

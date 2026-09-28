@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from scripts import audit_p4_4r_shadow_runtime_composition_stabilization as p44r_audit
 from domain import current_all_market_shadow_probability_settlement as prc
 from domain import current_shadow_all_market_runner as runner
 from domain import current_shadow_all_market_router as router_module
@@ -85,6 +86,25 @@ def _install_network_sentinel(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", _deny_network)
     monkeypatch.setattr(live, "capture_live_event_quote_evidence", _deny_network)
     monkeypatch.setattr(pc_source, "_fetch_page", _deny_network)
+
+
+def test_historical_fixture_hash_is_checkout_line_ending_independent(tmp_path):
+    fixture_root = tmp_path / p44r_audit.FIXTURE_ROOT
+    fixture_path = fixture_root / "initial" / "manifest.json"
+    fixture_path.parent.mkdir(parents=True)
+    canonical_lf = b'{"fixture":"retained"}\n'
+    expected_sha = hashlib.sha256(canonical_lf).hexdigest()
+
+    fixture_path.write_bytes(canonical_lf.replace(b"\n", b"\r\n"))
+    p44r_audit._verify_fixture_files(
+        tmp_path, {"initial/manifest.json": expected_sha}
+    )
+
+    fixture_path.write_bytes(b'{"fixture":"changed"}\r\n')
+    with pytest.raises(p44r_audit.P44RError, match="fixture SHA drifted"):
+        p44r_audit._verify_fixture_files(
+            tmp_path, {"initial/manifest.json": expected_sha}
+        )
 
 
 def _materialize_exact_fixture_bytes(destination_root: Path) -> Path:

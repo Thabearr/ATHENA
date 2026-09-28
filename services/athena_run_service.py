@@ -161,6 +161,8 @@ def _check_request_authority(request: RunRequest, manifest: AuthorityManifest) -
     # caller-added capability material before any executor is considered.
     if manifest != expected_manifest:
         return "REQUEST_AUTHORITY_MISMATCH"
+    if request.create_share_code is True and manifest.share_code_generation is not True:
+        return "REQUEST_AUTHORITY_MISMATCH"
     return None
 
 
