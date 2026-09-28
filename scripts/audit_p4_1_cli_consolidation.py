@@ -208,6 +208,7 @@ def _synthetic_request() -> RunRequest:
         target_legs=25,
         bookie="sportybet",
         profile="shadow",
+        create_share_code=True,
         now=FIXED_NOW,
     )
 
@@ -284,6 +285,7 @@ def _shadow_timeout_finalization_proof() -> dict[str, Any]:
         target_legs=2,
         bookie="sportybet",
         profile="shadow",
+        create_share_code=True,
         now=FIXED_NOW,
     )
     observed = FIXED_RECEIPT_TIME
@@ -582,6 +584,7 @@ def run_offline_proof() -> dict[str, Any]:
                 target_legs=25,
                 bookie="sportybet",
                 profile="main",
+                create_share_code=False,
                 now=FIXED_NOW,
             )
             main_manifest = AthenaRunService.authority_manifest_for(main_request)
@@ -601,6 +604,7 @@ def run_offline_proof() -> dict[str, Any]:
                 target_legs=25,
                 bookie="sportybet",
                 profile="shadow",
+                create_share_code=True,
                 target_total_odds=Decimal("2.5"),
                 now=FIXED_NOW,
             )
@@ -621,6 +625,7 @@ def run_offline_proof() -> dict[str, Any]:
                 target_legs=1,
                 bookie="sportybet",
                 profile="shadow",
+                create_share_code=True,
                 now=midnight,
             )
             unrepresentable_service = AthenaRunService(

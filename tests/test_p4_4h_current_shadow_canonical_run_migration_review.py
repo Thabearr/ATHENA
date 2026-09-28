@@ -143,7 +143,8 @@ def test_scheduled_shadow_is_not_owned_by_current_canonical_schedule() -> None:
 def test_utc_lagos_boundary_is_recorded_without_date_shift() -> None:
     boundary = datetime(2026, 9, 24, 23, tzinfo=timezone.utc)
     canonical_today = parse_explicit_request(
-        days="today", target_legs=20, bookie="sportybet", profile="shadow", now=boundary
+        days="today", target_legs=20, bookie="sportybet", profile="shadow",
+        create_share_code=True, now=boundary
     )
     assert canonical_today.dates == (date(2026, 9, 25),)
     legacy_today = legacy_dates.validate_fixture_dates(
@@ -152,7 +153,8 @@ def test_utc_lagos_boundary_is_recorded_without_date_shift() -> None:
     assert legacy_today == ("20260924",)
     with pytest.raises(ValueError):
         parse_explicit_request(
-            days="2026-09-24", target_legs=20, bookie="sportybet", profile="shadow", now=boundary
+            days="2026-09-24", target_legs=20, bookie="sportybet", profile="shadow",
+            create_share_code=True, now=boundary
         )
     result = audit._request_parity()
     assert result["boundary_explicit_date"]["date_shift_performed"] is False
@@ -263,6 +265,7 @@ def test_seven_day_horizon_diverges_at_utc_lagos_midnight() -> None:
             target_legs=20,
             bookie="sportybet",
             profile="shadow",
+            create_share_code=True,
             now=boundary,
         )
     canonical_lagos_window = tuple((date(2026, 9, 25) + timedelta(days=i)).strftime("%Y%m%d") for i in range(7))

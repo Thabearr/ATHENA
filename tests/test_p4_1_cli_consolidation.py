@@ -4,6 +4,7 @@ import ast
 from datetime import date, datetime, timezone
 from pathlib import Path
 import re
+import pytest
 
 from typer.testing import CliRunner
 
@@ -11,6 +12,7 @@ import build_acca as cli
 from domain.run_contracts import AuthorityManifest, RunReceipt, RunRequest, canonical_json_bytes
 from scripts import audit_p4_1_cli_consolidation as audit
 from services.athena_run_request_parser import (
+    AthenaRunRequestParseError,
     parse_explicit_request,
     parse_shorthand_request,
 )
@@ -29,6 +31,7 @@ def _request_for_explicit() -> RunRequest:
         target_legs=25,
         bookie="sportybet",
         profile="shadow",
+        create_share_code=True,
         now=FIXED_NOW,
     )
 
@@ -139,6 +142,29 @@ def test_explicit_run_command_resolves_request_and_prints_summary_before_service
     ]
     assert prior_prints == summary_lines
     assert all(kind == "print" for kind, _ in events[run_index + 1 :])
+
+
+def test_explicit_main_cli_preserves_legacy_no_delivery_compatibility(monkeypatch, tmp_path):
+    service = _FakeService()
+    monkeypatch.setattr(cli, "AthenaRunService", lambda: service)
+    monkeypatch.setattr(
+        cli,
+        "parse_explicit_request",
+        lambda **kwargs: parse_explicit_request(**kwargs, now=FIXED_NOW),
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "run", "--days", "tomorrow", "--target-legs", "1", "--bookie", "sportybet",
+            "--profile", "main", "--output-dir", str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0, (result.exception, result.output)
+    assert len(service.calls) == 1
+    assert service.calls[0][0].authority_profile == "MAIN"
+    assert service.calls[0][0].create_share_code is False
 
 
 def test_shorthand_calls_the_same_request_execution_and_service_path(monkeypatch):
@@ -339,6 +365,36 @@ def test_only_run_command_is_exposed_and_legacy_backtest_is_unavailable():
     assert "backtest" not in registered_names
     assert "generate" not in registered_names
     assert "quick" not in registered_names
+
+
+def test_cli_has_no_new_delivery_option_and_compatibility_default_is_localized():
+    help_result = CliRunner().invoke(cli.app, ["run", "--help"])
+    assert help_result.exit_code == 0
+    assert "--create-share-code" not in help_result.output
+    assert "--delivery" not in help_result.output
+    assert cli._legacy_cli_create_share_code_default("main") is False
+    assert cli._legacy_cli_create_share_code_default("shadow") is True
+    with pytest.raises(AthenaRunRequestParseError, match="profile must be exactly"):
+        cli._legacy_cli_create_share_code_default("SHADOW")
+
+
+def test_invalid_explicit_cli_profile_fails_before_service_or_side_effect(monkeypatch, tmp_path):
+    service = _FakeService()
+    monkeypatch.setattr(cli, "AthenaRunService", lambda: service)
+    monkeypatch.setattr(
+        cli,
+        "parse_explicit_request",
+        lambda **kwargs: parse_explicit_request(**kwargs, now=FIXED_NOW),
+    )
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "run", "--days", "tomorrow", "--target-legs", "1", "--bookie", "sportybet",
+            "--profile", "SHADOW", "--output-dir", str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 2
+    assert not service.calls
 
 
 def test_hosted_offline_service_proof_and_committed_receipt_integrity():

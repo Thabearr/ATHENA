@@ -33,6 +33,10 @@ _SHORTHAND_SCOPE_RE = re.compile(
 )
 _ACCA_TOKEN_RE = re.compile(r"^(?P<count>[1-9][0-9]*)acca$", re.ASCII)
 
+# Historical shorthand syntax is retained as a compatibility adapter only.
+# Canonical explicit request parsing always receives operation intent directly.
+SHORTHAND_LEGACY_CREATE_SHARE_CODE_DEFAULT = True
+
 
 class AthenaRunRequestParseError(ValueError):
     """Raised when CLI text cannot be resolved without ambiguity."""
@@ -109,11 +113,13 @@ def _parse_bookie(bookie: str) -> str:
     return bookie
 
 
-def _profile_fields(profile: str) -> tuple[str, str, bool]:
+def _profile_fields(profile: str) -> tuple[str, str]:
+    if type(profile) is not str:
+        raise AthenaRunRequestParseError("profile must be exactly 'main' or 'shadow'")
     if profile == "main":
-        return "MAIN", "main_application", False
+        return "MAIN", "main_application"
     if profile == "shadow":
-        return "SHADOW", "research_shadow", True
+        return "SHADOW", "research_shadow"
     raise AthenaRunRequestParseError("profile must be exactly 'main' or 'shadow'")
 
 
@@ -140,14 +146,17 @@ def parse_explicit_request(
     target_legs: int,
     bookie: str = "sportybet",
     profile: str,
+    create_share_code: bool,
     target_total_odds: Decimal | str | None = None,
     now: datetime | None = None,
 ) -> RunRequest:
-    """Resolve explicit CLI arguments to an exact immutable ``RunRequest``."""
+    """Resolve explicit request syntax; operation intent is never inferred from profile."""
     resolved_days = _parse_days(days, now)
     legs = _parse_target_legs(target_legs)
     selected_bookie = _parse_bookie(bookie)
-    authority_profile, mode, share_code = _profile_fields(profile)
+    if type(create_share_code) is not bool:
+        raise AthenaRunRequestParseError("create_share_code must be an exact bool")
+    authority_profile, mode = _profile_fields(profile)
     objective = _parse_target_total_odds(target_total_odds)
     try:
         return RunRequest(
@@ -157,7 +166,7 @@ def parse_explicit_request(
             bookie=selected_bookie,
             mode=mode,
             authority_profile=authority_profile,
-            create_share_code=share_code,
+            create_share_code=create_share_code,
             place_wager=False,
         )
     except RunContractError as exc:
@@ -202,7 +211,7 @@ def parse_shorthand_request(
             bookie=selected_bookie,
             mode="research_shadow",
             authority_profile="SHADOW",
-            create_share_code=True,
+            create_share_code=SHORTHAND_LEGACY_CREATE_SHARE_CODE_DEFAULT,
             place_wager=False,
         )
     except RunContractError as exc:
@@ -213,6 +222,7 @@ __all__ = [
     "AthenaRunRequestParseError",
     "CLI_TIMEZONE",
     "CLI_TIMEZONE_ID",
+    "SHORTHAND_LEGACY_CREATE_SHARE_CODE_DEFAULT",
     "parse_explicit_request",
     "parse_shorthand_request",
 ]

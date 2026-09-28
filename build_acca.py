@@ -29,6 +29,17 @@ def cli_root() -> None:
     """Submit a canonical ATHENA run request."""
 
 
+def _legacy_cli_create_share_code_default(profile: str) -> bool:
+    """Preserve historical CLI syntax while keeping profile out of parser policy."""
+    if type(profile) is not str:
+        raise AthenaRunRequestParseError("profile must be exactly 'main' or 'shadow'")
+    if profile == "main":
+        return False
+    if profile == "shadow":
+        return True
+    raise AthenaRunRequestParseError("profile must be exactly 'main' or 'shadow'")
+
+
 def _render_request_summary(request: RunRequest, manifest) -> None:
     capabilities = manifest.to_dict()["capabilities"]
     console.print("Resolved ATHENA request (before execution):")
@@ -92,6 +103,7 @@ def run_command(
             target_legs=target_legs,
             bookie=bookie,
             profile=profile,
+            create_share_code=_legacy_cli_create_share_code_default(profile),
             target_total_odds=target_total_odds,
         )
         execute_request(request, output_root=output_dir)
