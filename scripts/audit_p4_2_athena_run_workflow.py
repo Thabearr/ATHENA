@@ -271,6 +271,15 @@ def _workflow_contract(workflow: dict[str, Any]) -> dict[str, Any]:
     defaults = {key: str(value.get("default", "")) for key, value in inputs.items()}
     if defaults != dict(WORKFLOW_DISPATCH_DEFAULTS):
         raise P42AuditError("workflow_dispatch defaults differ from source resolver")
+    delivery_input = inputs.get("create_share_code")
+    if (
+        type(delivery_input) is not dict
+        or delivery_input.get("required") != "true"
+        or delivery_input.get("type") != "choice"
+        or delivery_input.get("default") != "false"
+        or delivery_input.get("options") != ["false", "true"]
+    ):
+        raise P42AuditError("workflow delivery intent must be the exact explicit false/true choice")
     if workflow.get("permissions") != {"contents": "read", "actions": "read"}:
         raise P42AuditError("workflow permissions are not exact read-only permissions")
     concurrency = workflow.get("concurrency")
@@ -347,6 +356,8 @@ def _workflow_contract(workflow: dict[str, Any]) -> dict[str, Any]:
         or "INPUT_DAYS" not in resolve_step.get("env", {})
     ):
         raise P42AuditError("workflow request resolver transport drifted")
+    if resolve_step.get("env", {}).get("INPUT_CREATE_SHARE_CODE") != "${{ inputs.create_share_code }}":
+        raise P42AuditError("explicit delivery intent is not passed to the canonical resolver")
     restore_history = by_id.get("restore_history_prime", {})
     history_run = restore_history.get("run", "")
     if any(token not in history_run for token in (
@@ -527,6 +538,7 @@ def _synthetic_parity_proof() -> dict[str, Any]:
                     "target_total_odds": "",
                     "bookie": "sportybet",
                     "profile": "shadow",
+                    "create_share_code": "true",
                 },
                 now=FIXED_NOW,
             )

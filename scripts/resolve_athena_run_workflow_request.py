@@ -123,6 +123,7 @@ def _environment_dispatch_inputs(environment: Mapping[str, str]) -> dict[str, st
         "target_total_odds": environment.get("INPUT_TARGET_TOTAL_ODDS", ""),
         "bookie": environment.get("INPUT_BOOKIE", ""),
         "profile": environment.get("INPUT_PROFILE", ""),
+        "create_share_code": environment.get("INPUT_CREATE_SHARE_CODE", ""),
     }
 
 

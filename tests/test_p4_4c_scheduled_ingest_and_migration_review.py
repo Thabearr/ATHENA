@@ -44,7 +44,12 @@ def test_p4_4c_appends_only_ordinary_ingest_revise_and_preserves_history() -> No
     assert ledger["transitions"][:3] == p44b_snapshot["transitions"]
     assert ledger["transitions"][:4] == snapshot["transitions"]
     assert len(snapshot["transitions"]) == 4
-    assert len(ledger["transitions"]) == 7
+    p44m_snapshot = json.loads(Path(
+        "artifacts/architecture/p4_workflow_evolution_snapshots/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json"
+    ).read_text(encoding="utf-8"))
+    assert ledger["transitions"][:7] == p44m_snapshot["transitions"]
+    evolution.validate_evolution_snapshot_extension(p44m_snapshot, ledger)
+    assert ledger["transitions"][7]["transition_id"] == "AUTH01B_ATHENA_RUN_EXPLICIT_DELIVERY_INTENT_V1"
     assert ledger["transitions"][5]["transition_id"] == p44g.TRANSITION_ID
     assert ledger["transitions"][6]["transition_id"] == (
         "P44M_ATHENA_RUN_PC_UPCOMING_EVIDENCE_PRESERVATION_V1"

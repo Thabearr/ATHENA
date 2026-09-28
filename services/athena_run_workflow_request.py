@@ -20,12 +20,7 @@ SCHEDULE_TARGET_LEGS = 20
 SCHEDULE_TARGET_TOTAL_ODDS = None
 SCHEDULE_BOOKIE = "sportybet"
 SCHEDULE_PROFILE = "main"
-
-# Compatibility-only mapping for the unchanged P4.2 workflow surface. AUTH-01B
-# will introduce an explicit workflow input; this is not canonical parser policy.
-WORKFLOW_LEGACY_CREATE_SHARE_CODE_DEFAULTS = MappingProxyType(
-    {"main": False, "shadow": True}
-)
+SCHEDULE_CREATE_SHARE_CODE = False
 
 WORKFLOW_DISPATCH_DEFAULTS = MappingProxyType(
     {
@@ -34,6 +29,7 @@ WORKFLOW_DISPATCH_DEFAULTS = MappingProxyType(
         "target_total_odds": "",
         "bookie": "sportybet",
         "profile": "main",
+        "create_share_code": "false",
     }
 )
 WORKFLOW_INPUT_NAMES = tuple(sorted(WORKFLOW_DISPATCH_DEFAULTS))
@@ -42,13 +38,6 @@ _CANONICAL_TARGET_LEGS = re.compile(r"^(?:[1-9]|[1-4][0-9]|50)$", re.ASCII)
 
 class AthenaRunWorkflowRequestError(ValueError):
     """Raised when an Actions event is not an exact canonical run request."""
-
-
-def _legacy_workflow_create_share_code_default(profile: str) -> bool:
-    """Preserve current event-to-request behavior until AUTH-01B adds intent input."""
-    if type(profile) is not str or profile not in WORKFLOW_LEGACY_CREATE_SHARE_CODE_DEFAULTS:
-        raise AthenaRunWorkflowRequestError("profile must be exactly 'main' or 'shadow'")
-    return WORKFLOW_LEGACY_CREATE_SHARE_CODE_DEFAULTS[profile]
 
 
 def _validate_dispatch_inputs(dispatch_inputs: Mapping[str, str] | None) -> dict[str, str]:
@@ -65,6 +54,18 @@ def _validate_dispatch_inputs(dispatch_inputs: Mapping[str, str] | None) -> dict
     if _CANONICAL_TARGET_LEGS.fullmatch(values["target_legs"]) is None:
         raise AthenaRunWorkflowRequestError("target_legs must be canonical decimal text from 1 through 50")
     return values
+
+
+def _parse_create_share_code_text(value: str) -> bool:
+    """Parse the workflow's exact, explicit delivery-intent choice."""
+
+    if type(value) is not str:
+        raise AthenaRunWorkflowRequestError("create_share_code must be exact 'false' or 'true' text")
+    if value == "false":
+        return False
+    if value == "true":
+        return True
+    raise AthenaRunWorkflowRequestError("create_share_code must be exact 'false' or 'true' text")
 
 
 def resolve_workflow_request(
@@ -85,6 +86,7 @@ def resolve_workflow_request(
         target_total_odds = SCHEDULE_TARGET_TOTAL_ODDS
         bookie = SCHEDULE_BOOKIE
         profile = SCHEDULE_PROFILE
+        create_share_code = SCHEDULE_CREATE_SHARE_CODE
     elif event_name == "workflow_dispatch":
         values = _validate_dispatch_inputs(dispatch_inputs)
         days = values["days"]
@@ -92,6 +94,7 @@ def resolve_workflow_request(
         target_total_odds = values["target_total_odds"] or None
         bookie = values["bookie"]
         profile = values["profile"]
+        create_share_code = _parse_create_share_code_text(values["create_share_code"])
     else:
         raise AthenaRunWorkflowRequestError("only schedule and workflow_dispatch events are supported")
 
@@ -102,7 +105,7 @@ def resolve_workflow_request(
             target_total_odds=target_total_odds,
             bookie=bookie,
             profile=profile,
-            create_share_code=_legacy_workflow_create_share_code_default(profile),
+            create_share_code=create_share_code,
             now=now,
         )
     except (TypeError, ValueError) as exc:
@@ -119,8 +122,8 @@ __all__ = [
     "SCHEDULE_PROFILE",
     "SCHEDULE_TARGET_LEGS",
     "SCHEDULE_TARGET_TOTAL_ODDS",
+    "SCHEDULE_CREATE_SHARE_CODE",
     "WORKFLOW_DISPATCH_DEFAULTS",
-    "WORKFLOW_LEGACY_CREATE_SHARE_CODE_DEFAULTS",
     "WORKFLOW_INPUT_NAMES",
     "resolve_workflow_request",
 ]

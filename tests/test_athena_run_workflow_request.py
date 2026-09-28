@@ -9,9 +9,9 @@ from services.athena_run_workflow_request import (
     AthenaRunWorkflowRequestError,
     SCHEDULE_DAYS,
     SCHEDULE_TARGET_LEGS,
+    SCHEDULE_CREATE_SHARE_CODE,
     WORKFLOW_DISPATCH_DEFAULTS,
-    WORKFLOW_LEGACY_CREATE_SHARE_CODE_DEFAULTS,
-    _legacy_workflow_create_share_code_default,
+    WORKFLOW_INPUT_NAMES,
     resolve_workflow_request,
 )
 
@@ -34,6 +34,9 @@ def test_schedule_resolves_source_controlled_main_defaults_to_exact_request():
     assert request.place_wager is False
     assert SCHEDULE_DAYS == "today"
     assert SCHEDULE_TARGET_LEGS == 20
+    assert SCHEDULE_CREATE_SHARE_CODE is False
+    assert "create_share_code" in WORKFLOW_INPUT_NAMES
+    assert DISPATCH_DEFAULTS["create_share_code"] == "false"
 
 
 @pytest.mark.parametrize("now", [DAYTIME, NEAR_MIDNIGHT])
@@ -49,7 +52,7 @@ def test_default_manual_and_schedule_resolve_identical_request_bytes_and_sha(now
     assert scheduled == manual
 
 
-def test_manual_shadow_override_uses_named_legacy_workflow_delivery_compatibility():
+def test_manual_shadow_delivery_is_explicit_workflow_intent():
     request = resolve_workflow_request(
         event_name="workflow_dispatch",
         dispatch_inputs={
@@ -58,6 +61,7 @@ def test_manual_shadow_override_uses_named_legacy_workflow_delivery_compatibilit
             "target_total_odds": "",
             "bookie": "sportybet",
             "profile": "shadow",
+            "create_share_code": "true",
         },
         now=DAYTIME,
     )
@@ -68,14 +72,41 @@ def test_manual_shadow_override_uses_named_legacy_workflow_delivery_compatibilit
     assert request.mode == "research_shadow"
     assert request.create_share_code is True
     assert request.place_wager is False
-    assert dict(WORKFLOW_LEGACY_CREATE_SHARE_CODE_DEFAULTS) == {"main": False, "shadow": True}
-    assert _legacy_workflow_create_share_code_default("shadow") is True
-    assert _legacy_workflow_create_share_code_default("main") is False
 
 
-def test_workflow_compatibility_delivery_mapping_rejects_unknown_profile():
-    with pytest.raises(AthenaRunWorkflowRequestError, match="profile must be exactly"):
-        _legacy_workflow_create_share_code_default("SHADOW")
+@pytest.mark.parametrize(
+    ("profile", "delivery", "authority_profile", "mode"),
+    [
+        ("main", "false", "MAIN", "main_application"),
+        ("main", "true", "MAIN", "main_application"),
+        ("shadow", "false", "SHADOW", "research_shadow"),
+        ("shadow", "true", "SHADOW", "research_shadow"),
+    ],
+)
+def test_workflow_profile_and_delivery_intent_are_independent(
+    profile, delivery, authority_profile, mode
+):
+    request = resolve_workflow_request(
+        event_name="workflow_dispatch",
+        dispatch_inputs={**DISPATCH_DEFAULTS, "profile": profile, "create_share_code": delivery},
+        now=DAYTIME,
+    )
+    assert request.authority_profile == authority_profile
+    assert request.mode == mode
+    assert request.create_share_code is (delivery == "true")
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["False", "True", "FALSE", "TRUE", "0", "1", "", " false", "false ", "yes"],
+)
+def test_workflow_delivery_input_accepts_only_exact_lowercase_bool_text(value):
+    with pytest.raises(AthenaRunWorkflowRequestError, match="exact 'false' or 'true'"):
+        resolve_workflow_request(
+            event_name="workflow_dispatch",
+            dispatch_inputs={**DISPATCH_DEFAULTS, "create_share_code": value},
+            now=DAYTIME,
+        )
 
 
 def test_target_total_odds_is_independent_of_leg_count():
@@ -129,6 +160,12 @@ def test_dispatch_rejects_missing_extra_and_nontext_input_values():
         resolve_workflow_request(
             event_name="workflow_dispatch",
             dispatch_inputs={**DISPATCH_DEFAULTS, "target_legs": 20},  # type: ignore[arg-type]
+            now=DAYTIME,
+        )
+    with pytest.raises(AthenaRunWorkflowRequestError, match="exact text"):
+        resolve_workflow_request(
+            event_name="workflow_dispatch",
+            dispatch_inputs={**DISPATCH_DEFAULTS, "create_share_code": False},  # type: ignore[arg-type]
             now=DAYTIME,
         )
 

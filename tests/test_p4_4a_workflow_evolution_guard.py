@@ -41,13 +41,18 @@ def test_p44a_receipt_and_zero_transition_checkpoint() -> None:
     assert snapshot["current_live_workflow_count"] == 37
     assert snapshot_bytes != current_bytes
     assert receipt["workflow_evolution_transition_count"] == 0
-    assert len(ledger["transitions"]) == 7
+    p44m_snapshot = json.loads(Path(
+        "artifacts/architecture/p4_workflow_evolution_snapshots/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json"
+    ).read_text(encoding="utf-8"))
+    assert ledger["transitions"][:7] == p44m_snapshot["transitions"]
+    evolution.validate_evolution_snapshot_extension(p44m_snapshot, ledger)
+    assert ledger["transitions"][7]["transition_id"] == "AUTH01B_ATHENA_RUN_EXPLICIT_DELIVERY_INTENT_V1"
     assert ledger["transitions"][4]["transition_id"] == p44f.TRANSITION_ID
     assert ledger["transitions"][5]["transition_id"] == p44g.TRANSITION_ID
     assert ledger["transitions"][6]["transition_id"] == p44m.TRANSITION_ID
     p44g_receipt = json.loads(Path(p44g.RECEIPT_PATH).read_text(encoding="utf-8"))
     p44m_receipt = json.loads(Path("artifacts/architecture/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json").read_text(encoding="utf-8"))
-    assert ledger["current_workflow_tree_sha1"] == p44m_receipt["workflow_tree_after_sha1"]
+    assert p44m_snapshot["current_workflow_tree_sha1"] == p44m_receipt["workflow_tree_after_sha1"]
     assert p44g_receipt["workflow_tree_sha1_after"] == "d58f71b9ac653c8762f1d9b18eede15755ee1a76"
     assert receipt["live_workflow_count_before"] == receipt["live_workflow_count_after"] == 37
     assert receipt["workflow_tree_before_sha1"] == receipt["workflow_tree_after_sha1"] == evolution.BASE_WORKFLOW_TREE_SHA1
@@ -111,7 +116,13 @@ def test_current_workflow_tree_and_protected_paths_match_reviewed_evolution() ->
     ledger = evolution.validate_current_state()
     p44g_receipt = json.loads(Path(p44g.RECEIPT_PATH).read_text(encoding="utf-8"))
     p44m_receipt = json.loads(Path("artifacts/architecture/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json").read_text(encoding="utf-8"))
-    assert ledger["current_workflow_tree_sha1"] == p44m_receipt["workflow_tree_after_sha1"]
+    p44m_snapshot = json.loads(Path(p44m.SNAPSHOT_PATH).read_text(encoding="utf-8"))
+    assert len(p44m_snapshot["transitions"]) == 7
+    assert ledger["transitions"][:7] == p44m_snapshot["transitions"]
+    assert p44m_snapshot["current_workflow_tree_sha1"] == p44m_receipt["workflow_tree_after_sha1"]
+    assert ledger["current_workflow_tree_sha1"] == evolution._git(
+        "rev-parse", "HEAD:.github/workflows"
+    ).decode("ascii").strip()
     assert p44g_receipt["workflow_tree_sha1_after"] == "d58f71b9ac653c8762f1d9b18eede15755ee1a76"
     assert len(list(Path(".github/workflows").glob("*.yml"))) == 38
     assert not evolution._git("diff", "--", ".github/workflows")

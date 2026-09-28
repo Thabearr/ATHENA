@@ -343,11 +343,16 @@ def _verify_current_contract(receipt: dict[str, Any], root: Path) -> dict[str, A
              and runtime.AUTHORITY["bet"] is False and runtime.AUTHORITY["wager_placed"] is False,
              "runtime authority profile broadened")
 
-    workflow = root / ".github/workflows/athena-run.yml"
+    from scripts import audit_p4_workflow_evolution_ledger as evolution
     try:
-        workflow_sha = hashlib.sha256(workflow.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
-    except OSError as exc:
-        raise P44QError("P4.4M workflow is unavailable") from exc
+        historical_workflow = evolution.resolve_reviewed_transition_after_source(
+            ".github/workflows/athena-run.yml",
+            "P44M_ATHENA_RUN_PC_UPCOMING_EVIDENCE_PRESERVATION_V1",
+        )
+        workflow_sha = hashlib.sha256(historical_workflow).hexdigest()
+        evolution.validate_current_state()
+    except evolution.WorkflowEvolutionError as exc:
+        raise P44QError("reviewed current workflow evolution or P4.4M workflow ancestry is unavailable") from exc
     _require(workflow_sha == P44M_WORKFLOW_SHA256, "P4.4M workflow bytes changed")
 
     return {

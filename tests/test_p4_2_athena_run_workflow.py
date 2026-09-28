@@ -12,7 +12,10 @@ from scripts.execute_athena_run_workflow import (
     AthenaWorkflowExecutionError,
     execute_persisted_request,
 )
-from scripts.resolve_athena_run_workflow_request import resolve_and_persist
+from scripts.resolve_athena_run_workflow_request import (
+    _environment_dispatch_inputs,
+    resolve_and_persist,
+)
 from services.athena_run_service import AthenaRunService, ExecutorResult
 from services.athena_run_workflow_request import resolve_workflow_request
 
@@ -56,7 +59,34 @@ def test_workflow_request_is_persisted_as_exact_canonical_bytes(tmp_path):
     assert metadata["request_canonical_sha256"] == request.canonical_sha256
     assert metadata["exact_github_sha"] == FIXED_COMMIT
     assert metadata["exact_github_ref"] == "refs/heads/main"
+    assert metadata["create_share_code"] is False
     assert "=" in github_output.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(("profile", "delivery", "expected"), [("shadow", "false", False), ("shadow", "true", True)])
+def test_manual_delivery_intent_is_persisted_as_exact_resolved_bool(
+    tmp_path, profile, delivery, expected
+):
+    request, metadata = resolve_and_persist(
+        event_name="workflow_dispatch",
+        dispatch_inputs={
+            "days": "today",
+            "target_legs": "20",
+            "target_total_odds": "",
+            "bookie": "sportybet",
+            "profile": profile,
+            "create_share_code": delivery,
+        },
+        github_sha=FIXED_COMMIT,
+        github_ref="refs/heads/main",
+        output_root=tmp_path / delivery,
+        now=FIXED_NOW,
+    )
+    assert request.authority_profile == "SHADOW"
+    assert request.create_share_code is expected
+    assert metadata["create_share_code"] is expected
+    persisted = json.loads((tmp_path / delivery / "workflow-request-resolution.json").read_text())
+    assert persisted["create_share_code"] is expected
 
 
 def test_resolved_request_conflict_is_not_overwritten(tmp_path):
@@ -177,7 +207,7 @@ def test_yaml_contract_uses_github_actions_on_key_and_exact_transport_policy():
     assert workflow["name"] == "ATHENA Canonical Run"
     assert contract["triggers"] == ["schedule", "workflow_dispatch"]
     assert contract["cron"] == "0 9 * * *"
-    assert contract["inputs"] == ["bookie", "days", "profile", "target_legs", "target_total_odds"]
+    assert contract["inputs"] == ["bookie", "create_share_code", "days", "profile", "target_legs", "target_total_odds"]
     assert contract["permissions"] == {"contents": "read", "actions": "read"}
     assert contract["job"]["timeout-minutes"] == "90"
     assert contract["concurrency_group"] == (
@@ -191,14 +221,42 @@ def test_workflow_has_no_noncanonical_triggers_or_manual_sensitive_inputs():
     triggers = workflow["on"]
     assert set(triggers) == {"schedule", "workflow_dispatch"}
     input_names = set(triggers["workflow_dispatch"]["inputs"])
-    assert input_names == {"days", "target_legs", "target_total_odds", "bookie", "profile"}
+    assert input_names == {"days", "target_legs", "target_total_odds", "bookie", "profile", "create_share_code"}
     assert not input_names.intersection(
-        {"mode", "authority_profile", "create_share_code", "place_wager", "stake", "wallet", "login", "cookies"}
+        {"mode", "authority_profile", "place_wager", "stake", "wallet", "login", "cookies"}
     )
+    delivery = triggers["workflow_dispatch"]["inputs"]["create_share_code"]
+    assert delivery == {
+        "description": "Explicit external share-code delivery intent",
+        "required": "true",
+        "default": "false",
+        "type": "choice",
+        "options": ["false", "true"],
+    }
     source = (ROOT / ".github/workflows/athena-run.yml").read_text(encoding="utf-8").casefold()
     assert "gmail_address" not in source
     assert "gmail_app_password" not in source
     assert "recipient_email" not in source
+
+
+def test_workflow_environment_handoff_includes_exact_delivery_intent_text():
+    assert _environment_dispatch_inputs(
+        {
+            "INPUT_DAYS": "today",
+            "INPUT_TARGET_LEGS": "20",
+            "INPUT_TARGET_TOTAL_ODDS": "",
+            "INPUT_BOOKIE": "sportybet",
+            "INPUT_PROFILE": "shadow",
+            "INPUT_CREATE_SHARE_CODE": "false",
+        }
+    ) == {
+        "days": "today",
+        "target_legs": "20",
+        "target_total_odds": "",
+        "bookie": "sportybet",
+        "profile": "shadow",
+        "create_share_code": "false",
+    }
 
 
 def test_committed_p42_receipt_hash_and_frozen_history_are_verified():

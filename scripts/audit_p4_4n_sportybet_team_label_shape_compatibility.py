@@ -166,15 +166,18 @@ def _verify_history_and_workflow(root: Path, receipt: dict[str, Any]) -> None:
         if relative.endswith("post_p4_4l_pc_upcoming_runtime_migration_v1.json"):
             _require(parsed.get("paginated_runtime_authority") is False and parsed.get("fanout_runtime_authority") is False, "historical non-runtime-source authority record drifted")
     p44m = _read_json(root / P44M_RECEIPT_PATH)
+    from scripts import audit_p4_workflow_evolution_ledger as evolution
     workflow_identity = p44m.get("workflow_after_identity", {})
-    workflow_path = root / P44M_WORKFLOW_PATH
     try:
-        workflow_sha = hashlib.sha256(workflow_path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
-    except OSError as exc:
-        raise P44NError("P4.4M workflow is unavailable") from exc
+        historical_workflow = evolution.resolve_reviewed_transition_after_source(
+            P44M_WORKFLOW_PATH.as_posix(),
+            "P44M_ATHENA_RUN_PC_UPCOMING_EVIDENCE_PRESERVATION_V1",
+        )
+    except evolution.WorkflowEvolutionError as exc:
+        raise P44NError("P4.4M reviewed workflow revision is unavailable") from exc
+    workflow_sha = hashlib.sha256(historical_workflow).hexdigest()
     _require(workflow_sha == receipt.get("p4_4m_workflow_sha256_unchanged") == workflow_identity.get("source_sha256"), "P4.4M workflow bytes changed")
     _require(receipt.get("workflow_count") == 38 and receipt.get("workflow_retirement_count") == 3, "workflow/retirement census changed")
-    from scripts import audit_p4_workflow_evolution_ledger as evolution
     from scripts import audit_p4_3_workflow_retirement_ledger as retirement
     live_state = evolution.validate_current_state()
     retired_state = retirement.validate_retirement_history()
