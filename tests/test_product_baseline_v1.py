@@ -323,10 +323,18 @@ def test_snapshot_audit_is_future_safe_when_runtime_source_is_not_present(tmp_pa
     assert details
 
 
-def test_exact_head_reproduction_passes_on_frozen_checkout():
+def test_exact_head_reproduction_skips_after_legitimate_parser_source_movement():
     data = load_baseline()
     assert all(item["hash_kind"] == "LF_NORMALIZED_SOURCE_SHA256" for item in data["source_snapshot"]["files"])
-    assert audit.exact_head_reproduction(data, ROOT) == ("PASS", [])
+    result, details = audit.exact_head_reproduction(data, ROOT)
+    assert result == "SKIP_SOURCE_MOVED"
+    assert {
+        "services/athena_run_request_parser.py",
+        "services/athena_run_workflow_request.py",
+    } <= set(details)
+    # The BASE-00 snapshot and historical receipts remain fully valid; only its
+    # optional exact-head source reproduction is skipped after a later mission.
+    assert audit.validate_baseline(data, ROOT, verify_receipts=True) == []
 
 
 def test_pr_review_binding_records_creation_identity_without_rewriting_source_base(tmp_path):

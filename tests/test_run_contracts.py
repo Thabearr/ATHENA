@@ -138,6 +138,38 @@ def test_run_request_canonical_round_trip_is_byte_exact_and_deterministic():
     assert contracts.canonical_sha256(request) == request.canonical_sha256
 
 
+def test_run_request_v1_main_and_shadow_bytes_match_pre_auth_01a_vectors():
+    shared = {
+        "dates": (date(2026, 9, 23), date(2026, 9, 24)),
+        "target_legs": 20,
+        "target_total_odds": None,
+        "bookie": "sportybet",
+        "place_wager": False,
+    }
+    vectors = (
+        (
+            contracts.RunRequest(
+                **shared, mode="main_application", authority_profile="MAIN",
+                create_share_code=False,
+            ),
+            b'{"authority_profile":"MAIN","bookie":"sportybet","contract":"RunRequest","create_share_code":false,"dates":["2026-09-23","2026-09-24"],"mode":"main_application","place_wager":false,"policy_id":"ATHENA_CANONICAL_RUN_CONTRACT_V1","schema_version":1,"target_legs":20,"target_total_odds":null}\n',
+            "2b39a501805f873b409df8eb880c56a7472edfca28799dd428655e392d13f085",
+        ),
+        (
+            contracts.RunRequest(
+                **shared, mode="research_shadow", authority_profile="SHADOW",
+                create_share_code=True,
+            ),
+            b'{"authority_profile":"SHADOW","bookie":"sportybet","contract":"RunRequest","create_share_code":true,"dates":["2026-09-23","2026-09-24"],"mode":"research_shadow","place_wager":false,"policy_id":"ATHENA_CANONICAL_RUN_CONTRACT_V1","schema_version":1,"target_legs":20,"target_total_odds":null}\n',
+            "79f028851287bf512e48974a0874d3407312d2499fee0f8e3248b61e3d804f5b",
+        ),
+    )
+    for request, expected_bytes, expected_sha256 in vectors:
+        assert contracts.canonical_json_bytes(request) == expected_bytes
+        assert request.canonical_sha256 == expected_sha256
+        assert contracts.RunRequest.from_json_bytes(expected_bytes) == request
+
+
 def test_run_request_strict_parser_rejects_extra_duplicate_nonfinite_and_noncanonical_bytes():
     payload = _request().to_dict()
     payload["extra"] = True

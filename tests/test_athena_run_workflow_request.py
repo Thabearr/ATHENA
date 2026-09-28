@@ -10,6 +10,8 @@ from services.athena_run_workflow_request import (
     SCHEDULE_DAYS,
     SCHEDULE_TARGET_LEGS,
     WORKFLOW_DISPATCH_DEFAULTS,
+    WORKFLOW_LEGACY_CREATE_SHARE_CODE_DEFAULTS,
+    _legacy_workflow_create_share_code_default,
     resolve_workflow_request,
 )
 
@@ -47,7 +49,7 @@ def test_default_manual_and_schedule_resolve_identical_request_bytes_and_sha(now
     assert scheduled == manual
 
 
-def test_manual_shadow_override_uses_the_p41_parser_semantics():
+def test_manual_shadow_override_uses_named_legacy_workflow_delivery_compatibility():
     request = resolve_workflow_request(
         event_name="workflow_dispatch",
         dispatch_inputs={
@@ -66,6 +68,14 @@ def test_manual_shadow_override_uses_the_p41_parser_semantics():
     assert request.mode == "research_shadow"
     assert request.create_share_code is True
     assert request.place_wager is False
+    assert dict(WORKFLOW_LEGACY_CREATE_SHARE_CODE_DEFAULTS) == {"main": False, "shadow": True}
+    assert _legacy_workflow_create_share_code_default("shadow") is True
+    assert _legacy_workflow_create_share_code_default("main") is False
+
+
+def test_workflow_compatibility_delivery_mapping_rejects_unknown_profile():
+    with pytest.raises(AthenaRunWorkflowRequestError, match="profile must be exactly"):
+        _legacy_workflow_create_share_code_default("SHADOW")
 
 
 def test_target_total_odds_is_independent_of_leg_count():

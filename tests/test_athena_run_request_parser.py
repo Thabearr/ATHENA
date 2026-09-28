@@ -18,12 +18,16 @@ WAT = ZoneInfo("Africa/Lagos")
 MONDAY = datetime(2026, 9, 21, 12, 0, tzinfo=WAT)
 
 
-def _explicit(days="today", *, target_legs=25, bookie="sportybet", profile="main", **kwargs):
+def _explicit(
+    days="today", *, target_legs=25, bookie="sportybet", profile="main",
+    create_share_code=False, **kwargs
+):
     return parse_explicit_request(
         days=days,
         target_legs=target_legs,
         bookie=bookie,
         profile=profile,
+        create_share_code=create_share_code,
         now=MONDAY,
         **kwargs,
     )
@@ -112,17 +116,43 @@ def test_bookie_is_exact_and_only_sportybet_is_supported():
             _explicit(bookie=bookie)
 
 
-def test_profiles_have_fixed_modes_and_share_code_permissions_with_no_wager():
-    main = _explicit(profile="main")
+def test_profile_selects_only_profile_and_mode_while_explicit_intent_is_independent():
+    main = _explicit(profile="main", create_share_code=False)
     assert (main.authority_profile, main.mode, main.create_share_code, main.place_wager) == (
         "MAIN", "main_application", False, False
     )
-    shadow = _explicit(profile="shadow")
-    assert (shadow.authority_profile, shadow.mode, shadow.create_share_code, shadow.place_wager) == (
-        "SHADOW", "research_shadow", True, False
+    shadow_no_delivery = _explicit(profile="shadow", create_share_code=False)
+    assert (
+        shadow_no_delivery.authority_profile,
+        shadow_no_delivery.mode,
+        shadow_no_delivery.create_share_code,
+        shadow_no_delivery.place_wager,
+    ) == ("SHADOW", "research_shadow", False, False)
+    shadow_delivery = _explicit(profile="shadow", create_share_code=True)
+    assert (
+        shadow_delivery.authority_profile,
+        shadow_delivery.mode,
+        shadow_delivery.create_share_code,
+        shadow_delivery.place_wager,
+    ) == ("SHADOW", "research_shadow", True, False)
+    main_delivery_is_syntactically_representable = _explicit(
+        profile="main", create_share_code=True
     )
+    assert main_delivery_is_syntactically_representable.authority_profile == "MAIN"
+    assert main_delivery_is_syntactically_representable.create_share_code is True
     with pytest.raises(AthenaRunRequestParseError):
-        _explicit(profile="MAIN")
+        _explicit(profile="MAIN", create_share_code=False)
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None])
+def test_explicit_delivery_intent_requires_an_exact_bool(value):
+    with pytest.raises(AthenaRunRequestParseError, match="exact bool"):
+        _explicit(profile="shadow", create_share_code=value)
+
+
+def test_explicit_parser_does_not_supply_a_profile_based_delivery_default():
+    with pytest.raises(TypeError, match="create_share_code"):
+        parse_explicit_request(days="today", target_legs=1, profile="main", now=MONDAY)
 
 
 def test_target_total_odds_remains_a_separate_decimal_objective():
@@ -141,7 +171,10 @@ def test_invalid_target_total_odds_fails_closed(value):
 
 def test_explicit_parser_requires_an_aware_injected_clock():
     with pytest.raises(AthenaRunRequestParseError, match="timezone-aware"):
-        parse_explicit_request(days="today", target_legs=1, profile="main", now=datetime(2026, 9, 21))
+        parse_explicit_request(
+            days="today", target_legs=1, profile="main", create_share_code=False,
+            now=datetime(2026, 9, 21)
+        )
 
 
 def test_shorthand_25acca_maps_only_to_target_legs_and_uses_shadow_profile():
@@ -212,7 +245,9 @@ def test_malformed_shorthand_and_unsupported_bookie_fail(date_scope, acca_token,
 def test_wat_near_midnight_preserves_lagos_date_when_utc_is_previous_day():
     now = datetime(2026, 9, 21, 0, 15, tzinfo=WAT)
     assert now.astimezone(timezone.utc).date() == date(2026, 9, 20)
-    request = parse_explicit_request(days="today", target_legs=1, profile="main", now=now)
+    request = parse_explicit_request(
+        days="today", target_legs=1, profile="main", create_share_code=False, now=now
+    )
     assert request.dates == (date(2026, 9, 21),)
     shorthand = parse_shorthand_request(
         date_scope="today-tomorrow", acca_token="1acca", bookie="sportybet", now=now
