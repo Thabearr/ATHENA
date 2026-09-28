@@ -150,42 +150,62 @@ def _git_blob_sha(revision: str, path: Path) -> str:
         ) from exc
 
 
-def _require_trusted_current_pr_context() -> None:
+def _is_git_sha(value: Any) -> bool:
+    return type(value) is str and re.fullmatch(r"[0-9a-f]{40}", value) is not None
+
+
+def _require_trusted_current_github_context() -> None:
     try:
         event_name = os.environ.get("GITHUB_EVENT_NAME")
         event_path = os.environ.get("GITHUB_EVENT_PATH")
-        if event_name != "pull_request" or not event_path:
-            raise ValueError("current event is not a pull_request")
+        if not event_path:
+            raise ValueError("GITHUB_EVENT_PATH is missing")
+        if os.environ.get("GITHUB_REPOSITORY") != "Thabearr/ATHENA":
+            raise ValueError("GITHUB_REPOSITORY differs")
         event = json.loads(Path(event_path).read_text(encoding="utf-8"))
         if type(event) is not dict:
             raise ValueError("event is not an object")
         repository = event.get("repository")
-        pull_request = event.get("pull_request")
         if type(repository) is not dict or repository.get("full_name") != "Thabearr/ATHENA":
             raise ValueError("repository identity differs")
-        if os.environ.get("GITHUB_REPOSITORY") not in (None, "Thabearr/ATHENA"):
-            raise ValueError("GITHUB_REPOSITORY differs")
-        if type(pull_request) is not dict:
-            raise ValueError("pull_request metadata is missing")
-        base = pull_request.get("base")
-        head = pull_request.get("head")
-        if type(base) is not dict or type(head) is not dict or base.get("ref") != "main":
-            raise ValueError("pull_request base/head metadata differs")
-        if re.fullmatch(r"[0-9a-f]{40}", str(base.get("sha", ""))) is None:
-            raise ValueError("pull_request base SHA is malformed")
-        event_head = str(head.get("sha", ""))
         github_sha = os.environ.get("GITHUB_SHA", "")
-        if (
-            re.fullmatch(r"[0-9a-f]{40}", event_head) is None
-            or re.fullmatch(r"[0-9a-f]{40}", github_sha) is None
-        ):
-            raise ValueError("pull_request head or checked-out SHA is malformed")
+        if not _is_git_sha(github_sha):
+            raise ValueError("GITHUB_SHA is malformed")
         current = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
         if current != github_sha:
             raise ValueError("checked-out HEAD differs from GITHUB_SHA")
+
+        if event_name == "pull_request":
+            pull_request = event.get("pull_request")
+            if type(pull_request) is not dict:
+                raise ValueError("pull_request metadata is missing")
+            base = pull_request.get("base")
+            head = pull_request.get("head")
+            if type(base) is not dict or type(head) is not dict or base.get("ref") != "main":
+                raise ValueError("pull_request base/head metadata differs")
+            if not _is_git_sha(base.get("sha")) or not _is_git_sha(head.get("sha")):
+                raise ValueError("pull_request base/head SHA is malformed")
+            return
+
+        if event_name == "push":
+            github_ref = os.environ.get("GITHUB_REF")
+            event_ref = event.get("ref")
+            after = event.get("after")
+            if (
+                github_ref != "refs/heads/main"
+                or event_ref != "refs/heads/main"
+                or event.get("deleted") is True
+                or not _is_git_sha(after)
+                or after != github_sha
+                or ("default_branch" in repository and repository.get("default_branch") != "main")
+            ):
+                raise ValueError("push event is not an exact non-deletion update to main")
+            return
+
+        raise ValueError("event is neither pull_request nor push")
     except (OSError, json.JSONDecodeError, UnicodeError, ValueError, subprocess.CalledProcessError) as exc:
         raise Auth01BWorkflowEvolutionError(
-            "shallow historical artifact verification lacks a trusted current PR context"
+            "shallow historical artifact verification lacks a trusted current GitHub PR/main-push context"
         ) from exc
 
 
@@ -203,7 +223,7 @@ def _verify_historical_file_unchanged(path: Path) -> str:
         _require(head_blob == base_blob, f"historical P4.4 file changed: {normalized}")
         return base_blob
 
-    _require_trusted_current_pr_context()
+    _require_trusted_current_github_context()
     _require(head_blob == expected_base_blob, f"historical P4.4 file changed: {normalized}")
     return expected_base_blob
 
