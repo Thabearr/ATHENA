@@ -454,7 +454,7 @@ def test_maintenance_revise_requires_exact_before_after_and_fixture_identity() -
 @pytest.mark.parametrize(
     ("contract_change", "message"),
     [
-        ({"policy_id": "OTHER"}, "grants or misstates"),
+        ({"policy_id": "OTHER"}, "schema/version is not reviewed"),
         ({"baseline_origin": "P4_3D"}, "grants or misstates"),
         ({"permissions_changed": True}, "grants or misstates"),
         ({"provider_acquisition_authority_changed": True}, "grants or misstates"),
@@ -517,8 +517,7 @@ def test_auth_01b_v2_maintenance_contract_is_exact_and_input_surface_only() -> N
     contract = copy.deepcopy(audit.AUTHORITY_SURFACE_MAINTENANCE_CONTRACT_V2)
     audit._validate_maintenance_contract(contract)
     for key in (
-        "event_trigger_kinds_changed", "workflow_dispatch_input_surface_changed",
-        "schedule_surface_changed", "permissions_changed",
+        "event_trigger_kinds_changed", "schedule_surface_changed", "permissions_changed",
         "concurrency_changed", "provider_step_added", "delivery_step_added",
         "secret_surface_changed", "model_authority_changed", "pricing_authority_changed",
         "selection_authority_changed", "betting_authority_changed", "retirement_authority_granted",
@@ -527,6 +526,10 @@ def test_auth_01b_v2_maintenance_contract_is_exact_and_input_surface_only() -> N
         altered[key] = True
         with pytest.raises(audit.WorkflowEvolutionError, match="grants or misstates"):
             audit._validate_maintenance_contract(altered)
+    altered = copy.deepcopy(contract)
+    altered["workflow_dispatch_input_surface_changed"] = False
+    with pytest.raises(audit.WorkflowEvolutionError, match="grants or misstates"):
+        audit._validate_maintenance_contract(altered)
     with pytest.raises(audit.WorkflowEvolutionError, match="schema/version"):
         audit._validate_maintenance_contract({**contract, "trigger_surface_changed": False})
 
