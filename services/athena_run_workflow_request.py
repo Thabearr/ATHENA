@@ -40,13 +40,6 @@ class AthenaRunWorkflowRequestError(ValueError):
     """Raised when an Actions event is not an exact canonical run request."""
 
 
-def _legacy_workflow_create_share_code_default(profile: str) -> bool:
-    """Preserve current event-to-request behavior until AUTH-01B adds intent input."""
-    if type(profile) is not str or profile not in WORKFLOW_LEGACY_CREATE_SHARE_CODE_DEFAULTS:
-        raise AthenaRunWorkflowRequestError("profile must be exactly 'main' or 'shadow'")
-    return WORKFLOW_LEGACY_CREATE_SHARE_CODE_DEFAULTS[profile]
-
-
 def _validate_dispatch_inputs(dispatch_inputs: Mapping[str, str] | None) -> dict[str, str]:
     if not isinstance(dispatch_inputs, Mapping):
         raise AthenaRunWorkflowRequestError("workflow_dispatch inputs must be a mapping")

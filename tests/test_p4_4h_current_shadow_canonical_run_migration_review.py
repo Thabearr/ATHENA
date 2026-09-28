@@ -5,6 +5,8 @@ from datetime import date, datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
+import socket
+import urllib.request
 
 import pytest
 
@@ -13,6 +15,7 @@ from domain.current_shadow_run_contract_adapter import adapt_current_shadow_requ
 from services.athena_run_request_parser import parse_explicit_request
 from services.athena_run_workflow_request import resolve_workflow_request
 from domain.ingest_contracts import canonical_json_bytes
+from scripts import audit_p4_4g_current_fotmob_canonical_only_workflow as p44g
 from scripts import audit_p4_4h_current_shadow_canonical_run_migration_review as audit
 from scripts import audit_p4_workflow_evolution_ledger as evolution
 
@@ -40,39 +43,218 @@ def test_review_receipt_remains_source_bound_as_historical_evidence() -> None:
     assert value["migration_dispositions"]["current_shadow_workflow_retirement_authorized"] is False
 
 
-def test_base_source_identity_allows_only_trusted_shallow_pr_checkout(monkeypatch) -> None:
-    path = audit.CURRENT_SHADOW
+def _historical_snapshot() -> dict:
+    return json.loads(p44g.SNAPSHOT_PATH.read_text(encoding="utf-8"))
+
+
+def test_current_audit_accepts_later_reviewed_state_and_preserves_exact_history() -> None:
+    receipt = audit.audit(check_live=True)
+    assert receipt["canonical_sha256"] == audit.expected_receipt()["canonical_sha256"]
+    current = evolution.validate_current_state()
+    historical = _historical_snapshot()
+    assert historical["canonical_sha256"] == audit.EVOLUTION_SHA256
+    assert len(historical["transitions"]) == 6
+    assert len(current["transitions"]) > 6
+    assert current["transitions"][:6] == historical["transitions"]
+    assert audit._identity(audit.ATHENA_RUN) != {
+        "git_blob_sha1": audit.EXPECTED_IDENTITIES[audit.ATHENA_RUN][0],
+        "source_sha256": audit.EXPECTED_IDENTITIES[audit.ATHENA_RUN][1],
+    }
+    assert audit._identity("services/athena_run_service.py") != {
+        "git_blob_sha1": audit.EXPECTED_IDENTITIES["services/athena_run_service.py"][0],
+        "source_sha256": audit.EXPECTED_IDENTITIES["services/athena_run_service.py"][1],
+    }
+
+
+def test_later_evolution_passes_only_with_exact_six_transition_prefix() -> None:
+    historical = _historical_snapshot()
+    later = copy.deepcopy(historical)
+    later["transitions"].append({"transition_id": "AUTH01B_TEST_LATER_REVIEW"})
+    audit._verify_historical_evolution_prefix(later, historical)
+
+
+@pytest.mark.parametrize("index", range(6))
+def test_mutating_any_historical_transition_fails_prefix_validation(index: int) -> None:
+    historical = _historical_snapshot()
+    later = copy.deepcopy(historical)
+    later["transitions"].append({"transition_id": "AUTH01B_TEST_LATER_REVIEW"})
+    later["transitions"][index]["transition_id"] += "_TAMPERED"
+    with pytest.raises(audit.P44HReviewError, match="exact P4.4H transition prefix"):
+        audit._verify_historical_evolution_prefix(later, historical)
+
+
+def test_wrong_historical_evolution_identity_fails() -> None:
+    historical = _historical_snapshot()
+    with pytest.raises(audit.P44HReviewError, match="six-transition checkpoint identity"):
+        audit._verify_historical_evolution_prefix(
+            historical,
+            historical,
+            expected_sha="0" * 64,
+        )
+
+
+def test_current_workflow_tree_must_match_current_cumulative_ledger() -> None:
+    current = evolution.validate_current_state()
+    audit._verify_current_workflow_tree(
+        current,
+        observed_tree=current["current_workflow_tree_sha1"],
+        observed_count=current["current_live_workflow_count"],
+    )
+    with pytest.raises(audit.P44HReviewError, match="current workflow tree differs"):
+        audit._verify_current_workflow_tree(
+            current,
+            observed_tree="0" * 40,
+            observed_count=current["current_live_workflow_count"],
+        )
+
+
+def test_historical_workflow_tree_remains_exact(monkeypatch) -> None:
+    historical = _historical_snapshot()
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _ref: True)
+    monkeypatch.setattr(
+        audit,
+        "_git",
+        lambda *args: audit.WORKFLOW_TREE.encode("ascii"),
+    )
+    audit._verify_historical_workflow_tree(
+        trusted_current_ci=False,
+        historical_snapshot=historical,
+    )
+    monkeypatch.setattr(audit, "_git", lambda *_args: ("0" * 40).encode("ascii"))
+    with pytest.raises(audit.P44HReviewError, match="historical workflow tree differs"):
+        audit._verify_historical_workflow_tree(
+            trusted_current_ci=False,
+            historical_snapshot=historical,
+        )
+
+
+def test_p44h_merge_requires_exact_parent_pair_and_current_ancestry(monkeypatch) -> None:
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _ref: True)
+    monkeypatch.setattr(
+        audit,
+        "_git",
+        lambda *args: f"{audit.BASE_MAIN} {audit.P44H_REVIEWED_HEAD}".encode("ascii"),
+    )
+    monkeypatch.setattr(audit.subprocess, "run", lambda *_args, **_kwargs: type("Result", (), {"returncode": 0})())
+    audit._verify_historical_review_ancestry(trusted_current_ci=False)
+
+
+def test_wrong_p44h_merge_parents_fail(monkeypatch) -> None:
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _ref: True)
+    monkeypatch.setattr(audit, "_git", lambda *_args: ("0" * 40 + " " + "1" * 40).encode("ascii"))
+    with pytest.raises(audit.P44HReviewError, match="exact reviewed base/head"):
+        audit._verify_historical_review_ancestry(trusted_current_ci=False)
+
+
+def test_p44h_merge_not_ancestor_of_current_head_fails(monkeypatch) -> None:
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _ref: True)
+    monkeypatch.setattr(
+        audit,
+        "_git",
+        lambda *args: f"{audit.BASE_MAIN} {audit.P44H_REVIEWED_HEAD}".encode("ascii"),
+    )
+    monkeypatch.setattr(audit.subprocess, "run", lambda *_args, **_kwargs: type("Result", (), {"returncode": 1})())
+    with pytest.raises(audit.P44HReviewError, match="not an ancestor"):
+        audit._verify_historical_review_ancestry(trusted_current_ci=True)
+
+
+def test_trusted_shallow_pr_does_not_require_historical_pr_base(tmp_path, monkeypatch) -> None:
+    event = {
+        "repository": {"full_name": "Thabearr/ATHENA"},
+        "pull_request": {
+            "base": {"ref": "main", "sha": "1" * 40},
+            "head": {"sha": "2" * 40},
+        },
+    }
+    event_path = tmp_path / "pull-request-event.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setenv("GITHUB_REPOSITORY", "Thabearr/ATHENA")
+    monkeypatch.setenv("GITHUB_SHA", "a" * 40)
+    monkeypatch.setattr(audit, "_git", lambda *_args: ("a" * 40).encode("ascii"))
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _ref: False)
+    assert audit._verify_base() is True
+
+
+def test_missing_history_in_untrusted_local_context_fails_closed(monkeypatch) -> None:
+    for name in ("GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH", "GITHUB_REPOSITORY", "GITHUB_SHA"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _ref: False)
+    with pytest.raises(audit.P44HReviewError, match="unavailable outside a trusted shallow CI context"):
+        audit._verify_base()
+
+
+def test_historical_source_identity_uses_reviewed_ref_not_current_head(monkeypatch) -> None:
+    path = "services/athena_run_service.py"
     pair = audit.EXPECTED_IDENTITIES[path]
-    expected = {"git_blob_sha1": pair[0], "source_sha256": pair[1]}
-
-    def missing_base_object(*args: str) -> bytes:
-        assert args == ("cat-file", "-e", audit.BASE_MAIN)
-        raise audit.P44HReviewError("base commit object is absent in depth-1 checkout")
-
-    monkeypatch.setattr(audit, "_git", missing_base_object)
-    monkeypatch.setattr(audit, "_identity", lambda selected: expected)
-
-    # Trusted PR event binding is established by _verify_base before this helper.
-    audit._verify_base_source_identity(path, pair, trusted_pr_event=True)
-    with pytest.raises(audit.P44HReviewError, match="base object unavailable"):
-        audit._verify_base_source_identity(path, pair, trusted_pr_event=False)
-
-
-def test_shallow_base_fallback_still_rejects_current_source_identity_drift(monkeypatch) -> None:
-    path = audit.ATHENA_RUN
-    pair = audit.EXPECTED_IDENTITIES[path]
-
-    def missing_base_object(*args: str) -> bytes:
-        raise audit.P44HReviewError("base commit object is absent in depth-1 checkout")
-
-    monkeypatch.setattr(audit, "_git", missing_base_object)
+    historical = {"git_blob_sha1": pair[0], "source_sha256": pair[1]}
+    monkeypatch.setattr(audit, "_commit_object_available", lambda commit: commit == audit.P44H_REVIEWED_HEAD)
     monkeypatch.setattr(
         audit,
         "_identity",
-        lambda selected: {"git_blob_sha1": "0" * 40, "source_sha256": "0" * 64},
+        lambda selected, ref="HEAD": historical if ref == audit.P44H_REVIEWED_HEAD else {"git_blob_sha1": "0" * 40, "source_sha256": "0" * 64},
     )
-    with pytest.raises(audit.P44HReviewError, match="shallow P4.4H checkout source identity differs"):
-        audit._verify_base_source_identity(path, pair, trusted_pr_event=True)
+    audit._verify_historical_source_identity(
+        path,
+        pair,
+        trusted_current_ci=False,
+        receipt=audit.expected_receipt(),
+    )
+
+
+def test_mutated_historical_source_identity_fails(monkeypatch) -> None:
+    path = audit.CURRENT_SHADOW
+    pair = audit.EXPECTED_IDENTITIES[path]
+    monkeypatch.setattr(audit, "_commit_object_available", lambda commit: commit == audit.P44H_REVIEWED_HEAD)
+    monkeypatch.setattr(
+        audit,
+        "_identity",
+        lambda *_args, **_kwargs: {"git_blob_sha1": "0" * 40, "source_sha256": "0" * 64},
+    )
+    with pytest.raises(audit.P44HReviewError, match="historical P4.4H source identity differs"):
+        audit._verify_historical_source_identity(
+            path,
+            pair,
+            trusted_current_ci=False,
+            receipt=audit.expected_receipt(),
+        )
+
+
+def test_shallow_historical_sources_require_trusted_receipt_binding(monkeypatch) -> None:
+    path = audit.ATHENA_RUN
+    pair = audit.EXPECTED_IDENTITIES[path]
+    receipt = audit.expected_receipt()
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _ref: False)
+    monkeypatch.setattr(audit, "_blob_object_available", lambda _blob: False)
+    audit._verify_historical_source_identity(
+        path,
+        pair,
+        trusted_current_ci=True,
+        receipt=receipt,
+    )
+    with pytest.raises(audit.P44HReviewError, match="unavailable outside trusted CI"):
+        audit._verify_historical_source_identity(
+            path,
+            pair,
+            trusted_current_ci=False,
+            receipt=receipt,
+        )
+
+
+def test_current_p44h_audit_remains_offline_under_network_sentinels(monkeypatch) -> None:
+    calls = []
+
+    def denied(*_args, **_kwargs):
+        calls.append("network")
+        raise AssertionError("P4.4H audit attempted network access")
+
+    monkeypatch.setattr(socket.socket, "connect", denied)
+    monkeypatch.setattr(socket.socket, "connect_ex", denied)
+    monkeypatch.setattr(socket, "create_connection", denied)
+    monkeypatch.setattr(urllib.request, "urlopen", denied)
+    assert audit.audit(check_live=True)["canonical_sha256"] == audit.expected_receipt()["canonical_sha256"]
+    assert calls == []
 
 
 def test_valid_explicit_shadow_request_pairs_are_exact() -> None:

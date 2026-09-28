@@ -22,6 +22,8 @@ from scripts import audit_p4_4g_current_fotmob_canonical_only_workflow as p44g
 from scripts import audit_p4_workflow_evolution_ledger as evolution
 
 BASE_MAIN = "64eab40138790b9c7a294e25dc2ba9397e8a5ece"
+P44H_REVIEWED_HEAD = "0ef5becd77333054431eb04f130ebab866a29a6e"
+P44H_MERGE_COMMIT = "0066720de62611a3673468597335c3a2c55aacaf"
 POLICY_ID = "ATHENA_P4_4H_CURRENT_SHADOW_CANONICAL_RUN_MIGRATION_REVIEW_V1"
 RECEIPT_PATH = Path("artifacts/architecture/p4_4h_current_shadow_canonical_run_migration_review_v1.json")
 MATRIX_PATH = Path("artifacts/architecture/p4_3_workflow_capability_matrix_v1.json")
@@ -364,66 +366,199 @@ def _read_canonical(path: Path) -> dict[str, Any]:
     return value
 
 
-def _verify_base() -> bool:
-    head = _git("rev-parse", "HEAD").decode().strip()
-    trusted_pr_event = False
-    if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
-        event_path = os.environ.get("GITHUB_EVENT_PATH")
-        try:
-            event = json.loads(Path(event_path).read_text(encoding="utf-8")) if event_path else {}
-            pr = event.get("pull_request", {})
-            event_head = pr.get("head", {}).get("sha", "")
-            trusted_pr_event = (
-                pr.get("base", {}).get("ref") == "main"
-                and pr.get("base", {}).get("sha") == BASE_MAIN
-                and re.fullmatch(r"[0-9a-f]{40}", str(event_head)) is not None
-                and re.fullmatch(r"[0-9a-f]{40}", str(os.environ.get("GITHUB_SHA", ""))) is not None
-                and head == os.environ.get("GITHUB_SHA")
-            )
-        except (OSError, json.JSONDecodeError):
-            trusted_pr_event = False
-        if not trusted_pr_event:
-            raise P44HReviewError("pull_request event is not bound to exact P4.4H base/head")
-    else:
-        remote_main = _git("rev-parse", "origin/main").decode().strip()
-        if remote_main != BASE_MAIN:
-            raise P44HReviewError(f"origin/main moved from exact P4.4H base: {remote_main}")
+def _commit_object_available(commit: str) -> bool:
+    return subprocess.run(
+        ["git", "cat-file", "-e", f"{commit}^{{commit}}"], capture_output=True
+    ).returncode == 0
+
+
+def _blob_object_available(blob: str) -> bool:
+    return subprocess.run(
+        ["git", "cat-file", "-e", f"{blob}^{{blob}}"], capture_output=True
+    ).returncode == 0
+
+
+def _require_trusted_current_ci_context() -> None:
+    """Bind shallow historical checks to this repository's current PR/push event."""
+    event_name = os.environ.get("GITHUB_EVENT_NAME")
+    event_path = os.environ.get("GITHUB_EVENT_PATH")
     try:
-        subprocess.run(["git", "merge-base", "--is-ancestor", BASE_MAIN, "HEAD"], check=True, capture_output=True)
-    except subprocess.CalledProcessError:
-        if not trusted_pr_event:
-            raise P44HReviewError("exact P4.4H base is not in current history")
-    return trusted_pr_event
+        if not event_path:
+            raise ValueError("GITHUB_EVENT_PATH is missing")
+        event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+        if type(event) is not dict:
+            raise ValueError("GitHub event must be an object")
+        repository = event.get("repository")
+        if type(repository) is not dict or repository.get("full_name") != "Thabearr/ATHENA":
+            raise ValueError("GitHub repository identity differs")
+        repository_env = os.environ.get("GITHUB_REPOSITORY")
+        if repository_env not in (None, "Thabearr/ATHENA"):
+            raise ValueError("GITHUB_REPOSITORY differs")
+        current = _git("rev-parse", "HEAD").decode("ascii").strip()
+        github_sha = os.environ.get("GITHUB_SHA", "")
+        if re.fullmatch(r"[0-9a-f]{40}", github_sha) is None or current != github_sha:
+            raise ValueError("current checkout differs from GITHUB_SHA")
+
+        if event_name == "pull_request":
+            pull_request = event.get("pull_request")
+            if type(pull_request) is not dict:
+                raise ValueError("pull_request event is malformed")
+            base = pull_request.get("base")
+            head = pull_request.get("head")
+            if type(base) is not dict or type(head) is not dict:
+                raise ValueError("pull_request base/head metadata is malformed")
+            if (
+                base.get("ref") != "main"
+                or re.fullmatch(r"[0-9a-f]{40}", str(base.get("sha", ""))) is None
+                or re.fullmatch(r"[0-9a-f]{40}", str(head.get("sha", ""))) is None
+            ):
+                raise ValueError("pull_request base/head identity is malformed")
+            return
+
+        if event_name == "push":
+            if (
+                os.environ.get("GITHUB_REF") != "refs/heads/main"
+                or event.get("ref") != "refs/heads/main"
+                or event.get("after") != github_sha
+                or event.get("deleted") is True
+                or repository.get("default_branch") != "main"
+            ):
+                raise ValueError("main push event identity differs")
+            return
+
+        raise ValueError("event is neither pull_request nor push")
+    except (
+        OSError,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        ValueError,
+        P44HReviewError,
+    ) as exc:
+        raise P44HReviewError(
+            "P4.4H historical audit lacks a trusted current repository PR/push binding"
+        ) from exc
 
 
-def _verify_base_source_identity(path: str, pair: tuple[str, str], *, trusted_pr_event: bool) -> None:
-    """Bind a protected source to P4.4H base, tolerating only trusted shallow PR checkouts.
-
-    GitHub's depth-1 synthetic pull-request checkout may omit the exact base commit
-    object. In that case the event must bind the exact base SHA, and the checked-out
-    source must independently retain the reviewed base identity. If the base commit
-    is present, its tree is authoritative and is checked directly.
-    """
-    expected = {"git_blob_sha1": pair[0], "source_sha256": pair[1]}
-    try:
-        _git("cat-file", "-e", BASE_MAIN)
-    except P44HReviewError:
-        if not trusted_pr_event:
-            raise P44HReviewError(f"exact P4.4H base object unavailable for {path}")
-        if _identity(path) != expected:
-            raise P44HReviewError(f"shallow P4.4H checkout source identity differs from reviewed base: {path}")
+def _verify_historical_review_ancestry(*, trusted_current_ci: bool) -> None:
+    """Authenticate the immutable P4.4H merge, not the current main tip."""
+    if _commit_object_available(P44H_MERGE_COMMIT):
+        parents = _git("show", "-s", "--format=%P", P44H_MERGE_COMMIT).decode("ascii").split()
+        if parents != [BASE_MAIN, P44H_REVIEWED_HEAD]:
+            raise P44HReviewError("P4.4H merge commit does not bind its exact reviewed base/head")
+        ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", P44H_MERGE_COMMIT, "HEAD"],
+            capture_output=True,
+        )
+        if ancestor.returncode != 0:
+            raise P44HReviewError("P4.4H reviewed merge is not an ancestor of current HEAD")
         return
+    if not trusted_current_ci:
+        raise P44HReviewError(
+            "P4.4H merge object is unavailable outside a trusted shallow CI context"
+        )
 
-    if evolution.source_identity(_git("show", f"{BASE_MAIN}:{path}")) != expected:
-        raise P44HReviewError(f"authorized base source identity differs: {path}")
+
+def _verify_base() -> bool:
+    """Authenticate P4.4H history while allowing later reviewed current state."""
+    event_name = os.environ.get("GITHUB_EVENT_NAME")
+    trusted_current_ci = False
+    if event_name is not None:
+        _require_trusted_current_ci_context()
+        trusted_current_ci = True
+    _verify_historical_review_ancestry(trusted_current_ci=trusted_current_ci)
+    return trusted_current_ci
+
+
+def _verify_historical_workflow_tree(
+    *, trusted_current_ci: bool, historical_snapshot: dict[str, Any]
+) -> None:
+    checked = False
+    for ref in (P44H_REVIEWED_HEAD, P44H_MERGE_COMMIT):
+        if _commit_object_available(ref):
+            tree = _git("rev-parse", f"{ref}:.github/workflows").decode("ascii").strip()
+            if tree != WORKFLOW_TREE:
+                raise P44HReviewError(f"P4.4H historical workflow tree differs at {ref}")
+            checked = True
+    if not checked:
+        if not trusted_current_ci:
+            raise P44HReviewError(
+                "P4.4H historical workflow tree objects are unavailable outside trusted CI"
+            )
+        if historical_snapshot.get("current_workflow_tree_sha1") != WORKFLOW_TREE:
+            raise P44HReviewError("immutable P4.4G snapshot does not authenticate the P4.4H workflow tree")
+
+
+def _verify_historical_source_identity(
+    path: str,
+    pair: tuple[str, str],
+    *,
+    trusted_current_ci: bool,
+    receipt: dict[str, Any],
+) -> None:
+    """Verify bytes at P4.4H, never substitute later HEAD bytes for history."""
+    expected = {"git_blob_sha1": pair[0], "source_sha256": pair[1]}
+    if _commit_object_available(P44H_REVIEWED_HEAD):
+        actual = _identity(path, P44H_REVIEWED_HEAD)
+    elif _blob_object_available(pair[0]):
+        actual = evolution.source_identity(_git("cat-file", "-p", pair[0]))
+    elif trusted_current_ci:
+        # The exact canonical P4.4H receipt is the immutable historical claim in
+        # a shallow checkout. AUTH-01A/B current bytes are deliberately not used
+        # as a proxy for the source reviewed by P4.4H.
+        receipt_identities = receipt.get("source_identities", {})
+        receipt_identity = receipt_identities.get(path)
+        if receipt_identity is None:
+            receipt_identity = receipt.get("fresh_holdout_workflow_identities", {}).get(path)
+        if receipt_identity == expected:
+            return
+        raise P44HReviewError(f"P4.4H receipt does not authenticate historical source identity: {path}")
+    else:
+        raise P44HReviewError(
+            f"historical P4.4H source object is unavailable outside trusted CI: {path}"
+        )
+    if actual != expected:
+        raise P44HReviewError(f"historical P4.4H source identity differs: {path}")
+
+
+def _verify_historical_evolution_prefix(
+    current_ledger: dict[str, Any], historical_snapshot: dict[str, Any], *, expected_sha: str = EVOLUTION_SHA256
+) -> None:
+    historical_transitions = historical_snapshot.get("transitions")
+    current_transitions = current_ledger.get("transitions")
+    if (
+        historical_snapshot.get("canonical_sha256") != expected_sha
+        or evolution.canonical_sha256(historical_snapshot) != expected_sha
+        or not isinstance(historical_transitions, list)
+        or len(historical_transitions) != 6
+    ):
+        raise P44HReviewError("immutable P4.4H six-transition checkpoint identity differs")
+    if (
+        not isinstance(current_transitions, list)
+        or len(current_transitions) < 6
+        or current_transitions[:6] != historical_transitions
+    ):
+        raise P44HReviewError("current workflow evolution does not preserve the exact P4.4H transition prefix")
+
+
+def _verify_current_workflow_tree(
+    current_ledger: dict[str, Any], *, observed_tree: str | None = None, observed_count: int | None = None
+) -> None:
+    if observed_tree is None:
+        observed_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
+    if observed_count is None:
+        paths = _git("ls-tree", "-r", "--name-only", "HEAD", ".github/workflows").decode("utf-8").splitlines()
+        observed_count = sum(path.endswith((".yml", ".yaml")) for path in paths)
+    if observed_tree != current_ledger.get("current_workflow_tree_sha1"):
+        raise P44HReviewError("current workflow tree differs from the current cumulative evolution ledger")
+    if observed_count != current_ledger.get("current_live_workflow_count"):
+        raise P44HReviewError("current workflow count differs from the current cumulative evolution ledger")
 
 
 def audit(*, check_live: bool = True) -> dict[str, Any]:
     try:
-        # The immutable phase receipt remains auditable after later main
-        # advances. Exact live ancestry and current-tree invariants are checked
-        # only when this phase is explicitly being reviewed as live.
-        trusted_pr_event = _verify_base() if check_live else False
+        # P4.4H remains immutable historical evidence; live checks authenticate
+        # its original merge and then validate the current cumulative ledgers.
+        trusted_current_ci = _verify_base() if check_live else False
         expected = expected_receipt()
         receipt = _read_canonical(RECEIPT_PATH)
         if receipt != expected or receipt.get("canonical_sha256") != _canonical_sha(receipt):
@@ -447,24 +582,30 @@ def audit(*, check_live: bool = True) -> dict[str, Any]:
                 raise P44HReviewError("frozen P4.3A Current Shadow baseline row differs")
             p44g.audit(check_live=True)
             ledger = evolution.validate_current_state()
-            if ledger.get("canonical_sha256") != EVOLUTION_SHA256 or len(ledger.get("transitions", [])) != 6:
-                raise P44HReviewError("current evolution ledger identity/prefix changed")
+            historical_snapshot = _read_canonical(p44g.SNAPSHOT_PATH)
+            _verify_historical_evolution_prefix(ledger, historical_snapshot)
+            _verify_historical_workflow_tree(
+                trusted_current_ci=trusted_current_ci,
+                historical_snapshot=historical_snapshot,
+            )
             retirement_state = retirement.validate_retirement_history()
-            if retirement_state.get("canonical_sha256") != RETIREMENT_SHA256 or retirement_state.get("current_retired_workflow_count") != RETIRED_COUNT:
-                raise P44HReviewError("P4.3 retirement ledger changed")
-            if _git("rev-parse", "HEAD:.github/workflows").decode().strip() != WORKFLOW_TREE:
-                raise P44HReviewError("workflow tree changed during evidence-only P4.4H")
-            count = sum(p.endswith((".yml", ".yaml")) for p in _git("ls-tree", "-r", "--name-only", "HEAD", ".github/workflows").decode().splitlines())
-            if count != WORKFLOW_COUNT:
-                raise P44HReviewError("workflow count changed")
+            if retirement_state.get("current_retired_workflow_count", 0) < RETIRED_COUNT:
+                raise P44HReviewError("current retirement history no longer includes P4.4H's three prior retirements")
+            _verify_current_workflow_tree(ledger)
             for path, pair in EXPECTED_IDENTITIES.items():
-                if _identity(path) != {"git_blob_sha1": pair[0], "source_sha256": pair[1]}:
-                    raise P44HReviewError(f"reviewed source identity drift: {path}")
+                _verify_historical_source_identity(
+                    path,
+                    pair,
+                    trusted_current_ci=trusted_current_ci,
+                    receipt=receipt,
+                )
             for path, pair in FRESH_HOLDOUT_IDENTITIES.items():
-                if _identity(path) != {"git_blob_sha1": pair[0], "source_sha256": pair[1]}:
-                    raise P44HReviewError(f"Fresh Holdout source identity drift: {path}")
-            for path in (CURRENT_SHADOW, ATHENA_RUN):
-                _verify_base_source_identity(path, EXPECTED_IDENTITIES[path], trusted_pr_event=trusted_pr_event)
+                _verify_historical_source_identity(
+                    path,
+                    pair,
+                    trusted_current_ci=trusted_current_ci,
+                    receipt=receipt,
+                )
         return receipt
     except (OSError, ValueError, AssertionError, json.JSONDecodeError) as exc:
         if isinstance(exc, P44HReviewError):
