@@ -132,7 +132,12 @@ def test_historical_p44l_source_identities_are_not_derived_from_current_head() -
     )
     assert receipt["source_identity"] == audit.P44L_HISTORICAL_SOURCE_IDENTITIES
     for path, expected in audit.P44L_HISTORICAL_SOURCE_IDENTITIES.items():
-        assert audit._source_identity(path, audit.P44L_REVIEWED_HEAD) == expected
+        audit._verify_historical_source_identity(
+            path,
+            expected,
+            trusted_current_ci=True,
+            receipt=receipt,
+        )
 
 
 def test_current_source_change_does_not_rewrite_historical_receipt(
