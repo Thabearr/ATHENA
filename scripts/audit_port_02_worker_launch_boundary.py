@@ -17,6 +17,8 @@ from runtime.source_identity import (
     read_tracked_head_blob,
     validate_repository_relative_path,
 )
+from scripts import audit_auth_01_analysis_only_shadow as auth_01d_historical
+from scripts import audit_auth_01_analysis_only_shadow_worker_boundary as auth_01d_forward
 from scripts import audit_port_02_installed_release_identity as port02a
 
 
@@ -25,6 +27,11 @@ ARTIFACT_PATH = "artifacts/architecture/port_02_worker_launch_boundary_v1.json"
 POLICY_ID = "ATHENA_PORT_02_WORKER_LAUNCH_BOUNDARY_V1"
 BASE_MAIN_SHA = "235fd86a1de26732473e7e839b5147b50bcfcd86"
 PORT02A_CANONICAL_SHA256 = "8e08b1e45d589e56f3f7577711fb919958f31ff77c147533ae834871ec85f70f"
+AUTH_01D_HISTORICAL_SHA256 = "7b09adb4882d49749c33efecbce0b1c8985a2d3bdec52417f7b02f8f335f4a86"
+AUTH_01D_HISTORICAL_REPLAY_SHA256 = "3b792193ef813f4aab79d7c3f9d48550270f3ae008265cc9ceb9c3d629e974f5"
+AUTH_01D_FORWARD_POLICY_ID = "ATHENA_AUTH_01_ANALYSIS_ONLY_SHADOW_WORKER_BOUNDARY_V1"
+AUTH_01D_FORWARD_CANONICAL_SHA256 = "51385a66ecebe7e07516601ed2d19c6f6a007c9ee4274e987ddf499e45b4292c"
+AUTH_01D_FORWARD_SEMANTIC_SHA256 = "aa019454ccc2bbad95f5a53fe3089ee9e8d2113e74f493de8735a6d77f5d9a63"
 P44H_CANONICAL_SHA256 = "0000a5978268909dd07330d59079bc4d7f8d32c0fee161653a4a19eea9b97c64"
 P44I_CANONICAL_SHA256 = "d6f65a382c4ef23318a81261e48b8e717f768864a6e1e5baed61af3c11351a7c"
 GITATTRIBUTES_BASE_BLOB = "39ccd8d38ce17c105a906e2f1416f68e64fcc862"
@@ -330,7 +337,22 @@ def _expected_fixed_fields(document: dict[str, Any]) -> None:
         "p4_4h_semantics_rewritten": False,
         "p4_4i_receipt_canonical_sha256": P44I_CANONICAL_SHA256,
         "p4_4i_semantics_rewritten": False,
-        "auth_01d_analysis_only_no_delivery": "PRESERVED",
+        "auth_01d_historical": {
+            "policy_id": auth_01d_historical.POLICY_ID,
+            "canonical_sha256": AUTH_01D_HISTORICAL_SHA256,
+            "deterministic_replay_sha256": AUTH_01D_HISTORICAL_REPLAY_SHA256,
+            "audit_result_on_b4_source": "SKIP_SOURCE_MOVED",
+            "historical_integrity": "PASS",
+            "historical_replay_reexecuted": False,
+        },
+        "auth_01d_worker_boundary_forward": {
+            "policy_id": AUTH_01D_FORWARD_POLICY_ID,
+            "canonical_sha256": AUTH_01D_FORWARD_CANONICAL_SHA256,
+            "audit_result": "PASS",
+            "current_release_identity_required": True,
+            "semantic_continuity_sha256": AUTH_01D_FORWARD_SEMANTIC_SHA256,
+            "external_calls": 0,
+        },
         "base_00_snapshot_rewritten": False,
         "port_01a_b2_and_02a_receipts_rewritten": False,
     }:
@@ -544,6 +566,55 @@ def validate_current_state() -> dict[str, Any]:
         raise Port02BAuditError("PORT-02A predecessor canonical identity changed")
 
     moved = _validate_worker_sources(document)
+    historical_auth = auth_01d_historical.check_artifact()
+    expected_historical_auth = document["historical_regressions"]["auth_01d_historical"]
+    if historical_auth != {
+        "result": "SKIP_SOURCE_MOVED",
+        "policy_id": auth_01d_historical.POLICY_ID,
+        "artifact_canonical_sha256": AUTH_01D_HISTORICAL_SHA256,
+        "historical_integrity": "PASS",
+        "historical_replay_sha256": AUTH_01D_HISTORICAL_REPLAY_SHA256,
+        "historical_replay_reexecuted": False,
+        "reason": "CURRENT_WORKER_BOUNDARY_REQUIRES_VERIFIED_CURRENT_RELEASE_IDENTITY",
+        "moved_paths": [
+            "services/athena_run_service.py",
+            "runtime/worker_launcher.py",
+            "runtime/worker_entry.py",
+        ],
+    } or expected_historical_auth != {
+        "policy_id": auth_01d_historical.POLICY_ID,
+        "canonical_sha256": AUTH_01D_HISTORICAL_SHA256,
+        "deterministic_replay_sha256": AUTH_01D_HISTORICAL_REPLAY_SHA256,
+        "audit_result_on_b4_source": "SKIP_SOURCE_MOVED",
+        "historical_integrity": "PASS",
+        "historical_replay_reexecuted": False,
+    }:
+        raise Port02BAuditError("AUTH-01D immutable historical evidence is not preserved exactly")
+
+    forward_auth = auth_01d_forward.check_artifact()
+    expected_forward_auth = document["historical_regressions"]["auth_01d_worker_boundary_forward"]
+    if (
+        forward_auth.get("result") != "PASS"
+        or forward_auth.get("policy_id") != AUTH_01D_FORWARD_POLICY_ID
+        or forward_auth.get("historical_predecessor_integrity") != "PASS"
+        or forward_auth.get("semantic_continuity_sha256") != AUTH_01D_FORWARD_SEMANTIC_SHA256
+        or forward_auth.get("historical_full_receipt_sha_compared") is not False
+        or forward_auth.get("provider_network_calls") != 0
+        or forward_auth.get("share_transport_calls") != 0
+        or forward_auth.get("account_wager_calls") != 0
+        or forward_auth.get("worker_command", {}).get("release_identity_id") != forward_auth.get("current_head_sha")
+        or forward_auth.get("run_receipt_exact_commit_sha") != forward_auth.get("current_head_sha")
+        or expected_forward_auth
+        != {
+            "policy_id": AUTH_01D_FORWARD_POLICY_ID,
+            "canonical_sha256": AUTH_01D_FORWARD_CANONICAL_SHA256,
+            "audit_result": "PASS",
+            "current_release_identity_required": True,
+            "semantic_continuity_sha256": AUTH_01D_FORWARD_SEMANTIC_SHA256,
+            "external_calls": 0,
+        }
+    ):
+        raise Port02BAuditError("AUTH-01D current worker-boundary forward evidence is not exact")
     return {
         "result": (
             "PORT_02B_WORKER_LAUNCH_BOUNDARY_SKIP_SOURCE_MOVED"
@@ -553,6 +624,11 @@ def validate_current_state() -> dict[str, Any]:
         "canonical_sha256": claimed,
         "source_moved_paths": moved,
         "predecessor_canonical_sha256": predecessor["canonical_sha256"],
+        "auth_01d_historical_integrity": "PASS",
+        "auth_01d_historical_replay_reexecuted": False,
+        "auth_01d_forward_result": "PASS",
+        "auth_01d_forward_canonical_sha256": AUTH_01D_FORWARD_CANONICAL_SHA256,
+        "auth_01d_semantic_continuity_sha256": forward_auth["semantic_continuity_sha256"],
         "network_provider_delivery_calls": 0,
     }
 

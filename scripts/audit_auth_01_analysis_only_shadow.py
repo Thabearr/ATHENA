@@ -35,6 +35,10 @@ if str(REPOSITORY_ROOT) not in sys.path:
 
 BASE_MAIN_SHA = "2b82f3236b786161d208d9ca3e4c8cf73ca9fac2"
 POLICY_ID = "ATHENA_AUTH_01_ANALYSIS_ONLY_SHADOW_V1"
+HISTORICAL_ARTIFACT_SHA256 = "7b09adb4882d49749c33efecbce0b1c8985a2d3bdec52417f7b02f8f335f4a86"
+HISTORICAL_REPLAY_SHA256 = "3b792193ef813f4aab79d7c3f9d48550270f3ae008265cc9ceb9c3d629e974f5"
+HISTORICAL_FALSE_REQUEST_SHA256 = "2206abcefa58a28b3ec162b8a735e20ee2b18203b832837c8da9cf2735a5b276"
+HISTORICAL_TRUE_REQUEST_SHA256 = "0142610f7c9fd1eec15b00da8ca13ecf4d2efc107b6b6d60e6e32e0841aaf3c4"
 ARTIFACT_PATH = Path("artifacts/architecture/auth_01_analysis_only_shadow_v1.json")
 BASELINE_JSON = Path("artifacts/product/product_baseline_v1.json")
 BASELINE_MARKDOWN = Path("docs/product/athena_product_baseline_v1.md")
@@ -90,6 +94,8 @@ IMPORT_MODULES = (
     "scripts.execute_current_shadow_all_market_fresh_reprice_bound",
     "scripts.execute_current_shadow_daily",
     "scripts.execute_current_shadow_request",
+    "runtime.worker_launcher",
+    "runtime.worker_entry",
 )
 
 
@@ -155,6 +161,108 @@ class _Patches:
         for owner, name, previous in reversed(self._previous):
             setattr(owner, name, previous)
         self._previous.clear()
+
+
+class HistoricalReplaySourceMoved(RuntimeError):
+    """The frozen A5 replay cannot execute truthfully on a later runtime seam."""
+
+
+def _current_worker_boundary_moved_paths(root: Path = REPOSITORY_ROOT) -> list[str]:
+    """Return the reviewed PORT-02B source paths that supersede the A5 launch seam."""
+
+    service_path = root / "services/athena_run_service.py"
+    launcher_path = root / "runtime/worker_launcher.py"
+    entry_path = root / "runtime/worker_entry.py"
+    if not (service_path.is_file() and launcher_path.is_file() and entry_path.is_file()):
+        return []
+    service_tree = ast.parse(service_path.read_text(encoding="utf-8"))
+    helper = next(
+        (
+            node for node in service_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_run_reviewed_shadow_worker"
+        ),
+        None,
+    )
+    if helper is None:
+        return []
+    names = {node.id for node in ast.walk(helper) if isinstance(node, ast.Name)}
+    if not {"WorkerCommand", "WorkerLauncher"}.issubset(names):
+        return []
+    head = subprocess.check_output(
+        ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+    ).strip()
+    if head == BASE_MAIN_SHA:
+        return []
+    return [
+        "services/athena_run_service.py",
+        "runtime/worker_launcher.py",
+        "runtime/worker_entry.py",
+    ]
+
+
+def _assert_no_raw_share_material(value: Any, key_path: str = "") -> None:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            _assert_no_raw_share_material(item, f"{key_path}.{key}" if key_path else str(key))
+        return
+    if type(value) in {list, tuple}:
+        for item in value:
+            _assert_no_raw_share_material(item, key_path)
+        return
+    if type(value) is str and re.search(r"https?://|sportybet\.com", value, re.IGNORECASE):
+        raise AssertionError("A5 architecture artifact contains a share URL/domain")
+    normalized_key = key_path.rsplit(".", 1)[-1].lower()
+    if any(token in normalized_key for token in ("share_code", "share_url", "sharecode", "shareurl")):
+        if normalized_key.endswith(("_copied", "_present")) and value is False:
+            return
+        if normalized_key.endswith("_calls") and type(value) is int and value == 0:
+            return
+        if value is not None and type(value) is not bool:
+            raise AssertionError("A5 architecture artifact contains a raw share-code value")
+
+
+def _validate_historical_artifact(root: Path = REPOSITORY_ROOT) -> dict[str, Any]:
+    artifact = _read_json(root / ARTIFACT_PATH)
+    claimed = artifact.get("canonical_sha256")
+    unsigned = dict(artifact)
+    unsigned.pop("canonical_sha256", None)
+    if claimed != HISTORICAL_ARTIFACT_SHA256 or _sha256(_canonical(unsigned)) != claimed:
+        raise AssertionError("immutable A5 architecture artifact canonical identity changed")
+    if artifact.get("policy_id") != POLICY_ID:
+        raise AssertionError("immutable A5 policy identity changed")
+    replay = artifact.get("offline_replay")
+    if not isinstance(replay, dict):
+        raise AssertionError("immutable A5 offline replay record is missing")
+    exact_historical_values = {
+        "deterministic_output_sha256": HISTORICAL_REPLAY_SHA256,
+        "request_sha256": HISTORICAL_FALSE_REQUEST_SHA256,
+    }
+    for name, expected in exact_historical_values.items():
+        if replay.get(name) != expected:
+            raise AssertionError(f"immutable A5 historical value changed: {name}")
+    request_vectors = replay.get("request_adapter_byte_equality")
+    if not isinstance(request_vectors, dict):
+        raise AssertionError("immutable A5 request vectors are missing")
+    if request_vectors.get("false", {}).get("canonical_sha256") != HISTORICAL_FALSE_REQUEST_SHA256:
+        raise AssertionError("immutable A5 false request identity changed")
+    if request_vectors.get("true", {}).get("canonical_sha256") != HISTORICAL_TRUE_REQUEST_SHA256:
+        raise AssertionError("immutable A5 true request identity changed")
+    if _git_blob(BASELINE_JSON, root=root) != BASELINE_JSON_BLOB:
+        raise AssertionError("BASE-00 frozen JSON blob changed")
+    if _git_blob(BASELINE_MARKDOWN, root=root) != BASELINE_MARKDOWN_BLOB:
+        raise AssertionError("BASE-00 frozen Markdown blob changed")
+    for path, expected in (
+        (P44R_RECEIPT_PATH, P44R_RECEIPT_SHA256),
+        (P44S_RECEIPT_PATH, P44S_RECEIPT_SHA256),
+    ):
+        receipt = _read_json(root / path)
+        receipt_claim = receipt.get("canonical_sha256")
+        receipt_unsigned = dict(receipt)
+        receipt_unsigned.pop("canonical_sha256", None)
+        if receipt_claim != expected or _sha256(_canonical(receipt_unsigned)) != expected:
+            raise AssertionError(f"immutable historical receipt identity changed: {path}")
+    _assert_no_raw_share_material(artifact)
+    return artifact
 
 
 def _materialize_retained_fixture(root: Path) -> tuple[Path, dict[str, bytes]]:
@@ -359,7 +467,11 @@ def _deny_counter(counters: dict[str, int], key: str):
     return deny
 
 
-def _build_replay(import_order: str) -> dict[str, Any]:
+def _build_replay(
+    import_order: str,
+    *,
+    exact_release_sha: str = BASE_MAIN_SHA,
+) -> dict[str, Any]:
     counters = {
         "provider_network": 0,
         "share_transport": 0,
@@ -392,6 +504,8 @@ def _build_replay(import_order: str) -> dict[str, Any]:
     fresh_runtime = modules["domain.current_shadow_fresh_reprice_runtime"]
     quote_binding = modules["domain._current_shadow_quote_binding"]
     binding_module = modules["domain.current_shadow_runtime_bindings"]
+    worker_launcher = modules["runtime.worker_launcher"]
+    worker_entry = modules["runtime.worker_entry"]
 
     live = modules["domain.sportybet_live_event_quote_evidence"]
     pc_source = modules["domain.current_shadow_sportybet_pc_upcoming_discovery"]
@@ -429,8 +543,8 @@ def _build_replay(import_order: str) -> dict[str, Any]:
         # keeps both clean-process executions identical.
         now = FRESH_OBSERVED
         patches.set(runner, "_now", lambda: now)
-        patches.set(runner, "_git_head", lambda _root: BASE_MAIN_SHA)
-        patches.set(runner, "_expected_lineage_main_sha", lambda: BASE_MAIN_SHA)
+        patches.set(runner, "_git_head", lambda _root: exact_release_sha)
+        patches.set(runner, "_expected_lineage_main_sha", lambda: exact_release_sha)
         binding = binding_module.fresh_reprice_current_shadow_runtime_bindings()
         patches.set(fresh_cli, "fresh_reprice_current_shadow_runtime_bindings", lambda: binding)
 
@@ -509,7 +623,7 @@ def _build_replay(import_order: str) -> dict[str, Any]:
             requested_operations=intent,
             authority_manifest=manifest,
             source_identity=envelope_module.SourceReleaseIdentity(
-                kind="GIT_COMMIT", value=BASE_MAIN_SHA
+                kind="GIT_COMMIT", value=exact_release_sha
             ),
             date_resolution_policy_id=envelope_module.DATE_RESOLUTION_POLICY_ID,
             date_resolution_timezone_id=envelope_module.DATE_RESOLUTION_TIMEZONE_ID,
@@ -522,37 +636,140 @@ def _build_replay(import_order: str) -> dict[str, Any]:
         if preview.blockers or preview.denied_operations:
             raise AssertionError("supported SHADOW no-delivery request was blocked by its V2 preview")
 
-        # The service still constructs and owns its production supervisor command.
-        # Only the OS process launch is replaced by direct invocation of the real
-        # request worker and its complete nested wrapper chain.
+        # Replace only the lowest OS-process creation seam. The real service,
+        # WorkerCommand validation, launcher admission, worker_entry validation,
+        # request binding and Current Shadow parser/worker remain in the path.
+        worker_commands: list[dict[str, Any]] = []
+        worker_run_directory_bound: list[bool] = []
         child_commands: list[list[str]] = []
+        child_parsed_intents: list[bool] = []
+        supervisor_commands: list[list[str]] = []
+        worker_entry_release_ids: list[str] = []
         child_stdout: list[str] = []
+        real_request_main = request_cli.main
 
-        def offline_child(command: list[str], **_kwargs: Any):
-            child_commands.append(list(command))
-            if command[1:3] != ["-m", "scripts.execute_current_shadow_request"]:
-                raise AssertionError("service invoked an unexpected child command")
-            flag = command.index("--create-share-code")
-            if command[flag + 1] != "false":
-                raise AssertionError("service child command did not bind exact false delivery intent")
-            args = request_cli.build_parser().parse_args(command[3:])
-            if args.create_share_code is not False:
-                raise AssertionError("request worker parser changed explicit false intent")
+        def capture_request_main(argv: list[str] | None = None):
+            exact_args = list(argv or [])
+            child_commands.append(exact_args)
+            parsed = request_cli.build_parser().parse_args(exact_args)
+            if parsed.create_share_code is not False:
+                raise AssertionError("worker_entry did not pass exact false intent to the real parser")
+            child_parsed_intents.append(parsed.create_share_code)
+            return real_request_main(argv)
+
+        patches.set(request_cli, "main", capture_request_main)
+        real_worker_entry_identity_check = worker_entry._verify_source_identity
+
+        def capture_worker_entry_identity(command: Any, **kwargs: Any):
+            identity = real_worker_entry_identity_check(command, **kwargs)
+            if identity.identity_kind == "DEVELOPMENT_CHECKOUT":
+                worker_entry_release_ids.append(identity.head_commit_sha)
+            else:
+                worker_entry_release_ids.append(identity.manifest_sha256)
+            return identity
+
+        patches.set(worker_entry, "_verify_source_identity", capture_worker_entry_identity)
+
+        class _InProcessWorkerProcess:
+            def __init__(self, returncode: int, stdout: str, stderr: str) -> None:
+                self.returncode = returncode
+                self._stdout = stdout
+                self._stderr = stderr
+                self.pid = None
+
+            def poll(self) -> int:
+                return self.returncode
+
+            def communicate(self):
+                return self._stdout, self._stderr
+
+        def offline_worker_spawn(argv: list[str], *, cwd: Path, shell: bool, **kwargs: Any):
+            if shell is not False:
+                raise AssertionError("reviewed worker launcher enabled shell execution")
+            if type(argv) is not list or any(type(value) is not str for value in argv):
+                raise AssertionError("reviewed worker launcher did not use an exact text argv list")
+            if argv[:3] != [sys.executable, "-m", "runtime.worker_entry"]:
+                raise AssertionError("development launcher did not select the reviewed worker entry")
+            if set(argv[3::2]) != {"--command-file", "--development-root"}:
+                raise AssertionError("development worker argv contains an unreviewed option")
+            if cwd != REPOSITORY_ROOT:
+                raise AssertionError("development worker cwd differs from the verified checkout root")
+            if kwargs.get("stdout") != subprocess.PIPE or kwargs.get("stderr") != subprocess.PIPE:
+                raise AssertionError("worker stdout/stderr are not captured")
+            command_file_index = argv.index("--command-file")
+            command_file = Path(argv[command_file_index + 1])
+            worker_command = worker_launcher.WorkerCommand.from_json_bytes(command_file.read_bytes())
+            worker_request = worker_launcher.read_bound_request(worker_command)
+            current_identity = importlib.import_module("runtime.release_identity").verify_development_checkout(
+                REPOSITORY_ROOT
+            )
+            if worker_command.operation != "CURRENT_SHADOW_REQUEST":
+                raise AssertionError("worker command selected an unreviewed operation")
+            if worker_command.mode != "research_shadow":
+                raise AssertionError("worker command selected an unreviewed mode")
+            if worker_command.request_artifact_id != request.canonical_sha256:
+                raise AssertionError("worker command is not bound to the exact RunRequest")
+            if worker_request != request:
+                raise AssertionError("worker request artifact differs from the canonical request")
+            if worker_command.envelope_artifact_id is not None:
+                raise AssertionError("worker command fabricated an absent ExecutionEnvelope artifact")
+            if (
+                worker_command.release_identity_kind != "DEVELOPMENT_CHECKOUT"
+                or worker_command.release_identity_id != current_identity.head_commit_sha
+                or worker_command.release_identity_id != exact_release_sha
+            ):
+                raise AssertionError("worker command does not bind the exact current DevelopmentCheckout")
+            command_payload = worker_command.to_dict()
+            if "module" in command_payload or "function" in command_payload or "argv" in command_payload:
+                raise AssertionError("WorkerCommand contains arbitrary dispatch or argv fields")
+            worker_run_directory_bound.append(
+                worker_command.run_directory.name == worker_command.request_artifact_id
+            )
+            command_payload["run_directory"] = "REQUEST_SHA_BOUND_RUN_DIRECTORY"
+            worker_commands.append(command_payload)
             stdout = __import__("io").StringIO()
-            with contextlib.redirect_stdout(stdout):
-                result = request_cli._execute_worker(args)
+            stderr = __import__("io").StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                returncode = worker_entry.main(argv[3:])
             child_stdout.append(stdout.getvalue())
-            return SimpleNamespace(returncode=result, stdout=stdout.getvalue(), stderr="")
+            return _InProcessWorkerProcess(returncode, stdout.getvalue(), stderr.getvalue())
 
-        patches.set(service_module, "subprocess", SimpleNamespace(run=offline_child))
+        def offline_supervisor_child(command: list[str], *, env: dict[str, str], check: bool, timeout: float):
+            supervisor_commands.append(list(command))
+            if command[:3] != [sys.executable, "-m", request_cli.WORKER_MODULE]:
+                raise AssertionError("Current Shadow supervisor invoked an unexpected worker command")
+            if check is not False or timeout != request_cli.bound._supervisor_timeout_seconds():
+                raise AssertionError("Current Shadow supervisor timeout/exit semantics changed")
+            args = request_cli.build_parser().parse_args(command[3:])
+            if args.create_share_code is not False or env.get(request_cli.WORKER_ENV) != "1":
+                raise AssertionError("Current Shadow supervisor child lost explicit false intent")
+            stdout = __import__("io").StringIO()
+            stderr = __import__("io").StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                returncode = request_cli._execute_worker(args)
+            if stdout.getvalue():
+                print(stdout.getvalue(), end="")
+            if stderr.getvalue():
+                print(stderr.getvalue(), end="", file=sys.stderr)
+            return SimpleNamespace(returncode=returncode, stdout=stdout.getvalue(), stderr=stderr.getvalue())
+
+        patches.set(worker_launcher, "_spawn_process", offline_worker_spawn)
+        # The real worker_entry calls the existing supervisor normally. Replace
+        # only that supervisor's OS child-process creation so the retained
+        # _execute_worker and all reviewed offline Current Shadow owners run in
+        # this process with the already-installed provider/delivery sentinels.
+        patches.set(request_cli, "subprocess", SimpleNamespace(run=offline_supervisor_child))
         output_root = work_root / "canonical-service-output"
         service = service_module.AthenaRunService(
-            _commit_sha_provider=lambda: BASE_MAIN_SHA,
+            _commit_sha_provider=lambda: exact_release_sha,
             _clock=lambda: now,
         )
         receipt = service.run(request, output_root=output_root)
-        if not child_commands or len(child_commands) != 1:
-            raise AssertionError("canonical SHADOW supervisor was not executed exactly once")
+        if len(worker_commands) != 1 or len(child_commands) != 1 or len(supervisor_commands) != 1:
+            raise AssertionError("canonical SHADOW worker boundary was not executed exactly once")
+        create_share_code_index = child_commands[0].index("--create-share-code")
+        if child_commands[0][create_share_code_index + 1] != "false":
+            raise AssertionError("worker_entry did not serialize exact false delivery intent")
         current_shadow_dir = output_root / request.canonical_sha256 / "current-shadow"
         policy_payload = _read_json(current_shadow_dir / request_cli.REQUEST_POLICY_FILENAME)
         inner_receipt = _read_json(current_shadow_dir / runner.RUN_RECEIPT_FILENAME)
@@ -652,7 +869,7 @@ def _build_replay(import_order: str) -> dict[str, Any]:
         result = {
             "schema_version": 1,
             "policy_id": "ATHENA_AUTH_01_OFFLINE_REPLAY_V1",
-            "base_commit_sha": BASE_MAIN_SHA,
+            "base_commit_sha": exact_release_sha,
             "request": {
                 "authority_profile": request.authority_profile,
                 "mode": request.mode,
@@ -677,7 +894,7 @@ def _build_replay(import_order: str) -> dict[str, Any]:
                 "inner_receipt_canonical_sha256": _sha256(_canonical(inner_receipt)),
                 "request_policy_delivery_intent": policy_payload["create_share_code"],
                 "inner_delivery_intent": inner_receipt["create_share_code"],
-                "service_child_create_share_code_argument": child_commands[0][child_commands[0].index("--create-share-code") + 1],
+                "service_child_create_share_code_argument": child_commands[0][create_share_code_index + 1],
                 "stage_checkpoint": stage_payload.get("stage"),
                 "progress_checkpoint": progress_payload.get("stage"),
                 "share_stage_entered": False,
@@ -717,6 +934,7 @@ def _build_replay(import_order: str) -> dict[str, Any]:
                 "source_summary": dict(inner_receipt.get("source_summary", {})),
             },
             "canonical_run_receipt": {
+                "exact_commit_sha": receipt.exact_commit_sha,
                 "canonical_sha256": receipt.canonical_sha256,
                 "canonical_bytes_sha256": _sha256(canonical_json_bytes(receipt)),
                 "status": receipt.status,
@@ -724,6 +942,20 @@ def _build_replay(import_order: str) -> dict[str, Any]:
                 "selected_leg_count": len(receipt.selected_legs),
                 "counts": dict(receipt.counts),
                 "stages": actual_stages,
+            },
+            "worker_boundary": {
+                "command": worker_commands[0],
+                "final_delivery_argument": ["--create-share-code", child_commands[0][create_share_code_index + 1]],
+                "parsed_create_share_code": child_parsed_intents[0],
+                "supervisor_child_create_share_code": False,
+                "arbitrary_module": False,
+                "arbitrary_function": False,
+                "arbitrary_argv": False,
+                "shell": False,
+                "worker_entry_release_identity_id": worker_entry_release_ids[0],
+                "run_receipt_exact_commit_sha": receipt.exact_commit_sha,
+                "run_directory_bound_to_request_sha": worker_run_directory_bound[0],
+                "current_head_sha": exact_release_sha,
             },
             "side_effects": dict(counters),
         }
@@ -805,8 +1037,6 @@ def _workflow_and_contract_checks(root: Path = REPOSITORY_ROOT) -> None:
     service_source = (root / "services/athena_run_service.py").read_text(encoding="utf-8")
     if "share_code = True, request.create_share_code" not in service_source:
         raise AssertionError("SHADOW delivery capability is no longer per-request")
-    if '"true" if request.create_share_code else "false"' not in service_source:
-        raise AssertionError("service child command no longer serializes the exact request bool")
     if re.search(r"getattr\([^\n]*create_share_code[^\n]*,\s*True\s*\)", parser_source + resolver_source + service_source):
         raise AssertionError("canonical authority contains a hidden delivery fallback")
     for path in (
@@ -1149,51 +1379,36 @@ def _run_architecture_audits(root: Path = REPOSITORY_ROOT) -> dict[str, Any]:
 def check_artifact(root: Path = REPOSITORY_ROOT) -> dict[str, Any]:
     if root.resolve() != REPOSITORY_ROOT.resolve():
         raise ValueError("A5 audit must run at the repository root")
+    artifact = _validate_historical_artifact(root)
+    moved_paths = _current_worker_boundary_moved_paths(root)
+    if moved_paths:
+        return {
+            "result": "SKIP_SOURCE_MOVED",
+            "policy_id": POLICY_ID,
+            "artifact_canonical_sha256": HISTORICAL_ARTIFACT_SHA256,
+            "historical_integrity": "PASS",
+            "historical_replay_sha256": HISTORICAL_REPLAY_SHA256,
+            "historical_replay_reexecuted": False,
+            "reason": "CURRENT_WORKER_BOUNDARY_REQUIRES_VERIFIED_CURRENT_RELEASE_IDENTITY",
+            "moved_paths": moved_paths,
+        }
+
     _workflow_and_contract_checks(root)
-    if _git_blob(BASELINE_JSON, root=root) != BASELINE_JSON_BLOB:
-        raise AssertionError("BASE-00 frozen JSON blob changed")
-    if _git_blob(BASELINE_MARKDOWN, root=root) != BASELINE_MARKDOWN_BLOB:
-        raise AssertionError("BASE-00 frozen Markdown blob changed")
     audits = _run_architecture_audits(root)
     replay, forward, reverse = _clean_process_pair()
     output_sha = _sha256(forward)
     expected = _build_artifact(replay, output_sha)
-    artifact = _read_json(root / ARTIFACT_PATH)
-    claimed = artifact.get("canonical_sha256")
-    unsigned = dict(artifact)
-    unsigned.pop("canonical_sha256", None)
-    if claimed != _sha256(_canonical(unsigned)):
-        raise AssertionError("A5 architecture artifact canonical self-hash mismatch")
     if artifact != expected:
-        raise AssertionError("committed A5 artifact differs from recomputed current evidence")
+        raise AssertionError("committed A5 artifact differs from recomputed historical source evidence")
     if forward != reverse:
         raise AssertionError("clean-process replay bytes differ")
-    def assert_no_raw_share_material(value: Any, key_path: str = "") -> None:
-        if isinstance(value, Mapping):
-            for key, item in value.items():
-                assert_no_raw_share_material(item, f"{key_path}.{key}" if key_path else str(key))
-            return
-        if type(value) in {list, tuple}:
-            for item in value:
-                assert_no_raw_share_material(item, key_path)
-            return
-        if type(value) is str and re.search(r"https?://|sportybet\.com", value, re.IGNORECASE):
-            raise AssertionError("A5 architecture artifact contains a share URL/domain")
-        normalized_key = key_path.rsplit(".", 1)[-1].lower()
-        if any(token in normalized_key for token in ("share_code", "share_url", "sharecode", "shareurl")):
-            if normalized_key.endswith(("_copied", "_present")) and value is False:
-                return
-            if normalized_key.endswith("_calls") and type(value) is int and value == 0:
-                return
-            if value is not None and type(value) is not bool:
-                raise AssertionError("A5 architecture artifact contains a raw share-code value")
-
-    assert_no_raw_share_material(artifact)
     return {
         "result": "PASS",
         "policy_id": POLICY_ID,
-        "artifact_canonical_sha256": claimed,
+        "artifact_canonical_sha256": HISTORICAL_ARTIFACT_SHA256,
         "replay_sha256": output_sha,
+        "historical_integrity": "PASS",
+        "historical_replay_reexecuted": True,
         "clean_process_count": 2,
         "P4_4R_P4_4S": audits,
     }
@@ -1210,9 +1425,19 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("select exactly one of --check, --replay-json, or --print-artifact")
     try:
         if args.replay_json:
+            if _current_worker_boundary_moved_paths():
+                raise HistoricalReplaySourceMoved(
+                    "AUTH_01D_HISTORICAL_REPLAY_SOURCE_MOVED: current PORT-02B worker identity "
+                    "cannot truthfully execute the historical BASE_MAIN_SHA replay"
+                )
             sys.stdout.buffer.write(_canonical(_build_replay(args.import_order)))
             return 0
         if args.print_artifact:
+            if _current_worker_boundary_moved_paths():
+                raise HistoricalReplaySourceMoved(
+                    "AUTH_01D_HISTORICAL_REPLAY_SOURCE_MOVED: refusing to print a new v1 artifact "
+                    "from later source"
+                )
             replay, forward, reverse = _clean_process_pair()
             if forward != reverse:
                 raise AssertionError("forward/reverse A5 replay output differs")
@@ -1220,6 +1445,9 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write(json.dumps(artifact, ensure_ascii=False, allow_nan=False, sort_keys=True, indent=2) + "\n")
             return 0
         result = check_artifact()
+    except HistoricalReplaySourceMoved as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     except Exception as exc:
         print(f"AUTH-01D audit failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1

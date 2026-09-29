@@ -1,0 +1,148 @@
+{
+  "canonical_sha256": "51385a66ecebe7e07516601ed2d19c6f6a007c9ee4274e987ddf499e45b4292c",
+  "current_release_identity_contract": {
+    "commit_sha_pinned_in_artifact": false,
+    "identity_kind": "DEVELOPMENT_CHECKOUT",
+    "run_receipt_exact_commit_sha": "EXACT_VERIFIED_CURRENT_HEAD",
+    "worker_command_identity": "EXACT_VERIFIED_CURRENT_HEAD",
+    "worker_entry_reverification": "EXACT_VERIFIED_CURRENT_HEAD"
+  },
+  "current_request_contract": {
+    "authority_profile": "SHADOW",
+    "bookie": "sportybet",
+    "create_share_code": false,
+    "false_request_sha256": "2206abcefa58a28b3ec162b8a735e20ee2b18203b832837c8da9cf2735a5b276",
+    "mode": "research_shadow",
+    "place_wager": false,
+    "true_compatibility_request_sha256": "0142610f7c9fd1eec15b00da8ca13ecf4d2efc107b6b6d60e6e32e0841aaf3c4"
+  },
+  "current_worker_boundary": {
+    "arbitrary_argv": false,
+    "arbitrary_cwd": false,
+    "arbitrary_environment": false,
+    "arbitrary_function": false,
+    "arbitrary_module": false,
+    "delivery_argument": [
+      "--create-share-code",
+      "false"
+    ],
+    "envelope_artifact_id": null,
+    "mode": "research_shadow",
+    "operation": "CURRENT_SHADOW_REQUEST",
+    "parsed_create_share_code": false,
+    "request_artifact_id": "2206abcefa58a28b3ec162b8a735e20ee2b18203b832837c8da9cf2735a5b276",
+    "retained_offline_worker_chain_executed": true,
+    "run_directory_bound_to_request_sha": true,
+    "shell": false,
+    "worker_command_policy_id": "ATHENA_WORKER_COMMAND_V1",
+    "worker_command_schema_version": 1
+  },
+  "governance": {
+    "LG_A": "NOT_RUN_NOT_AUTHORIZED",
+    "P4_4": "INCOMPLETE",
+    "PORT_02C": "NOT_STARTED",
+    "architecture_checkpoint_E": "INCOMPLETE",
+    "caller_migration": "NOT_AUTHORIZED",
+    "clean_successor_proof": "INCOMPLETE",
+    "reread_required_before_port_02c": true,
+    "source_review_counter_if_merged": "5/5",
+    "source_review_counter_while_unmerged": "4/5",
+    "workflow_retirement": "NOT_AUTHORIZED"
+  },
+  "historical_predecessor": {
+    "canonical_sha256": "7b09adb4882d49749c33efecbce0b1c8985a2d3bdec52417f7b02f8f335f4a86",
+    "deterministic_replay_sha256": "3b792193ef813f4aab79d7c3f9d48550270f3ae008265cc9ceb9c3d629e974f5",
+    "false_request_sha256": "2206abcefa58a28b3ec162b8a735e20ee2b18203b832837c8da9cf2735a5b276",
+    "policy_id": "ATHENA_AUTH_01_ANALYSIS_ONLY_SHADOW_V1",
+    "rewritten": false,
+    "true_request_sha256": "0142610f7c9fd1eec15b00da8ca13ecf4d2efc107b6b6d60e6e32e0841aaf3c4"
+  },
+  "implementation_base_main_sha": "235fd86a1de26732473e7e839b5147b50bcfcd86",
+  "network_sentinels": {
+    "cookies": 0,
+    "email": 0,
+    "login": 0,
+    "provider_network": 0,
+    "share_transport": 0,
+    "stake": 0,
+    "wager": 0,
+    "wallet": 0
+  },
+  "policy_id": "ATHENA_AUTH_01_ANALYSIS_ONLY_SHADOW_WORKER_BOUNDARY_V1",
+  "repository": "Thabearr/ATHENA",
+  "schema_version": 1,
+  "semantic_continuity": {
+    "historical_full_run_receipt_sha_compared": false,
+    "projection": {
+      "authority_manifest": {
+        "additional_capabilities": {},
+        "authority_profile": "SHADOW",
+        "capabilities": {
+          "cookies": false,
+          "login": false,
+          "provider_acquisition": true,
+          "share_code_generation": false,
+          "staking": false,
+          "wager": false,
+          "wallet": false
+        },
+        "mode": "research_shadow"
+      },
+      "authority_profile": "SHADOW",
+      "bookie": "sportybet",
+      "business_status": "RESEARCH_SHADOW_PORTFOLIO_READY_WITH_SHORTFALL",
+      "create_share_code": false,
+      "email_login_cookies_wallet_stake_wager_call_count": 0,
+      "inner_delivery_intent": false,
+      "mode": "research_shadow",
+      "place_wager": false,
+      "provider_network_call_count": 0,
+      "request_canonical_sha256": "2206abcefa58a28b3ec162b8a735e20ee2b18203b832837c8da9cf2735a5b276",
+      "request_policy_delivery_intent": false,
+      "reserve_leg_count": 0,
+      "selected_leg_count": 1,
+      "selected_leg_identity_order": [
+        {
+          "fixture_identity": "FOTMOB:5071393",
+          "provider_event_id": "sr:match:66299604"
+        }
+      ],
+      "share_code_present": false,
+      "share_receipt_present": false,
+      "share_transport_call_count": 0,
+      "share_url_present": false,
+      "shortfall": 19,
+      "target_legs": 20,
+      "wager_placed": false
+    },
+    "semantic_continuity_sha256": "aa019454ccc2bbad95f5a53fe3089ee9e8d2113e74f493de8735a6d77f5d9a63"
+  },
+  "side_effects": {
+    "cookies": 0,
+    "email": 0,
+    "login": 0,
+    "provider_acquisition": 0,
+    "share_code_create_reload": 0,
+    "stake": 0,
+    "wager": 0,
+    "wallet": 0,
+    "worker_os_processes": 0
+  },
+  "source_identities": [
+    {
+      "git_blob_payload_sha256": "b4c50cc8143e0b01a1b307b0a754b04eb19309a38b7be42f53f95a63cafcd0de",
+      "git_blob_sha1": "16d54ff599bffc70cdd66498a440647cf8e8b131",
+      "path": "services/athena_run_service.py"
+    },
+    {
+      "git_blob_payload_sha256": "5474b2622a4ab980fa136ce6eb3c63c448d915aa351e4d51f0474c85f1fdbcdd",
+      "git_blob_sha1": "9c83a1fe58fb2028e82d88633c264d5d06179a6f",
+      "path": "runtime/worker_launcher.py"
+    },
+    {
+      "git_blob_payload_sha256": "feaf4a9364fd064f081c9a4d086b65fdc31620075f0071ae1385bcbfa5cdaf94",
+      "git_blob_sha1": "77d8888a4b007f9bb0967409a23e826f97338c90",
+      "path": "runtime/worker_entry.py"
+    }
+  ]
+}

@@ -144,7 +144,7 @@ def test_frozen_base_and_p44_receipt_identities_are_unchanged():
         assert hashlib.sha256(audit._canonical(unsigned)).hexdigest() == expected
 
 
-def test_offline_audit_recomputes_two_process_proof_with_network_sentinels(monkeypatch):
+def test_offline_audit_preserves_historical_proof_without_replaying_moved_source(monkeypatch):
     attempts: list[str] = []
 
     def deny(name: str):
@@ -161,16 +161,26 @@ def test_offline_audit_recomputes_two_process_proof_with_network_sentinels(monke
 
     result = audit.check_artifact()
 
-    assert result["result"] == "PASS"
+    assert result["result"] == "SKIP_SOURCE_MOVED"
     assert result["policy_id"] == audit.POLICY_ID
     assert result["artifact_canonical_sha256"] == EXPECTED_ARTIFACT_SHA256
-    assert result["clean_process_count"] == 2
-    assert result["P4_4R_P4_4S"]["P4_4R"]["result"] in {
-        "PASS",
-        "PASS_VIA_P4_4S_FORWARD_EVIDENCE",
-    }
-    assert result["P4_4R_P4_4S"]["P4_4S"]["result"] == "PASS"
+    assert result["historical_integrity"] == "PASS"
+    assert result["historical_replay_sha256"] == "3b792193ef813f4aab79d7c3f9d48550270f3ae008265cc9ceb9c3d629e974f5"
+    assert result["historical_replay_reexecuted"] is False
+    assert result["reason"] == "CURRENT_WORKER_BOUNDARY_REQUIRES_VERIFIED_CURRENT_RELEASE_IDENTITY"
+    assert result["moved_paths"] == [
+        "services/athena_run_service.py",
+        "runtime/worker_launcher.py",
+        "runtime/worker_entry.py",
+    ]
     assert attempts == []
+
+
+def test_historical_replay_json_refuses_later_source(capsys):
+    assert audit.main(["--replay-json"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "AUTH_01D_HISTORICAL_REPLAY_SOURCE_MOVED" in captured.err
 
 
 def test_shallow_architecture_audit_uses_forward_evidence_not_fake_git_history(monkeypatch):
