@@ -99,10 +99,14 @@ def test_untracked_crlf_candidate_is_not_replaced_with_tracked_head_bytes(tmp_pa
         validator.validate_contract(candidate, inventory)
 
 
-def test_untracked_symlink_alias_cannot_borrow_tracked_head_bytes(tmp_path: Path) -> None:
+def test_untracked_symlink_alias_is_checked_as_raw_canonical_bytes(tmp_path: Path) -> None:
     candidate = tmp_path / "contract-alias.json"
+    target = tmp_path / "contract-crlf.json"
     try:
-        candidate.symlink_to(CONTRACT)
+        target.write_bytes(
+            validator.canonical_json_bytes(_payload()).replace(b"\n", b"\r\n")
+        )
+        candidate.symlink_to(target)
     except (OSError, NotImplementedError):
         pytest.skip("symlinks are unavailable in this Windows environment")
     inventory = tmp_path / "inventory.json"
