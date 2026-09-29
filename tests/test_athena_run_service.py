@@ -52,6 +52,36 @@ def _service(tmp_executor, *, commit=COMMIT, now=NOW) -> AthenaRunService:
     )
 
 
+def _synthetic_worker_args(request: RunRequest, run_directory: Path) -> list[str]:
+    """Test-only expected arguments derived from the exact bound request."""
+
+    return [
+        "--target-size",
+        str(request.target_legs),
+        "--fixture-scope",
+        "today",
+        "--fixture-dates",
+        ",".join(day.strftime("%Y%m%d") for day in request.dates),
+        "--output-dir",
+        str(run_directory / "current-shadow"),
+        "--create-share-code",
+        "true" if request.create_share_code else "false",
+    ]
+
+
+def _patch_reviewed_worker(monkeypatch, fake_supervisor) -> None:
+    """Inject offline worker transport at the private service launch seam."""
+
+    from services import athena_run_service as service_module
+
+    def fake_worker(request, *, run_directory, exact_commit_sha):
+        del exact_commit_sha
+        args = _synthetic_worker_args(request, run_directory)
+        return fake_supervisor(args, shell=False)
+
+    monkeypatch.setattr(service_module, "_run_reviewed_shadow_worker", fake_worker)
+
+
 def _manifest(request: RunRequest) -> AuthorityManifest:
     return AthenaRunService.authority_manifest_for(request)
 
@@ -568,7 +598,6 @@ def test_shadow_synthetic_executor_preserves_exact_request_dates_without_live_pa
 def test_shadow_default_adapter_preserves_timeout_receipt_and_progress_without_outer_timeout(
     monkeypatch, tmp_path
 ):
-    from services import athena_run_service as service_module
     from scripts import execute_current_shadow_all_market_fresh_reprice_bound as bound
 
     observed_at = datetime(2026, 9, 23, 12, 0, 0, 123456, tzinfo=timezone.utc)
@@ -653,7 +682,7 @@ def test_shadow_default_adapter_preserves_timeout_receipt_and_progress_without_o
         )
         return SimpleNamespace(returncode=0, stdout="synthetic child", stderr="")
 
-    monkeypatch.setattr(service_module.subprocess, "run", fake_supervisor)
+    _patch_reviewed_worker(monkeypatch, fake_supervisor)
     service = AthenaRunService(
         _commit_sha_provider=lambda: COMMIT,
         _clock=lambda: observed_at,
@@ -678,7 +707,7 @@ def test_shadow_default_adapter_preserves_timeout_receipt_and_progress_without_o
     command, kwargs = invocations[0]
     assert "timeout" not in kwargs
     assert command[command.index("--fixture-dates") + 1] == "20260923"
-    assert "scripts.execute_current_shadow_request" in command
+    assert command[command.index("--create-share-code") + 1] == "true"
     adapted_evidence = receipt.evidence["current_shadow_adapter"]["evidence"]
     preserved_legacy = adapted_evidence["legacy_current_shadow"]
     assert preserved_legacy["receipt"]["source_summary"]["timeout_stage"] == (
@@ -710,8 +739,6 @@ def _shadow_service_request() -> RunRequest:
 
 
 def _run_shadow_supervisor_fixture(monkeypatch, tmp_path, *, request, child_result):
-    from services import athena_run_service as service_module
-
     calls = []
 
     def fake_supervisor(command, **kwargs):
@@ -719,7 +746,7 @@ def _run_shadow_supervisor_fixture(monkeypatch, tmp_path, *, request, child_resu
         child_result(command)
         return SimpleNamespace(returncode=1, stdout="", stderr="")
 
-    monkeypatch.setattr(service_module.subprocess, "run", fake_supervisor)
+    _patch_reviewed_worker(monkeypatch, fake_supervisor)
     service = AthenaRunService(
         _commit_sha_provider=lambda: COMMIT,
         _clock=lambda: NOW,
@@ -730,8 +757,6 @@ def _run_shadow_supervisor_fixture(monkeypatch, tmp_path, *, request, child_resu
 def test_shadow_nonzero_provisional_receipt_is_durable_incomplete_failure(
     monkeypatch, tmp_path
 ):
-    from services import athena_run_service as service_module
-
     request = _shadow_service_request()
     stdout = "synthetic stdout " * 200 + "STDOUT_ALLOWED_SUFFIX"
     stderr = "synthetic stderr " * 200 + "STDERR_ALLOWED_SUFFIX"
@@ -757,7 +782,7 @@ def test_shadow_nonzero_provisional_receipt_is_durable_incomplete_failure(
         )
         return SimpleNamespace(returncode=1, stdout=stdout, stderr=stderr)
 
-    monkeypatch.setattr(service_module.subprocess, "run", fake_supervisor)
+    _patch_reviewed_worker(monkeypatch, fake_supervisor)
     service = AthenaRunService(_commit_sha_provider=lambda: COMMIT, _clock=lambda: NOW)
     receipt = service.run(request, output_root=tmp_path)
 
@@ -846,8 +871,6 @@ def test_shadow_nonzero_overrides_terminal_selection_and_share_code_receipt(
 def test_shadow_zero_returncode_startup_provisional_receipt_is_not_terminal(
     monkeypatch, tmp_path
 ):
-    from services import athena_run_service as service_module
-
     request = _shadow_service_request()
 
     def fake_supervisor(command, **_kwargs):
@@ -868,7 +891,7 @@ def test_shadow_zero_returncode_startup_provisional_receipt_is_not_terminal(
         )
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
-    monkeypatch.setattr(service_module.subprocess, "run", fake_supervisor)
+    _patch_reviewed_worker(monkeypatch, fake_supervisor)
     service = AthenaRunService(_commit_sha_provider=lambda: COMMIT, _clock=lambda: NOW)
     receipt = service.run(request, output_root=tmp_path)
 
@@ -885,8 +908,6 @@ def test_shadow_zero_returncode_startup_provisional_receipt_is_not_terminal(
 def test_shadow_supervisor_missing_policy_or_receipt_pair_stays_fail_closed(
     monkeypatch, tmp_path
 ):
-    from services import athena_run_service as service_module
-
     request = _shadow_service_request()
     calls = []
 
@@ -896,7 +917,7 @@ def test_shadow_supervisor_missing_policy_or_receipt_pair_stays_fail_closed(
         output_dir.mkdir(parents=True, exist_ok=True)
         return SimpleNamespace(returncode=0, stdout="no durable output", stderr="")
 
-    monkeypatch.setattr(service_module.subprocess, "run", fake_supervisor)
+    _patch_reviewed_worker(monkeypatch, fake_supervisor)
     service = AthenaRunService(_commit_sha_provider=lambda: COMMIT, _clock=lambda: NOW)
     receipt = service.run(request, output_root=tmp_path)
 
@@ -909,6 +930,36 @@ def test_shadow_supervisor_missing_policy_or_receipt_pair_stays_fail_closed(
     assert failure["terminal_receipt_file_exists"] is False
     assert failure["supervisor_returncode"] == 0
     assert len(calls) == 1
+
+
+def test_shadow_captured_receipt_bytes_are_invariant_to_worker_transport(monkeypatch, tmp_path):
+    """Captured supervisor evidence yields the same RunReceipt across transports."""
+
+    request = _shadow_service_request()
+    shadow_receipt = _captured_verified_shadow_receipt(request=request, observed_at=NOW)
+    payloads = []
+
+    for transport in ("pre_b4_direct_result", "b4_worker_result"):
+        def fake_transport(command, *, shell):
+            assert shell is False
+            _write_shadow_child_evidence(
+                command,
+                request=request,
+                observed_at=NOW,
+                receipt=shadow_receipt,
+            )
+            if transport == "pre_b4_direct_result":
+                return SimpleNamespace(returncode=0, stdout="same stdout", stderr="same stderr")
+            from runtime.worker_launcher import WorkerProcessResult
+
+            return WorkerProcessResult(0, "same stdout", "same stderr")
+
+        _patch_reviewed_worker(monkeypatch, fake_transport)
+        service = AthenaRunService(_commit_sha_provider=lambda: COMMIT, _clock=lambda: NOW)
+        receipt = service.run(request, output_root=tmp_path / transport)
+        payloads.append(canonical_json_bytes(receipt))
+
+    assert payloads[0] == payloads[1]
 
 
 def test_shadow_lagos_date_outside_exact_utc_window_fails_closed_without_shift(tmp_path):
