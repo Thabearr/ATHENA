@@ -206,7 +206,7 @@ def _validate_no_local_paths_or_secrets(document: dict[str, Any]) -> None:
     for key, value in _walk_strings(document):
         if key.lower() in forbidden:
             raise Port02BAuditError("receipt contains a forbidden secret-bearing field")
-        if re.match(r"^[A-Za-z]:[\\/]|^/(?:Users|home|tmp)/", value):
+        if type(value) is str and re.match(r"^[A-Za-z]:[\\/]|^/(?:Users|home|tmp)/", value):
             raise Port02BAuditError("receipt contains a workstation-specific absolute path")
 
 
