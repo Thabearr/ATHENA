@@ -25,6 +25,7 @@ def _args(tmp_path: Path, dates=None):
         fixture_scope=daily.SCOPE_TODAY,
         fixture_dates=dates,
         output_dir=tmp_path,
+        create_share_code=True,
     )
 
 
@@ -156,6 +157,9 @@ def test_explicit_worker_binds_exact_count_and_restores_all_compatibility(monkey
     assert policy["run199_identity_policy_id"] == run199_identity.POLICY_ID
     assert policy["wager_placed"] is False
     assert policy["authority"]["bet"] is False
+    assert policy["create_share_code"] is True
+    assert policy["authority"]["research_anonymous_share_code_generation"] is True
+    assert policy["authority"]["provider_create_reload_verification"] is True
 
     diagnostic = json.loads((tmp_path / request_cli.XG_DIAGNOSTIC_FILENAME).read_text())
     assert diagnostic["dataset_name"] == request_cli.xg_fallback.DIAGNOSTIC_DATASET_NAME
@@ -251,12 +255,28 @@ def test_outer_supervisor_forwards_exact_dates_to_worker(monkeypatch, tmp_path):
     assert command[:3] == [request_cli.sys.executable, "-m", request_cli.WORKER_MODULE]
     index = command.index("--fixture-dates")
     assert command[index + 1] == "20260908,20260910"
+    delivery_index = command.index("--create-share-code")
+    assert command[delivery_index + 1] == "true"
     assert captured["env"][request_cli.WORKER_ENV] == "1"
 
 
 def test_fixture_date_argument_rejects_bad_format():
     with pytest.raises(argparse.ArgumentTypeError):
         request_cli._fixture_dates("2026-09-08")
+
+
+@pytest.mark.parametrize("value", ["False", "TRUE", "0", "1", "yes", "no", "", " true", "false "])
+def test_strict_delivery_cli_value_rejects_noncanonical_text(value):
+    with pytest.raises(ValueError):
+        runner.parse_create_share_code_text(value)
+
+
+def test_strict_delivery_cli_accepts_only_lowercase_boolean_text_and_legacy_omission():
+    assert runner.parse_create_share_code_text("false") is False
+    assert runner.parse_create_share_code_text("true") is True
+    args = request_cli.build_parser().parse_args(["--target-size", "10"])
+    assert args.create_share_code is True
+    assert runner.LEGACY_CREATE_SHARE_CODE_DEFAULT is True
 
 
 def test_request_policy_date_contract_is_same_module_used_by_cli():

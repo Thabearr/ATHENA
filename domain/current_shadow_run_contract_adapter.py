@@ -44,6 +44,12 @@ _VERIFIED_RECEIPT_STATUSES = frozenset(
         "RESEARCH_SHADOW_CODE_VERIFIED_WITH_SHORTFALL",
     }
 )
+_PORTFOLIO_READY_STATUSES = frozenset(
+    {
+        "RESEARCH_SHADOW_PORTFOLIO_READY",
+        "RESEARCH_SHADOW_PORTFOLIO_READY_WITH_SHORTFALL",
+    }
+)
 _RISKY_REQUEST_AUTHORITY_KEYS = (
     "production_model",
     "pricing",
@@ -180,7 +186,50 @@ def _validate_request_policy(value: Any) -> Mapping[str, Any]:
             raise CurrentShadowRunContractAdapterError(
                 "Current Shadow request-policy authority must contain string->bool entries"
             )
+    if "create_share_code" in policy:
+        intent = policy.get("create_share_code")
+        if type(intent) is not bool:
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow create_share_code intent must be exact bool"
+            )
+        for key in (
+            "research_anonymous_share_code_generation",
+            "provider_create_reload_verification",
+        ):
+            if key not in authority or type(authority[key]) is not bool or authority[key] is not intent:
+                raise CurrentShadowRunContractAdapterError(
+                    f"Current Shadow request-policy {key} must match explicit delivery intent"
+                )
     return policy
+
+
+def _request_policy_delivery_intent(
+    policy: Mapping[str, Any], *, expected_create_share_code: bool | None = None
+) -> bool:
+    if expected_create_share_code is not None and type(expected_create_share_code) is not bool:
+        raise CurrentShadowRunContractAdapterError(
+            "expected_create_share_code must be exact bool when supplied"
+        )
+    if "create_share_code" in policy:
+        intent = policy["create_share_code"]
+        if type(intent) is not bool:
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow create_share_code intent must be exact bool"
+            )
+    else:
+        # Historical request policies predate explicit intent and represented
+        # the retained delivery-enabled Current Shadow path only.
+        intent = True
+    if expected_create_share_code is not None:
+        if expected_create_share_code is False and "create_share_code" not in policy:
+            raise CurrentShadowRunContractAdapterError(
+                "canonical no-delivery request requires explicit policy intent"
+            )
+        if intent is not expected_create_share_code:
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow request-policy intent differs from canonical request"
+            )
+    return intent
 
 
 def _validated_resolved_dates(values: Sequence[date] | None) -> tuple[date, ...] | None:
@@ -234,10 +283,15 @@ def adapt_current_shadow_request(
     target_size: int,
     request_policy: Mapping[str, Any],
     resolved_dates: Sequence[date] | None = None,
+    expected_create_share_code: bool | None = None,
 ) -> RunRequest:
     """Map a resolved Current Shadow request without interpreting relative scopes."""
 
     policy = _validate_request_policy(request_policy)
+    create_share_code = _request_policy_delivery_intent(
+        policy,
+        expected_create_share_code=expected_create_share_code,
+    )
     supplied = _validated_resolved_dates(resolved_dates)
     legacy_dates = policy["fixture_dates"]
     if legacy_dates is None:
@@ -269,7 +323,7 @@ def adapt_current_shadow_request(
         bookie="sportybet",
         mode="research_shadow",
         authority_profile="SHADOW",
-        create_share_code=True,
+        create_share_code=create_share_code,
         place_wager=False,
     )
 
@@ -586,7 +640,41 @@ def adapt_current_shadow_receipt(
     for key in _TOP_LEVEL_SAFETY_KEYS:
         _exact_false(receipt.get(key), f"Current Shadow receipt {key}")
 
+    policy_intent = _request_policy_delivery_intent(
+        policy,
+        expected_create_share_code=request.create_share_code,
+    )
+    if "create_share_code" in receipt:
+        receipt_intent = receipt.get("create_share_code")
+        if type(receipt_intent) is not bool or receipt_intent is not request.create_share_code:
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow receipt delivery intent differs from canonical request"
+            )
+    elif request.create_share_code is False or "create_share_code" in policy:
+        raise CurrentShadowRunContractAdapterError(
+            "Current Shadow receipt must explicitly preserve new delivery intent"
+        )
+    elif policy_intent is not True:
+        raise CurrentShadowRunContractAdapterError(
+            "legacy Current Shadow receipt is delivery-enabled only"
+        )
+
     legacy_authority = _validated_legacy_authority(receipt)
+    for key in (
+        "research_anonymous_share_code_generation",
+        "provider_create_reload_verification",
+    ):
+        if legacy_authority.get(key) is not request.create_share_code:
+            raise CurrentShadowRunContractAdapterError(
+                f"Current Shadow per-run {key} authority differs from delivery intent"
+            )
+    if request.create_share_code is False and any(
+        receipt.get(key) is not None
+        for key in ("share_code_receipt", "shareCode", "shareURL")
+    ):
+        raise CurrentShadowRunContractAdapterError(
+            "no-delivery receipt cannot contain share-code evidence"
+        )
     counts = _legacy_counts(receipt)
     legs = _selected_legs(receipt, counts["selected_leg_count"])
     shortfall = receipt.get("shortfall")
@@ -638,6 +726,31 @@ def adapt_current_shadow_receipt(
         selected_legs=legs,
         shortfall=shortfall,
     )
+    terminal_status = receipt.get("status")
+    if request.create_share_code is False and terminal_status in _VERIFIED_RECEIPT_STATUSES:
+        raise CurrentShadowRunContractAdapterError(
+            "no-delivery request cannot have a verified delivery status"
+        )
+    if terminal_status in _PORTFOLIO_READY_STATUSES:
+        if request.create_share_code is not False or share_result is not None or len(legs) <= 0:
+            raise CurrentShadowRunContractAdapterError(
+                "portfolio-ready status requires selected legs and explicit no-delivery intent"
+            )
+        if terminal_status == "RESEARCH_SHADOW_PORTFOLIO_READY" and shortfall != 0:
+            raise CurrentShadowRunContractAdapterError(
+                "portfolio-ready status cannot carry shortfall"
+            )
+        if (
+            terminal_status == "RESEARCH_SHADOW_PORTFOLIO_READY_WITH_SHORTFALL"
+            and shortfall <= 0
+        ):
+            raise CurrentShadowRunContractAdapterError(
+                "portfolio-ready shortfall status requires positive shortfall"
+            )
+    elif request.create_share_code is True and terminal_status in _PORTFOLIO_READY_STATUSES:
+        raise CurrentShadowRunContractAdapterError(
+            "delivery-enabled request cannot use no-delivery portfolio status"
+        )
     evidence = {
         "legacy_current_shadow": {
             "adapter_policy": "ONE_WAY_NO_INFERENCE_V1",

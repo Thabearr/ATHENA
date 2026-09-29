@@ -42,6 +42,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target-size", type=int, required=True)
     parser.add_argument(
+        "--create-share-code",
+        type=runner.parse_create_share_code_text,
+        default=runner.LEGACY_CREATE_SHARE_CODE_DEFAULT,
+        metavar="true|false",
+        help="explicit delivery intent; omission preserves legacy delivery-enabled behavior",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("artifacts/current-shadow-all-market"),
@@ -465,6 +472,7 @@ def _execute_once(args: argparse.Namespace, *, runtime_bindings=None) -> int:
             target_size=args.target_size,
             output_dir=args.output_dir,
             runtime_bindings=runtime_bindings,
+            create_share_code=args.create_share_code,
         )
     finally:
         runner.price_module.build_current_shadow_price_context_from_reconciliation = original_context
@@ -516,6 +524,8 @@ def main(argv: list[str] | None = None) -> int:
         str(args.target_size),
         "--output-dir",
         str(args.output_dir),
+        "--create-share-code",
+        runner.create_share_code_cli_text(args.create_share_code),
     ]
     try:
         completed = subprocess.run(
@@ -528,6 +538,7 @@ def main(argv: list[str] | None = None) -> int:
         result = runner.write_current_shadow_timeout_receipt(
             target_size=args.target_size,
             output_dir=args.output_dir,
+            create_share_code=args.create_share_code,
         )
         print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
         return 0

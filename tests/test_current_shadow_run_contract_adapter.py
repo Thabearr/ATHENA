@@ -12,8 +12,8 @@ SHA = "a" * 40
 OBSERVED = "2026-09-10T12:34:56.123456Z"
 
 
-def _request_policy(*, fixture_dates=None, fixture_scope="today"):
-    return {
+def _request_policy(*, fixture_dates=None, fixture_scope="today", create_share_code=None):
+    policy = {
         "schema_version": 1,
         "dataset_name": adapter.CURRENT_REQUEST_DATASET,
         "fixture_scope": fixture_scope,
@@ -34,9 +34,14 @@ def _request_policy(*, fixture_dates=None, fixture_scope="today"):
         },
         "wager_placed": False,
     }
+    if create_share_code is not None:
+        policy["create_share_code"] = create_share_code
+        policy["authority"]["research_anonymous_share_code_generation"] = create_share_code
+        policy["authority"]["provider_create_reload_verification"] = create_share_code
+    return policy
 
 
-def _authority():
+def _authority(*, create_share_code=True):
     return {
         "research_shadow_current_runner": True,
         "research_shadow_source_acquisition": True,
@@ -45,8 +50,8 @@ def _authority():
         "research_shadow_market_routing": True,
         "research_shadow_portfolio": True,
         "research_shadow_shortfall": True,
-        "research_anonymous_share_code_generation": True,
-        "provider_create_reload_verification": True,
+        "research_anonymous_share_code_generation": create_share_code,
+        "provider_create_reload_verification": create_share_code,
         "production_model": False,
         "production_probability": False,
         "phase6": False,
@@ -97,7 +102,11 @@ def _leg(leg_id="LEG-1"):
     }
 
 
-def _receipt(*, target=2, selected=1, include_final=True, include_portfolio=True, verified=True):
+def _receipt(
+    *, target=2, selected=1, include_final=True, include_portfolio=True,
+    verified=True, create_share_code=None, status=None,
+):
+    intent = True if create_share_code is None else create_share_code
     legs = [_leg(f"LEG-{index + 1}") for index in range(selected)]
     portfolio = None
     portfolio_sha256 = None
@@ -149,16 +158,22 @@ def _receipt(*, target=2, selected=1, include_final=True, include_portfolio=True
             "stake_submitted": False,
             "wager_placed": False,
         }
-    return {
-        "schema_version": 1,
-        "dataset_name": adapter.CURRENT_RECEIPT_DATASET,
-        "status": (
+    if status is None:
+        status = (
             "RESEARCH_SHADOW_CODE_VERIFIED_WITH_SHORTFALL"
             if verified and selected < target
             else "RESEARCH_SHADOW_CODE_VERIFIED"
             if verified
+            else "RESEARCH_SHADOW_PORTFOLIO_READY_WITH_SHORTFALL"
+            if create_share_code is False and selected < target
+            else "RESEARCH_SHADOW_PORTFOLIO_READY"
+            if create_share_code is False
             else "RESEARCH_NO_CODE_NO_BET"
-        ),
+        )
+    payload = {
+        "schema_version": 1,
+        "dataset_name": adapter.CURRENT_RECEIPT_DATASET,
+        "status": status,
         "observed_at": OBSERVED,
         "exact_commit_sha": SHA,
         "requested_target_size": target,
@@ -184,13 +199,16 @@ def _receipt(*, target=2, selected=1, include_final=True, include_portfolio=True
         "shareCode": share_code,
         "shareURL": share_url,
         "reasons": [],
-        "authority": _authority(),
+        "authority": _authority(create_share_code=intent),
         "sportybet_login_used": False,
         "sportybet_cookie_used": False,
         "sportybet_wallet_used": False,
         "stake_submitted": False,
         "wager_placed": False,
     }
+    if create_share_code is not None:
+        payload["create_share_code"] = create_share_code
+    return payload
 
 
 def _stage(stage="PORTFOLIO"):
@@ -584,3 +602,150 @@ def test_composed_adapter_produces_canonical_round_trippable_receipt():
     raw = run_contracts.canonical_json_bytes(receipt)
     rebuilt = run_contracts.RunReceipt.from_json_bytes(raw)
     assert rebuilt.to_dict() == receipt.to_dict()
+
+
+def test_request_adapter_preserves_explicit_delivery_intent_and_legacy_defaults_true():
+    dates = ["20260910"]
+    no_delivery_policy = _request_policy(
+        fixture_dates=dates,
+        create_share_code=False,
+    )
+    no_delivery = adapter.adapt_current_shadow_request(
+        target_size=2,
+        request_policy=no_delivery_policy,
+        expected_create_share_code=False,
+    )
+    assert no_delivery.create_share_code is False
+
+    delivery_policy = _request_policy(fixture_dates=dates, create_share_code=True)
+    delivery = adapter.adapt_current_shadow_request(
+        target_size=2,
+        request_policy=delivery_policy,
+        expected_create_share_code=True,
+    )
+    assert delivery.create_share_code is True
+
+    legacy = adapter.adapt_current_shadow_request(
+        target_size=2,
+        request_policy=_request_policy(fixture_dates=dates),
+    )
+    assert legacy.create_share_code is True
+
+
+def test_canonical_no_delivery_requires_explicit_policy_and_receipt_evidence():
+    with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="requires explicit policy"):
+        adapter.adapt_current_shadow_request(
+            target_size=2,
+            request_policy=_request_policy(fixture_dates=["20260910"]),
+            expected_create_share_code=False,
+        )
+
+    policy = _request_policy(fixture_dates=["20260910"], create_share_code=False)
+    request = adapter.adapt_current_shadow_request(
+        target_size=2,
+        request_policy=policy,
+        expected_create_share_code=False,
+    )
+    receipt = _receipt(
+        target=2,
+        selected=1,
+        include_final=False,
+        verified=False,
+        create_share_code=False,
+        status="RESEARCH_SHADOW_PORTFOLIO_READY_WITH_SHORTFALL",
+    )
+    receipt.pop("create_share_code")
+    with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="explicitly preserve"):
+        adapter.adapt_current_shadow_receipt(
+            request=request,
+            receipt_payload=receipt,
+            request_policy=policy,
+        )
+
+
+def test_no_delivery_receipt_uses_portfolio_truth_and_rejects_any_share_evidence():
+    policy = _request_policy(fixture_dates=["20260910"], create_share_code=False)
+    request = adapter.adapt_current_shadow_request(
+        target_size=2,
+        request_policy=policy,
+        expected_create_share_code=False,
+    )
+    legacy = _receipt(
+        target=2,
+        selected=1,
+        include_final=False,
+        include_portfolio=True,
+        verified=False,
+        create_share_code=False,
+        status="RESEARCH_SHADOW_PORTFOLIO_READY_WITH_SHORTFALL",
+    )
+    adapted = adapter.adapt_current_shadow_receipt(
+        request=request,
+        receipt_payload=legacy,
+        request_policy=policy,
+    )
+    assert adapted.selected_legs == tuple(legacy["portfolio"]["selected_legs"])
+    assert adapted.share_code_result is None
+    assert adapted.authority_manifest.share_code_generation is False
+    assert adapted.status == "RESEARCH_SHADOW_PORTFOLIO_READY_WITH_SHORTFALL"
+    assert adapted.shortfall == 1
+
+    for key, value in (
+        ("share_code_receipt", {"unexpected": "evidence"}),
+        ("shareCode", "UNEXPECTED"),
+        ("shareURL", "https://example.test/unexpected"),
+    ):
+        tampered = dict(legacy)
+        tampered[key] = value
+        with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="no-delivery receipt"):
+            adapter.adapt_current_shadow_receipt(
+                request=request,
+                receipt_payload=tampered,
+                request_policy=policy,
+            )
+
+    wrong_authority = dict(legacy)
+    wrong_authority["authority"] = dict(legacy["authority"])
+    wrong_authority["authority"]["research_anonymous_share_code_generation"] = True
+    with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="authority differs"):
+        adapter.adapt_current_shadow_receipt(
+            request=request,
+            receipt_payload=wrong_authority,
+            request_policy=policy,
+        )
+
+
+def test_no_delivery_ready_status_and_delivery_verified_status_are_intent_bound():
+    policy = _request_policy(fixture_dates=["20260910"], create_share_code=False)
+    request = adapter.adapt_current_shadow_request(
+        target_size=2,
+        request_policy=policy,
+        expected_create_share_code=False,
+    )
+    verified = _receipt(target=2, selected=2, create_share_code=False)
+    with pytest.raises(adapter.CurrentShadowRunContractAdapterError):
+        adapter.adapt_current_shadow_receipt(
+            request=request,
+            receipt_payload=verified,
+            request_policy=policy,
+        )
+
+    delivery_policy = _request_policy(fixture_dates=["20260910"], create_share_code=True)
+    delivery_request = adapter.adapt_current_shadow_request(
+        target_size=2,
+        request_policy=delivery_policy,
+        expected_create_share_code=True,
+    )
+    no_delivery_status = _receipt(
+        target=2,
+        selected=2,
+        verified=False,
+        create_share_code=True,
+        status="RESEARCH_SHADOW_PORTFOLIO_READY",
+    )
+    with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="portfolio-ready status"):
+        adapter.adapt_current_shadow_receipt(
+            request=delivery_request,
+            receipt_payload=no_delivery_status,
+            request_policy=delivery_policy,
+        )

@@ -685,6 +685,7 @@ def _probe_current_shadow(source_commit: str, profile: str) -> tuple[dict[str, A
         fixture_scope=daily.SCOPE_TODAY,
         fixture_dates=None,
         output_dir=Path("artifacts/p0.5-synthetic-current-shadow"),
+        create_share_code=True,
     )
 
     with ExitStack() as stack:

@@ -80,11 +80,13 @@ def _fake_terminal_receipt():
 
 def test_public_runner_and_cli_accept_no_provider_native_ids_odds_or_preselected_legs():
     params = inspect.signature(runner.execute_current_shadow_all_market).parameters
-    assert set(params) == {"target_size", "output_dir"}
+    assert set(params) == {"target_size", "output_dir", "create_share_code"}
+    assert params["create_share_code"].default is runner.LEGACY_CREATE_SHARE_CODE_DEFAULT
     parser = cli.build_parser()
     option_strings = {option for action in parser._actions for option in action.option_strings}
     assert "--target-size" in option_strings
     assert "--output-dir" in option_strings
+    assert "--create-share-code" in option_strings
     forbidden = {
         "--event-id", "--provider-market-id", "--provider-outcome-id", "--odds",
         "--probability", "--xg", "--preselected-leg", "--fixture-list",
@@ -151,8 +153,128 @@ def test_stage_sequence_tracks_the_exact_source_bound_chain(monkeypatch, tmp_pat
         lambda **_kwargs: _share(runner.share_module.STATUS_CODE_VERIFIED,
                                  code="CHAIN", url="https://example.test/chain"),
     )
-    runner.execute_current_shadow_all_market(target_size=1, output_dir=tmp_path)
+    result = runner.execute_current_shadow_all_market(target_size=1, output_dir=tmp_path)
     assert tuple(observed) == runner.STAGE_SEQUENCE
+    payload = _receipt_payload(tmp_path / runner.RUN_RECEIPT_FILENAME)
+    assert result.create_share_code is True
+    assert payload["create_share_code"] is True
+    assert payload["authority"]["research_anonymous_share_code_generation"] is True
+    assert payload["authority"]["provider_create_reload_verification"] is True
+
+
+@pytest.mark.parametrize(
+    ("selected", "expected_status", "expected_shortfall"),
+    [
+        (3, runner.STATUS_PORTFOLIO_READY, 0),
+        (2, runner.STATUS_PORTFOLIO_READY_WITH_SHORTFALL, 1),
+    ],
+)
+def test_no_delivery_selected_portfolio_skips_share_stage_and_transport(
+    monkeypatch, tmp_path, selected, expected_status, expected_shortfall
+):
+    _install_common(monkeypatch)
+    observed_stages = []
+    sources = _sources(
+        reconciled=selected,
+        selected=selected,
+        no_bet=0,
+        router_inputs=tuple(object() for _ in range(selected)),
+    )
+    chosen = _portfolio(target=3, selected=selected, reserve=1)
+
+    def acquire(**kwargs):
+        kwargs["stage_callback"](runner.STAGE_CURRENT_FOTMOB_SOURCE)
+        return sources
+
+    def checkpoint(**kwargs):
+        observed_stages.append(kwargs["stage"])
+
+    def forbidden_share(**_kwargs):
+        pytest.fail("no-delivery branch must not call share transport")
+
+    monkeypatch.setattr(runner, "_acquire_router_inputs", acquire)
+    monkeypatch.setattr(runner, "_checkpoint_stage", checkpoint)
+    monkeypatch.setattr(runner.portfolio_module, "optimize_shadow_portfolio", lambda *_a, **_k: chosen)
+    monkeypatch.setattr(runner.share_module, "create_verified_shadow_all_market_share_code", forbidden_share)
+
+    result = runner.execute_current_shadow_all_market(
+        target_size=3,
+        output_dir=tmp_path,
+        create_share_code=False,
+    )
+    payload = _receipt_payload(tmp_path / runner.RUN_RECEIPT_FILENAME)
+    assert result.status == expected_status
+    assert result.create_share_code is False
+    assert result.selected_leg_count == selected
+    assert result.reserve_leg_count == 1
+    assert result.shortfall == expected_shortfall
+    assert result.share_code_receipt is None
+    assert result.share_code is None
+    assert result.share_url is None
+    assert runner.STAGE_SHARE_CODE_CREATE_RELOAD not in observed_stages
+    assert payload["create_share_code"] is False
+    assert payload["authority"]["research_anonymous_share_code_generation"] is False
+    assert payload["authority"]["provider_create_reload_verification"] is False
+    assert payload["portfolio"]["selected_leg_count"] == selected
+    assert payload["portfolio"]["shortfall"] == expected_shortfall
+    assert payload["share_code_receipt"] is None
+    assert payload["shareCode"] is None
+    assert payload["shareURL"] is None
+
+
+def test_no_delivery_timeout_receipt_preserves_exact_false_intent(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+    result = runner.write_current_shadow_timeout_receipt(
+        target_size=2,
+        output_dir=tmp_path,
+        create_share_code=False,
+    )
+    payload = _receipt_payload(tmp_path / runner.RUN_RECEIPT_FILENAME)
+    assert result.create_share_code is False
+    assert payload["create_share_code"] is False
+    assert payload["authority"]["research_anonymous_share_code_generation"] is False
+    assert payload["share_code_receipt"] is None
+
+
+def test_no_delivery_source_failure_receipt_preserves_exact_false_intent(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+    monkeypatch.setattr(
+        runner.shadow_core_adapter,
+        "resolve_shadow_canonical_core",
+        lambda: object(),
+    )
+
+    def fail_source(**_kwargs):
+        raise runner.CurrentShadowAllMarketRunnerError("synthetic offline source failure")
+
+    monkeypatch.setattr(runner, "_acquire_router_inputs", fail_source)
+    result = runner.execute_current_shadow_all_market(
+        target_size=2,
+        output_dir=tmp_path,
+        create_share_code=False,
+    )
+    payload = _receipt_payload(tmp_path / runner.RUN_RECEIPT_FILENAME)
+
+    assert result.status == runner.STATUS_SOURCE_INCOMPLETE
+    assert result.create_share_code is False
+    assert payload["create_share_code"] is False
+    assert payload["authority"]["research_anonymous_share_code_generation"] is False
+    assert payload["authority"]["provider_create_reload_verification"] is False
+    assert payload["share_code_receipt"] is None
+    assert payload["shareCode"] is None
+    assert payload["shareURL"] is None
+
+
+def test_internal_runner_requires_an_exact_delivery_bool():
+    from domain.current_shadow_runtime_bindings import default_current_shadow_runtime_bindings
+
+    with pytest.raises(runner.CurrentShadowAllMarketRunnerError, match="exact bool"):
+        runner._execute_current_shadow_all_market_with_bindings(
+            target_size=1,
+            output_dir=Path("unused"),
+            runtime_bindings=default_current_shadow_runtime_bindings(),
+            create_share_code=1,
+        )
 
 
 def test_timeout_receipt_is_durable_fail_closed_and_identifies_stage(monkeypatch, tmp_path):

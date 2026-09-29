@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import builtins
 from datetime import date, datetime, timezone
-import socket
 import subprocess
-import urllib.request
 
 from domain.run_contracts import RunRequest
 from services.athena_run_service import AthenaRunService, ExecutorResult
@@ -130,48 +127,33 @@ def test_shadow_no_delivery_is_admitted_to_synthetic_executor_and_narrows_delive
     assert receipt.wager_placed is False
 
 
-def test_shadow_no_delivery_production_executor_stops_before_runtime_or_external_boundary(
+def test_shadow_no_delivery_production_executor_launches_with_explicit_false_flag_offline(
     monkeypatch, tmp_path
 ):
     from services import athena_run_service as service_module
 
-    external_attempts = []
-    original_import = builtins.__import__
+    child_commands = []
+    child_kwargs = []
 
-    def denied(name, globals=None, locals=None, fromlist=(), level=0):
-        if name.startswith(("providers", "workers")) or (
-            name == "domain" and "current_shadow_fixture_date_request" in fromlist
-        ):
-            external_attempts.append(("import", name))
-            raise AssertionError("no-delivery path entered Current Shadow/provider runtime")
-        return original_import(name, globals, locals, fromlist, level)
+    def offline_child(command, **kwargs):
+        child_commands.append(command)
+        child_kwargs.append(kwargs)
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="synthetic offline stop")
 
-    def deny_subprocess(*_args, **_kwargs):
-        external_attempts.append(("subprocess", None))
-        raise AssertionError("no-delivery path started a subprocess")
-
-    def deny_network(*_args, **_kwargs):
-        external_attempts.append(("network", None))
-        raise AssertionError("no-delivery path attempted network access")
-
-    monkeypatch.setattr(builtins, "__import__", denied)
-    monkeypatch.setattr(service_module.subprocess, "run", deny_subprocess)
-    monkeypatch.setattr(socket.socket, "connect", deny_network)
-    monkeypatch.setattr(urllib.request, "urlopen", deny_network)
+    monkeypatch.setattr(service_module.subprocess, "run", offline_child)
     request = _request(profile="SHADOW", create_share_code=False)
     receipt = _service().run(request, output_root=tmp_path)
 
-    assert receipt.status == "SHADOW_NO_DELIVERY_RUNTIME_NOT_YET_AVAILABLE"
+    assert receipt.status == "SOURCE_INCOMPLETE"
     assert receipt.selected_legs == ()
     assert receipt.share_code_result is None
     assert receipt.counts["selected_leg_count"] == 0
     assert receipt.shortfall == request.target_legs
-    assert receipt.evidence["runtime_readiness"] == "AUTH_01C_REQUIRED"
-    assert receipt.evidence["current_shadow_triggered"] is False
-    assert receipt.evidence["current_shadow_subprocess_started"] is False
-    assert receipt.evidence["provider_acquisition"] is False
-    assert receipt.evidence["share_code_operation"] is False
-    assert external_attempts == []
+    assert len(child_commands) == 1
+    index = child_commands[0].index("--create-share-code")
+    assert child_commands[0][index + 1] == "false"
+    assert "env" not in child_kwargs[0]
+    assert "SHADOW_NO_DELIVERY_RUNTIME_NOT_YET_AVAILABLE" not in receipt.status
 
 
 def test_shadow_delivery_remains_a_valid_synthetic_compatibility_shape(tmp_path):

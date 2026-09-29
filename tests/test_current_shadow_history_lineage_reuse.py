@@ -66,9 +66,10 @@ def test_worker_reuses_first_exact_pr151_lineage_snapshot(monkeypatch, tmp_path,
     )
     monkeypatch.setattr(runner.latest_history, "_build_with_readers", replay_builder)
 
-    def execute(*, target_size, output_dir, runtime_bindings):
+    def execute(*, target_size, output_dir, runtime_bindings, create_share_code):
         assert target_size == 20
         assert output_dir == tmp_path
+        assert create_share_code is True
         assert runtime_bindings.policy_id == "ATHENA_CURRENT_SHADOW_RUNTIME_COMPOSITION_BINDINGS_V1"
         common = {
             "current_bootstrap": object(),
@@ -90,7 +91,9 @@ def test_worker_reuses_first_exact_pr151_lineage_snapshot(monkeypatch, tmp_path,
 
     monkeypatch.setattr(runner, "_execute_current_shadow_all_market_with_bindings", execute)
 
-    rc = cli._execute_once(Namespace(target_size=20, output_dir=tmp_path))
+    rc = cli._execute_once(
+        Namespace(target_size=20, output_dir=tmp_path, create_share_code=True)
+    )
 
     assert rc == 0
     assert len(live_calls) == 1

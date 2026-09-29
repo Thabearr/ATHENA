@@ -63,6 +63,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="comma-separated UTC YYYYMMDD dates; 1..7 unique dates in today..today+6",
     )
     parser.add_argument(
+        "--create-share-code",
+        type=runner.parse_create_share_code_text,
+        default=runner.LEGACY_CREATE_SHARE_CODE_DEFAULT,
+        metavar="true|false",
+        help="explicit delivery intent; omission preserves legacy delivery-enabled behavior",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("artifacts/current-shadow-all-market"),
@@ -156,6 +163,7 @@ def _write_request_policy(args: argparse.Namespace) -> None:
         {
             "schema_version": 1,
             "dataset_name": "athena-current-shadow-request-policy-v1",
+            "create_share_code": args.create_share_code,
             "fixture_scope": args.fixture_scope,
             "fixture_dates": selected,
             "rolling_date_policy": fixture_dates.policy_summary(),
@@ -165,6 +173,8 @@ def _write_request_policy(args: argparse.Namespace) -> None:
             "current_asof_elo_only_policy": xg_fallback.policy_summary(),
             "authority": {
                 "research_shadow_request": True,
+                "research_anonymous_share_code_generation": args.create_share_code,
+                "provider_create_reload_verification": args.create_share_code,
                 "production_model": False,
                 "pricing": False,
                 "selection": False,
@@ -215,6 +225,7 @@ def _execute_worker(args: argparse.Namespace) -> int:
             target_size=args.target_size,
             fixture_scope=args.fixture_scope,
             output_dir=args.output_dir,
+            create_share_code=args.create_share_code,
         )
         try:
             return daily._execute_worker(daily_args)
@@ -248,6 +259,8 @@ def main(argv: list[str] | None = None) -> int:
         args.fixture_scope,
         "--output-dir",
         str(args.output_dir),
+        "--create-share-code",
+        runner.create_share_code_cli_text(args.create_share_code),
     ]
     if args.fixture_dates is not None:
         command.extend(("--fixture-dates", ",".join(args.fixture_dates)))
@@ -262,6 +275,7 @@ def main(argv: list[str] | None = None) -> int:
         result = bound._write_timeout_receipt(
             target_size=args.target_size,
             output_dir=args.output_dir,
+            create_share_code=args.create_share_code,
         )
         print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
         return 0

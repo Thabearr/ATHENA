@@ -65,7 +65,7 @@ def test_explicit_dates_fail_closed_outside_exact_rolling_contract(monkeypatch, 
         )
 
 
-def test_today_scope_sets_one_day_only_and_restores_runner(monkeypatch):
+def test_today_scope_sets_one_day_only_and_restores_runner(monkeypatch, tmp_path):
     original = runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT
     original_issuer = runner._issue_current_fixture_sources
     seen = {}
@@ -78,7 +78,7 @@ def test_today_scope_sets_one_day_only_and_restores_runner(monkeypatch):
 
     monkeypatch.setattr(bound, "_execute_worker", fake_worker)
     args = daily.build_parser().parse_args(
-        ["--target-size", "20", "--fixture-scope", "today"]
+        ["--target-size", "20", "--fixture-scope", "today", "--output-dir", str(tmp_path)]
     )
 
     assert daily._execute_worker(args) == 17
@@ -91,7 +91,9 @@ def test_today_scope_sets_one_day_only_and_restores_runner(monkeypatch):
     assert runner._issue_current_fixture_sources is original_issuer
 
 
-def test_three_day_scope_preserves_existing_prf_horizon_and_activates_all_market_worker(monkeypatch):
+def test_three_day_scope_preserves_existing_prf_horizon_and_activates_all_market_worker(
+    monkeypatch, tmp_path
+):
     original = runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT
     seen = {}
     monkeypatch.delenv(daily.all_market_cli.WORKER_ENV, raising=False)
@@ -103,7 +105,7 @@ def test_three_day_scope_preserves_existing_prf_horizon_and_activates_all_market
 
     monkeypatch.setattr(bound, "_execute_worker", fake_worker)
     args = daily.build_parser().parse_args(
-        ["--target-size", "20", "--fixture-scope", "three-day"]
+        ["--target-size", "20", "--fixture-scope", "three-day", "--output-dir", str(tmp_path)]
     )
 
     assert daily._execute_worker(args) == 0
@@ -149,6 +151,8 @@ def test_exact_dates_issue_only_requested_dates_and_restore_runner(monkeypatch, 
             "15",
             "--fixture-dates",
             "20260910,20260907,20260909",
+            "--output-dir",
+            str(tmp_path),
         ]
     )
     assert daily._execute_worker(args) == 0
@@ -157,7 +161,7 @@ def test_exact_dates_issue_only_requested_dates_and_restore_runner(monkeypatch, 
     assert runner._issue_current_fixture_sources is original_issuer
 
 
-def test_scope_and_all_market_worker_marker_restore_after_worker_failure(monkeypatch):
+def test_scope_and_all_market_worker_marker_restore_after_worker_failure(monkeypatch, tmp_path):
     original = runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT
     original_issuer = runner._issue_current_fixture_sources
     monkeypatch.setenv(daily.all_market_cli.WORKER_ENV, "preexisting")
@@ -168,7 +172,9 @@ def test_scope_and_all_market_worker_marker_restore_after_worker_failure(monkeyp
         raise RuntimeError("failed")
 
     monkeypatch.setattr(bound, "_execute_worker", boom)
-    args = daily.build_parser().parse_args(["--target-size", "20"])
+    args = daily.build_parser().parse_args(
+        ["--target-size", "20", "--output-dir", str(tmp_path)]
+    )
 
     with pytest.raises(RuntimeError, match="failed"):
         daily._execute_worker(args)
@@ -189,6 +195,7 @@ def test_source_adapter_failure_finalizes_durable_source_incomplete(monkeypatch,
     )
     provisional = runner._receipt(
         status=runner.STATUS_SOURCE_INCOMPLETE,
+        create_share_code=True,
         exact_commit_sha=exact_sha,
         target_size=15,
         sources=None,

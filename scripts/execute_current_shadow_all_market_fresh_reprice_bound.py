@@ -42,7 +42,9 @@ def _supervisor_timeout_seconds() -> int:
     return timeout
 
 
-def _write_timeout_receipt(*, target_size: int, output_dir):
+def _write_timeout_receipt(
+    *, target_size: int, output_dir, create_share_code: bool = runner.LEGACY_CREATE_SHARE_CODE_DEFAULT
+):
     """Write a truthful timeout receipt for this wrapper's exact larger budget."""
 
     original = runner.CURRENT_SHADOW_RUN_TIMEOUT_SECONDS
@@ -51,6 +53,7 @@ def _write_timeout_receipt(*, target_size: int, output_dir):
         return runner.write_current_shadow_timeout_receipt(
             target_size=target_size,
             output_dir=output_dir,
+            create_share_code=create_share_code,
         )
     finally:
         runner.CURRENT_SHADOW_RUN_TIMEOUT_SECONDS = original
@@ -75,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
         str(args.target_size),
         "--output-dir",
         str(args.output_dir),
+        "--create-share-code",
+        runner.create_share_code_cli_text(args.create_share_code),
     ]
     try:
         completed = subprocess.run(
@@ -87,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         result = _write_timeout_receipt(
             target_size=args.target_size,
             output_dir=args.output_dir,
+            create_share_code=args.create_share_code,
         )
         print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
         return 0

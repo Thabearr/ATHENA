@@ -204,6 +204,8 @@ def main(argv: list[str] | None = None) -> int:
         str(args.target_size),
         "--output-dir",
         str(args.output_dir),
+        "--create-share-code",
+        runner.create_share_code_cli_text(args.create_share_code),
     ]
     try:
         completed = subprocess.run(
@@ -216,6 +218,7 @@ def main(argv: list[str] | None = None) -> int:
         result = runner.write_current_shadow_timeout_receipt(
             target_size=args.target_size,
             output_dir=args.output_dir,
+            create_share_code=args.create_share_code,
         )
         print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
         return 0
