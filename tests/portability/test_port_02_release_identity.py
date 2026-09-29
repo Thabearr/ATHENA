@@ -575,8 +575,10 @@ def test_installed_manifest_schema_policy_identity_and_release_ids_are_pinned(tm
 
 
 def test_port_02_receipt_is_canonical_self_hashed_and_pins_parity(tmp_path: Path) -> None:
-    receipt_path = ROOT / receipt_audit.ARTIFACT_PATH
-    raw_receipt = receipt_path.read_bytes()
+    raw_receipt, receipt_source = _tracked_head_payload(receipt_audit.ARTIFACT_PATH)
+    assert receipt_source.repository_relative_path == receipt_audit.ARTIFACT_PATH
+    assert receipt_source.filtered_worktree_git_blob_sha1 == receipt_source.git_blob_sha1
+    assert receipt_source.git_blob_payload_sha256 == hashlib.sha256(raw_receipt).hexdigest()
     document = receipt_audit._load_strict_json(raw_receipt)
     assert raw_receipt == receipt_audit.canonical_json_bytes(document)
     summary = receipt_audit.validate_receipt(document)
