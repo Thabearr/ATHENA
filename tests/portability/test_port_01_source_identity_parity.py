@@ -313,6 +313,37 @@ def test_historical_portability_and_baseline_anchors_remain_exact() -> None:
                 ]
 
 
+def test_current_audit_executes_immutable_canonical_anchor_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    anchor = {
+        "anchor_id": "SYNTHETIC_CANONICAL_ANCHOR",
+        "path": "synthetic/anchor.json",
+        "git_blob_sha1": "a" * 40,
+        "git_blob_payload_sha256": "b" * 64,
+        "canonical_sha256": "1" * 64,
+    }
+    payload = b'{"canonical_sha256":"' + b"0" * 64 + b'"}\n'
+    identity = source_identity.DevelopmentSourceIdentity(
+        repository_relative_path=anchor["path"],
+        git_blob_sha1=anchor["git_blob_sha1"],
+        git_blob_payload_sha256=anchor["git_blob_payload_sha256"],
+        filtered_worktree_git_blob_sha1=anchor["git_blob_sha1"],
+        raw_worktree_sha256=hashlib.sha256(payload).hexdigest(),
+    )
+    monkeypatch.setattr(audit, "load_receipt", lambda: {"current_source_evolution": []})
+    monkeypatch.setattr(audit, "validate_receipt", lambda _document: {})
+    monkeypatch.setattr(audit, "EXPECTED_ANCHORS", (anchor,))
+    monkeypatch.setattr(
+        audit,
+        "read_tracked_head_blob",
+        lambda *_args, **_kwargs: (payload, identity),
+    )
+
+    with pytest.raises(audit.PortabilityAuditError, match="historical canonical identity changed"):
+        audit.validate_current_state()
+
+
 def test_current_platform_audit_is_offline_and_read_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

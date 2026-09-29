@@ -256,7 +256,7 @@ def validate_receipt(document: dict[str, Any]) -> dict[str, Any]:
     if document["windows_b1_reproduction"] != {
         "command": "python -m pytest -q --tb=short tests/test_architecture_runtime_reachability.py tests/test_architecture_runtime_reachability_artifact.py tests/test_main_shadow_authority_parity.py tests/test_repository_architecture_inventory.py tests/test_athena_run_authority_matrix.py",
         "before": {"collected": 214, "passed": 199, "failed": 10, "skipped": 0, "xfailed": 5, "xpassed": 0},
-        "after": {"collected": 217, "passed": 212, "failed": 0, "skipped": 0, "xfailed": 5, "xpassed": 0},
+        "after": {"collected": 217, "passed": 211, "failed": 0, "skipped": 1, "xfailed": 5, "xpassed": 0},
         "added_regression_tests": 3,
         "all_original_ten_nodes_pass": True,
         "environment": "Windows 11 x86-64; core.autocrlf=true",
@@ -455,29 +455,29 @@ def validate_current_state() -> dict[str, Any]:
             or identity.git_blob_payload_sha256 != anchor["git_blob_payload_sha256"]
         ):
             raise PortabilityAuditError(f"historical Git identity changed: {anchor['anchor_id']}")
-            if anchor["canonical_sha256"] is not None:
-                parsed = _read_json_bytes(payload, anchor["anchor_id"])
-                if "canonical_sha256" in parsed:
-                    canonical_identity = parsed["canonical_sha256"]
-                else:
-                    # Some canonical JSON contracts (such as the parity
-                    # inventory) have no embedded self-hash field; their
-                    # canonical identity is the exact output of their
-                    # source-controlled pretty JSON serializer.
-                    canonical_identity = canonical_payload_sha256(
-                        (
-                            json.dumps(
-                                parsed,
-                                ensure_ascii=False,
-                                allow_nan=False,
-                                sort_keys=True,
-                                indent=2,
-                            )
-                            + "\n"
-                        ).encode("utf-8")
+        if anchor["canonical_sha256"] is not None:
+            parsed = _read_json_bytes(payload, anchor["anchor_id"])
+            if "canonical_sha256" in parsed:
+                canonical_identity = parsed["canonical_sha256"]
+            else:
+                # Some canonical JSON contracts (such as the parity
+                # inventory) have no embedded self-hash field; their
+                # canonical identity is the exact output of their
+                # source-controlled pretty JSON serializer.
+                canonical_identity = canonical_payload_sha256(
+                    (
+                        json.dumps(
+                            parsed,
+                            ensure_ascii=False,
+                            allow_nan=False,
+                            sort_keys=True,
+                            indent=2,
+                        )
+                        + "\n"
                     )
-                if canonical_identity != anchor["canonical_sha256"]:
-                    raise PortabilityAuditError(f"historical canonical identity changed: {anchor['anchor_id']}")
+                )
+            if canonical_identity != anchor["canonical_sha256"]:
+                raise PortabilityAuditError(f"historical canonical identity changed: {anchor['anchor_id']}")
 
     for row in document["current_source_evolution"]:
         try:
