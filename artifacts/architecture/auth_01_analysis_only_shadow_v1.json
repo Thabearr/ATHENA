@@ -1,0 +1,271 @@
+{
+  "authority_matrix": [
+    {
+      "admission": "ACCEPTED",
+      "business_status": "MAIN_PHASE6_AUTHORITY_REQUIRED",
+      "create_share_code": false,
+      "manifest_provider_acquisition": false,
+      "manifest_share_code_generation": false,
+      "profile": "MAIN"
+    },
+    {
+      "admission": "REQUEST_AUTHORITY_MISMATCH",
+      "create_share_code": true,
+      "executor_invoked": false,
+      "manifest_provider_acquisition": false,
+      "manifest_share_code_generation": false,
+      "profile": "MAIN"
+    },
+    {
+      "admission": "ACCEPTED",
+      "create_share_code": false,
+      "delivery_result": null,
+      "manifest_provider_acquisition": true,
+      "manifest_share_code_generation": false,
+      "profile": "SHADOW"
+    },
+    {
+      "admission": "ACCEPTED",
+      "create_share_code": true,
+      "manifest_provider_acquisition": true,
+      "manifest_share_code_generation": true,
+      "profile": "SHADOW",
+      "real_delivery_exercised_by_a5": false
+    },
+    {
+      "admission": "EXECUTOR_UNAVAILABLE",
+      "create_share_code": false,
+      "manifest_provider_acquisition": false,
+      "manifest_share_code_generation": false,
+      "profile": "UNSUPPORTED"
+    },
+    {
+      "admission": "CONTRACT_REJECTED",
+      "place_wager": true,
+      "profile": "SHADOW"
+    }
+  ],
+  "canonical_sha256": "7b09adb4882d49749c33efecbce0b1c8985a2d3bdec52417f7b02f8f335f4a86",
+  "capability_snapshot": [
+    {
+      "capability_id": "CAP-RETAINED-OFFLINE-REPLAY",
+      "state": "VERIFIED_AVAILABLE_OFFLINE"
+    },
+    {
+      "capability_id": "CAP-SHADOW-ANALYSIS-NO-DELIVERY",
+      "state": "OFFLINE_VERIFIED_NOT_LIVE_SUCCESSOR_PROOF"
+    },
+    {
+      "capability_id": "CAP-SHADOW-DELIVERY-COMPATIBILITY",
+      "state": "RETAINED_COMPATIBILITY_REQUIRES_EXPLICIT_INTENT_AND_SEPARATE_EXTERNAL_AUTHORIZATION"
+    },
+    {
+      "capability_id": "CAP-SHADOW-PROVIDER-ACQUISITION",
+      "state": "IMPLEMENTED_REVIEWED_CAPABILITY_NOT_EXERCISED_BY_A5"
+    },
+    {
+      "blocker": "MAIN_PHASE6_AUTHORITY_REQUIRED",
+      "capability_id": "CAP-MAIN-LIVE-ANALYSIS",
+      "state": "BLOCKED_BY_AUTHORITY"
+    },
+    {
+      "capability_id": "CAP-WAGER",
+      "state": "NOT_AUTHORIZED"
+    },
+    {
+      "capability_id": "CAP-CALLER-MIGRATION",
+      "state": "NOT_AUTHORIZED"
+    },
+    {
+      "capability_id": "CAP-WORKFLOW-RETIREMENT",
+      "state": "NOT_AUTHORIZED"
+    },
+    {
+      "capability_id": "CAP-CLEAN-LIVE-SUCCESSOR",
+      "state": "NOT_RERUN_IN_A5"
+    }
+  ],
+  "current_no_delivery_contract": {
+    "SHARE_CODE_CREATE_RELOAD_reachable": false,
+    "allowed_terminal_statuses": [
+      "RESEARCH_SHADOW_PORTFOLIO_READY",
+      "RESEARCH_SHADOW_PORTFOLIO_READY_WITH_SHORTFALL"
+    ],
+    "authority_profile": "SHADOW",
+    "bookie": "sportybet",
+    "cookies": false,
+    "create_share_code": false,
+    "login": false,
+    "mode": "research_shadow",
+    "provider_acquisition_capability": true,
+    "share_code_generation_capability": false,
+    "share_code_present": false,
+    "share_receipt_present": false,
+    "share_url_present": false,
+    "shortfall": 19,
+    "staking": false,
+    "wager": false,
+    "wallet": false
+  },
+  "governance": {
+    "P4_4": "INCOMPLETE",
+    "architecture_checkpoint_E": "INCOMPLETE",
+    "caller_migration": "NOT_AUTHORIZED",
+    "clean_live_successor_proof": "NOT_RERUN_IN_A5",
+    "clean_successor_proof": "INCOMPLETE",
+    "live_proof": "NOT_AUTHORIZED",
+    "mandatory_reread_comment_id": 5881358508,
+    "master_issue": 337,
+    "source_review_counter_if_merged": "1/5",
+    "source_review_counter_while_unmerged": "0/5",
+    "workflow_retirement": "NOT_AUTHORIZED"
+  },
+  "governing_contracts": {
+    "ExecutionEnvelope": {
+      "policy_id": "ATHENA_EXECUTION_ENVELOPE_V2",
+      "schema_version": 2
+    },
+    "RunReceipt": {
+      "policy_id": "ATHENA_CANONICAL_RUN_CONTRACT_V1",
+      "schema_version": 1
+    },
+    "RunRequest": {
+      "policy_id": "ATHENA_CANONICAL_RUN_CONTRACT_V1",
+      "schema_version": 1
+    },
+    "delivery_intent": "EXPLICIT_REQUEST_BOOL_INDEPENDENT_OF_PROFILE",
+    "place_wager": false
+  },
+  "historical_authorization_mismatch": {
+    "artifact_id": 10940728036,
+    "artifact_name": "athena-run-36345657852",
+    "artifact_sha256": "f0618654b49fcd7a6a2df95260025b6c655da5aefb477102696a812e9930b18a",
+    "attempt": 1,
+    "business_status": "RESEARCH_SHADOW_CODE_VERIFIED_WITH_SHORTFALL",
+    "classification": "POST_P4_4S_INTERNAL_SUCCESS_AUTHORIZATION_NONCOMPLIANT_SHARE_CODE_SIDE_EFFECT",
+    "counts": {
+      "priced_fixture_count": 3,
+      "provider_event_count": 223,
+      "reconciled_fixture_count": 3,
+      "reserve_leg_count": 0,
+      "reviewed_fixture_count": 3,
+      "router_no_bet_count": 0,
+      "router_selected_count": 3,
+      "selected_leg_count": 3,
+      "shortfall": 17,
+      "target_legs": 20
+    },
+    "head_sha": "eae938a268707f07db3da2d551ea589782902b1c",
+    "inner_current_shadow_receipt_sha256": "80ce47a0965562cffd11d8dbd847740fbf57e36b8f1b173020827ea19a18b258",
+    "interpretation": "PRE_FIX_INTERNAL_ANALYSIS_REACHED_TERMINAL_RESULT_BUT_OWNER_PROHIBITED_DELIVERY; NOT_CLEAN_SUCCESSOR_PROOF; DOES_NOT_AUTHORIZE_MIGRATION_OR_RETIREMENT",
+    "login_cookies_wallet_staking_wager_place_wager_wager_placed": false,
+    "owner_authorized_share_code_action": false,
+    "persisted_create_share_code": true,
+    "raw_share_code_copied": false,
+    "raw_share_url_copied": false,
+    "request_sha256": "0142610f7c9fd1eec15b00da8ca13ecf4d2efc107b6b6d60e6e32e0841aaf3c4",
+    "run_id": 36345657852,
+    "run_receipt_sha256": "a8ce4f163432ebead90ee649c7297115acba0a852ceeac2beeb5ef0bdc0d4b6d",
+    "share_code_operation_attempted": true,
+    "share_code_result_verified": true,
+    "source_manifest_canonical_sha256": "fb5412845dbed85d00396ea8f11a9343e1145dc4cba07664d54be69b260b449f",
+    "stabilization_receipt_sha256": "a16860bd03f03a99087f030ed91474a57233ef3e619a36a20494c615bb15e1c7",
+    "workflow_name": "ATHENA Canonical Run"
+  },
+  "historical_sources": {
+    "BASE00_files_rewritten": false,
+    "BASE00_json_git_blob_sha1": "a37c079b9175c1e24ac098b87fd6bc28e23e9527",
+    "BASE00_markdown_git_blob_sha1": "e20bd828d3b7a3d3305021492074be111d22c096",
+    "P4_4R_receipt_sha256": "90e2d7e984609ded80c9113a05453628bebadfcb3cede7fc95b9696931016552",
+    "P4_4S_receipt_sha256": "0907272a20b439e6874ee3b3fa399a488e8dd3c9a6e428dafa2aa53202c513c3",
+    "historical_receipts_rewritten": false
+  },
+  "implementation_base_main_sha": "2b82f3236b786161d208d9ca3e4c8cf73ca9fac2",
+  "offline_replay": {
+    "canonical_output_bytes_identical": true,
+    "canonical_run_receipt_sha256": "53ac042bca943b8e80941142f8b0d841c8ac4225394239d4e9e46c15c43b4576",
+    "clean_process_count": 2,
+    "decision_owners_executed": [
+      "canonical_context_builder",
+      "source-controlled Price-all",
+      "source-controlled Router",
+      "fresh-reprice context builder",
+      "fresh-reprice Price-all",
+      "fresh-reprice Router",
+      "source-controlled Portfolio optimizer",
+      "current_shadow_run_contract_adapter",
+      "AthenaRunService production SHADOW supervisor"
+    ],
+    "deterministic_output_sha256": "3b792193ef813f4aab79d7c3f9d48550270f3ae008265cc9ceb9c3d629e974f5",
+    "email_login_cookies_wallet_stake_wager_call_count": 0,
+    "execution_envelope_sha256": "174a3b043f1082ea9122c2117c8a3c80c5bc9fe314ca13f236e4d6693087a0ad",
+    "fixture_evidence_classification": "REAL_RETAINED_PROVIDER_EVENT_BYTES_PLUS_SYNTHETIC_RECONCILIATION_HISTORY_MODEL",
+    "import_orders": [
+      "forward",
+      "reverse"
+    ],
+    "inner_current_shadow_receipt_sha256": "1f9d1eb32015b32546cd7f93b57c52810319ceb22eea22811a56482d90e42878",
+    "provider_network_call_count": 0,
+    "request_adapter_byte_equality": {
+      "false": {
+        "bytes_equal": true,
+        "canonical_sha256": "2206abcefa58a28b3ec162b8a735e20ee2b18203b832837c8da9cf2735a5b276"
+      },
+      "true": {
+        "bytes_equal": true,
+        "canonical_sha256": "0142610f7c9fd1eec15b00da8ca13ecf4d2efc107b6b6d60e6e32e0841aaf3c4"
+      }
+    },
+    "request_sha256": "2206abcefa58a28b3ec162b8a735e20ee2b18203b832837c8da9cf2735a5b276",
+    "reserve_leg_count": 0,
+    "runner_counts": {
+      "priced_fixture_count": 1,
+      "provider_event_count": 100,
+      "reconciled_fixture_count": 1,
+      "reviewed_fixture_count": 1,
+      "router_no_bet_count": 0,
+      "router_selected_count": 1
+    },
+    "selected_leg_count": 1,
+    "share_transport_call_count": 0,
+    "shortfall": 19,
+    "stage_summary": [
+      {
+        "counts": {},
+        "observed_at": "2026-09-27T01:55:27.176214Z",
+        "stage": "COMPLETE",
+        "status": "CHECKPOINTED"
+      },
+      {
+        "counts": {
+          "priced_fixture_count": 1,
+          "provider_event_count": 100,
+          "reconciled_fixture_count": 1,
+          "reviewed_fixture_count": 1,
+          "router_no_bet_count": 0,
+          "router_selected_count": 1
+        },
+        "observed_at": "2026-09-27T01:55:27.176214Z",
+        "stage": "PORTFOLIO",
+        "status": "STARTED"
+      }
+    ],
+    "status": "RESEARCH_SHADOW_PORTFOLIO_READY_WITH_SHORTFALL",
+    "target_legs": 20
+  },
+  "policy_id": "ATHENA_AUTH_01_ANALYSIS_ONLY_SHADOW_V1",
+  "repository": "Thabearr/ATHENA",
+  "safety": {
+    "cookies": 0,
+    "email_sends": 0,
+    "login": 0,
+    "provider_network_calls": 0,
+    "raw_share_code_or_url_copied": false,
+    "share_code_create_reload_calls": 0,
+    "stake": 0,
+    "wager": 0,
+    "wallet": 0,
+    "workflow_dispatches": 0
+  },
+  "schema_version": 1
+}
