@@ -165,6 +165,19 @@ def test_offline_audit_recomputes_two_process_proof_with_network_sentinels(monke
     assert result["policy_id"] == audit.POLICY_ID
     assert result["artifact_canonical_sha256"] == EXPECTED_ARTIFACT_SHA256
     assert result["clean_process_count"] == 2
-    assert result["P4_4R_P4_4S"]["P4_4R"]["result"] == "PASS"
+    assert result["P4_4R_P4_4S"]["P4_4R"]["result"] in {
+        "PASS",
+        "PASS_VIA_P4_4S_FORWARD_EVIDENCE",
+    }
     assert result["P4_4R_P4_4S"]["P4_4S"]["result"] == "PASS"
     assert attempts == []
+
+
+def test_shallow_architecture_audit_uses_forward_evidence_not_fake_git_history(monkeypatch):
+    monkeypatch.setattr(audit, "_git_commit_object_available", lambda _root, _sha: False)
+    result = audit._run_architecture_audits(ROOT)
+    assert result["P4_4R"]["result"] == "PASS_VIA_P4_4S_FORWARD_EVIDENCE"
+    assert result["P4_4R"]["historical_workflow_sha256"] == (
+        "45f7fe3556f892320a12b15c210637782edca60792ccbf030a714414a32f005a"
+    )
+    assert result["P4_4S"]["result"] == "PASS"

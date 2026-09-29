@@ -1045,15 +1045,103 @@ def _clean_process_pair() -> tuple[dict[str, Any], bytes, bytes]:
     return replay, outputs[0], outputs[1]
 
 
-def _run_architecture_audits() -> dict[str, Any]:
+def _git_commit_object_available(root: Path, commit_sha: str) -> bool:
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), "cat-file", "-e", f"{commit_sha}^{{commit}}"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return False
+    return completed.returncode == 0
+
+
+def _verify_p44r_from_forward_evidence(
+    root: Path,
+    p44r: Any,
+    p44s_result: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate P4.4R's immutable checkpoint without inventing shallow Git ancestry.
+
+    P4.4S is specifically forward-compatible with shallow checkouts: it pins the
+    P4.4R receipt and historical receipt inventory, and authenticates the source
+    supersession. The workflow evolution ledger separately authenticates the
+    current workflow and supplies P4.4M's immutable after-bytes.
+    """
+
+    receipt = p44r._read_json(root, p44r.RECEIPT_PATH)
+    p44r.verify_receipt(receipt)
+    receipt_sha = p44r._verify_self_hash(receipt, "P4.4R receipt")
+    inventory = p44r._read_json(root, p44r.INVENTORY_PATH)
+    inventory_sha = p44r._verify_self_hash(inventory, "P4.4R composition inventory")
+    if receipt.get("composition_inventory_sha256") != inventory_sha:
+        raise AssertionError("P4.4R receipt does not bind the exact composition inventory")
+
+    p44r._verify_fixture_files(root)
+    p44r._verify_runtime_composition(root)
+    verifier_sha = _sha256(
+        (root / "domain/_current_shadow_quote_binding.py")
+        .read_bytes()
+        .replace(b"\r\n", b"\n")
+    )
+    p44r.verify_context_verifier_source_supersession(root, receipt, verifier_sha)
+
+    evolution = importlib.import_module("scripts.audit_p4_workflow_evolution_ledger")
+    try:
+        ledger = evolution.validate_current_state()
+        historical_workflow = evolution.resolve_reviewed_transition_after_source(
+            ".github/workflows/athena-run.yml",
+            "P44M_ATHENA_RUN_PC_UPCOMING_EVIDENCE_PRESERVATION_V1",
+        )
+    except Exception as exc:
+        raise AssertionError("P4.4R historical workflow/current evolution evidence is unavailable") from exc
+    workflow_contract = receipt["before_after_contracts"]["canonical_workflow"]
+    historical_workflow_sha = _sha256(historical_workflow.replace(b"\r\n", b"\n"))
+    if not (
+        historical_workflow_sha == workflow_contract.get("base_main_git_blob_sha256")
+        == workflow_contract.get("after_git_blob_sha256")
+        and workflow_contract.get("unchanged") is True
+    ):
+        raise AssertionError("P4.4R historical workflow identity does not match reviewed evolution ancestry")
+    if (
+        ledger.get("current_live_workflow_count") != 38
+        or ledger.get("current_p4_3_retired_workflow_count") != 3
+    ):
+        raise AssertionError("current workflow/retirement counts differ from the P4.4R checkpoint")
+    expected_receipt_count = receipt.get("historical_receipt_immutability", {}).get(
+        "compared_receipt_count"
+    )
+    if (
+        p44s_result.get("historical_p4_4r_receipt_sha256") != receipt_sha
+        or p44s_result.get("p4_4r_historical_receipt_count") != expected_receipt_count
+    ):
+        raise AssertionError("P4.4S forward evidence does not bind P4.4R receipt/history exactly")
+    return {
+        "result": "PASS_VIA_P4_4S_FORWARD_EVIDENCE",
+        "receipt_sha256": receipt_sha,
+        "inventory_sha256": inventory_sha,
+        "historical_workflow_sha256": historical_workflow_sha,
+        "current_workflow_tree_sha1": ledger["current_workflow_tree_sha1"],
+    }
+
+
+def _run_architecture_audits(root: Path = REPOSITORY_ROOT) -> dict[str, Any]:
     p44r = importlib.import_module("scripts.audit_p4_4r_shadow_runtime_composition_stabilization")
     p44s = importlib.import_module("scripts.audit_p4_4s_canonical_adapter_bound_context_builder")
-    p44r_result = p44r.audit(REPOSITORY_ROOT)
-    p44s_result = p44s.audit(REPOSITORY_ROOT)
-    if not isinstance(p44r_result, dict) or not isinstance(p44s_result, dict):
+    p44s_result = p44s.audit(root)
+    if not isinstance(p44s_result, dict):
         raise AssertionError("P4.4R/P4.4S audits returned unexpected results")
+    if _git_commit_object_available(root, p44r.BASE_MAIN_SHA):
+        p44r_result = p44r.audit(root)
+        if not isinstance(p44r_result, dict):
+            raise AssertionError("P4.4R audit returned an unexpected result")
+        p44r_summary = {"result": "PASS", "receipt_sha256": P44R_RECEIPT_SHA256}
+    else:
+        p44r_summary = _verify_p44r_from_forward_evidence(root, p44r, p44s_result)
     return {
-        "P4_4R": {"result": "PASS", "receipt_sha256": P44R_RECEIPT_SHA256},
+        "P4_4R": p44r_summary,
         "P4_4S": {"result": "PASS", "receipt_sha256": P44S_RECEIPT_SHA256},
     }
 
@@ -1066,7 +1154,7 @@ def check_artifact(root: Path = REPOSITORY_ROOT) -> dict[str, Any]:
         raise AssertionError("BASE-00 frozen JSON blob changed")
     if _git_blob(BASELINE_MARKDOWN, root=root) != BASELINE_MARKDOWN_BLOB:
         raise AssertionError("BASE-00 frozen Markdown blob changed")
-    audits = _run_architecture_audits()
+    audits = _run_architecture_audits(root)
     replay, forward, reverse = _clean_process_pair()
     output_sha = _sha256(forward)
     expected = _build_artifact(replay, output_sha)
