@@ -312,8 +312,8 @@ class _ShadowSupervisorExecutor:
         # This code path is only reached by an actual SHADOW run request. Tests
         # and audits inject synthetic executors and never call this supervisor.
         # The launched Current Shadow request module remains the reviewed
-        # 75-minute supervisor and finalization owner. Do not add a second
-        # timeout here; an equal outer timeout could terminate finalization.
+        # 75-minute supervisor and finalization owner. Do not add a second timeout here:
+        # an equal outer timeout could terminate finalization before it persists.
         try:
             completed = _run_reviewed_shadow_worker(
                 request,
