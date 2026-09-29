@@ -305,7 +305,12 @@ def test_historical_portability_and_baseline_anchors_remain_exact() -> None:
         assert identity.git_blob_payload_sha256 == anchor["git_blob_payload_sha256"]
         if anchor["canonical_sha256"] is not None:
             value = audit._read_json_bytes(payload, anchor["anchor_id"])
-            assert value["canonical_sha256"] == anchor["canonical_sha256"]
+            if "canonical_sha256" in value:
+                assert value["canonical_sha256"] == anchor["canonical_sha256"]
+            else:
+                assert hashlib.sha256(parity.canonical_json_bytes(value)).hexdigest() == anchor[
+                    "canonical_sha256"
+                ]
 
 
 def test_current_platform_audit_is_offline_and_read_only(

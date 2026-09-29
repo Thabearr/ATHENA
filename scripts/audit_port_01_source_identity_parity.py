@@ -455,10 +455,29 @@ def validate_current_state() -> dict[str, Any]:
             or identity.git_blob_payload_sha256 != anchor["git_blob_payload_sha256"]
         ):
             raise PortabilityAuditError(f"historical Git identity changed: {anchor['anchor_id']}")
-        if anchor["canonical_sha256"] is not None:
-            parsed = _read_json_bytes(payload, anchor["anchor_id"])
-            if parsed.get("canonical_sha256") != anchor["canonical_sha256"]:
-                raise PortabilityAuditError(f"historical canonical identity changed: {anchor['anchor_id']}")
+            if anchor["canonical_sha256"] is not None:
+                parsed = _read_json_bytes(payload, anchor["anchor_id"])
+                if "canonical_sha256" in parsed:
+                    canonical_identity = parsed["canonical_sha256"]
+                else:
+                    # Some canonical JSON contracts (such as the parity
+                    # inventory) have no embedded self-hash field; their
+                    # canonical identity is the exact output of their
+                    # source-controlled pretty JSON serializer.
+                    canonical_identity = canonical_payload_sha256(
+                        (
+                            json.dumps(
+                                parsed,
+                                ensure_ascii=False,
+                                allow_nan=False,
+                                sort_keys=True,
+                                indent=2,
+                            )
+                            + "\n"
+                        ).encode("utf-8")
+                    )
+                if canonical_identity != anchor["canonical_sha256"]:
+                    raise PortabilityAuditError(f"historical canonical identity changed: {anchor['anchor_id']}")
 
     for row in document["current_source_evolution"]:
         try:
