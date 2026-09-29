@@ -466,11 +466,11 @@ def test_writable_roots_are_separate_and_platform_policies_are_explicit(
         explicit.data_root, explicit.cache_root, explicit.state_root
     ))
 
-    windows = default_writable_roots(
-        platform_name="win32", environ={"LOCALAPPDATA": "C:\\Users\\Sample\\AppData\\Local"}
-    )
-    assert str(windows.data_root).endswith("ATHENA\\data")
     if sys.platform == "win32":
+        windows = default_writable_roots(
+            platform_name="win32", environ={"LOCALAPPDATA": "C:\\Users\\Sample\\AppData\\Local"}
+        )
+        assert str(windows.data_root).endswith("ATHENA\\data")
         pytest.skip("Linux/XDG path semantics are validated on Hosted Linux")
     linux = default_writable_roots(
         platform_name="linux",
