@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://athena.invalid/schemas/release-manifest-v1.json",
+  "title": "ATHENA installed release manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "policy_id",
+    "release_id",
+    "build_id",
+    "platform_tag",
+    "architecture_tag",
+    "closed_world_roots",
+    "resources"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "policy_id": { "const": "ATHENA_INSTALLED_RELEASE_MANIFEST_V1" },
+    "release_id": { "$ref": "#/$defs/identifier" },
+    "build_id": { "$ref": "#/$defs/identifier" },
+    "platform_tag": { "enum": ["windows", "linux"] },
+    "architecture_tag": { "enum": ["x86_64", "aarch64"] },
+    "closed_world_roots": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/path" }
+    },
+    "resources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/resource" }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?/)[^\\u0000-\\u001f]+$"
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "logical_path",
+        "payload_path",
+        "role",
+        "byte_sha256",
+        "required",
+        "source_git_blob_sha1",
+        "canonical_sha256"
+      ],
+      "properties": {
+        "logical_path": { "$ref": "#/$defs/path" },
+        "payload_path": { "$ref": "#/$defs/path" },
+        "role": {
+          "enum": [
+            "CANONICAL_COMPONENT_SOURCE",
+            "AUTHORITY_REGISTRY",
+            "CONFIG",
+            "MODEL",
+            "UI",
+            "MIGRATION",
+            "TIMEZONE",
+            "LOCK",
+            "SCHEMA"
+          ]
+        },
+        "byte_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "required": { "type": "boolean" },
+        "source_git_blob_sha1": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+          ]
+        },
+        "canonical_sha256": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          ]
+        }
+      }
+    }
+  }
+}

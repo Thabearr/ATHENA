@@ -14,6 +14,11 @@ from domain import price_all as _price_all
 from domain import provider_market_semantics as _provider_semantics
 from domain import run_contracts as _run_contracts
 from domain import sportybet_share_code as _share_code
+from runtime.release_identity import (
+    DevelopmentCheckoutIdentity,
+    InstalledReleaseIdentity,
+)
+from runtime.resources import ResourceResolutionError, ResourceResolver
 from runtime.source_identity import SourceIdentityError, read_tracked_head_blob
 
 
@@ -133,6 +138,28 @@ def _share_code_identity() -> str:
     return _share_code.validate_share_code_contract()[
         "canonical_share_code_contract_sha256"
     ]
+
+
+def _installed_contract_identity(responsibility_id: str) -> str:
+    """Compute the pure semantic identity for a manifest-verified component.
+
+    The ordinary DevelopmentCheckout validators remain unchanged and continue
+    to verify their Git-backed delegated ancestry.  Installed mode instead
+    binds the exact component source payload and its source Git identity through
+    the trusted release manifest, so it must not call a validator that shells
+    out to Git.
+    """
+    pure_identities: Mapping[str, Callable[[], str]] = {
+        "provider_market_semantics": _provider_semantics.calculate_provider_market_semantics_contract_sha256,
+        "price_all_and_de_vig": lambda: _price_all.IMPLEMENTATION_CONTRACT_SHA256,
+        "market_router": _router.calculate_canonical_market_router_contract_sha256,
+        "portfolio_optimizer": _portfolio.calculate_portfolio_contract_sha256,
+        "delivery_share_code_transport": _share_code.calculate_share_code_contract_sha256,
+    }
+    try:
+        return pure_identities[responsibility_id]()
+    except KeyError as exc:
+        raise CanonicalCoreError("unknown installed canonical responsibility") from exc
 
 
 _COMPONENT_SPECS: Mapping[str, tuple[str, Any, Callable[[], str]]] = {
@@ -272,14 +299,62 @@ class CanonicalCoreBindings:
 
 def _validate_record(
     record: _authority.ComponentAuthorityRecord, responsibility_id: str,
+    *,
+    release_identity: DevelopmentCheckoutIdentity | InstalledReleaseIdentity | None = None,
+    resources: ResourceResolver | None = None,
 ) -> None:
     expected_component_id, module, identity = _COMPONENT_SPECS[responsibility_id]
     if record.component_id != expected_component_id:
         raise CanonicalCoreError("registry component identity differs from reviewed canonical owner")
-    if record.contract_sha256 != identity():
+    contract_identity = (
+        _installed_contract_identity(responsibility_id)
+        if type(release_identity) is InstalledReleaseIdentity
+        else identity()
+    )
+    if record.contract_sha256 != contract_identity:
         raise CanonicalCoreError("registry component contract identity drifted")
-    if record.artifact_git_blob_sha != _git_blob_sha(module):
-        raise CanonicalCoreError("registry component source artifact identity drifted")
+    if release_identity is None:
+        if resources is not None:
+            raise CanonicalCoreError("resource resolver requires an explicit release identity")
+        if record.artifact_git_blob_sha != _git_blob_sha(module):
+            raise CanonicalCoreError("registry component source artifact identity drifted")
+        return
+    if type(resources) is not ResourceResolver or resources.identity is not release_identity:
+        raise CanonicalCoreError("canonical core requires the resolver bound to its exact release identity")
+
+    if type(release_identity) is DevelopmentCheckoutIdentity:
+        repository_root = Path(__file__).resolve().parents[1]
+        if release_identity.repository_root != repository_root:
+            raise CanonicalCoreError("DevelopmentCheckout identity belongs to another source tree")
+        module_path = getattr(module, "__file__", None)
+        if type(module_path) is not str:
+            raise CanonicalCoreError("canonical component has no source artifact")
+        try:
+            logical_path = Path(module_path).resolve().relative_to(repository_root).as_posix()
+            source = resources.source_identity(logical_path)
+        except (ValueError, ResourceResolutionError) as exc:
+            raise CanonicalCoreError("canonical component source identity could not be resolved") from exc
+        if getattr(source, "git_blob_sha1", None) != record.artifact_git_blob_sha:
+            raise CanonicalCoreError("registry component source artifact identity drifted")
+        return
+
+    if type(release_identity) is not InstalledReleaseIdentity:
+        raise CanonicalCoreError("unsupported canonical source identity mode")
+    logical_path = f"{module.__name__.replace('.', '/')}.py"
+    try:
+        source_record = resources.resource_record(
+            logical_path,
+            expected_role="CANONICAL_COMPONENT_SOURCE",
+        )
+        # Reading also rechecks the raw installed payload SHA after identity
+        # creation, so a post-verification mutation cannot be hidden.
+        resources.read_bytes(logical_path, expected_role="CANONICAL_COMPONENT_SOURCE")
+    except ResourceResolutionError as exc:
+        raise CanonicalCoreError("installed canonical component source is unavailable") from exc
+    if source_record.source_git_blob_sha1 != record.artifact_git_blob_sha:
+        raise CanonicalCoreError("installed canonical component source Git identity drifted")
+    if source_record.canonical_sha256 != contract_identity:
+        raise CanonicalCoreError("installed canonical component contract identity drifted")
 
 
 def _resolve_canonical_core_with_registry_for_test(
@@ -288,6 +363,8 @@ def _resolve_canonical_core_with_registry_for_test(
     regime_id: str = CURRENT_SPORTYBET_PROVIDER,
     required_schema_version: int = SCHEMA_VERSION,
     registry: _authority.ComponentAuthorityRegistry,
+    release_identity: DevelopmentCheckoutIdentity | InstalledReleaseIdentity | None = None,
+    resources: ResourceResolver | None = None,
 ) -> CanonicalCoreBindings:
     """Test-only structural resolver for deliberately synthetic registry states.
 
@@ -305,6 +382,13 @@ def _resolve_canonical_core_with_registry_for_test(
         raise CanonicalCoreError("required_schema_version must be positive exact int")
     if type(registry) is not _authority.ComponentAuthorityRegistry:
         raise CanonicalCoreError("exact ComponentAuthorityRegistry is required")
+    if release_identity is None:
+        if resources is not None:
+            raise CanonicalCoreError("resource resolver requires an explicit release identity")
+    elif type(release_identity) not in {DevelopmentCheckoutIdentity, InstalledReleaseIdentity}:
+        raise CanonicalCoreError("unsupported release identity type")
+    elif type(resources) is not ResourceResolver or resources.identity is not release_identity:
+        raise CanonicalCoreError("resource resolver identity mismatch")
     if registry.runtime_mutation_allowed is not False:
         raise CanonicalCoreError("runtime registry mutation is forbidden")
     records = []
@@ -315,7 +399,12 @@ def _resolve_canonical_core_with_registry_for_test(
                 profile=authority_manifest.authority_profile,
                 required_schema_version=required_schema_version,
             )
-            _validate_record(record, responsibility_id)
+            _validate_record(
+                record,
+                responsibility_id,
+                release_identity=release_identity,
+                resources=resources,
+            )
             records.append(record)
     except _authority.ComponentAuthorityRegistryError as exc:
         raise CanonicalCoreError("canonical champion resolution failed closed") from exc
@@ -334,6 +423,8 @@ def resolve_canonical_core(
     *,
     regime_id: str = CURRENT_SPORTYBET_PROVIDER,
     required_schema_version: int = SCHEMA_VERSION,
+    release_identity: DevelopmentCheckoutIdentity | InstalledReleaseIdentity | None = None,
+    resources: ResourceResolver | None = None,
 ) -> CanonicalCoreBindings:
     """Resolve only the reviewed source-controlled canonical champions.
 
@@ -341,11 +432,42 @@ def resolve_canonical_core(
     boundary.  Promotion therefore requires a reviewed source change to the
     default registry rather than a runtime object injection.
     """
+    if release_identity is None and resources is None:
+        # Preserve the pre-PORT-02A public development behavior and its exact
+        # source-controlled registry loading seam for existing callers.
+        return _resolve_canonical_core_with_registry_for_test(
+            authority_manifest,
+            regime_id=regime_id,
+            required_schema_version=required_schema_version,
+            registry=_authority.load_default_registry(),
+        )
+    if type(release_identity) not in {DevelopmentCheckoutIdentity, InstalledReleaseIdentity}:
+        raise CanonicalCoreError("an exact reviewed release identity is required")
+    if type(resources) is not ResourceResolver or resources.identity is not release_identity:
+        raise CanonicalCoreError("canonical core requires a resolver bound to its exact release identity")
+    try:
+        registry_role = "AUTHORITY_REGISTRY" if type(release_identity) is InstalledReleaseIdentity else None
+        registry_bytes = resources.read_bytes(
+            "config/architecture/component-authority-registry-v1.json",
+            expected_role=registry_role,
+        )
+        registry = _authority.ComponentAuthorityRegistry.from_json_bytes(registry_bytes)
+        if type(release_identity) is InstalledReleaseIdentity:
+            registry_record = resources.resource_record(
+                "config/architecture/component-authority-registry-v1.json",
+                expected_role="AUTHORITY_REGISTRY",
+            )
+            if registry_record.canonical_sha256 != registry.canonical_sha256:
+                raise CanonicalCoreError("installed authority registry canonical identity drifted")
+    except (_authority.ComponentAuthorityRegistryError, ResourceResolutionError) as exc:
+        raise CanonicalCoreError("reviewed authority registry could not be loaded from release resources") from exc
     return _resolve_canonical_core_with_registry_for_test(
         authority_manifest,
         regime_id=regime_id,
         required_schema_version=required_schema_version,
-        registry=_authority.load_default_registry(),
+        registry=registry,
+        release_identity=release_identity,
+        resources=resources,
     )
 
 

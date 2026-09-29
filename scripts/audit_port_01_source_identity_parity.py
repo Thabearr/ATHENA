@@ -29,6 +29,11 @@ B1_GIT_BLOB_SHA1 = "6ff6fd3153419e7dae7f789401dc1b757d207126"
 B1_FAILURE_IDS = tuple(f"WIN-CRLF-{number:02d}" for number in range(1, 11))
 SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+# PORT-02A intentionally adds a reviewed installed source mode to this frozen
+# B2 seam.  Its old identity remains pinned in the receipt; only this exact
+# source path may report a later-current-source skip after historical anchors
+# have been verified.  Other B2 source paths remain exact-current assertions.
+B3_AUTHORIZED_MOVED_CURRENT_SOURCE_PATHS = frozenset({"domain/canonical_core.py"})
 
 IDENTITY_CONTRACT = {
     "RAW_FILE_SHA256": (
@@ -478,6 +483,7 @@ def validate_current_state() -> dict[str, Any]:
             if canonical_identity != anchor["canonical_sha256"]:
                 raise PortabilityAuditError(f"historical canonical identity changed: {anchor['anchor_id']}")
 
+    moved_paths: list[str] = []
     for row in document["current_source_evolution"]:
         try:
             _payload, identity = read_tracked_head_blob(ROOT, row["path"])
@@ -487,10 +493,17 @@ def validate_current_state() -> dict[str, Any]:
             identity.git_blob_sha1 != row["after_git_blob_sha1"]
             or identity.git_blob_payload_sha256 != row["after_git_blob_payload_sha256"]
         ):
-            raise PortabilityAuditError(f"current source identity changed after receipt: {row['path']}")
+            if row["path"] not in B3_AUTHORIZED_MOVED_CURRENT_SOURCE_PATHS:
+                raise PortabilityAuditError(f"current source identity changed after receipt: {row['path']}")
+            moved_paths.append(row["path"])
 
     return {
-        "result": "PORT_01B_SOURCE_IDENTITY_PARITY_PASS",
+        "result": (
+            "PORT_01B_SOURCE_IDENTITY_PARITY_SKIP_SOURCE_MOVED"
+            if moved_paths
+            else "PORT_01B_SOURCE_IDENTITY_PARITY_PASS"
+        ),
+        "moved_paths": moved_paths,
         **summary,
         "repository": "Thabearr/ATHENA",
         "network_provider_delivery_calls": 0,
