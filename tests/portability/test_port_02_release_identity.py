@@ -490,7 +490,10 @@ def test_writable_roots_are_separate_and_platform_policies_are_explicit(
         default_writable_roots(platform_name="win32", environ={})
     with pytest.raises(ResourceResolutionError, match="HOME"):
         default_writable_roots(platform_name="linux", environ={})
-    with pytest.raises(ResourceResolutionError, match="inside installed"):
+    with pytest.raises(
+        ResourceResolutionError,
+        match="outside installed release root",
+    ):
         WritableRoots(
             data_root=release / "data",
             cache_root=tmp_path / "cache",
