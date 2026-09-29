@@ -1,0 +1,268 @@
+{
+  "schema_version": 1,
+  "policy_id": "ATHENA_PORT_01_SOURCE_IDENTITY_PARITY_V1",
+  "repository": "Thabearr/ATHENA",
+  "implementation_base_main_sha": "3da28cf4ac856b2dade041bb0675fdcfc17796ea",
+  "predecessor": {
+    "mission": "PORT-01A",
+    "policy_id": "ATHENA_PORT_01_WINDOWS_FAILURE_INVENTORY_V1",
+    "canonical_sha256": "78b92cde4681d3bbd71007ed4c3e434717c029f6745b3b37ecb93bb917738966",
+    "git_blob_sha1": "6ff6fd3153419e7dae7f789401dc1b757d207126",
+    "fixed_blocker_ids": [
+      "WIN-CRLF-01",
+      "WIN-CRLF-02",
+      "WIN-CRLF-03",
+      "WIN-CRLF-04",
+      "WIN-CRLF-05",
+      "WIN-CRLF-06",
+      "WIN-CRLF-07",
+      "WIN-CRLF-08",
+      "WIN-CRLF-09",
+      "WIN-CRLF-10"
+    ]
+  },
+  "windows_b1_reproduction": {
+    "command": "python -m pytest -q --tb=short tests/test_architecture_runtime_reachability.py tests/test_architecture_runtime_reachability_artifact.py tests/test_main_shadow_authority_parity.py tests/test_repository_architecture_inventory.py tests/test_athena_run_authority_matrix.py",
+    "before": {
+      "collected": 214,
+      "passed": 199,
+      "failed": 10,
+      "skipped": 0,
+      "xfailed": 5,
+      "xpassed": 0
+    },
+    "after": {
+      "collected": 217,
+      "passed": 212,
+      "failed": 0,
+      "skipped": 0,
+      "xfailed": 5,
+      "xpassed": 0
+    },
+    "added_regression_tests": 3,
+    "all_original_ten_nodes_pass": true,
+    "environment": "Windows 11 x86-64; core.autocrlf=true"
+  },
+  "identity_contract": {
+    "RAW_FILE_SHA256": "SHA-256 of exact materialized file bytes; no Git lookup, text translation, or newline normalization.",
+    "CANONICAL_PAYLOAD_SHA256": "SHA-256 of bytes emitted by the named canonical serializer; bytes are not repaired.",
+    "GIT_BLOB_SHA1": "Git object SHA-1 for the exact tracked HEAD blob after repository clean filters.",
+    "GIT_BLOB_PAYLOAD_SHA256": "SHA-256 of exact unfiltered payload bytes returned for HEAD:path.",
+    "FILTERED_WORKTREE_GIT_BLOB_EQUIVALENCE": "Proof that git hash-object --path=<logical-path> --filters <worktree-file> equals the HEAD blob SHA-1 before source-controlled HEAD bytes are used.",
+    "INSTALLED_PAYLOAD_SHA256": "NOT_IMPLEMENTED_PORT_02A"
+  },
+  "fixed_blockers": [
+    {
+      "failure_id": "WIN-CRLF-01",
+      "predecessor_class": "RAW_ARTIFACT_BYTES",
+      "source_path": "tests/fixtures/p4_4r_run_36285099805_quote_evidence/initial/manifest.json",
+      "predecessor_git_blob_sha1": "120443830d12f2d77c6917d2e8396fab8d25c181",
+      "predecessor_git_blob_payload_sha256": "f2515e5f02682a05b6d3e1cd48f03b08085f0567baf56dfce38244a63e99892e",
+      "predecessor_windows_raw_sha256": "da7d7ec5553f0a30253644f25b5104dfe81b026564135772e63fab99b7b0ad09",
+      "expected_byte_domain": "GIT_BLOB_PAYLOAD_SHA256",
+      "remediation_seam": "scripts/audit_runtime_reachability.py::_materialize_tracked_fixture",
+      "windows_result": "PASS_EXACT_HEAD_BLOB_MATERIALIZED",
+      "linux_result": "REQUIRED_EXACT_FINAL_HEAD_HOSTED_TESTS",
+      "status": "CLOSED_AT_SOURCE_IDENTITY_BOUNDARY",
+      "historical_hash_changed": false
+    },
+    {
+      "failure_id": "WIN-CRLF-02",
+      "predecessor_class": "RAW_ARTIFACT_BYTES",
+      "source_path": "tests/fixtures/p4_4r_run_36285099805_quote_evidence/initial/manifest.json",
+      "predecessor_git_blob_sha1": "120443830d12f2d77c6917d2e8396fab8d25c181",
+      "predecessor_git_blob_payload_sha256": "f2515e5f02682a05b6d3e1cd48f03b08085f0567baf56dfce38244a63e99892e",
+      "predecessor_windows_raw_sha256": "da7d7ec5553f0a30253644f25b5104dfe81b026564135772e63fab99b7b0ad09",
+      "expected_byte_domain": "GIT_BLOB_PAYLOAD_SHA256",
+      "remediation_seam": "scripts/audit_runtime_reachability.py::_materialize_tracked_fixture",
+      "windows_result": "PASS_EXACT_HEAD_BLOB_MATERIALIZED",
+      "linux_result": "REQUIRED_EXACT_FINAL_HEAD_HOSTED_TESTS",
+      "status": "CLOSED_AT_SOURCE_IDENTITY_BOUNDARY",
+      "historical_hash_changed": false
+    },
+    {
+      "failure_id": "WIN-CRLF-03",
+      "predecessor_class": "RAW_ARTIFACT_BYTES",
+      "source_path": "tests/fixtures/p4_4r_run_36285099805_quote_evidence/initial/manifest.json",
+      "predecessor_git_blob_sha1": "120443830d12f2d77c6917d2e8396fab8d25c181",
+      "predecessor_git_blob_payload_sha256": "f2515e5f02682a05b6d3e1cd48f03b08085f0567baf56dfce38244a63e99892e",
+      "predecessor_windows_raw_sha256": "da7d7ec5553f0a30253644f25b5104dfe81b026564135772e63fab99b7b0ad09",
+      "expected_byte_domain": "GIT_BLOB_PAYLOAD_SHA256",
+      "remediation_seam": "scripts/audit_runtime_reachability.py::_materialize_tracked_fixture",
+      "windows_result": "PASS_EXACT_HEAD_BLOB_MATERIALIZED",
+      "linux_result": "REQUIRED_EXACT_FINAL_HEAD_HOSTED_TESTS",
+      "status": "CLOSED_AT_SOURCE_IDENTITY_BOUNDARY",
+      "historical_hash_changed": false
+    },
+    {
+      "failure_id": "WIN-CRLF-04",
+      "predecessor_class": "RAW_ARTIFACT_BYTES",
+      "source_path": "tests/fixtures/p4_4r_run_36285099805_quote_evidence/initial/manifest.json",
+      "predecessor_git_blob_sha1": "120443830d12f2d77c6917d2e8396fab8d25c181",
+      "predecessor_git_blob_payload_sha256": "f2515e5f02682a05b6d3e1cd48f03b08085f0567baf56dfce38244a63e99892e",
+      "predecessor_windows_raw_sha256": "da7d7ec5553f0a30253644f25b5104dfe81b026564135772e63fab99b7b0ad09",
+      "expected_byte_domain": "GIT_BLOB_PAYLOAD_SHA256",
+      "remediation_seam": "scripts/audit_runtime_reachability.py::_materialize_tracked_fixture",
+      "windows_result": "PASS_EXACT_HEAD_BLOB_MATERIALIZED",
+      "linux_result": "REQUIRED_EXACT_FINAL_HEAD_HOSTED_TESTS",
+      "status": "CLOSED_AT_SOURCE_IDENTITY_BOUNDARY",
+      "historical_hash_changed": false
+    },
+    {
+      "failure_id": "WIN-CRLF-05",
+      "predecessor_class": "RAW_ARTIFACT_BYTES",
+      "source_path": "tests/fixtures/p4_4r_run_36285099805_quote_evidence/initial/manifest.json",
+      "predecessor_git_blob_sha1": "120443830d12f2d77c6917d2e8396fab8d25c181",
+      "predecessor_git_blob_payload_sha256": "f2515e5f02682a05b6d3e1cd48f03b08085f0567baf56dfce38244a63e99892e",
+      "predecessor_windows_raw_sha256": "da7d7ec5553f0a30253644f25b5104dfe81b026564135772e63fab99b7b0ad09",
+      "expected_byte_domain": "GIT_BLOB_PAYLOAD_SHA256",
+      "remediation_seam": "scripts/audit_runtime_reachability.py::_materialize_tracked_fixture",
+      "windows_result": "PASS_EXACT_HEAD_BLOB_MATERIALIZED",
+      "linux_result": "REQUIRED_EXACT_FINAL_HEAD_HOSTED_TESTS",
+      "status": "CLOSED_AT_SOURCE_IDENTITY_BOUNDARY",
+      "historical_hash_changed": false
+    },
+    {
+      "failure_id": "WIN-CRLF-06",
+      "predecessor_class": "RAW_ARTIFACT_BYTES",
+      "source_path": "tests/fixtures/p4_4r_run_36285099805_quote_evidence/initial/manifest.json",
+      "predecessor_git_blob_sha1": "120443830d12f2d77c6917d2e8396fab8d25c181",
+      "predecessor_git_blob_payload_sha256": "f2515e5f02682a05b6d3e1cd48f03b08085f0567baf56dfce38244a63e99892e",
+      "predecessor_windows_raw_sha256": "da7d7ec5553f0a30253644f25b5104dfe81b026564135772e63fab99b7b0ad09",
+      "expected_byte_domain": "GIT_BLOB_PAYLOAD_SHA256",
+      "remediation_seam": "scripts/audit_runtime_reachability.py::_materialize_tracked_fixture",
+      "windows_result": "PASS_EXACT_HEAD_BLOB_MATERIALIZED",
+      "linux_result": "REQUIRED_EXACT_FINAL_HEAD_HOSTED_TESTS",
+      "status": "CLOSED_AT_SOURCE_IDENTITY_BOUNDARY",
+      "historical_hash_changed": false
+    },
+    {
+      "failure_id": "WIN-CRLF-07",
+      "predecessor_class": "RAW_ARTIFACT_BYTES",
+      "source_path": "tests/fixtures/p4_4r_run_36285099805_quote_evidence/initial/manifest.json",
+      "predecessor_git_blob_sha1": "120443830d12f2d77c6917d2e8396fab8d25c181",
+      "predecessor_git_blob_payload_sha256": "f2515e5f02682a05b6d3e1cd48f03b08085f0567baf56dfce38244a63e99892e",
+      "predecessor_windows_raw_sha256": "da7d7ec5553f0a30253644f25b5104dfe81b026564135772e63fab99b7b0ad09",
+      "expected_byte_domain": "GIT_BLOB_PAYLOAD_SHA256",
+      "remediation_seam": "scripts/audit_runtime_reachability.py::_materialize_tracked_fixture",
+      "windows_result": "PASS_EXACT_HEAD_BLOB_MATERIALIZED",
+      "linux_result": "REQUIRED_EXACT_FINAL_HEAD_HOSTED_TESTS",
+      "status": "CLOSED_AT_SOURCE_IDENTITY_BOUNDARY",
+      "historical_hash_changed": false
+    },
+    {
+      "failure_id": "WIN-CRLF-08",
+      "predecessor_class": "RAW_ARTIFACT_BYTES",
+      "source_path": "tests/fixtures/p4_4r_run_36285099805_quote_evidence/initial/manifest.json",
+      "predecessor_git_blob_sha1": "120443830d12f2d77c6917d2e8396fab8d25c181",
+      "predecessor_git_blob_payload_sha256": "f2515e5f02682a05b6d3e1cd48f03b08085f0567baf56dfce38244a63e99892e",
+      "predecessor_windows_raw_sha256": "da7d7ec5553f0a30253644f25b5104dfe81b026564135772e63fab99b7b0ad09",
+      "expected_byte_domain": "GIT_BLOB_PAYLOAD_SHA256",
+      "remediation_seam": "scripts/audit_runtime_reachability.py::_materialize_tracked_fixture",
+      "windows_result": "PASS_EXACT_HEAD_BLOB_MATERIALIZED",
+      "linux_result": "REQUIRED_EXACT_FINAL_HEAD_HOSTED_TESTS",
+      "status": "CLOSED_AT_SOURCE_IDENTITY_BOUNDARY",
+      "historical_hash_changed": false
+    },
+    {
+      "failure_id": "WIN-CRLF-09",
+      "predecessor_class": "CANONICAL_JSON_BYTES",
+      "source_path": "config/architecture/main-shadow-authority-parity-v1.json",
+      "predecessor_git_blob_sha1": "034985b0f750550a30369b2cfa295db1ce0ec13d",
+      "predecessor_git_blob_payload_sha256": "d4f525a0eb8d3ffe07e5b64a3452d758bc9e180c5b1db37feecbac1faf395bfe",
+      "predecessor_windows_raw_sha256": "0b2c517517c196fe92e13c8a8c7010f8e7546372c41aee37f8abdff431b0ba34",
+      "expected_byte_domain": "CANONICAL_PAYLOAD_SHA256",
+      "remediation_seam": "scripts/validate_main_shadow_authority_parity.py::_read_contract_json",
+      "windows_result": "PASS_TRACKED_CANONICAL_HEAD_PAYLOAD",
+      "linux_result": "REQUIRED_EXACT_FINAL_HEAD_HOSTED_TESTS",
+      "status": "CLOSED_AT_SOURCE_IDENTITY_BOUNDARY",
+      "historical_hash_changed": false
+    },
+    {
+      "failure_id": "WIN-CRLF-10",
+      "predecessor_class": "CANONICAL_JSON_BYTES",
+      "source_path": "config/architecture/main-shadow-authority-parity-v1.json",
+      "predecessor_git_blob_sha1": "034985b0f750550a30369b2cfa295db1ce0ec13d",
+      "predecessor_git_blob_payload_sha256": "d4f525a0eb8d3ffe07e5b64a3452d758bc9e180c5b1db37feecbac1faf395bfe",
+      "predecessor_windows_raw_sha256": "0b2c517517c196fe92e13c8a8c7010f8e7546372c41aee37f8abdff431b0ba34",
+      "expected_byte_domain": "CANONICAL_PAYLOAD_SHA256",
+      "remediation_seam": "scripts/validate_main_shadow_authority_parity.py::_read_contract_json",
+      "windows_result": "PASS_TRACKED_CANONICAL_HEAD_PAYLOAD",
+      "linux_result": "REQUIRED_EXACT_FINAL_HEAD_HOSTED_TESTS",
+      "status": "CLOSED_AT_SOURCE_IDENTITY_BOUNDARY",
+      "historical_hash_changed": false
+    }
+  ],
+  "platform_matrix": {
+    "windows_normal_checkout": {
+      "os": "Windows 11 x86-64",
+      "core_autocrlf": "true",
+      "result": "PASS_EXACT_B1_FAILURES_CLOSED"
+    },
+    "lf_native_control": {
+      "performed": false,
+      "result": "NOT_USED_PRIMARY_WINDOWS_CHECKOUT_WAS_AUTHORITATIVE"
+    },
+    "hosted_linux": {
+      "platform": "Hosted Ubuntu/Linux",
+      "gate": "REQUIRED_ON_EXACT_FINAL_HEAD",
+      "same_source_identity_contract": true
+    },
+    "unicode_path": "PASS_EXPLICIT_REPOSITORY_ROOT",
+    "unrelated_cwd": "PASS_EXPLICIT_REPOSITORY_ROOT",
+    "read_only_source": "PASS_NO_SOURCE_WRITE",
+    "semantic_worktree_mutation": "REJECTED_FILTERED_IDENTITY_MISMATCH"
+  },
+  "immutable_anchors": [
+    {"anchor_id":"P44R_RECEIPT","path":"artifacts/architecture/p4_4r_shadow_runtime_composition_stabilization_v1.json","git_blob_sha1":"0ed10b25f57a87037bf2d786a8f2ec77b0b2f55f","git_blob_payload_sha256":"965f42e56823de78013c40a5b839ea81d0d5c79aadb4a02bc122110014a51eab","canonical_sha256":"90e2d7e984609ded80c9113a05453628bebadfcb3cede7fc95b9696931016552"},
+    {"anchor_id":"P44S_RECEIPT","path":"artifacts/architecture/p4_4s_canonical_adapter_bound_context_builder_v1.json","git_blob_sha1":"a8368721e2181e44a54bce25aae6171df11b6b40","git_blob_payload_sha256":"78ee27a58dff7c9c22ca7aee6740d9aa35bcc7d655aa9e2ad0a6ff4047ad8d8e","canonical_sha256":"0907272a20b439e6874ee3b3fa399a488e8dd3c9a6e428dafa2aa53202c513c3"},
+    {"anchor_id":"BASE00_JSON","path":"artifacts/product/product_baseline_v1.json","git_blob_sha1":"a37c079b9175c1e24ac098b87fd6bc28e23e9527","git_blob_payload_sha256":"c171cc6adf713d4c4ec97a0f23eb73ae3ac48abc472e71db9afbd33fbd0013a3","canonical_sha256":"d3db092eb890f45cae9eccfefb7134a59bf4d1b9f43e43160421c4210832b27f"},
+    {"anchor_id":"BASE00_MARKDOWN","path":"docs/product/athena_product_baseline_v1.md","git_blob_sha1":"e20bd828d3b7a3d3305021492074be111d22c096","git_blob_payload_sha256":"7139bf5583273d717eb8bca32a06066ab4f4e1178e2a79acc6517b4d23f44a5b","canonical_sha256":null},
+    {"anchor_id":"P05_RUNTIME_ARTIFACT","path":"artifacts/architecture/runtime-reachability-v1.json","git_blob_sha1":"0c840c9b245d0eb8610a62ac3cc8bbc3be1120a1","git_blob_payload_sha256":"a8ccb4c0c8ab2bea9bd133bb7fa7e155957bf1e38e5bf7ae6cccb4f44640f7e4","canonical_sha256":null},
+    {"anchor_id":"PORT01A_INVENTORY","path":"artifacts/architecture/port_01_windows_failure_inventory_v1.json","git_blob_sha1":"6ff6fd3153419e7dae7f789401dc1b757d207126","git_blob_payload_sha256":"b6958170ab20752656d40a8809563fe939c2875a34d88366430af216536d5aec","canonical_sha256":"78b92cde4681d3bbd71007ed4c3e434717c029f6745b3b37ecb93bb917738966"},
+    {"anchor_id":"PARITY_CONTRACT","path":"config/architecture/main-shadow-authority-parity-v1.json","git_blob_sha1":"034985b0f750550a30369b2cfa295db1ce0ec13d","git_blob_payload_sha256":"d4f525a0eb8d3ffe07e5b64a3452d758bc9e180c5b1db37feecbac1faf395bfe","canonical_sha256":"d4f525a0eb8d3ffe07e5b64a3452d758bc9e180c5b1db37feecbac1faf395bfe"},
+    {"anchor_id":"RAW_QUOTE_VERIFIER","path":"domain/sportybet_live_event_quote_evidence.py","git_blob_sha1":"096d54fe7493f6d81cdf3c4af7c4a9333c75fadc","git_blob_payload_sha256":"5d64143321e12313bb239b6d3973c8b5da5fb28855649e9890194f233ff0b48f","canonical_sha256":null},
+    {"anchor_id":"GIT_ATTRIBUTES","path":".gitattributes","git_blob_sha1":"39ccd8d38ce17c105a906e2f1416f68e64fcc862","git_blob_payload_sha256":"8a9b99b2c7eadeb2562f6f5cb57f0b5523be99c8a535c83a6a86f29082dd3559","canonical_sha256":null}
+  ],
+  "current_source_evolution": [
+    {"path":"domain/canonical_core.py","before_git_blob_sha1":"7a693a9bc7bf869da7089d96d21f408cc7c2bf97","before_git_blob_payload_sha256":"ce077495c34508a9823d35ac649cae1ee7bfa481d6002dfb1661a676e8d4c529","after_git_blob_sha1":"cb241f82069ca8f6904b3779b704b0ed5583ddb8","after_git_blob_payload_sha256":"9608d9b57e89055710080ee104e3462c423a52bead38b2fc0660d7af91c8c148","after_identity_domain":"GIT_BLOB_SHA1_AND_GIT_BLOB_PAYLOAD_SHA256"},
+    {"path":"runtime/__init__.py","before_git_blob_sha1":null,"before_git_blob_payload_sha256":null,"after_git_blob_sha1":"b4ecd9111a9f1f8daf36cb252ee69cd913ec4d80","after_git_blob_payload_sha256":"d9ecc12d702e53142d2ae9457946bb6242f6afd19cf4018f6099ea0307610b84","after_identity_domain":"GIT_BLOB_SHA1_AND_GIT_BLOB_PAYLOAD_SHA256"},
+    {"path":"runtime/source_identity.py","before_git_blob_sha1":null,"before_git_blob_payload_sha256":null,"after_git_blob_sha1":"d4e911c67cf0a9fa30c764cf464e57a33fa67c04","after_git_blob_payload_sha256":"7a8fb2b9ead92c70e1a3451f10f830196053b077f995f2b89111b02805115c61","after_identity_domain":"GIT_BLOB_SHA1_AND_GIT_BLOB_PAYLOAD_SHA256"},
+    {"path":"scripts/audit_runtime_reachability.py","before_git_blob_sha1":"59a69a03cb89492864b5f02a6cb41de31b782d2a","before_git_blob_payload_sha256":"ebbaae44194e6fa60978c8fcd2d3ebceefba89d5c0e7f4753f57443c4667948a","after_git_blob_sha1":"e07bf59ee75b745019e9c3aaf4ccecf827f4974d","after_git_blob_payload_sha256":"43a84bc5cb40207d175623a048bde75bdb78efc775482d892239c749110ba3d0","after_identity_domain":"GIT_BLOB_SHA1_AND_GIT_BLOB_PAYLOAD_SHA256"},
+    {"path":"scripts/validate_main_shadow_authority_parity.py","before_git_blob_sha1":"b65c70ab46caa43f8fcbd8701dedbf35e12b95be","before_git_blob_payload_sha256":"61da66a3e677f8c329dca32d2ac088f2eda8f052843221a443c3a75260afa198","after_git_blob_sha1":"0102bb805493eac18024ed05b41407eb2db94d5a","after_git_blob_payload_sha256":"a3960fe3fc41f7aeda39e74f1d967c5565d832de52b58b71029cb13db3e7a28c","after_identity_domain":"GIT_BLOB_SHA1_AND_GIT_BLOB_PAYLOAD_SHA256"}
+  ],
+  "safety": {
+    "gitattributes_changed": false,
+    "historical_hashes_repinned": false,
+    "historical_receipts_rewritten": false,
+    "parity_contract_content_changed": false,
+    "raw_quote_verifier_changed": false,
+    "installed_payload_identity_implemented": false,
+    "network_calls": 0,
+    "provider_calls": 0,
+    "workflow_dispatches": 0,
+    "share_code_actions": 0,
+    "email_actions": 0,
+    "login_actions": 0,
+    "cookie_actions": 0,
+    "wallet_actions": 0,
+    "staking_actions": 0,
+    "wager_actions": 0
+  },
+  "governance": {
+    "source_review_counter_while_unmerged": "2/5",
+    "source_review_counter_if_merged": "3/5",
+    "lg_a_comment_id": 5882699153,
+    "lg_a_status": "LG_A_WAITING_SEPARATE_OWNER_AUTHORIZATION",
+    "lg_a_run": false,
+    "p4_4_complete": false,
+    "architecture_checkpoint_e_complete": false,
+    "clean_successor_proof_complete": false,
+    "live_proof_authorized": false,
+    "caller_migration_authorized": false,
+    "workflow_retirement_authorized": false,
+    "port_02a_started": false
+  },
+  "canonical_sha256_byte_domain": "CANONICAL_PAYLOAD_SHA256",
+  "canonical_sha256": "b0e45491bb5749b4bed72660727d95b3bcd223b724c3e9f10e13edf0321d4429"
+}

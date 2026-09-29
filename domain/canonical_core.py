@@ -5,7 +5,6 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
-import subprocess
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from domain import component_authority_registry as _authority
@@ -15,6 +14,7 @@ from domain import price_all as _price_all
 from domain import provider_market_semantics as _provider_semantics
 from domain import run_contracts as _run_contracts
 from domain import sportybet_share_code as _share_code
+from runtime.source_identity import SourceIdentityError, read_tracked_head_blob
 
 
 SCHEMA_VERSION = 1
@@ -98,29 +98,15 @@ def _git_blob_sha(module: Any) -> str:
         relative_path = source_path.relative_to(repository_root).as_posix()
     except ValueError as exc:
         raise CanonicalCoreError("canonical component source is outside repository") from exc
-    # A registry record pins a Git *blob*, whose identity uses Git's checked-in
-    # content filters rather than the workstation's CRLF representation.  This
-    # is deliberately source-only verification; no module discovery or network
-    # operation is involved.  Missing Git/filter state fails closed.
     try:
-        completed = subprocess.run(
-            [
-                "git", "-C", str(repository_root), "hash-object", "--path",
-                relative_path, "--filters", str(source_path),
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
+        _payload, identity = read_tracked_head_blob(
+            repository_root,
+            relative_path,
+            verify_worktree_filtered_identity=True,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except SourceIdentityError as exc:
         raise CanonicalCoreError("canonical component Git blob verification failed") from exc
-    digest = completed.stdout.strip()
-    if completed.returncode != 0 or len(digest) != 40 or any(
-        character not in "0123456789abcdef" for character in digest
-    ):
-        raise CanonicalCoreError("canonical component Git blob verification failed")
-    return digest
+    return identity.git_blob_sha1
 
 
 def _provider_identity() -> str:

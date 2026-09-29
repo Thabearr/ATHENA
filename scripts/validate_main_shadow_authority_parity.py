@@ -9,14 +9,19 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
+
+from runtime.source_identity import SourceIdentityError, read_tracked_head_blob
 
 SCHEMA_VERSION = 1
 POLICY_ID = "ATHENA_MAIN_SHADOW_AUTHORITY_PARITY_V1"
 EXPECTED_BASE_MAIN = "147c09d058e8609ef11296bd7e0f74e4c6626b63"
 EXPECTED_INVENTORY_SHA256 = "a77617557659c8d8a7a5e6887ba65529a87f5f7c229113a36ca6d2f9f2a26a4a"
 EXPECTED_INVENTORY_SOURCE_COMMIT = "e04cbbeaeff999a1e5dd3ff7891857b4813a7fac"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+CONTRACT_REPOSITORY_PATH = "config/architecture/main-shadow-authority-parity-v1.json"
 AUTHORITY_PROFILES = (
     "SHARED_CANONICAL", "MAIN_ONLY", "SHADOW_ONLY", "RESEARCH_CHALLENGER",
     "HISTORICAL_EVIDENCE", "UNKNOWN",
@@ -159,12 +164,46 @@ def _require(condition: bool, message: str) -> None:
 
 def _read_json(path: Path) -> tuple[bytes, dict[str, Any]]:
     raw = path.read_bytes()
+    return raw, _parse_json_object(raw, path)
+
+
+def _parse_json_object(raw: bytes, path: Path) -> dict[str, Any]:
     try:
         value = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValidationError(f"invalid JSON: {path}") from exc
     _require(isinstance(value, dict), f"JSON root must be an object: {path}")
-    return raw, value
+    return value
+
+
+def _read_contract_json(path: Path) -> tuple[bytes, dict[str, Any]]:
+    """Use exact HEAD bytes only for the one reviewed tracked contract path."""
+
+    try:
+        # Compare lexical absolute paths; resolving first would let an
+        # untracked symlink alias borrow the tracked contract's HEAD payload.
+        candidate = Path(path).absolute()
+        tracked_contract = REPOSITORY_ROOT / CONTRACT_REPOSITORY_PATH
+    except (OSError, TypeError, ValueError):
+        candidate = None
+        tracked_contract = None
+    if (
+        candidate is not None
+        and tracked_contract is not None
+        and os.path.normcase(str(candidate)) == os.path.normcase(str(tracked_contract))
+    ):
+        try:
+            raw, _identity = read_tracked_head_blob(
+                REPOSITORY_ROOT,
+                CONTRACT_REPOSITORY_PATH,
+                verify_worktree_filtered_identity=True,
+            )
+        except SourceIdentityError as exc:
+            raise ValidationError(
+                "tracked authority contract source identity could not be proven"
+            ) from exc
+        return raw, _parse_json_object(raw, path)
+    return _read_json(path)
 
 
 def _inventory_digest(raw: bytes) -> str:
@@ -301,7 +340,7 @@ def _validate_deviations(deviations: Any, responsibilities: dict[str, dict[str, 
 
 
 def validate_contract(contract_path: Path, inventory_path: Path) -> dict[str, Any]:
-    contract_raw, contract = _read_json(contract_path)
+    contract_raw, contract = _read_contract_json(contract_path)
     inventory_raw, inventory = _read_json(inventory_path)
     _require(contract_raw == canonical_json_bytes(contract), "contract JSON is not canonical deterministic bytes")
     _require(set(contract) == TOP_LEVEL_KEYS, "top-level contract schema changed")
