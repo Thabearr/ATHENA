@@ -573,7 +573,9 @@ def test_installed_manifest_schema_policy_identity_and_release_ids_are_pinned(tm
 
 def test_port_02_receipt_is_canonical_self_hashed_and_pins_parity(tmp_path: Path) -> None:
     receipt_path = ROOT / receipt_audit.ARTIFACT_PATH
-    document = json.loads(receipt_path.read_text(encoding="utf-8"))
+    raw_receipt = receipt_path.read_bytes()
+    document = receipt_audit._load_strict_json(raw_receipt)
+    assert raw_receipt == receipt_audit.canonical_json_bytes(document)
     summary = receipt_audit.validate_receipt(document)
     assert summary["canonical_sha256"] == document["canonical_sha256"]
     root, trusted, _manifest = build_synthetic_release(tmp_path)
