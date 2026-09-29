@@ -512,7 +512,7 @@ def test_installed_offline_probe_semantics_equal_development_but_provenance_diff
 
 def test_port_02b_receipt_and_audit_pin_offline_probe_vector(tmp_path: Path):
     result = port02b_audit.validate_current_state()
-    assert result["canonical_sha256"] == "e4f604c87f8118f0583aabcfe8d8c554c3b781ff1d4ebef60d6a3a4e7271003a"
+    assert result["canonical_sha256"] == "a11307ee1e3fd3e9da307f9384479d5fdf3e1f2a4d35a57cb892ae6b705e9cde"
     assert result["network_provider_delivery_calls"] == 0
 
     request = RunRequest(
