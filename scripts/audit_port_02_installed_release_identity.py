@@ -54,19 +54,58 @@ RECEIPT_FIELDS = frozenset(
         "canonical_sha256",
     }
 )
-EXPECTED_ANCHORS = {
-    "P44R_RECEIPT": "90e2d7e984609ded80c9113a05453628bebadfcb3cede7fc95b9696931016552",
-    "P44S_RECEIPT": "0907272a20b439e6874ee3b3fa399a488e8dd3c9a6e428dafa2aa53202c513c3",
-    "BASE00_JSON": "d3db092eb890f45cae9eccfefb7134a59bf4d1b9f43e43160421c4210832b27f",
-    "P05_RUNTIME_ARTIFACT": "a8ccb4c0c8ab2bea9bd133bb7fa7e155957bf1e38e5bf7ae6cccb4f44640f7e4",
-    "PORT01A_INVENTORY": "78b92cde4681d3bbd71007ed4c3e434717c029f6745b3b37ecb93bb917738966",
-    "PORT01B_RECEIPT": PORT01B_CANONICAL_SHA256,
-}
+EXPECTED_ANCHORS = (
+    {
+        "anchor_id": "P44R_RECEIPT",
+        "path": "artifacts/architecture/p4_4r_shadow_runtime_composition_stabilization_v1.json",
+        "git_blob_sha1": "0ed10b25f57a87037bf2d786a8f2ec77b0b2f55f",
+        "git_blob_payload_sha256": "965f42e56823de78013c40a5b839ea81d0d5c79aadb4a02bc122110014a51eab",
+        "canonical_sha256": "90e2d7e984609ded80c9113a05453628bebadfcb3cede7fc95b9696931016552",
+    },
+    {
+        "anchor_id": "P44S_RECEIPT",
+        "path": "artifacts/architecture/p4_4s_canonical_adapter_bound_context_builder_v1.json",
+        "git_blob_sha1": "a8368721e2181e44a54bce25aae6171df11b6b40",
+        "git_blob_payload_sha256": "78ee27a58dff7c9c22ca7aee6740d9aa35bcc7d655aa9e2ad0a6ff4047ad8d8e",
+        "canonical_sha256": "0907272a20b439e6874ee3b3fa399a488e8dd3c9a6e428dafa2aa53202c513c3",
+    },
+    {
+        "anchor_id": "BASE00_JSON",
+        "path": "artifacts/product/product_baseline_v1.json",
+        "git_blob_sha1": "a37c079b9175c1e24ac098b87fd6bc28e23e9527",
+        "git_blob_payload_sha256": "c171cc6adf713d4c4ec97a0f23eb73ae3ac48abc472e71db9afbd33fbd0013a3",
+        "canonical_sha256": "d3db092eb890f45cae9eccfefb7134a59bf4d1b9f43e43160421c4210832b27f",
+    },
+    {
+        "anchor_id": "P05_RUNTIME_ARTIFACT",
+        "path": "artifacts/architecture/runtime-reachability-v1.json",
+        "git_blob_sha1": "0c840c9b245d0eb8610a62ac3cc8bbc3be1120a1",
+        "git_blob_payload_sha256": "a8ccb4c0c8ab2bea9bd133bb7fa7e155957bf1e38e5bf7ae6cccb4f44640f7e4",
+        "canonical_sha256": None,
+    },
+    {
+        "anchor_id": "PORT01A_INVENTORY",
+        "path": "artifacts/architecture/port_01_windows_failure_inventory_v1.json",
+        "git_blob_sha1": "6ff6fd3153419e7dae7f789401dc1b757d207126",
+        "git_blob_payload_sha256": "b6958170ab20752656d40a8809563fe939c2875a34d88366430af216536d5aec",
+        "canonical_sha256": "78b92cde4681d3bbd71007ed4c3e434717c029f6745b3b37ecb93bb917738966",
+    },
+    {
+        "anchor_id": "PORT01B_RECEIPT",
+        "path": "artifacts/architecture/port_01_source_identity_parity_v1.json",
+        "git_blob_sha1": "4ad2dd77cc95a82410aa973387f81c00175f04a8",
+        "git_blob_payload_sha256": "a307f5a002c533ff25db62634329c27e772b7e441aab8d3583c719c60a9a614e",
+        "canonical_sha256": PORT01B_CANONICAL_SHA256,
+    },
+)
 EXPECTED_BEFORE_SOURCE = {
-    "domain/canonical_core.py": "cb241f82069ca8f6904b3779b704b0ed5583ddb8",
-    "runtime/release_identity.py": None,
-    "runtime/resources.py": None,
-    "config/release_manifest.schema.json": None,
+    "domain/canonical_core.py": (
+        "cb241f82069ca8f6904b3779b704b0ed5583ddb8",
+        "9608d9b57e89055710080ee104e3462c423a52bead38b2fc0660d7af91c8c148",
+    ),
+    "runtime/release_identity.py": (None, None),
+    "runtime/resources.py": (None, None),
+    "config/release_manifest.schema.json": (None, None),
 }
 EXPECTED_SOURCE_PATHS = tuple(sorted(EXPECTED_BEFORE_SOURCE))
 EXPECTED_ROLES = list(RESOURCE_ROLES)
@@ -225,6 +264,13 @@ def validate_receipt(document: dict[str, Any]) -> dict[str, Any]:
         raise Port02AuditError("installed no-Git or unrelated-cwd proof is missing")
     if installed.get("unicode_release_root") is not True or installed.get("read_only_resources") is not True:
         raise Port02AuditError("installed platform-path proof is incomplete")
+    if (
+        installed.get("platform_tag") not in {"windows", "linux"}
+        or installed.get("architecture_tag") not in {"x86_64", "aarch64"}
+        or installed.get("windows_local_result") != "PASS"
+        or installed.get("hosted_linux_gate") != "REQUIRED_ON_EXACT_FINAL_HEAD"
+    ):
+        raise Port02AuditError("installed platform evidence is not accurately classified")
 
     resources = document["resource_proof"]
     expected_resource_paths = {
@@ -300,7 +346,7 @@ def validate_receipt(document: dict[str, Any]) -> dict[str, Any]:
         raise Port02AuditError("writable-root policy drifted")
 
     anchors = document["immutable_anchors"]
-    if type(anchors) is not list or {item.get("anchor_id"): item.get("canonical_sha256") for item in anchors} != EXPECTED_ANCHORS:
+    if type(anchors) is not list or tuple(anchors) != EXPECTED_ANCHORS:
         raise Port02AuditError("historical P4.4/BASE/runtime/PORT anchors changed")
     for item in anchors:
         validate_repository_relative_path(item.get("path"))
@@ -312,10 +358,14 @@ def validate_receipt(document: dict[str, Any]) -> dict[str, Any]:
         raise Port02AuditError("PORT-02A current source identity path list changed")
     for row in source_rows:
         path = validate_repository_relative_path(row.get("path"))
-        if row.get("before_git_blob_sha1") != EXPECTED_BEFORE_SOURCE[path]:
+        before_blob, before_payload = EXPECTED_BEFORE_SOURCE[path]
+        if row.get("before_git_blob_sha1") != before_blob:
             raise Port02AuditError(f"PORT-02A before identity changed for {path}")
-        if row.get("before_git_blob_sha1") is not None:
-            _require_sha(row["before_git_blob_sha1"], sha1=True, label=f"{path} before Git SHA")
+        if row.get("before_git_blob_payload_sha256") != before_payload:
+            raise Port02AuditError(f"PORT-02A before payload identity changed for {path}")
+        if before_blob is not None:
+            _require_sha(before_blob, sha1=True, label=f"{path} before Git SHA")
+            _require_sha(before_payload, label=f"{path} before payload SHA")
         _require_sha(row.get("after_git_blob_sha1"), sha1=True, label=f"{path} after Git SHA")
         _require_sha(row.get("after_git_blob_payload_sha256"), label=f"{path} after payload SHA")
 

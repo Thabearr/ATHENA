@@ -24,6 +24,7 @@ from runtime.resources import (
     WritableRoots,
     default_writable_roots,
 )
+from scripts import audit_port_02_installed_release_identity as receipt_audit
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -568,3 +569,30 @@ def test_installed_manifest_schema_policy_identity_and_release_ids_are_pinned(tm
     trusted = _write_manifest(root, manifest)
     with pytest.raises(release_identity.ReleaseManifestError, match="policy"):
         release_identity.verify_installed_release(root, trusted)
+
+
+def test_port_02_receipt_is_canonical_self_hashed_and_pins_parity(tmp_path: Path) -> None:
+    receipt_path = ROOT / receipt_audit.ARTIFACT_PATH
+    document = json.loads(receipt_path.read_text(encoding="utf-8"))
+    summary = receipt_audit.validate_receipt(document)
+    assert summary["canonical_sha256"] == document["canonical_sha256"]
+    root, trusted, _manifest = build_synthetic_release(tmp_path)
+    if _platform_tags() == (
+        document["installed_proof"]["platform_tag"],
+        document["installed_proof"]["architecture_tag"],
+    ):
+        assert trusted == document["installed_proof"]["trusted_manifest_sha256"]
+    installed = release_identity.verify_installed_release(root, trusted)
+    bindings = core.resolve_canonical_core(
+        _authority_manifest(),
+        regime_id=REGIME,
+        release_identity=installed,
+        resources=ResourceResolver.for_installed(installed),
+    )
+    assert bindings.canonical_sha256 == document["canonical_core_parity"]["installed_bindings_sha256"]
+    assert bindings.registry_canonical_sha256 == document["canonical_core_parity"]["registry_canonical_sha256"]
+
+
+def test_port_02_audit_duplicate_json_keys_fail_closed() -> None:
+    with pytest.raises(receipt_audit.Port02AuditError, match="duplicate JSON"):
+        receipt_audit._load_strict_json(b'{"schema_version":1,"schema_version":1}\n')
