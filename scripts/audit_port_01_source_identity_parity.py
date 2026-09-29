@@ -464,18 +464,17 @@ def validate_current_state() -> dict[str, Any]:
                 # inventory) have no embedded self-hash field; their
                 # canonical identity is the exact output of their
                 # source-controlled pretty JSON serializer.
-                canonical_identity = canonical_payload_sha256(
-                    (
-                        json.dumps(
-                            parsed,
-                            ensure_ascii=False,
-                            allow_nan=False,
-                            sort_keys=True,
-                            indent=2,
-                        )
-                        + "\n"
+                canonical_payload = (
+                    json.dumps(
+                        parsed,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        sort_keys=True,
+                        indent=2,
                     )
-                )
+                    + "\n"
+                ).encode("utf-8")
+                canonical_identity = canonical_payload_sha256(canonical_payload)
             if canonical_identity != anchor["canonical_sha256"]:
                 raise PortabilityAuditError(f"historical canonical identity changed: {anchor['anchor_id']}")
 
