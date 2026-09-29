@@ -484,7 +484,7 @@ def test_writable_roots_are_separate_and_platform_policies_are_explicit(
     assert linux.data_root == Path("/data/athena")
     assert linux.cache_root == Path("/cache/athena")
     assert linux.state_root == Path("/state/athena")
-    with pytest.raises(ResourceResolutionError, match="unsupported"):
+    with pytest.raises(ResourceResolutionError, match="support Windows and Linux only"):
         default_writable_roots(platform_name="darwin", environ={"HOME": "/tmp"})
     with pytest.raises(ResourceResolutionError, match="LOCALAPPDATA"):
         default_writable_roots(platform_name="win32", environ={})
