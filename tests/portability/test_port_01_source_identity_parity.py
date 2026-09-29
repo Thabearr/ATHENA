@@ -353,9 +353,33 @@ def test_current_platform_audit_is_offline_and_read_only(
     monkeypatch.setattr(socket, "create_connection", forbidden)
     monkeypatch.setattr(urllib.request, "urlopen", forbidden)
     result = audit.validate_current_state()
-    assert result["result"] == "PORT_01B_SOURCE_IDENTITY_PARITY_PASS"
+    assert result["result"] == "PORT_01B_SOURCE_IDENTITY_PARITY_SKIP_SOURCE_MOVED"
+    assert result["moved_paths"] == ["domain/canonical_core.py"]
     assert result["fixed_blocker_count"] == 10
     assert result["network_provider_delivery_calls"] == 0
+
+
+def test_b2_current_source_drift_outside_b3_authorized_path_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = {
+        "path": "scripts/validate_main_shadow_authority_parity.py",
+        "after_git_blob_sha1": "a" * 40,
+        "after_git_blob_payload_sha256": "b" * 64,
+    }
+    identity = source_identity.DevelopmentSourceIdentity(
+        repository_relative_path=row["path"],
+        git_blob_sha1="c" * 40,
+        git_blob_payload_sha256="d" * 64,
+        filtered_worktree_git_blob_sha1="c" * 40,
+        raw_worktree_sha256="e" * 64,
+    )
+    monkeypatch.setattr(audit, "load_receipt", lambda: {"current_source_evolution": [row]})
+    monkeypatch.setattr(audit, "validate_receipt", lambda _document: {})
+    monkeypatch.setattr(audit, "EXPECTED_ANCHORS", ())
+    monkeypatch.setattr(audit, "read_tracked_head_blob", lambda *_args, **_kwargs: (b"", identity))
+    with pytest.raises(audit.PortabilityAuditError, match="current source identity changed"):
+        audit.validate_current_state()
 
 
 def test_canonical_core_uses_same_tracked_identity_for_unchanged_component() -> None:
