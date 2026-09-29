@@ -13,6 +13,10 @@ from pathlib import Path
 import pytest
 
 from scripts import validate_main_shadow_authority_parity as validator
+from runtime.source_identity import (
+    canonical_payload_sha256,
+    read_tracked_head_blob,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "config/architecture/main-shadow-authority-parity-v1.json"
@@ -59,9 +63,56 @@ def test_baseline_contract_is_valid_and_deterministic(tmp_path: Path) -> None:
     payload = _payload()
     first = _validate(payload, tmp_path)
     second = _validate(payload, tmp_path)
+    contract_blob, identity = read_tracked_head_blob(
+        ROOT,
+        "config/architecture/main-shadow-authority-parity-v1.json",
+    )
     assert first == second
-    assert first["contract_sha256"] == hashlib.sha256(CONTRACT.read_bytes()).hexdigest()
-    assert CONTRACT.read_bytes() == validator.canonical_json_bytes(payload)
+    assert first["contract_sha256"] == canonical_payload_sha256(contract_blob)
+    assert contract_blob == validator.canonical_json_bytes(json.loads(contract_blob))
+    assert identity.git_blob_sha1 == "034985b0f750550a30369b2cfa295db1ce0ec13d"
+    assert identity.git_blob_payload_sha256 == (
+        "d4f525a0eb8d3ffe07e5b64a3452d758bc9e180c5b1db37feecbac1faf395bfe"
+    )
+    assert first["contract_sha256"] == hashlib.sha256(contract_blob).hexdigest()
+
+
+def test_tracked_contract_uses_exact_head_payload_after_filtered_checkout_proof() -> None:
+    result = validator.validate_contract(CONTRACT, INVENTORY)
+    tracked_bytes, identity = read_tracked_head_blob(
+        ROOT,
+        "config/architecture/main-shadow-authority-parity-v1.json",
+    )
+    assert result["contract_sha256"] == hashlib.sha256(tracked_bytes).hexdigest()
+    assert identity.filtered_worktree_git_blob_sha1 == identity.git_blob_sha1
+    assert identity.raw_worktree_sha256 == hashlib.sha256(CONTRACT.read_bytes()).hexdigest()
+
+
+def test_untracked_crlf_candidate_is_not_replaced_with_tracked_head_bytes(tmp_path: Path) -> None:
+    payload = _payload()
+    canonical = validator.canonical_json_bytes(payload)
+    candidate = tmp_path / "untracked-contract.json"
+    candidate.write_bytes(canonical.replace(b"\n", b"\r\n"))
+    inventory = tmp_path / "inventory.json"
+    inventory.write_bytes(_committed_inventory_bytes())
+    with pytest.raises(validator.ValidationError, match="not canonical"):
+        validator.validate_contract(candidate, inventory)
+
+
+def test_untracked_symlink_alias_is_checked_as_raw_canonical_bytes(tmp_path: Path) -> None:
+    candidate = tmp_path / "contract-alias.json"
+    target = tmp_path / "contract-crlf.json"
+    try:
+        target.write_bytes(
+            validator.canonical_json_bytes(_payload()).replace(b"\n", b"\r\n")
+        )
+        candidate.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are unavailable in this Windows environment")
+    inventory = tmp_path / "inventory.json"
+    inventory.write_bytes(_committed_inventory_bytes())
+    with pytest.raises(validator.ValidationError, match="not canonical"):
+        validator.validate_contract(candidate, inventory)
 
 
 def test_inventory_digest_rejects_semantic_mutation_but_tolerates_checkout_eol(tmp_path: Path) -> None:

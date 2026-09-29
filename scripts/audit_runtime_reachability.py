@@ -16,7 +16,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import tempfile
 from types import SimpleNamespace
@@ -30,6 +29,11 @@ from domain.architecture_runtime_reachability import (
     canonical_json_bytes,
     scoped_callable_checkpoint,
     validate_trace_document,
+)
+from runtime.source_identity import (
+    DevelopmentSourceIdentity,
+    SourceIdentityError,
+    read_tracked_head_blob,
 )
 
 
@@ -375,6 +379,28 @@ def _probe_historical_prediction_service(
     return trace, observation
 
 
+def _materialize_tracked_fixture(relative_path: str, destination: Path) -> DevelopmentSourceIdentity:
+    """Materialize exact tracked HEAD bytes for a synthetic raw-evidence replay."""
+
+    try:
+        payload, identity = read_tracked_head_blob(REPOSITORY_ROOT, relative_path)
+    except SourceIdentityError as exc:
+        raise RuntimeReachabilityError(
+            f"retained source fixture identity could not be proven: {relative_path}"
+        ) from exc
+    try:
+        destination.write_bytes(payload)
+    except OSError as exc:
+        raise RuntimeReachabilityError(
+            f"retained source fixture could not be materialized: {relative_path}"
+        ) from exc
+    if destination.read_bytes() != payload:
+        raise RuntimeReachabilityError(
+            f"retained source fixture materialization changed bytes: {relative_path}"
+        )
+    return identity
+
+
 def _make_shadow_context_and_quotes():
     from domain import current_all_market_shadow_probability_settlement as prc
     from domain import current_shadow_sportybet_pc_upcoming_reconciliation as pc_upcoming
@@ -387,14 +413,20 @@ def _make_shadow_context_and_quotes():
 
     fixture = "FOTMOB:5071393"
     event = "sr:match:66299604"
-    evidence_fixture_root = REPOSITORY_ROOT / "tests/fixtures/p4_4r_run_36285099805_quote_evidence"
     temporary_root = tempfile.TemporaryDirectory(prefix="p05-current-shadow-evidence-")
     repository_root = Path(temporary_root.name)
     capture_id = "1aec7fa77430c1f7ab99b957"
     evidence_directory = repository_root / live.ALLOWED_OUTPUT_RELATIVE / capture_id
     evidence_directory.mkdir(parents=True)
-    shutil.copyfile(evidence_fixture_root / "initial/event.raw.json", evidence_directory / live.RAW_FILENAME)
-    shutil.copyfile(evidence_fixture_root / "initial/manifest.json", evidence_directory / live.MANIFEST_FILENAME)
+    fixture_prefix = "tests/fixtures/p4_4r_run_36285099805_quote_evidence/initial"
+    _materialize_tracked_fixture(
+        f"{fixture_prefix}/event.raw.json",
+        evidence_directory / live.RAW_FILENAME,
+    )
+    _materialize_tracked_fixture(
+        f"{fixture_prefix}/manifest.json",
+        evidence_directory / live.MANIFEST_FILENAME,
+    )
     evidence = prb.load_provider_event_evidence(
         evidence_directory,
         repository_root=repository_root,
