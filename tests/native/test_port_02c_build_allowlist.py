@@ -68,6 +68,8 @@ def test_banned_frozen_modules_cover_tests():
             assert banned in text, spec
         assert "shell=True" not in text
         for hidden in (
+            "domain.historical_training_coverage",
+            "domain.historical_asof_features",
             "domain._historical_training_coverage_impl",
             "domain._historical_training_coverage_post_hardening",
             "domain._historical_training_coverage_row_issuance",

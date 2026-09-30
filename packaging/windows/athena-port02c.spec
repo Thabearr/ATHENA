@@ -14,11 +14,13 @@ REPO_ROOT = Path(SPECPATH).resolve().parents[1]
 UI_DIR = REPO_ROOT / "ui"
 
 # Hidden imports PyInstaller's static analysis cannot trace: domain/__init__
-# and the historical-training-coverage facade resolve these underscore
-# implementations through importlib at package-initialization time
-# (proven by native CI: ModuleNotFoundError for the impl alias).
+# resolves these through importlib at package-initialization time
+# (proven by native CI: ModuleNotFoundError for the impl alias in round 3,
+# then for the facade itself in round 5 via run_desktop -> api.server).
 # Keep this list exact; do not broaden into package collection.
 _HIDDEN_DOMAIN_IMPORTS = [
+    "domain.historical_training_coverage",
+    "domain.historical_asof_features",
     "domain._historical_training_coverage_impl",
     "domain._historical_training_coverage_post_hardening",
     "domain._historical_training_coverage_row_issuance",
