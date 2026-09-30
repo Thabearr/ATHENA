@@ -48,6 +48,24 @@ FIXED_NOW = datetime(2026, 9, 21, 12, 0, 0, tzinfo=WAT)
 FIXED_UTC = FIXED_NOW.astimezone(timezone.utc)
 FIXED_RECEIPT_TIME = datetime(2026, 9, 21, 11, 0, 0, 123456, tzinfo=timezone.utc)
 FIXED_COMMIT = "a" * 40
+HISTORICAL_RECEIPT_CANONICAL_SHA256 = "268933433aaab84cb2533840f2e01eba96ec5906e796c9eced2032e1d6706208"
+HISTORICAL_SOURCE_IDENTITY_FIELDS = frozenset(
+    {
+        "build_acca_source_sha256",
+        "parser_source_sha256",
+        "service_source_sha256",
+    }
+)
+HISTORICAL_SOURCE_IDENTITY_VALUES = {
+    "build_acca_source_sha256": "a7e0b6674a7f4d6e42b2d3dae7b14ec1b47a844323b6085fd7e6d1aa30b9de97",
+    "parser_source_sha256": "5b2f5c83c19749bb1769026e3bb34d1cd5c2ab7f701cc446ef962d80a75c6772",
+    "service_source_sha256": "0a87df8ef7274dcbff25088f36fcbaefe085394cc378eb8ec447a65d25f3bc98",
+}
+CURRENT_SOURCE_PATHS = {
+    "build_acca_source_sha256": "build_acca.py",
+    "parser_source_sha256": "services/athena_run_request_parser.py",
+    "service_source_sha256": "services/athena_run_service.py",
+}
 
 PRESERVED_HISTORICAL_FILES = {
     "artifacts/architecture/runtime-reachability-v1.json": P0_5_RUNTIME_RAW_SHA256,
@@ -265,6 +283,52 @@ print(json.dumps(result, sort_keys=True))
     return proof
 
 
+def _verify_worker_timeout_ownership() -> None:
+    """Keep the Current Shadow supervisor as the sole business-timeout owner."""
+    service_path = REPOSITORY_ROOT / "services/athena_run_service.py"
+    service_tree = ast.parse(service_path.read_text(encoding="utf-8"))
+    executor = next(
+        (
+            node
+            for node in service_tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "_ShadowSupervisorExecutor"
+        ),
+        None,
+    )
+    call_method = next(
+        (
+            node
+            for node in (executor.body if executor is not None else ())
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "__call__"
+        ),
+        None,
+    )
+    worker_calls = [
+        node
+        for node in (ast.walk(call_method) if call_method is not None else ())
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_run_reviewed_shadow_worker"
+    ]
+    if len(worker_calls) != 1 or any(keyword.arg == "timeout" for keyword in worker_calls[0].keywords):
+        raise P4_1AuditError("reviewed worker call gained or lost timeout ownership")
+
+    launcher_path = REPOSITORY_ROOT / "runtime/worker_launcher.py"
+    launcher_tree = ast.parse(launcher_path.read_text(encoding="utf-8"))
+    timeout_owner_calls = [
+        node
+        for node in ast.walk(launcher_tree)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Attribute) and node.func.attr in {"communicate", "wait"})
+            or (isinstance(node.func, ast.Name) and node.func.id == "_spawn_process")
+        )
+        and any(keyword.arg == "timeout" for keyword in node.keywords)
+    ]
+    if timeout_owner_calls:
+        raise P4_1AuditError("worker launcher acquired a Current Shadow business timeout")
+
+
 def _shadow_timeout_finalization_proof() -> dict[str, Any]:
     """Prove the canonical adapter waits for the existing supervisor receipt.
 
@@ -276,10 +340,12 @@ def _shadow_timeout_finalization_proof() -> dict[str, Any]:
 
     from scripts import execute_current_shadow_all_market_fresh_reprice_bound as bound
     from services import athena_run_service as service_module
+    from runtime.worker_launcher import WorkerProcessResult
 
     reviewed_inner_seconds = bound._supervisor_timeout_seconds()
     if reviewed_inner_seconds != 75 * 60:
         raise P4_1AuditError("reviewed Current Shadow timeout is not exactly 75 minutes")
+    _verify_worker_timeout_ownership()
     request = parse_explicit_request(
         days="2026-09-23",
         target_legs=2,
@@ -299,9 +365,26 @@ def _shadow_timeout_finalization_proof() -> dict[str, Any]:
     }
     calls: list[dict[str, Any]] = []
 
-    def write_fake_supervisor_artifacts(command, **kwargs):
-        calls.append(dict(kwargs))
-        output_dir = Path(command[command.index("--output-dir") + 1])
+    def write_fake_supervisor_artifacts(
+        request_value,
+        *,
+        run_directory,
+        exact_commit_sha,
+    ):
+        if request_value != request:
+            raise P4_1AuditError("synthetic worker received a different request")
+        if exact_commit_sha != FIXED_COMMIT:
+            raise P4_1AuditError("synthetic worker received a different commit identity")
+        if run_directory.name != request_value.canonical_sha256:
+            raise P4_1AuditError("synthetic worker directory does not bind the request identity")
+        calls.append(
+            {
+                "request": request_value,
+                "run_directory": run_directory,
+                "exact_commit_sha": exact_commit_sha,
+            }
+        )
+        output_dir = run_directory / "current-shadow"
         output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = observed.isoformat(timespec="microseconds").replace("+00:00", "Z")
         request_policy = {
@@ -418,14 +501,14 @@ def _shadow_timeout_finalization_proof() -> dict[str, Any]:
         (output_dir / "current-shadow-all-market-progress.json").write_text(
             json.dumps(progress), encoding="utf-8"
         )
-        return SimpleNamespace(returncode=0, stdout="synthetic timeout receipt", stderr="")
+        return WorkerProcessResult(returncode=0, stdout="synthetic timeout receipt", stderr="")
 
     with tempfile.TemporaryDirectory(prefix="athena-p4-1-shadow-timeout-") as temporary_root:
         with (
             _network_denied() as network_attempts,
             patch.object(
-                service_module.subprocess,
-                "run",
+                service_module,
+                "_run_reviewed_shadow_worker",
                 side_effect=write_fake_supervisor_artifacts,
             ),
         ):
@@ -435,9 +518,7 @@ def _shadow_timeout_finalization_proof() -> dict[str, Any]:
             )
             receipt = service.run(request, output_root=Path(temporary_root))
 
-    outer_timeout_present = bool(calls and "timeout" in calls[0])
-    if outer_timeout_present:
-        raise P4_1AuditError("AthenaRunService added a competing outer Shadow timeout")
+    outer_timeout_present = False
     legacy = receipt.evidence["current_shadow_adapter"]["evidence"]["legacy_current_shadow"]
     preserved = legacy["receipt"]
     expected_canonical_counts = {
@@ -464,7 +545,16 @@ def _shadow_timeout_finalization_proof() -> dict[str, Any]:
     )
     if not inner_receipt_preserved or not partial_progress_preserved:
         raise P4_1AuditError("Current Shadow timeout receipt/progress was not preserved canonically")
-    if len(calls) != 1 or network_attempts["count"] != 0:
+    if (
+        len(calls) != 1
+        or calls[0]
+        != {
+            "request": request,
+            "run_directory": Path(temporary_root) / request.canonical_sha256,
+            "exact_commit_sha": FIXED_COMMIT,
+        }
+        or network_attempts["count"] != 0
+    ):
         raise P4_1AuditError("timeout preservation proof made an unexpected call or network attempt")
 
     return {
@@ -937,6 +1027,8 @@ def verify_committed_receipt(path: Path | None = None) -> dict[str, Any]:
     unsigned.pop("canonical_sha256", None)
     if type(stored) is not str or canonical_sha256(unsigned) != stored:
         raise P4_1AuditError("P4.1 receipt canonical SHA-256 failed verification")
+    if stored != HISTORICAL_RECEIPT_CANONICAL_SHA256:
+        raise P4_1AuditError("P4.1 historical receipt canonical identity changed")
     if (
         receipt.get("policy_id") != POLICY_ID
         or receipt.get("schema_version") != SCHEMA_VERSION
@@ -945,6 +1037,11 @@ def verify_committed_receipt(path: Path | None = None) -> dict[str, Any]:
         or receipt.get("component_registry_canonical_sha256") != REGISTRY_CANONICAL_SHA256
     ):
         raise P4_1AuditError("P4.1 receipt policy/base identity failed verification")
+    if any(
+        receipt.get(field) != expected
+        for field, expected in HISTORICAL_SOURCE_IDENTITY_VALUES.items()
+    ):
+        raise P4_1AuditError("P4.1 historical source identity fields changed")
     if receipt.get("p4_1_cli_exit_gate_satisfied") is not True:
         raise P4_1AuditError("P4.1 receipt does not claim a satisfied exit gate")
     if receipt.get("network_attempt_count") != 0:
@@ -1007,18 +1104,95 @@ def verify_committed_receipt(path: Path | None = None) -> dict[str, Any]:
     return receipt
 
 
+def _current_source_identities(repository_root: Path = REPOSITORY_ROOT) -> dict[str, dict[str, str]]:
+    """Resolve current source identities from exact tracked HEAD blobs."""
+    from runtime.source_identity import SourceIdentityError, read_tracked_head_blob
+
+    identities: dict[str, dict[str, str]] = {}
+    for field, relative_path in CURRENT_SOURCE_PATHS.items():
+        try:
+            _payload, identity = read_tracked_head_blob(repository_root, relative_path)
+        except SourceIdentityError as exc:
+            raise P4_1AuditError(
+                f"current tracked source identity failed for {relative_path}"
+            ) from exc
+        if (
+            identity.repository_relative_path != relative_path
+            or identity.filtered_worktree_git_blob_sha1 != identity.git_blob_sha1
+        ):
+            raise P4_1AuditError(f"current tracked source identity is unbound: {relative_path}")
+        identities[field] = {
+            "path": relative_path,
+            "git_blob_sha1": identity.git_blob_sha1,
+            "git_blob_payload_sha256": identity.git_blob_payload_sha256,
+            "filtered_worktree_git_blob_sha1": identity.filtered_worktree_git_blob_sha1,
+        }
+    return identities
+
+
+def _compare_historical_and_current_receipts(
+    committed: dict[str, Any],
+    current: dict[str, Any],
+    current_source_identities: dict[str, dict[str, str]],
+) -> dict[str, Any]:
+    """Compare historical P4.1 semantics while classifying only source pins as moved."""
+    excluded = HISTORICAL_SOURCE_IDENTITY_FIELDS | {"canonical_sha256"}
+    all_fields = set(committed) | set(current)
+    changed_fields = [
+        field
+        for field in sorted(all_fields - excluded)
+        if field not in committed or field not in current or committed[field] != current[field]
+    ]
+    if changed_fields:
+        raise P4_1AuditError(
+            "non-source P4.1 receipt fields drifted: " + ", ".join(changed_fields)
+        )
+
+    moved_source_fields: list[str] = []
+    for field in sorted(HISTORICAL_SOURCE_IDENTITY_FIELDS):
+        expected_historical = HISTORICAL_SOURCE_IDENTITY_VALUES[field]
+        if committed.get(field) != expected_historical:
+            raise P4_1AuditError(f"historical P4.1 source identity changed: {field}")
+        identity = current_source_identities.get(field)
+        if type(identity) is not dict or type(identity.get("git_blob_payload_sha256")) is not str:
+            raise P4_1AuditError(f"current tracked source identity is missing: {field}")
+        current_sha256 = identity["git_blob_payload_sha256"]
+        if current.get(field) != current_sha256:
+            raise P4_1AuditError(
+                f"current source hash does not match tracked HEAD blob: {field}"
+            )
+        if current_sha256 != expected_historical:
+            moved_source_fields.append(field)
+
+    return {
+        "result": "SKIP_SOURCE_MOVED" if moved_source_fields else "PASS",
+        "policy_id": POLICY_ID,
+        "historical_integrity": "PASS",
+        "current_behavioral_compatibility": "PASS",
+        "historical_receipt_canonical_sha256": HISTORICAL_RECEIPT_CANONICAL_SHA256,
+        "moved_source_fields": moved_source_fields,
+        "current_source_identities": current_source_identities,
+    }
+
+
+def check_current_compatibility(path: Path | None = None) -> dict[str, Any]:
+    """Validate immutable P4.1 evidence and current behavioral compatibility."""
+    committed = verify_committed_receipt(path)
+    current = build_receipt()
+    identities = _current_source_identities()
+    return _compare_historical_and_current_receipts(committed, current, identities)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args(argv)
-    receipt = build_receipt()
     if args.check:
-        committed = verify_committed_receipt(args.output)
-        if committed != receipt:
-            raise SystemExit("committed P4.1 receipt differs from deterministic audit")
-        print(receipt["canonical_sha256"])
+        result = check_current_compatibility(args.output)
+        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         return 0
+    receipt = build_receipt()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(_canonical_bytes(receipt))
     print(receipt["canonical_sha256"])

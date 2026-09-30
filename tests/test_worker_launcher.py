@@ -9,7 +9,6 @@ import signal
 import stat
 import subprocess
 import sys
-from types import SimpleNamespace
 
 import pytest
 
@@ -449,12 +448,22 @@ def test_process_handle_captures_and_cancels_without_retry():
     assert result == WorkerProcessResult(0, "captured stdout", "captured stderr")
 
 
-@pytest.mark.parametrize("platform_name,expected", (("nt", "creationflags"), ("posix", "start_new_session")))
-def test_platform_process_group_ownership_interface(monkeypatch, platform_name: str, expected: str):
+@pytest.mark.parametrize("platform_name", ("nt", "posix"))
+def test_platform_process_group_ownership_interface(monkeypatch, platform_name: str):
     monkeypatch.setattr(worker_launcher.os, "name", platform_name)
+    if platform_name == "nt":
+        windows_new_process_group = 0x00000200
+        monkeypatch.setattr(
+            worker_launcher.subprocess,
+            "CREATE_NEW_PROCESS_GROUP",
+            windows_new_process_group,
+            raising=False,
+        )
+        expected = {"creationflags": windows_new_process_group}
+    else:
+        expected = {"start_new_session": True}
     options = worker_launcher._process_group_options()
-    assert tuple(options) == (expected,)
-    assert expected != "kill_tree"
+    assert options == expected
 
 
 def test_development_offline_probe_is_a_real_zero_external_process(tmp_path: Path):
@@ -571,6 +580,8 @@ def test_port_02b_receipt_and_audit_pin_offline_probe_vector(tmp_path: Path):
 
 
 def test_worker_entry_derives_current_shadow_arguments_only_from_bound_request(monkeypatch, tmp_path: Path):
+    from scripts import execute_current_shadow_request as request_module
+
     request = _request(shadow=True, create_share_code=False)
     command = _command(
         tmp_path / "run", request, operation="CURRENT_SHADOW_REQUEST"
@@ -580,12 +591,8 @@ def test_worker_entry_derives_current_shadow_arguments_only_from_bound_request(m
         captured["argv"] = list(argv)
         return 0
 
-    fake_module = SimpleNamespace(
-        WORKER_ENV="ATHENA_CURRENT_SHADOW_REQUEST_WORKER",
-        main=fake_main,
-    )
-    monkeypatch.setitem(sys.modules, "scripts.execute_current_shadow_request", fake_module)
-    monkeypatch.setenv("ATHENA_CURRENT_SHADOW_REQUEST_WORKER", "1")
+    monkeypatch.setattr(request_module, "main", fake_main)
+    monkeypatch.setenv(request_module.WORKER_ENV, "1")
     result = worker_entry._run_current_shadow(command, request)
     assert result == 0
     assert captured["argv"] == [
@@ -593,7 +600,7 @@ def test_worker_entry_derives_current_shadow_arguments_only_from_bound_request(m
         "--output-dir", os.fspath(command.run_directory / "current-shadow"),
         "--create-share-code", "false",
     ]
-    assert os.environ["ATHENA_CURRENT_SHADOW_REQUEST_WORKER"] == "1"
+    assert os.environ[request_module.WORKER_ENV] == "1"
 
 
 def test_worker_entry_rejects_extra_cli_and_wrong_fixed_command_path(tmp_path: Path):
