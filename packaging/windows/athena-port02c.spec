@@ -10,7 +10,7 @@ can never ship as a production runtime dependency.
 """
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(SPECPATH).resolve().parents[1]
 UI_DIR = REPO_ROOT / "ui"
 
 _shared = dict(

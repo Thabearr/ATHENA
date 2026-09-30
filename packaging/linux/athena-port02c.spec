@@ -8,7 +8,7 @@ pytest/tests are excluded so test code can never ship as production runtime.
 """
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(SPECPATH).resolve().parents[1]
 UI_DIR = REPO_ROOT / "ui"
 
 _shared = dict(
