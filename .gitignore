@@ -16,3 +16,7 @@ backtest_output.txt
 .cache/athena-history/
 .cache/athena-runtime/
 data/history_exports/
+
+# PORT-02C disposable native bundle output
+build-port02c-*/
+

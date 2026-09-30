@@ -1,0 +1,5 @@
+# PORT-02C build-only dependencies.
+# PyInstaller freezes native onedir payloads; it must never ship inside the
+# installed runtime and must never be added to production requirements.txt.
+# CI records the exact resolved version in build metadata at build time.
+pyinstaller>=6.0,<7

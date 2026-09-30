@@ -1,3 +1,4 @@
+import argparse
 import threading
 import uvicorn
 import webview
@@ -24,7 +25,19 @@ def wait_for_server():
             time.sleep(0.5)
     return False
 
+def parse_args(argv=None):
+    """Packaging/qualification-only CLI. Normal launches behave exactly as before."""
+    parser = argparse.ArgumentParser(description="ATHENA desktop shell.", allow_abbrev=False)
+    parser.add_argument(
+        "--port02c-smoke",
+        action="store_true",
+        help="Start the local server, prove readiness, then exit without opening a window.",
+    )
+    return parser.parse_args(argv)
+
+
 if __name__ == '__main__':
+    smoke = parse_args().port02c_smoke
     # Check if backend server is already online
     if not wait_for_server():
         # Start the backend server if not already running
@@ -37,6 +50,13 @@ if __name__ == '__main__':
             exit(1)
     else:
         logger.info("ATHENA local server is already active on port 8500.")
+
+    if smoke:
+        # Offline packaging smoke: resource/backend initialization is proven
+        # by server readiness above. No window, no provider call, clean exit.
+        # This switch never alters business authority and is not a product journey.
+        logger.info("ATHENA smoke mode: server is online, exiting without UI.")
+        raise SystemExit(0)
 
     import os
     # Launch the Pywebview window pointing to our local HTML file
