@@ -4,14 +4,16 @@
 Single COLLECT directory so the shell, worker, and qualifier executables
 share one frozen dependency closure. The builder invokes:
     pyinstaller packaging/windows/athena-port02c.spec --distpath <bundle>/bin --workpath <tmp>
-`datas` carries only the desktop shell UI assets; Python modules resolve via
+`datas` carries desktop UI assets and one exact reviewed source manifest; Python modules resolve via
 pathex + PyInstaller import analysis. pytest/tests are excluded so test code
 can never ship as a production runtime dependency.
 """
 from pathlib import Path
+import runpy
 
 REPO_ROOT = Path(SPECPATH).resolve().parents[1]
 UI_DIR = REPO_ROOT / "ui"
+_reviewed_data = runpy.run_path(str(REPO_ROOT / "scripts" / "port_02c_build_config.py"))["PYINSTALLER_REVIEWED_DATA_RESOURCES"]
 
 # Hidden imports PyInstaller's static analysis cannot trace: domain/__init__
 # resolves these through importlib at package-initialization time
@@ -57,7 +59,9 @@ shell_a = Analysis(  # noqa: F821
 )
 qualify_a = Analysis(  # noqa: F821
     [str(REPO_ROOT / "scripts" / "qualify_port_02_native_runtime.py")],
-    datas=[],
+    # Attach once: the single shared COLLECT places this exact static contract
+    # under _internal/artifacts/research-manifests for all three executables.
+    datas=[(str(REPO_ROOT / source), destination) for source, destination, _, _ in _reviewed_data],
     hiddenimports=list(_HIDDEN_DOMAIN_IMPORTS),
     **_shared,
 )

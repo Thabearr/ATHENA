@@ -9,6 +9,17 @@ BUILD_PYTHON = "3.12"
 ARCHITECTURE_TAG = "x86_64"
 PLATFORM_TAGS = ("windows", "linux")
 
+# Static reviewed source-contract data, not retained run qualification evidence.
+# (repository source, PyInstaller destination directory, exact size, byte SHA)
+PYINSTALLER_REVIEWED_DATA_RESOURCES = (
+    (
+        "artifacts/research-manifests/sportybet-ng-early-payout-settlement-source-evidence-v1.json",
+        "artifacts/research-manifests",
+        2059,
+        "af371490fb3e72dc9b5d3422a6b36af28ff4246ee6ead23b0c957e26c398afe4",
+    ),
+)
+
 # Release-manifest closed-world roots staged by the PORT-02C slice builder.
 # Minimal slice: only resources the installed qualification proof reads.
 # "domain" carries exactly the five staged CANONICAL_COMPONENT_SOURCE files

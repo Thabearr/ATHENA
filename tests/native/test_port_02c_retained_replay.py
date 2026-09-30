@@ -174,7 +174,14 @@ def test_no_normal_runtime_reachability():
             assert "port_02c_offline_composed_replay" not in path.read_text(encoding="utf-8")
 
 
-def test_real_composed_replay(tmp_path):
+def test_real_composed_replay(tmp_path, monkeypatch):
+    class HostClockMustNotBeRead(datetime):
+        @classmethod
+        def now(cls, *args, **kwargs):
+            raise AssertionError("qualification must not consult the host clock")
+
+    # Local qualifier dependency only; no production clock/verifier substitution.
+    monkeypatch.setattr(replay, "datetime", HostClockMustNotBeRead)
     value = replay.run_replay(fixture_root=FIXTURES, writable_root=tmp_path)
     assert value["qualification_reconciliation_sha256"] == replay.QUALIFICATION_SHA
     assert value["historical_run_reconciliation_sha256"] == replay.HISTORICAL_SHA

@@ -28,6 +28,7 @@ from scripts.port_02c_build_config import (  # noqa: E402
     ARCHITECTURE_TAG,
     BANNED_FROZEN_MODULES,
     PLATFORM_TAGS,
+    PYINSTALLER_REVIEWED_DATA_RESOURCES,
     QUALIFICATION_FIXTURE_PREFIXES,
     QUALIFY_EXE,
     SHELL_EXE,
@@ -100,6 +101,30 @@ def _canonical_json_bytes(value: object) -> bytes:
     ).encode("utf-8")
 
 
+def validate_reviewed_data_resources(repo: Path) -> list[dict]:
+    """Bind the exact static frozen data closure to clean tracked HEAD bytes."""
+    records = []
+    for rel, destination, expected_size, expected_sha in PYINSTALLER_REVIEWED_DATA_RESOURCES:
+        path = repo / PurePosixPath(rel)
+        for parent in (path, *path.parents):
+            if parent == repo:
+                break
+            if parent.is_symlink() or bool(getattr(parent, "is_junction", lambda: False)()):
+                _fail(f"reviewed data path is a symlink or junction: {rel}")
+        if not path.is_file():
+            _fail(f"reviewed data is not a normal file: {rel}")
+        blob, blob_sha1 = _require_clean_tracked(repo, rel)
+        if path.read_bytes() != blob:
+            _fail(f"reviewed data checkout bytes differ from HEAD: {rel}")
+        digest = hashlib.sha256(blob).hexdigest()
+        if len(blob) != expected_size or digest != expected_sha:
+            _fail(f"reviewed data byte size/SHA mismatch: {rel}")
+        records.append({"source_path": rel, "destination": destination,
+                        "byte_size": len(blob), "byte_sha256": digest,
+                        "source_git_blob_sha1": blob_sha1})
+    return records
+
+
 def _discover_qualification_files(repo: Path) -> list[str]:
     discovered: list[str] = []
     for prefix in QUALIFICATION_FIXTURE_PREFIXES:
@@ -124,6 +149,7 @@ def build(*, repo: Path, platform_tag: str, output: Path, freeze: bool) -> dict:
     except ReleaseIdentityError as exc:
         _fail(f"development checkout is not verified: {exc}")
     head_sha = identity.head_commit_sha
+    reviewed_data = validate_reviewed_data_resources(repo)
 
     if output.exists() and any(output.iterdir()):
         _fail(f"output directory is not empty: {output}")
@@ -283,6 +309,13 @@ def build(*, repo: Path, platform_tag: str, output: Path, freeze: bool) -> dict:
         if completed.returncode != 0:
             _fail(f"PyInstaller failed: {completed.stdout.decode('utf-8', 'replace')[-2000:]}")
         collected = bin_dir / "athena-bundle"
+        for record in reviewed_data:
+            installed = collected / "_internal" / record["destination"] / PurePosixPath(record["source_path"]).name
+            if not installed.is_file():
+                _fail(f"reviewed frozen data is missing: {installed}")
+            raw = installed.read_bytes()
+            if len(raw) != record["byte_size"] or hashlib.sha256(raw).hexdigest() != record["byte_sha256"]:
+                _fail(f"reviewed frozen data identity mismatch: {installed}")
         for key, names in (("shell", SHELL_EXE), ("worker", WORKER_EXE), ("qualifier", QUALIFY_EXE)):
             exe_path = collected / names[platform_tag]
             if not exe_path.is_file():
@@ -304,6 +337,7 @@ def build(*, repo: Path, platform_tag: str, output: Path, freeze: bool) -> dict:
         "qualification_file_count": len(qualification_records),
         "qualification_manifest_sha256": hashlib.sha256(qualification_manifest_bytes).hexdigest(),
         "executable_sha256": executables,
+        "pyinstaller_reviewed_data_resources": reviewed_data,
         "banned_frozen_modules": list(BANNED_FROZEN_MODULES),
         "entire_repo_bundled": False,
         "entire_venv_bundled": False,

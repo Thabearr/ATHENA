@@ -114,5 +114,6 @@ def test_staged_bundle_verifies_and_tamper_fails(tmp_path: Path):
     from scripts.port_02c_offline_composed_replay import STAGED_FIXTURE_ROOT, verify_fixture_manifest
 
     verify_fixture_manifest(bundle / "qualification" / STAGED_FIXTURE_ROOT)
+    assert metadata["pyinstaller_reviewed_data_resources"] == build_dev_bundle.validate_reviewed_data_resources(ROOT)
     qualification = json.loads((bundle / "qualification/qualification-manifest.json").read_bytes())
     assert all(row["staged_name"].startswith("retained/") for row in qualification["files"])
