@@ -330,10 +330,10 @@ def qualify(
             "fixture_sha256": fixture_shas,
             "wager": False,
         }
-        from scripts.port_02c_offline_composed_replay import FIXTURE_PREFIX, run_replay
+        from scripts.port_02c_offline_composed_replay import STAGED_FIXTURE_ROOT, run_replay
 
         semantic_payload["composed_replay"] = run_replay(
-            fixture_root=qualification_dir / FIXTURE_PREFIX,
+            fixture_root=qualification_dir / STAGED_FIXTURE_ROOT,
             writable_root=writable.data_root / "port02c-replay",
             variant=variant,
         )
@@ -352,6 +352,7 @@ def qualify(
         "variant": variant,
         "host_platform": HOST_PLATFORM,
         "host_arch": "x86_64",
+        "host_os_version": platform_module.platform(),
         "release_manifest_sha256": identity.manifest_sha256,
         "worker_sha256": worker_sha256,
         "semantic_replay_sha256": semantic_sha256,

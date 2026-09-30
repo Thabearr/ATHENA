@@ -110,3 +110,8 @@ def test_staged_bundle_verifies_and_tamper_fails(tmp_path: Path):
     assert (bundle / "build-metadata.json").is_file()
     assert (bundle / "qualification" / "qualification-manifest.json").is_file()
     assert metadata["qualification_file_count"] >= len(QUALIFICATION_FIXTURE_PREFIXES)
+    from scripts.port_02c_offline_composed_replay import STAGED_FIXTURE_ROOT, verify_fixture_manifest
+
+    verify_fixture_manifest(bundle / "qualification" / STAGED_FIXTURE_ROOT)
+    qualification = json.loads((bundle / "qualification/qualification-manifest.json").read_bytes())
+    assert all(row["staged_name"].startswith("retained/") for row in qualification["files"])

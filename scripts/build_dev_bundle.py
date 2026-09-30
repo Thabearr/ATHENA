@@ -220,10 +220,14 @@ def build(*, repo: Path, platform_tag: str, output: Path, freeze: bool) -> dict:
 
     qualification_dir = output / "qualification"
     qualification_dir.mkdir(parents=True, exist_ok=True)
+    from scripts.port_02c_offline_composed_replay import FIXTURE_PREFIX, STAGED_FIXTURE_ROOT, verify_fixture_manifest
+
     qualification_records: list[dict] = []
     for rel in _discover_qualification_files(repo):
         blob, blob_sha1 = _require_clean_tracked(repo, rel)
-        staged = qualification_dir / PurePosixPath(rel)
+        if not rel.startswith(FIXTURE_PREFIX + "/"):
+            _fail(f"qualification member is outside the exact retained corpus: {rel}")
+        staged = qualification_dir / STAGED_FIXTURE_ROOT / PurePosixPath(rel[len(FIXTURE_PREFIX) + 1:])
         if staged.exists():
             _fail(f"qualification fixture collision: {rel}")
         staged.parent.mkdir(parents=True, exist_ok=True)
@@ -243,9 +247,7 @@ def build(*, repo: Path, platform_tag: str, output: Path, freeze: bool) -> dict:
     }
     qualification_manifest_bytes = _canonical_json_bytes(qualification_manifest)
     (qualification_dir / "qualification-manifest.json").write_bytes(qualification_manifest_bytes)
-    from scripts.port_02c_offline_composed_replay import FIXTURE_PREFIX, verify_fixture_manifest
-
-    verify_fixture_manifest(qualification_dir / FIXTURE_PREFIX)
+    verify_fixture_manifest(qualification_dir / STAGED_FIXTURE_ROOT)
 
     pyinstaller_version = None
     executables: dict[str, str] = {}
@@ -293,6 +295,7 @@ def build(*, repo: Path, platform_tag: str, output: Path, freeze: bool) -> dict:
         "platform_tag": platform_tag,
         "architecture_tag": ARCHITECTURE_TAG,
         "host_platform": HOST_PLATFORM,
+        "host_os_version": platform_module.platform(),
         "python_version": platform_module.python_version(),
         "pyinstaller_version": pyinstaller_version,
         "frozen": freeze,
