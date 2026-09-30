@@ -183,6 +183,9 @@ def qualify(
             resolver = ResourceResolver.for_installed(identity)
         except (ReleaseIdentityError, ResourceResolutionError) as exc:
             raise QualificationError(f"installed resource resolver failed: {exc}") from exc
+        if (release_root / "bin/athena-bundle/_internal/config/architecture/component-authority-registry-v1.json").exists():
+            raise QualificationError("module-relative internal authority registry is forbidden")
+        resolver.read_bytes("config/architecture/component-authority-registry-v1.json", expected_role="AUTHORITY_REGISTRY")
         resource_shas: dict[str, str] = {}
         for record in identity.resources:
             try:
@@ -336,6 +339,8 @@ def qualify(
             fixture_root=qualification_dir / STAGED_FIXTURE_ROOT,
             writable_root=writable.data_root / "port02c-replay",
             variant=variant,
+            release_identity=identity,
+            resources=resolver,
         )
         semantic_bytes = (
             json.dumps(semantic_payload, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
@@ -378,6 +383,9 @@ def qualify(
         "cwd_authority": False,
         "install_root_write_count": 0,
         "canonical_owners": owners,
+        "module_relative_registry_required": False,
+        "release_managed_registry_present": True,
+        "pyinstaller_internal_registry_present": False,
         "bindings_policy_id": standard_bindings.policy_id,
     }
     result_bytes = (

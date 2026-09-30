@@ -22,6 +22,9 @@ def test_exact_static_allowlist_and_tracked_clean_bytes():
     }]
     assert not any(SOURCE.startswith(p) for p in QUALIFICATION_FIXTURE_PREFIXES)
     assert SOURCE not in {p for p, _ in SLICE_RESOURCES}
+    registry = "config/architecture/component-authority-registry-v1.json"
+    assert (registry, "AUTHORITY_REGISTRY") in SLICE_RESOURCES
+    assert registry not in {p for p, _, _, _ in PYINSTALLER_REVIEWED_DATA_RESOURCES}
 
 
 @pytest.mark.parametrize("platform", ["windows", "linux"])

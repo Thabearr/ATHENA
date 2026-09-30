@@ -70,11 +70,17 @@ def _refresh_selected_inputs(
     repository_root: Path,
     runtime_bindings: Any,
     evidence_loader: Callable[..., Any] | None = None,
+    release_identity=None,
+    resources=None,
 ) -> Any:
     """Refresh only initially selected exact fixtures; loader is an offline test seam."""
 
     if not isinstance(repository_root, Path):
         raise ShadowPriceError("fresh reprice requires the exact repository root")
+    source_context = {}
+    if release_identity is not None or resources is not None:
+        canonical_adapter.resolve_shadow_canonical_core(release_identity=release_identity, resources=resources)
+        source_context = {"release_identity": release_identity, "resources": resources}
     refreshed_inputs: list[Any] = []
     evidence_by_event: dict[str, dict[str, Any]] = {}
     for source in sources.router_inputs:
@@ -123,11 +129,12 @@ def _refresh_selected_inputs(
             fresh_provider_event_evidence=evidence,
             runtime_bindings=runtime_bindings,
         )
-        priced_bundle = canonical_adapter.price_all_shadow_fixture(fresh_context)
-        decision = canonical_adapter.route_shadow_price_results(priced_bundle)
+        priced_bundle = canonical_adapter.price_all_shadow_fixture(fresh_context, **source_context)
+        decision = canonical_adapter.route_shadow_price_results(priced_bundle, **source_context)
         portfolio_input = canonical_adapter.build_shadow_portfolio_router_input(
             price_all_bundle=priced_bundle,
             router_decision=decision,
+            **source_context,
         )
         refreshed_inputs.append(portfolio_input)
         inventory = fresh_context.provider_inventory
@@ -148,15 +155,21 @@ def refresh_selected_inputs(
     *,
     repository_root: Path,
     runtime_bindings: Any,
+    release_identity=None,
+    resources=None,
 ) -> Any:
     """Production refresh boundary; exact anonymous detail reads only when selected."""
 
+    if release_identity is not None or resources is not None:
+        canonical_adapter.resolve_shadow_canonical_core(release_identity=release_identity, resources=resources)
     if sources.router_selected_count == 0:
         return sources
     return _refresh_selected_inputs(
         sources,
         repository_root=repository_root,
         runtime_bindings=runtime_bindings,
+        release_identity=release_identity,
+        resources=resources,
     )
 
 

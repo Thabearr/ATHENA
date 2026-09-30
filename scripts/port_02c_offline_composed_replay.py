@@ -240,18 +240,22 @@ def qualification_model_scan(replay_root: Path, reconciliation):
         prc.scan_current_fixture_all_markets = original
 
 
-def run_replay(*, fixture_root: Path, writable_root: Path, variant: str = "standard") -> dict:
+def run_replay(*, fixture_root: Path, writable_root: Path, variant: str = "standard",
+               release_identity=None, resources=None) -> dict:
     if variant not in {"standard", "reverse-import", "caches-disabled"}:
         raise ReplayError("unknown replay variant")
     for module in reversed(MODULE_ORDER) if variant == "reverse-import" else MODULE_ORDER:
         importlib.import_module(module)
     from domain import _current_shadow_quote_binding as qb
     from domain import current_shadow_runtime_bindings as bindings
+    from domain import current_shadow_canonical_core_adapter as adapter
     from domain import current_shadow_all_market_portfolio as portfolio
     from domain import current_shadow_sportybet_pc_upcoming_reconciliation as pc
     from domain import sportybet_live_event_quote_evidence as live
     from domain.current_shadow_fresh_reprice_runtime import _refresh_selected_inputs
     from domain._current_shadow_price_core import ShadowRouterDecisionStatus
+    source_context = {"release_identity": release_identity, "resources": resources}
+    adapter_core = adapter.resolve_shadow_canonical_core(**source_context)
     verify_fixture_manifest(fixture_root)
     writable_root.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix="port02c-replay-", dir=writable_root))
@@ -280,8 +284,8 @@ def run_replay(*, fixture_root: Path, writable_root: Path, variant: str = "stand
                     provider_event_id=EVENT, current_reconciliation_bundle=checked,
                     runtime_bindings=direct_binding)
                 direct_binding.verify_context(context)
-                priced = direct_binding.price_all(context)
-                routed = direct_binding.route(priced)
+                priced = adapter.price_all_shadow_fixture(context, **source_context)
+                routed = adapter.route_shadow_price_results(priced, **source_context)
                 if routed.status is not ShadowRouterDecisionStatus.SELECTED:
                     raise ReplayError("focused direct Router did not select retained fixture")
                 sources = SimpleNamespace(
@@ -297,18 +301,23 @@ def run_replay(*, fixture_root: Path, writable_root: Path, variant: str = "stand
                     return root / live.ALLOWED_OUTPUT_RELATIVE / FRESH_CAPTURE
                 fresh_binding = bindings.fresh_reprice_current_shadow_runtime_bindings()
                 refreshed = _refresh_selected_inputs(sources, repository_root=root,
-                    runtime_bindings=fresh_binding, evidence_loader=loader)
+                    runtime_bindings=fresh_binding, evidence_loader=loader, **source_context)
                 item = refreshed.router_inputs[0]
                 fresh = item.price_all_bundle._context
                 fresh_binding.verify_context(fresh)
                 if fresh.evaluation_time.isoformat() != "2026-09-27T20:04:20.651079+00:00":
                     raise ReplayError("fresh clock differs from exact retained observation")
-                portfolio.verify_shadow_portfolio_router_input(item)
-                optimized = fresh_binding.optimize_portfolio(refreshed.router_inputs,
-                    target_size=20, evaluation_time=fresh.evaluation_time)
+                adapter.verify_shadow_portfolio_router_input(item, **source_context)
+                optimized = adapter.optimize_shadow_portfolio(refreshed.router_inputs,
+                    target_size=20, evaluation_time=fresh.evaluation_time, **source_context)
                 portfolio.verify_shadow_portfolio_optimization(optimized)
                 payload = {
                     "replay_scope": REPLAY_SCOPE, "source_run_id": 36345657852,
+                    "canonical_adapter_source_mode": resources.source_mode if resources is not None else "DEVELOPMENT_CHECKOUT",
+                    "canonical_adapter_registry_resolution": "RESOURCE_RESOLVER_AUTHORITY_REGISTRY" if resources is not None else "SOURCE_CHECKOUT",
+                    "canonical_adapter_registry_sha256": adapter_core.registry_canonical_sha256,
+                    "canonical_adapter_bindings_sha256": adapter_core.canonical_sha256,
+                    "canonical_adapter_owner_ids": {r.responsibility_id: r.component_id for r in adapter_core.records},
                     "source_artifact_id": 10940728036, "source_artifact_zip_sha256": ZIP_SHA,
                     "qualification_evaluation_time_policy_id": TIME_POLICY_ID,
                     "qualification_initial_evaluation_time": context.to_dict()["evaluation_time"],

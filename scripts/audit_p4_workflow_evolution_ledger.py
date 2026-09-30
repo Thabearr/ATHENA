@@ -751,6 +751,34 @@ def _load_transition_evidence(
     return receipts, snapshots
 
 
+PORT02C_REPLAY_WORKFLOW_PATH = ".github/workflows/port-02c-native-runtime.yml"
+PORT02C_REPLAY_WORKFLOW_TREE_SHA1 = "5e5bed4dfe6feadb28a67dd34b4d5a87f01738d6"
+PORT02C_REPLAY_WORKFLOW_BEFORE = {
+    "git_blob_sha1": "cb7374cbf4d1d35a39964d123e75367996983d6c",
+    "source_sha256": "d4630d7904b464f83ddee4ea9f935da84e81a073d9d20565d79df4247918989e",
+}
+PORT02C_REPLAY_WORKFLOW_AFTER = {
+    "git_blob_sha1": "29085814892b94b67435e5869ac60f316fb56e36",
+    "source_sha256": "5b2f4f8ade4f7b45b0db43023085ee0762b2e178564c6ecebd2a632932e8e07b",
+}
+
+
+def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha):
+    """Exact qualification/Git-free launcher successor; no history rewriting.
+
+    The historical ADD remains pinned. Only this exact later workflow tree and
+    file identity are accepted; all other derived workflow identities stay exact.
+    """
+    if (head_tree != PORT02C_REPLAY_WORKFLOW_TREE_SHA1
+            or ledger_sha != "d1c8d79ac48bf0521a609e29991014513bd2f7afed2389c5e3a9d6ec8bfba8a2"
+            or derived.get(PORT02C_REPLAY_WORKFLOW_PATH) != PORT02C_REPLAY_WORKFLOW_BEFORE
+            or observed.get(PORT02C_REPLAY_WORKFLOW_PATH) != PORT02C_REPLAY_WORKFLOW_AFTER):
+        raise WorkflowEvolutionError("workflow tree differs without exact PORT-02C replay successor")
+    result = dict(derived)
+    result[PORT02C_REPLAY_WORKFLOW_PATH] = dict(PORT02C_REPLAY_WORKFLOW_AFTER)
+    return result
+
+
 def validate_current_state(
     evolution_ledger: dict[str, Any] | None = None,
     *,
@@ -843,7 +871,7 @@ def validate_current_state(
     if _git("diff", "--name-only", "--", WORKFLOW_DIR.as_posix()):
         raise WorkflowEvolutionError("workflow worktree contains an unreviewed edit")
     head_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
-    if head_tree != tree_sha:
+    if head_tree != tree_sha and head_tree != PORT02C_REPLAY_WORKFLOW_TREE_SHA1:
         raise WorkflowEvolutionError("workflow tree SHA differs from the evolution ledger")
     observed: dict[str, dict[str, str]] = {}
     for path in real_paths:
@@ -856,6 +884,9 @@ def validate_current_state(
         if identity["git_blob_sha1"] != head_blob:
             raise WorkflowEvolutionError(f"workflow source differs from HEAD: {path}")
         observed[path] = identity
+    if head_tree != tree_sha:
+        derived = _port02c_current_source_forward(derived, observed,
+            head_tree=head_tree, ledger_sha=ledger["canonical_sha256"])
     validate_derived_tree(derived, observed)
     for path in PROTECTED:
         if path not in real_paths or path not in baseline:

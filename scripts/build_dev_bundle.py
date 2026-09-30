@@ -309,6 +309,8 @@ def build(*, repo: Path, platform_tag: str, output: Path, freeze: bool) -> dict:
         if completed.returncode != 0:
             _fail(f"PyInstaller failed: {completed.stdout.decode('utf-8', 'replace')[-2000:]}")
         collected = bin_dir / "athena-bundle"
+        if (collected / "_internal/config/architecture/component-authority-registry-v1.json").exists():
+            _fail("authority registry must remain release-managed, not PyInstaller-internal")
         for record in reviewed_data:
             installed = collected / "_internal" / record["destination"] / PurePosixPath(record["source_path"]).name
             if not installed.is_file():

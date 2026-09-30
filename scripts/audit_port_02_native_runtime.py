@@ -192,6 +192,20 @@ def _check_qualification(value: dict) -> None:
         "source_reconciliation_verifier_mode": "CANONICAL_UNPATCHED",
         "runtime_binding_verifier_mode": "CANONICAL_UNPATCHED",
         "fresh_evaluation_time": "2026-09-27T20:04:20.651079Z",
+        "canonical_adapter_source_mode": "INSTALLED_RELEASE",
+        "canonical_adapter_registry_resolution": "RESOURCE_RESOLVER_AUTHORITY_REGISTRY",
+        "canonical_adapter_registry_sha256": "74e79e216497c2e7f31a51e278251a5c62645e1085d04ebb8712022658f8f109",
+        "canonical_adapter_bindings_sha256": "6d39a2721ec482ce92050fa5a4a863ec4f2047c1cea645f2d2e870dc180d52a1",
+        "canonical_adapter_owner_ids": {
+            "provider_market_semantics": "domain.provider_market_semantics",
+            "price_all_and_de_vig": "domain.price_all",
+            "market_router": "domain.market_router",
+            "portfolio_optimizer": "domain.portfolio_optimizer",
+            "delivery_share_code_transport": "domain.sportybet_share_code",
+        },
+        "module_relative_registry_required": False,
+        "release_managed_registry_present": True,
+        "pyinstaller_internal_registry_present": False,
     }
     stages = {
         "direct_context_sha256", "direct_price_all_sha256", "direct_router_sha256",
