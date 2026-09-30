@@ -76,6 +76,9 @@ REQUIRED_PLATFORM_FIELDS = frozenset(
         "git_on_path",
         "git_calls",
         "bundle_has_no_dot_git",
+        "evidence_source",
+        "qualification_head_sha",
+        "local_evidence_sha256",
     }
 )
 REQUIRED_SAFETY_FIELDS = frozenset(
@@ -277,11 +280,24 @@ def _check_platforms(value: dict) -> None:
         ):
             if row[flag] is not True:
                 raise AuditError(f"platform gate {flag} is not PASS")
-        if not row["workflow_run_id"] or not row["python_version"] or not row["pyinstaller_version"]:
+        if SHA1_RE.fullmatch(row["qualification_head_sha"] or "") is None:
+            raise AuditError("platform qualification head is not exact")
+        if row["platform"] == "windows":
+            if (row["evidence_source"] != "LOCAL_WINDOWS_11_NATIVE"
+                    or row["workflow_run_id"] is not None
+                    or SHA256_RE.fullmatch(row["local_evidence_sha256"] or "") is None):
+                raise AuditError("Windows 11 must identify local native evidence, not a hosted run")
+        elif (row["evidence_source"] != "GITHUB_ACTIONS_UBUNTU_24_04_NATIVE"
+                or type(row["workflow_run_id"]) is not int or row["workflow_run_id"] <= 0
+                or row["local_evidence_sha256"] is not None):
+            raise AuditError("Ubuntu must identify exact hosted native evidence")
+        if not row["python_version"] or not row["pyinstaller_version"]:
             raise AuditError("platform evidence identifiers are incomplete")
     if seen != {("windows", "x86_64"), ("linux", "x86_64")}:
         raise AuditError("platform rows must be exactly Windows + Ubuntu x86-64")
     by_platform = {row["platform"]: row for row in platforms}
+    if by_platform["windows"]["qualification_head_sha"] != by_platform["linux"]["qualification_head_sha"]:
+        raise AuditError("native platforms qualified different source heads")
     if by_platform["windows"]["semantic_replay_sha256"] != by_platform["linux"]["semantic_replay_sha256"]:
         raise AuditError("cross-platform semantic replay digests differ")
     parity = value["cross_platform_parity"]
