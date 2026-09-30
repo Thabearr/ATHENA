@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-import subprocess
 
 from domain.run_contracts import RunRequest
 from services.athena_run_service import AthenaRunService, ExecutorResult
+from runtime.worker_launcher import WorkerProcessResult
 
 
 NOW = datetime(2026, 9, 22, 12, 30, tzinfo=timezone.utc)
@@ -127,20 +127,24 @@ def test_shadow_no_delivery_is_admitted_to_synthetic_executor_and_narrows_delive
     assert receipt.wager_placed is False
 
 
-def test_shadow_no_delivery_production_executor_launches_with_explicit_false_flag_offline(
+def test_shadow_no_delivery_production_executor_uses_reviewed_worker_boundary_offline(
     monkeypatch, tmp_path
 ):
     from services import athena_run_service as service_module
 
-    child_commands = []
-    child_kwargs = []
+    worker_calls = []
 
-    def offline_child(command, **kwargs):
-        child_commands.append(command)
-        child_kwargs.append(kwargs)
-        return subprocess.CompletedProcess(command, 1, stdout="", stderr="synthetic offline stop")
+    def offline_worker(request, *, run_directory, exact_commit_sha):
+        assert request.authority_profile == "SHADOW"
+        assert request.mode == "research_shadow"
+        assert request.create_share_code is False
+        assert request.place_wager is False
+        assert run_directory.name == request.canonical_sha256
+        assert exact_commit_sha == COMMIT
+        worker_calls.append((request, run_directory, exact_commit_sha))
+        return WorkerProcessResult(returncode=1, stdout="", stderr="synthetic offline stop")
 
-    monkeypatch.setattr(service_module.subprocess, "run", offline_child)
+    monkeypatch.setattr(service_module, "_run_reviewed_shadow_worker", offline_worker)
     request = _request(profile="SHADOW", create_share_code=False)
     receipt = _service().run(request, output_root=tmp_path)
 
@@ -149,10 +153,7 @@ def test_shadow_no_delivery_production_executor_launches_with_explicit_false_fla
     assert receipt.share_code_result is None
     assert receipt.counts["selected_leg_count"] == 0
     assert receipt.shortfall == request.target_legs
-    assert len(child_commands) == 1
-    index = child_commands[0].index("--create-share-code")
-    assert child_commands[0][index + 1] == "false"
-    assert "env" not in child_kwargs[0]
+    assert worker_calls == [(request, tmp_path / request.canonical_sha256, COMMIT)]
     assert "SHADOW_NO_DELIVERY_RUNTIME_NOT_YET_AVAILABLE" not in receipt.status
 
 

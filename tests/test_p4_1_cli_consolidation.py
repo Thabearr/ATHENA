@@ -4,6 +4,7 @@ import ast
 from datetime import date, datetime, timezone
 from pathlib import Path
 import re
+import subprocess
 import pytest
 
 from typer.testing import CliRunner
@@ -447,3 +448,95 @@ def test_hosted_offline_service_proof_and_committed_receipt_integrity():
     assert receipt["workflow_consolidation_claimed"] is False
     assert receipt["shadow_timeout_budget_proof"] == timeout_proof
     assert receipt["offline_synthetic_request_receipt_proof"] == proof
+
+
+def test_p41_historical_receipt_is_exact_and_current_check_classifies_source_movement():
+    committed = audit.verify_committed_receipt()
+    assert committed["canonical_sha256"] == audit.HISTORICAL_RECEIPT_CANONICAL_SHA256
+    assert {
+        field: committed[field]
+        for field in audit.HISTORICAL_SOURCE_IDENTITY_FIELDS
+    } == audit.HISTORICAL_SOURCE_IDENTITY_VALUES
+
+    result = audit.check_current_compatibility()
+    assert result["result"] == "SKIP_SOURCE_MOVED"
+    assert result["policy_id"] == "ATHENA_P4_1_CLI_CONSOLIDATION_V1"
+    assert result["historical_integrity"] == "PASS"
+    assert result["current_behavioral_compatibility"] == "PASS"
+    assert result["historical_receipt_canonical_sha256"] == (
+        "268933433aaab84cb2533840f2e01eba96ec5906e796c9eced2032e1d6706208"
+    )
+    assert set(result["moved_source_fields"]) == {
+        "build_acca_source_sha256",
+        "parser_source_sha256",
+        "service_source_sha256",
+    }
+    assert set(result["current_source_identities"]) == set(audit.CURRENT_SOURCE_PATHS)
+
+
+def test_p41_current_comparison_fails_on_non_source_receipt_drift():
+    committed = audit.verify_committed_receipt()
+    identities = audit._current_source_identities()
+    current = audit.build_receipt()
+    current["provider_acquisition"] = True
+
+    with pytest.raises(
+        audit.P4_1AuditError,
+        match="non-source P4.1 receipt fields drifted: provider_acquisition",
+    ):
+        audit._compare_historical_and_current_receipts(committed, current, identities)
+
+
+def test_p41_committed_receipt_with_a_new_valid_self_hash_still_fails_historical_pin(tmp_path: Path):
+    tampered = dict(audit.verify_committed_receipt())
+    tampered["p4_1_cli_exit_gate_satisfied"] = False
+    unsigned = dict(tampered)
+    unsigned.pop("canonical_sha256")
+    tampered["canonical_sha256"] = audit.canonical_sha256(unsigned)
+    candidate = tmp_path / "p4_1_tampered.json"
+    candidate.write_bytes(canonical_json_bytes(tampered))
+
+    with pytest.raises(
+        audit.P4_1AuditError,
+        match="historical receipt canonical identity changed",
+    ):
+        audit.verify_committed_receipt(candidate)
+
+
+def test_p41_current_source_identity_rejects_uncommitted_semantic_mutation(tmp_path: Path):
+    repository_root = tmp_path / "source identity repo"
+    repository_root.mkdir()
+    for relative_path in audit.CURRENT_SOURCE_PATHS.values():
+        source_path = repository_root.joinpath(*relative_path.split("/"))
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_bytes(b"# reviewed source identity fixture\n")
+
+    subprocess.run(["git", "init", "-q", str(repository_root)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository_root), "config", "user.name", "P4.1 test"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repository_root), "config", "user.email", "p41-test@example.invalid"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(repository_root), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository_root), "commit", "-q", "-m", "source identity fixture"],
+        check=True,
+    )
+
+    clean = audit._current_source_identities(repository_root)
+    assert set(clean) == set(audit.CURRENT_SOURCE_PATHS)
+    assert all(
+        identity["git_blob_sha1"] == identity["filtered_worktree_git_blob_sha1"]
+        for identity in clean.values()
+    )
+
+    changed_source = repository_root / "build_acca.py"
+    changed_source.write_bytes(b"# uncommitted semantic source mutation\n")
+    with pytest.raises(
+        audit.P4_1AuditError,
+        match="current tracked source identity failed for build_acca.py",
+    ):
+        audit._current_source_identities(repository_root)

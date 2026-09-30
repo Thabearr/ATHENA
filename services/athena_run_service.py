@@ -16,7 +16,6 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 from typing import Any, Callable, Mapping, Protocol
 
@@ -166,6 +165,47 @@ def _check_request_authority(request: RunRequest, manifest: AuthorityManifest) -
     return None
 
 
+def _run_reviewed_shadow_worker(
+    request: RunRequest,
+    *,
+    run_directory: Path,
+    exact_commit_sha: str,
+):
+    """Bind and launch the reviewed Current Shadow supervisor worker."""
+
+    from runtime.release_identity import (
+        ReleaseIdentityError,
+        verify_development_checkout,
+    )
+    from runtime.worker_launcher import (
+        WORKER_MODE_BY_OPERATION,
+        WorkerCommand,
+        WorkerLaunchError,
+        WorkerLauncher,
+    )
+
+    repository_root = Path(__file__).resolve().parents[1]
+    try:
+        identity = verify_development_checkout(repository_root)
+    except ReleaseIdentityError as exc:
+        raise WorkerLaunchError("Current Shadow DevelopmentCheckout could not be verified") from exc
+    if identity.head_commit_sha != exact_commit_sha:
+        raise WorkerLaunchError("Current Shadow worker command commit differs from verified Git HEAD")
+    if run_directory.name != request.canonical_sha256:
+        raise WorkerLaunchError("Current Shadow worker run directory does not bind the exact request SHA")
+    command = WorkerCommand(
+        operation="CURRENT_SHADOW_REQUEST",
+        mode=WORKER_MODE_BY_OPERATION["CURRENT_SHADOW_REQUEST"],
+        run_directory=run_directory,
+        request_artifact_id=request.canonical_sha256,
+        envelope_artifact_id=None,
+        release_identity_kind=identity.identity_kind,
+        release_identity_id=identity.head_commit_sha,
+    )
+    launcher = WorkerLauncher.for_development(identity)
+    return launcher.launch(command).communicate()
+
+
 class _MainFailClosedExecutor:
     """Use only the reviewed target-only MAIN authority boundary."""
 
@@ -269,37 +309,18 @@ class _ShadowSupervisorExecutor:
         receipt_path = shadow_output_dir / "current-shadow-all-market-run-receipt.json"
         stage_path = shadow_output_dir / "current-shadow-all-market-stage.json"
         progress_path = shadow_output_dir / "current-shadow-all-market-progress.json"
-        command = [
-            sys.executable,
-            "-m",
-            "scripts.execute_current_shadow_request",
-            "--target-size",
-            str(request.target_legs),
-            "--fixture-scope",
-            "today",
-            "--fixture-dates",
-            ",".join(representable),
-            "--output-dir",
-            str(shadow_output_dir),
-            "--create-share-code",
-            "true" if request.create_share_code else "false",
-        ]
         # This code path is only reached by an actual SHADOW run request. Tests
         # and audits inject synthetic executors and never call this supervisor.
-        # The launched request module is itself the reviewed 75-minute
-        # supervisor: it owns the timeout and writes a truthful timeout receipt
-        # before returning. Do not add a second timeout here; an equal outer
-        # timeout could terminate that finalization path before it persists the
-        # terminal receipt and last completed progress.
+        # The launched Current Shadow request module remains the reviewed
+        # 75-minute supervisor and finalization owner. Do not add a second timeout here:
+        # an equal outer timeout could terminate finalization before it persists.
         try:
-            completed = subprocess.run(
-                command,
-                cwd=Path(__file__).resolve().parents[1],
-                check=False,
-                capture_output=True,
-                text=True,
+            completed = _run_reviewed_shadow_worker(
+                request,
+                run_directory=run_directory,
+                exact_commit_sha=exact_commit_sha,
             )
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             return ExecutorResult(
                 status="EXECUTOR_UNAVAILABLE",
                 evidence={
