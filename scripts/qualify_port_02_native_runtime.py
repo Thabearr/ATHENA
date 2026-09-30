@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PORT-02C installed-runtime qualifier (Phase A: probe + canonical bindings).
+"""PORT-02C installed-runtime qualifier: probe plus retained composed replay.
 
 Installed execution with explicit arguments only. No arbitrary modules,
 commands, or environment injection. Verifies the installed release identity,
@@ -9,10 +9,9 @@ probe artifacts, then exercises the existing canonical composition seams
 (canonical core resolution + runtime bindings policy) under a hard network
 sentinel and emits one strict canonical JSON qualification result.
 
-Layer-3 scope in Phase A is BINDINGS_SEMANTIC_CHECK: canonical owner +
-bindings-policy + retained-fixture-SHA semantics. The full retained
-direct -> fresh -> Price-all -> Router -> Portfolio replay lands in Phase B.
-The result JSON states its exact replay_scope; nothing here claims otherwise.
+The composition uses real retained source verification and real business owners,
+with explicitly non-authoritative qualification-only model/history inputs.
+It does not prove complete current-history reconstruction or live authority.
 """
 from __future__ import annotations
 
@@ -57,7 +56,7 @@ from runtime.worker_launcher import (  # noqa: E402
 HOST_PLATFORM = {"Windows": "windows", "Linux": "linux"}.get(platform_module.system(), "unknown")
 VARIANTS = ("standard", "reverse-import", "caches-disabled")
 QUALIFIER_POLICY_ID = "ATHENA_PORT_02_NATIVE_RUNTIME_QUALIFIER_V1"
-REPLAY_SCOPE = "BINDINGS_SEMANTIC_CHECK"
+REPLAY_SCOPE = "RETAINED_SOURCE_DIRECT_FRESH_PRICE_ROUTER_PORTFOLIO_QUALIFICATION"
 
 
 class QualificationError(ValueError):
@@ -102,6 +101,7 @@ class _NetworkSentinel:
     def install(self) -> None:
         targets = [
             (socket.socket, "connect", self._deny),
+            (socket.socket, "connect_ex", self._deny),
             (socket, "create_connection", self._deny),
             (urllib.request, "urlopen", self._deny),
         ]
@@ -148,6 +148,10 @@ def qualify(
         os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 
     git_on_path = shutil.which("git") is not None
+    if git_on_path:
+        raise QualificationError("Git must not be discoverable on installed qualification PATH")
+    if any(release_root.rglob(".git")):
+        raise QualificationError("installed qualification bundle must not contain .git")
     sentinel = _NetworkSentinel()
     sentinel.install()
     try:
@@ -326,6 +330,13 @@ def qualify(
             "fixture_sha256": fixture_shas,
             "wager": False,
         }
+        from scripts.port_02c_offline_composed_replay import FIXTURE_PREFIX, run_replay
+
+        semantic_payload["composed_replay"] = run_replay(
+            fixture_root=qualification_dir / FIXTURE_PREFIX,
+            writable_root=writable.data_root / "port02c-replay",
+            variant=variant,
+        )
         semantic_bytes = (
             json.dumps(semantic_payload, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
             + "\n"
@@ -349,6 +360,8 @@ def qualify(
         "worker_pid_type": "int",
         "git_calls": 0,
         "git_on_path": git_on_path,
+        "git_executable_not_on_path": not git_on_path,
+        "bundle_has_no_dot_git": not any(release_root.rglob(".git")),
         "provider_calls": 0,
         "delivery_calls": 0,
         "network_attempts": sentinel.attempts,

@@ -9,6 +9,9 @@ on:
       - scripts/build_dev_bundle.py
       - scripts/qualify_port_02_native_runtime.py
       - scripts/audit_port_02_native_runtime.py
+      - scripts/port_02c_offline_composed_replay.py
+      - scripts/port_02c_git_free_launch.py
+      - tests/fixtures/port_02c_run_36345657852/**
       - tests/native/**
       - run_desktop.py
       - artifacts/architecture/port_02_native_runtime_v1.json
@@ -58,6 +61,7 @@ jobs:
         run: |
           python --version
           python -m pip show pyinstaller
+          python -c "import platform; print(platform.platform())"
 
       - name: Stage and freeze native bundle (Unicode path)
         env:
@@ -88,10 +92,10 @@ jobs:
           if [ "$PORT02C_OS" = "windows" ]; then QUAL="$EXE_DIR/athena-port02c-qualify.exe"; WORKER="$EXE_DIR/athena-worker.exe"; else QUAL="$EXE_DIR/athena-port02c-qualify"; WORKER="$EXE_DIR/athena-worker"; fi
           WORKER_SHA=$(PORT02C_WORKER="$WORKER" python -c "import hashlib,os; print(hashlib.sha256(open(os.environ['PORT02C_WORKER'],'rb').read()).hexdigest())")
           export PORT02C_WORKER
-          PATH_NOGIT=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vi 'git' | paste -sd ':' -)
+          LAUNCHER="${{ github.workspace }}/scripts/port_02c_git_free_launch.py"
           mkdir -p "${{ runner.temp }}/port02c-out-standard"
           cd "${{ runner.temp }}"
-          env "PATH=$PATH_NOGIT" "$QUAL" --release-root "$PORT02C_BUNDLE" --trusted-manifest-sha256 "$MANIFEST_SHA" --worker-executable "$WORKER" --worker-sha256 "$WORKER_SHA" --output-dir "${{ runner.temp }}/port02c-out-standard" --variant standard
+          python "$LAUNCHER" "$QUAL" --release-root "$PORT02C_BUNDLE" --trusted-manifest-sha256 "$MANIFEST_SHA" --worker-executable "$WORKER" --worker-sha256 "$WORKER_SHA" --output-dir "${{ runner.temp }}/port02c-out-standard" --variant standard
           echo "MANIFEST_SHA=$MANIFEST_SHA" >> "$GITHUB_ENV"
           echo "WORKER_SHA=$WORKER_SHA" >> "$GITHUB_ENV"
 
@@ -103,7 +107,7 @@ jobs:
           if [ "${{ matrix.os }}" = "windows" ]; then QUAL="$EXE_DIR/athena-port02c-qualify.exe"; WORKER="$EXE_DIR/athena-worker.exe"; else QUAL="$EXE_DIR/athena-port02c-qualify"; WORKER="$EXE_DIR/athena-worker"; fi
           mkdir -p "${{ runner.temp }}/port02c-out-reverse"
           cd "${{ runner.temp }}"
-          "$QUAL" --release-root "$BUNDLE" --trusted-manifest-sha256 "$MANIFEST_SHA" --worker-executable "$WORKER" --worker-sha256 "$WORKER_SHA" --output-dir "${{ runner.temp }}/port02c-out-reverse" --variant reverse-import
+          python "${{ github.workspace }}/scripts/port_02c_git_free_launch.py" "$QUAL" --release-root "$BUNDLE" --trusted-manifest-sha256 "$MANIFEST_SHA" --worker-executable "$WORKER" --worker-sha256 "$WORKER_SHA" --output-dir "${{ runner.temp }}/port02c-out-reverse" --variant reverse-import
 
       - name: CASE 3 caches disabled
         shell: bash
@@ -115,7 +119,7 @@ jobs:
           if [ "${{ matrix.os }}" = "windows" ]; then QUAL="$EXE_DIR/athena-port02c-qualify.exe"; WORKER="$EXE_DIR/athena-worker.exe"; else QUAL="$EXE_DIR/athena-port02c-qualify"; WORKER="$EXE_DIR/athena-worker"; fi
           mkdir -p "${{ runner.temp }}/port02c-out-nocache"
           cd "${{ runner.temp }}"
-          "$QUAL" --release-root "$BUNDLE" --trusted-manifest-sha256 "$MANIFEST_SHA" --worker-executable "$WORKER" --worker-sha256 "$WORKER_SHA" --output-dir "${{ runner.temp }}/port02c-out-nocache" --variant caches-disabled
+          python "${{ github.workspace }}/scripts/port_02c_git_free_launch.py" "$QUAL" --release-root "$BUNDLE" --trusted-manifest-sha256 "$MANIFEST_SHA" --worker-executable "$WORKER" --worker-sha256 "$WORKER_SHA" --output-dir "${{ runner.temp }}/port02c-out-nocache" --variant caches-disabled
 
       - name: CASE 4 locked resource read
         shell: bash
@@ -127,7 +131,7 @@ jobs:
           LOCK_PID=$!
           mkdir -p "${{ runner.temp }}/port02c-out-locked"
           cd "${{ runner.temp }}"
-          "$QUAL" --release-root "$BUNDLE" --trusted-manifest-sha256 "$MANIFEST_SHA" --worker-executable "$WORKER" --worker-sha256 "$WORKER_SHA" --output-dir "${{ runner.temp }}/port02c-out-locked" --variant standard
+          python "${{ github.workspace }}/scripts/port_02c_git_free_launch.py" "$QUAL" --release-root "$BUNDLE" --trusted-manifest-sha256 "$MANIFEST_SHA" --worker-executable "$WORKER" --worker-sha256 "$WORKER_SHA" --output-dir "${{ runner.temp }}/port02c-out-locked" --variant standard
           kill $LOCK_PID || true
 
       - name: CASE 5 shell offline smoke (bounded)
@@ -157,6 +161,9 @@ jobs:
               assert doc["provider_calls"] == 0, variant
               assert doc["delivery_calls"] == 0, variant
               assert doc["network_attempts"] == 0, variant
+              assert doc["git_on_path"] is False, variant
+              assert doc["git_calls"] == 0, variant
+              assert doc["bundle_has_no_dot_git"] is True, variant
               digests[variant] = doc["semantic_replay_sha256"]
           assert len(set(digests.values())) == 1, digests
           print("variant semantic equality PASS", digests)

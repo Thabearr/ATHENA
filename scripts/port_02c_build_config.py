@@ -37,8 +37,7 @@ SLICE_RESOURCES: tuple[tuple[str, str], ...] = (
 # The builder discovers exact files via `git ls-tree` under these prefixes;
 # hashes are pinned in the qualification manifest at build time.
 QUALIFICATION_FIXTURE_PREFIXES = (
-    "tests/fixtures/p4_4r_run_36285099805_quote_evidence",
-    "tests/fixtures/p4_4r_pre_fix_quote_context_verifier.py",
+    "tests/fixtures/port_02c_run_36345657852",
 )
 
 # Modules that must never be collected into a production executable.

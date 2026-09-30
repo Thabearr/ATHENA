@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -26,7 +27,7 @@ def _stage_bundle_with_wrapper_worker(tmp_path: Path) -> tuple[Path, dict, Path,
     wrapper = bundle / "bin" / "athena-worker"
     wrapper.parent.mkdir(parents=True, exist_ok=True)
     wrapper.write_text(
-        "#!/usr/bin/env python3\n"
+        f"#!{sys.executable}\n"
         "import sys\n"
         f"sys.path.insert(0, {str(ROOT)!r})\n"
         "from runtime.worker_entry import main\n"
@@ -43,6 +44,9 @@ def test_variant_equality_and_canonical_output(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg-cache"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
+    from scripts.port_02c_git_free_launch import sanitized_git_free_path
+
+    monkeypatch.setenv("PATH", sanitized_git_free_path(os.environ.get("PATH", "")))
 
     digests: dict[str, str] = {}
     for variant in ("standard", "reverse-import", "caches-disabled"):

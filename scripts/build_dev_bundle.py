@@ -243,6 +243,9 @@ def build(*, repo: Path, platform_tag: str, output: Path, freeze: bool) -> dict:
     }
     qualification_manifest_bytes = _canonical_json_bytes(qualification_manifest)
     (qualification_dir / "qualification-manifest.json").write_bytes(qualification_manifest_bytes)
+    from scripts.port_02c_offline_composed_replay import FIXTURE_PREFIX, verify_fixture_manifest
+
+    verify_fixture_manifest(qualification_dir / FIXTURE_PREFIX)
 
     pyinstaller_version = None
     executables: dict[str, str] = {}
