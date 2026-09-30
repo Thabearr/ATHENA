@@ -28,7 +28,7 @@ _shared = dict(
     binaries=[],
     hookspath=[],
     runtime_hooks=[],
-    excludes=["pytest", "_pytest", "tests", "tkinter", "unittest"],
+    excludes=["pytest", "_pytest", "tests", "tkinter"],
     cipher=None,
     noarchive=False,
 )
