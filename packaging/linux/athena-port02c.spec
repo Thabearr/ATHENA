@@ -11,6 +11,18 @@ from pathlib import Path
 REPO_ROOT = Path(SPECPATH).resolve().parents[1]
 UI_DIR = REPO_ROOT / "ui"
 
+# Hidden imports PyInstaller's static analysis cannot trace: domain/__init__
+# and the historical-training-coverage facade resolve these underscore
+# implementations through importlib at package-initialization time
+# (proven by native CI: ModuleNotFoundError for the impl alias).
+# Keep this list exact; do not broaden into package collection.
+_HIDDEN_DOMAIN_IMPORTS = [
+    "domain._historical_training_coverage_impl",
+    "domain._historical_training_coverage_post_hardening",
+    "domain._historical_training_coverage_row_issuance",
+    "domain._historical_asof_features_impl",
+]
+
 _shared = dict(
     pathex=[str(REPO_ROOT)],
     binaries=[],
@@ -24,7 +36,7 @@ _shared = dict(
 worker_a = Analysis(  # noqa: F821 - provided by PyInstaller at build time
     [str(REPO_ROOT / "runtime" / "worker_entry.py")],
     datas=[],
-    hiddenimports=[],
+    hiddenimports=list(_HIDDEN_DOMAIN_IMPORTS),
     **_shared,
 )
 shell_a = Analysis(  # noqa: F821
@@ -34,13 +46,13 @@ shell_a = Analysis(  # noqa: F821
         (str(UI_DIR / "app.js"), "ui"),
         (str(UI_DIR / "styles.css"), "ui"),
     ],
-    hiddenimports=[],
+    hiddenimports=list(_HIDDEN_DOMAIN_IMPORTS),
     **_shared,
 )
 qualify_a = Analysis(  # noqa: F821
     [str(REPO_ROOT / "scripts" / "qualify_port_02_native_runtime.py")],
     datas=[],
-    hiddenimports=[],
+    hiddenimports=list(_HIDDEN_DOMAIN_IMPORTS),
     **_shared,
 )
 

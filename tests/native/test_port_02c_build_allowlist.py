@@ -67,6 +67,13 @@ def test_banned_frozen_modules_cover_tests():
         for banned in ("pytest", "_pytest", '"tests"'):
             assert banned in text, spec
         assert "shell=True" not in text
+        for hidden in (
+            "domain._historical_training_coverage_impl",
+            "domain._historical_training_coverage_post_hardening",
+            "domain._historical_training_coverage_row_issuance",
+            "domain._historical_asof_features_impl",
+        ):
+            assert hidden in text, spec
 
 
 def test_staged_bundle_verifies_and_tamper_fails(tmp_path: Path):
