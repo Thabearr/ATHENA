@@ -352,7 +352,8 @@ def qualify(
         "variant": variant,
         "host_platform": HOST_PLATFORM,
         "host_arch": "x86_64",
-        "host_os_version": platform_module.platform(),
+        "host_os_version": (platform_module.platform() if os.name == "nt" else
+                            platform_module.freedesktop_os_release().get("PRETTY_NAME", platform_module.platform())),
         "release_manifest_sha256": identity.manifest_sha256,
         "worker_sha256": worker_sha256,
         "semantic_replay_sha256": semantic_sha256,

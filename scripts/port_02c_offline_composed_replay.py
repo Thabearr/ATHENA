@@ -282,9 +282,11 @@ def run_replay(*, fixture_root: Path, writable_root: Path, variant: str = "stand
                 direct_binding.verify_context(context)
                 priced = direct_binding.price_all(context)
                 routed = direct_binding.route(priced)
+                if routed.status is not ShadowRouterDecisionStatus.SELECTED:
+                    raise ReplayError("focused direct Router did not select retained fixture")
                 sources = SimpleNamespace(
                     router_inputs=(SimpleNamespace(price_all_bundle=priced,
-                        router_decision=SimpleNamespace(status=ShadowRouterDecisionStatus.SELECTED)),),
+                        router_decision=routed),),
                     reviewed_fixture_count=1, reconciled_fixture_count=1,
                     provider_event_count=223, priced_fixture_count=1,
                     router_selected_count=1, router_no_bet_count=0,

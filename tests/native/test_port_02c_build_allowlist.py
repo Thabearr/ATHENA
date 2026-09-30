@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import sys
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -83,14 +84,14 @@ def test_staged_bundle_verifies_and_tamper_fails(tmp_path: Path):
 
     bundle = tmp_path / "bundle"
     metadata = build_dev_bundle.build(
-        repo=ROOT, platform_tag="linux", output=bundle, freeze=False
+        repo=ROOT, platform_tag="windows" if sys.platform == "win32" else "linux", output=bundle, freeze=False
     )
     manifest_bytes = (bundle / "release-manifest.json").read_bytes()
     assert metadata["trusted_manifest_sha256"] == hashlib.sha256(manifest_bytes).hexdigest()
     manifest = json.loads(manifest_bytes.decode("utf-8"))
     assert manifest["schema_version"] == MANIFEST_SCHEMA_VERSION
     assert manifest["policy_id"] == MANIFEST_POLICY_ID
-    assert manifest["platform_tag"] == "linux"
+    assert manifest["platform_tag"] == ("windows" if sys.platform == "win32" else "linux")
 
     identity = verify_installed_release(bundle, metadata["trusted_manifest_sha256"])
     assert identity.manifest_sha256 == metadata["trusted_manifest_sha256"]

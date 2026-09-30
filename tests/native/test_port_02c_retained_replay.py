@@ -115,6 +115,47 @@ def test_model_scan_restored_even_on_exception(tmp_path):
         original(complete_current_history=sentinel, fixture_identity=replay.FIXTURE)
 
 
+def _qualification_receipt():
+    return {
+        "replay_scope": replay.REPLAY_SCOPE, "source_run_id": 36345657852,
+        "source_artifact_id": 10940728036, "source_artifact_zip_sha256": replay.ZIP_SHA,
+        "fixture_manifest_sha256": replay.FIXTURE_MANIFEST_SHA256,
+        "qualification_evaluation_time_policy_id": replay.TIME_POLICY_ID,
+        "qualification_initial_evaluation_time": "2026-09-27T19:48:52.628430Z",
+        "qualification_reconciliation_sha256": replay.QUALIFICATION_SHA,
+        "historical_run_reconciliation_sha256": replay.HISTORICAL_SHA,
+        "historical_evaluation_time_retained": False,
+        "historical_reconciliation_sha_reproduction_required": False,
+        "complete_current_history_reconstructed": False,
+        "production_model_authority": False, "production_probability_authority": False,
+        "source_reconciliation_verifier_mode": "CANONICAL_UNPATCHED",
+        "runtime_binding_verifier_mode": "CANONICAL_UNPATCHED",
+        "fresh_evaluation_time": "2026-09-27T20:04:20.651079Z",
+        **{k: "a" * 64 for k in ("direct_context_sha256", "direct_price_all_sha256", "direct_router_sha256",
+            "fresh_context_sha256", "fresh_price_all_sha256", "fresh_router_sha256",
+            "portfolio_input_sha256", "portfolio_result_sha256")},
+    }
+
+
+@pytest.mark.parametrize("field,value", [
+    ("replay_scope", "BINDINGS_SEMANTIC_CHECK"),
+    ("qualification_initial_evaluation_time", "2026-09-30T00:00:00Z"),
+    ("qualification_initial_evaluation_time", "2026-09-27T19:48:52.628429Z"),
+    ("qualification_initial_evaluation_time", "2026-09-27T20:04:20.651079Z"),
+    ("qualification_reconciliation_sha256", replay.HISTORICAL_SHA),
+    ("qualification_evaluation_time_policy_id", "ARBITRARY_FIXED_TIME"),
+    ("complete_current_history_reconstructed", True),
+    ("runtime_binding_verifier_mode", "PATCHED"),
+])
+def test_receipt_clock_authority_roles_fail_closed(field, value):
+    from scripts import audit_port_02_native_runtime as audit
+    good = _qualification_receipt()
+    audit._check_qualification(good)
+    good[field] = value
+    with pytest.raises(audit.AuditError):
+        audit._check_qualification(good)
+
+
 @pytest.mark.parametrize("filename", ["git", "git.exe", "git.cmd", "git.bat"])
 def test_git_sanitizer_examines_actual_files(tmp_path, filename):
     import os

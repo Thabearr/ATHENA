@@ -47,6 +47,7 @@ REQUIRED_TOP_FIELDS = frozenset(
         "safety",
         "classification",
         "canonical_sha256",
+        "qualification",
     }
 )
 REQUIRED_PLATFORM_FIELDS = frozenset(
@@ -71,6 +72,10 @@ REQUIRED_PLATFORM_FIELDS = frozenset(
         "spawn",
         "shutdown",
         "variant_equality",
+        "host_os_version",
+        "git_on_path",
+        "git_calls",
+        "bundle_has_no_dot_git",
     }
 )
 REQUIRED_SAFETY_FIELDS = frozenset(
@@ -90,6 +95,7 @@ REQUIRED_SAFETY_FIELDS = frozenset(
         "first_launch_pip_install",
         "entire_repo_bundled",
         "entire_venv_bundled",
+        "network_attempts",
     }
 )
 
@@ -132,6 +138,7 @@ def _check_receipt(path: Path) -> dict:
         raise AuditError("receipt implementation base drifted")
     if value["canonical_sha256"] != _receipt_canonical_sha(value):
         raise AuditError("receipt self-hash mismatch")
+    _check_qualification(value["qualification"])
 
     predecessors = value["predecessors"]
     expected_predecessors = {
@@ -164,6 +171,56 @@ def _check_receipt(path: Path) -> dict:
     return value
 
 
+def _check_qualification(value: dict) -> None:
+    from scripts import port_02c_offline_composed_replay as replay
+
+    exact = {
+        "replay_scope": replay.REPLAY_SCOPE,
+        "source_run_id": 36345657852,
+        "source_artifact_id": 10940728036,
+        "source_artifact_zip_sha256": replay.ZIP_SHA,
+        "fixture_manifest_sha256": replay.FIXTURE_MANIFEST_SHA256,
+        "qualification_evaluation_time_policy_id": replay.TIME_POLICY_ID,
+        "qualification_initial_evaluation_time": "2026-09-27T19:48:52.628430Z",
+        "qualification_reconciliation_sha256": replay.QUALIFICATION_SHA,
+        "historical_run_reconciliation_sha256": replay.HISTORICAL_SHA,
+        "historical_evaluation_time_retained": False,
+        "historical_reconciliation_sha_reproduction_required": False,
+        "complete_current_history_reconstructed": False,
+        "production_model_authority": False,
+        "production_probability_authority": False,
+        "source_reconciliation_verifier_mode": "CANONICAL_UNPATCHED",
+        "runtime_binding_verifier_mode": "CANONICAL_UNPATCHED",
+        "fresh_evaluation_time": "2026-09-27T20:04:20.651079Z",
+    }
+    stages = {
+        "direct_context_sha256", "direct_price_all_sha256", "direct_router_sha256",
+        "fresh_context_sha256", "fresh_price_all_sha256", "fresh_router_sha256",
+        "portfolio_input_sha256", "portfolio_result_sha256",
+    }
+    if type(value) is not dict or set(value) != set(exact) | stages:
+        raise AuditError("qualification fields are not exact")
+    for key, expected in exact.items():
+        if type(value[key]) is not type(expected) or value[key] != expected:
+            raise AuditError(f"qualification identity/authority drift: {key}")
+    for field in stages:
+        if type(value[field]) is not str or SHA256_RE.fullmatch(value[field]) is None:
+            raise AuditError(f"qualification stage identity missing: {field}")
+    # Independently derive availability, never accept a caller-authored clock.
+    from datetime import datetime
+    corpus = ROOT / replay.FIXTURE_PREFIX
+    replay.verify_fixture_manifest(corpus)
+    times = [replay.ISSUED_AT]
+    discovery = json.loads((corpus / "source-evidence/current-shadow-sportybet-pc-upcoming-discovery/manifest.json").read_bytes())
+    times.append(discovery["last_observed_at"])
+    for cid in replay.INITIAL_CAPTURES.values():
+        detail = json.loads((corpus / f"source-evidence/sportybet-live-event-quote-evidence/{cid}/manifest.json").read_bytes())
+        times.append(detail["observed_at"])
+    derived = max(datetime.fromisoformat(t.replace("Z", "+00:00")) for t in times)
+    if derived.isoformat().replace("+00:00", "Z") != value["qualification_initial_evaluation_time"]:
+        raise AuditError("qualification clock is not max initial retained availability")
+
+
 def _check_platforms(value: dict) -> None:
     platforms = value["platforms"]
     if type(platforms) is not list or len(platforms) != 2:
@@ -176,6 +233,13 @@ def _check_platforms(value: dict) -> None:
         if key in seen:
             raise AuditError("duplicate platform row")
         seen.add(key)
+        if row["git_on_path"] is not False or row["git_calls"] != 0 or row["bundle_has_no_dot_git"] is not True:
+            raise AuditError("Git executable/call/.git absence gates are not proven separately")
+        os_version = row["host_os_version"]
+        if type(os_version) is not str or (row["platform"] == "windows" and "Windows-11" not in os_version):
+            raise AuditError("actual Windows 11 native evidence required")
+        if row["platform"] == "linux" and not ("Ubuntu" in os_version and "24.04" in os_version):
+            raise AuditError("actual Ubuntu 24.04 native evidence required")
         for sha_field in (
             "release_manifest_sha256",
             "shell_executable_sha256",
