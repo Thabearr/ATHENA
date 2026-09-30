@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from packaging.common.build_config import (  # noqa: E402
+from scripts.port_02c_build_config import (  # noqa: E402
     ARCHITECTURE_TAG,
     BANNED_FROZEN_MODULES,
     PLATFORM_TAGS,

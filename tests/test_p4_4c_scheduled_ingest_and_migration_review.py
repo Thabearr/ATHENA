@@ -160,7 +160,7 @@ def test_migration_review_does_not_change_retirement_ledger_or_workflow_count() 
     current = evolution.validate_current_state()
     assert history["canonical_sha256"] == p44c.P43_LEDGER_SHA256
     assert history["current_retired_workflow_count"] == 3
-    assert current["current_live_workflow_count"] == 38
+    assert current["current_live_workflow_count"] == 39
     assert Path(".github/workflows/athena-ingest.yml").is_file()
     assert not any(
         row["retirement_authorized"] or row["equivalence_claimed"]

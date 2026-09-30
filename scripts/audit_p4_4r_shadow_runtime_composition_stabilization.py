@@ -475,14 +475,14 @@ def audit(root: Path | None = None) -> dict[str, Any]:
     workflow_paths = subprocess.check_output(
         ["git", "ls-tree", "-r", "--name-only", "HEAD", "--", ".github/workflows"], cwd=root
     ).decode("utf-8").splitlines()
-    _require(len([item for item in workflow_paths if item.endswith((".yml", ".yaml"))]) == 38,
+    _require(len([item for item in workflow_paths if item.endswith((".yml", ".yaml"))]) == 39,
              "P4.4R changed the workflow count")
     from scripts import audit_p4_workflow_evolution_ledger as evolution
     try:
         ledger = evolution.validate_current_state()
     except evolution.WorkflowEvolutionError as exc:
         raise P44RError("current workflow evolution is not authenticated") from exc
-    _require(ledger.get("current_live_workflow_count") == 38
+    _require(ledger.get("current_live_workflow_count") == 39
              and ledger.get("current_p4_3_retired_workflow_count") == 3,
              "P4.4R changed workflow/retirement governance counts")
     try:

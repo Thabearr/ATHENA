@@ -124,7 +124,7 @@ def test_current_workflow_tree_and_protected_paths_match_reviewed_evolution() ->
         "rev-parse", "HEAD:.github/workflows"
     ).decode("ascii").strip()
     assert p44g_receipt["workflow_tree_sha1_after"] == "d58f71b9ac653c8762f1d9b18eede15755ee1a76"
-    assert len(list(Path(".github/workflows").glob("*.yml"))) == 38
+    assert len(list(Path(".github/workflows").glob("*.yml"))) == 39
     assert not evolution._git("diff", "--", ".github/workflows")
     baseline = evolution.baseline_state(retirement.validate_retirement_history())
     latest = {

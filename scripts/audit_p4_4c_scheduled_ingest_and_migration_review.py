@@ -592,7 +592,7 @@ def check() -> dict[str, Any]:
     if not triggers or re.search(r"(?m)^  (?!schedule:|workflow_dispatch:)[A-Za-z_][A-Za-z0-9_-]*:", triggers.group(1)):
         raise AssertionError("P4.4C added an unreviewed acquisition trigger")
     _validate_receipt_semantics(receipt)
-    if ledger.get("current_live_workflow_count") != 38 or ledger.get("current_workflow_tree_sha1") != _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip():
+    if ledger.get("current_live_workflow_count") != 39 or ledger.get("current_workflow_tree_sha1") != _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip():
         raise AssertionError("P4.4C current workflow tree/count does not match reviewed state")
     if history.get("current_retired_workflow_count") != 3:
         raise AssertionError("P4.4C unexpectedly changed P4.3 retirement count")

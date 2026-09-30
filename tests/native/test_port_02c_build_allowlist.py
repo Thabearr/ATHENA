@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from packaging.common.build_config import (
+from scripts.port_02c_build_config import (
     BANNED_FROZEN_MODULES,
     QUALIFICATION_FIXTURE_PREFIXES,
     SLICE_CLOSED_WORLD_ROOTS,

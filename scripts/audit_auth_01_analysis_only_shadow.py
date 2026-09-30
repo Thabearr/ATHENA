@@ -1336,7 +1336,7 @@ def _verify_p44r_from_forward_evidence(
     ):
         raise AssertionError("P4.4R historical workflow identity does not match reviewed evolution ancestry")
     if (
-        ledger.get("current_live_workflow_count") != 38
+        ledger.get("current_live_workflow_count") != 39
         or ledger.get("current_p4_3_retired_workflow_count") != 3
     ):
         raise AssertionError("current workflow/retirement counts differ from the P4.4R checkpoint")

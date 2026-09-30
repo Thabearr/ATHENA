@@ -88,7 +88,7 @@ def test_evolution_ledger_appends_exactly_one_maintenance_revision() -> None:
     assert transition["workflow_path"] == audit.WORKFLOW_PATH
     assert transition["canonical_family"] == "ATHENA_RUN"
     assert transition["maintenance_contract"] == evolution.MAINTENANCE_CONTRACT
-    assert ledger["current_live_workflow_count"] == 38
+    assert ledger["current_live_workflow_count"] == 39
     assert ledger["current_p4_3_retired_workflow_count"] == 3
     assert ledger["transitions"][7]["phase_id"] == "AUTH-01B"
 
