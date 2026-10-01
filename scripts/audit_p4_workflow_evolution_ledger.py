@@ -761,6 +761,8 @@ PORT02C_REPLAY_WORKFLOW_AFTER = {
     "git_blob_sha1": "29085814892b94b67435e5869ac60f316fb56e36",
     "source_sha256": "5b2f4f8ade4f7b45b0db43023085ee0762b2e178564c6ecebd2a632932e8e07b",
 }
+CORE01B_WORKFLOW_TREE_SHA1 = "b1f3e16acccc543456c330e13476a3019cdbd477"
+CORE01B_LEDGER_SHA256 = "1e4cdb1973637ebbf1793e08cd7deb943d7dbd75854ee5fb7e459586ab445cc8"
 
 
 def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha):
@@ -769,8 +771,11 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
     The historical ADD remains pinned. Only this exact later workflow tree and
     file identity are accepted; all other derived workflow identities stay exact.
     """
-    if (head_tree != PORT02C_REPLAY_WORKFLOW_TREE_SHA1
-            or ledger_sha != "d1c8d79ac48bf0521a609e29991014513bd2f7afed2389c5e3a9d6ec8bfba8a2"
+    reviewed_contexts = {
+        (PORT02C_REPLAY_WORKFLOW_TREE_SHA1, "d1c8d79ac48bf0521a609e29991014513bd2f7afed2389c5e3a9d6ec8bfba8a2"),
+        (CORE01B_WORKFLOW_TREE_SHA1, CORE01B_LEDGER_SHA256),
+    }
+    if ((head_tree, ledger_sha) not in reviewed_contexts
             or derived.get(PORT02C_REPLAY_WORKFLOW_PATH) != PORT02C_REPLAY_WORKFLOW_BEFORE
             or observed.get(PORT02C_REPLAY_WORKFLOW_PATH) != PORT02C_REPLAY_WORKFLOW_AFTER):
         raise WorkflowEvolutionError("workflow tree differs without exact PORT-02C replay successor")
@@ -892,7 +897,7 @@ def validate_current_state(
         if identity["git_blob_sha1"] != head_blob:
             raise WorkflowEvolutionError(f"workflow source differs from HEAD: {path}")
         observed[path] = identity
-    if head_tree != tree_sha:
+    if head_tree != tree_sha or derived.get(PORT02C_REPLAY_WORKFLOW_PATH) != observed.get(PORT02C_REPLAY_WORKFLOW_PATH):
         derived = _port02c_current_source_forward(derived, observed,
             head_tree=head_tree, ledger_sha=ledger["canonical_sha256"])
     validate_derived_tree(derived, observed)

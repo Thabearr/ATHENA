@@ -266,9 +266,9 @@ def audit() -> dict[str, Any]:
     fixture_bytes = BEFORE_FIXTURE_PATH.read_bytes().replace(b"\r\n", b"\n")
     _require(evolution.source_identity(fixture_bytes) == EXPECTED_BEFORE, "AUTH-01B before fixture bytes differ from authoritative main")
     _require(transition.get("historical_before_fixture") == {"path": BEFORE_FIXTURE_PATH.as_posix(), **EXPECTED_BEFORE}, "AUTH-01B before fixture identity is not bound")
-    current_bytes = Path(WORKFLOW_PATH).read_bytes().replace(b"\r\n", b"\n")
+    current_bytes = evolution.resolve_reviewed_transition_after_source(WORKFLOW_PATH, TRANSITION_ID)
     current_identity = evolution.source_identity(current_bytes)
-    _require(transition.get("after") == current_identity, "AUTH-01B after identity differs from current workflow")
+    _require(transition.get("after") == current_identity, "AUTH-01B historical transition-after identity differs")
 
     old_workflow = _yaml(evolution.resolve_reviewed_transition_after_source(
         WORKFLOW_PATH,

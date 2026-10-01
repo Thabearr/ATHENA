@@ -46,6 +46,18 @@ HISTORICAL_PATHS = [
     ".github/workflows/current-shadow-history-cache-prime.yml",
     ".github/workflows/p3-0-comparison-evidence-capture.yml",
 ]
+HISTORICAL_BLOBS = {
+    ".github/workflows/current-shadow-all-market.yml": "4321d70563e98acaf1663f5a7b28781908535328",
+    ".github/workflows/current-shadow-history-cache-prime.yml": "22d3f04288e434b5edf67e419e99a706641a859d",
+    ".github/workflows/p3-0-comparison-evidence-capture.yml": "0d0d2285e7b17ca625288ec295884433e3c3cedd",
+    "artifacts/architecture/auth_01_analysis_only_shadow_v1.json": "2270ae97e1529e620ad9df4e77df9510b10a453a",
+    "artifacts/architecture/auth_01b_athena_run_explicit_delivery_intent_v1.json": "f9134cba777859c923d5eec0812d586d2ee5671c",
+    "artifacts/architecture/core_01_schedule_date_disposition_v1.json": "508d444bc981f332420fa10ac6b394fe4f22efa6",
+    "artifacts/architecture/p4_4h_current_shadow_canonical_run_migration_review_v1.json": "924febf73ab39a55433e69fd64cc203d493d68df",
+    "artifacts/architecture/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json": "b79f610bfe06c550584a7c305bf721b94c5efba9",
+    PREDECESSOR_PATH: "a8882c7659e4f92c0a6b50d5bb3e2c85363d87a3",
+    "artifacts/architecture/port_02_native_runtime_v1.json": "d21ff8cef38d6a06045f200bcdef981fa5034118",
+}
 
 
 def tracked(path: str):
@@ -204,6 +216,8 @@ def expected_evidence():
     source_ids = {}
     for path in SOURCE_PATHS + HISTORICAL_PATHS:
         raw, identity = tracked(path)
+        if path in HISTORICAL_BLOBS:
+            roles.require(identity.git_blob_sha1 == HISTORICAL_BLOBS[path], f"historical source drift: {path}")
         source_ids[path] = {"git_blob_sha1": identity.git_blob_sha1,
                             "git_blob_payload_sha256": identity.git_blob_payload_sha256}
     c1 = roles.strict_json(tracked(HISTORICAL_PATHS[0])[0])

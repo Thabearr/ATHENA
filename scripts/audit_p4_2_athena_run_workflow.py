@@ -358,25 +358,20 @@ def _workflow_contract(workflow: dict[str, Any]) -> dict[str, Any]:
         raise P42AuditError("workflow request resolver transport drifted")
     if resolve_step.get("env", {}).get("INPUT_CREATE_SHARE_CODE") != "${{ inputs.create_share_code }}":
         raise P42AuditError("explicit delivery intent is not passed to the canonical resolver")
-    restore_history = by_id.get("restore_history_prime", {})
-    history_run = restore_history.get("run", "")
-    if any(token not in history_run for token in (
-        "current-shadow-history-cache-prime.yml", "current-shadow-history-cache-prime",
-        "restore_current_shadow_history_prime_artifact", "--expected-prime-commit-sha",
-    )):
-        raise P42AuditError("trusted-main history-prime restore contract is incomplete")
-    restore_bootstrap = by_id.get("restore_pr119", {}).get("run", "")
-    if any(token not in restore_bootstrap for token in (
-        "athena-fresh-holdout-bootstrap-v1", "pr119-materialized.ndjson",
-        "e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2",
-    )):
-        raise P42AuditError("fixed PR119 bootstrap restore contract is incomplete")
-    restore_identity = by_id.get("restore_identity", {}).get("run", "")
-    if any(token not in restore_identity for token in (
-        "current-shadow-all-market.yml", "current-shadow-all-market-request",
-        "current-shadow-fixture-identity-v2-state.json", "ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH",
-    )):
-        raise P42AuditError("persistent Shadow identity restore contract is incomplete")
+    restore_roles = by_id.get("restore_artifact_roles", {})
+    if (restore_roles.get("run") != "python -m scripts.restore_athena_artifact_roles --restore-inputs"
+            or restore_roles.get("if") != "success() && steps.resolve_request.outputs.authority_profile == 'SHADOW'"):
+        raise P42AuditError("canonical role restore contract is incomplete")
+    from scripts.audit_core_01b_canonical_artifact_ancestry import BEFORE_FIXTURE, verify_workflow_authority
+    from runtime.source_identity import read_tracked_head_blob
+    before_bytes = read_tracked_head_blob(REPOSITORY_ROOT, BEFORE_FIXTURE)[0]
+    current_bytes = read_tracked_head_blob(REPOSITORY_ROOT, WORKFLOW_PATH)[0]
+    try:
+        verify_workflow_authority(before_bytes, current_bytes)
+    except ValueError as exc:
+        raise P42AuditError("CORE-01B workflow authority/capability preservation differs") from exc
+    if by_id.get("build_artifact_roles", {}).get("run") != "python -m scripts.build_athena_artifact_role_manifest":
+        raise P42AuditError("canonical role publication is missing")
     lineage_run = by_id.get("bind_lineage_main", {}).get("run", "")
     if "git/ref/heads/main" not in lineage_run or "ATHENA_EXPECTED_LINEAGE_MAIN_SHA" not in lineage_run:
         raise P42AuditError("Shadow lineage-main binding is missing")

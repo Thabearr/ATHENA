@@ -191,7 +191,8 @@ def test_unrepresentable_exact_bridge_precedes_provider_and_delivery(tmp_path, d
 
 @pytest.fixture(scope="module")
 def reviewed_sources():
-    return {path: audit.read_tracked_head_blob(audit.ROOT, path) for path in audit.SOURCE_BLOBS}
+    paths = [*audit.SOURCE_BLOBS, audit.CORE01B_BEFORE_FIXTURE]
+    return {path: audit.read_tracked_head_blob(audit.ROOT, path) for path in paths}
 
 
 def test_exact_receipt_audit_canonical_sha_and_predecessor_immutability():
@@ -201,7 +202,7 @@ def test_exact_receipt_audit_canonical_sha_and_predecessor_immutability():
 
 
 def test_schedule_semantics_compatibility_email_and_history(reviewed_sources):
-    measured = audit.inspect_semantics({p: raw for p, (raw, identity) in reviewed_sources.items()})
+    measured = audit.inspect_semantics(audit.inspect_sources(audit.ROOT)[1])
     selected = resolve_workflow_request(event_name="schedule", now=NORMAL)
     assert selected.authority_profile == "MAIN" and selected.mode == "main_application"
     assert selected.create_share_code is selected.place_wager is False
@@ -210,8 +211,11 @@ def test_schedule_semantics_compatibility_email_and_history(reviewed_sources):
         text = reviewed_sources[path][0].decode()
         assert 'cron: "0 9 * * *"' in text
         assert "backfill" not in text.lower() and "catch-up" not in text.lower()
-        assert "current-shadow-all-market-request" in text
-        assert "current-shadow-all-market.yml/runs?status=success" in text
+        if path == audit.LEGACY_WORKFLOW:
+            assert "current-shadow-all-market-request" in text
+            assert "current-shadow-all-market.yml/runs?status=success" in text
+        else:
+            assert "scripts.restore_athena_artifact_roles --restore-inputs" in text
     text = reviewed_sources[audit.LEGACY_WORKFLOW][0].decode()
     assert "scope=(today|three-day)" in text and "dates=([0-9]{8}" in text
     assert text.index("scripts.execute_current_shadow_request") < text.index("scripts.send_current_shadow_email")
