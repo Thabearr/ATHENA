@@ -318,3 +318,28 @@ Canonical SHADOW artifacts now preserve the active pcUpcoming provider-source
 evidence root when it exists. This does not change the workflow's triggers,
 authority, or runtime source contract and does not establish successor-proof
 equivalence or workflow-retirement eligibility.
+
+## CORE-01A current disposition (after merged PORT-02C)
+
+The earlier phase sections and receipts remain historical, unchanged evidence.
+The current disposition is
+`artifacts/architecture/core_01_schedule_date_disposition_v1.json`:
+both 09:00Z schedules remain unchanged, canonical MAIN/no-delivery and legacy
+SHADOW compatibility. Equal cron expressions are not capability equivalence.
+Canonical dates resolve once in Africa/Lagos; legacy YYYYMMDD dates retain the
+UTC rolling horizon. The 23:00Z mismatch is not translated or broadened, and the
+service rejects an exact unrepresentable request before provider work with
+`SHADOW_DATE_POLICY_UNREPRESENTABLE`. No automatic missed-run backfill exists or
+is authorized. See `athena_run_workflow.md` for the exact ownership/boundary matrix.
+
+Run 36345657852 retains its authorization-noncompliant delivery classification.
+AUTH-01D offline analysis-only proof and PORT-02C installed retained replay are
+not clean live proof. Clean successor proof remains INCOMPLETE / NOT RERUN;
+LG-A is NOT RUN / NOT AUTHORIZED. Caller/schedule migration and workflow retirement
+remain unauthorized. Issue-comment compatibility, separate email, and legacy
+successful-run/artifact identity/history ancestry remain retained open blockers.
+No workflow YAML, live count, retirement ledger, or evolution transition changes.
+P4.4 and Checkpoint E remain incomplete. Actual merge-count governance is 1/5
+while CORE-01A is open, 2/5 only after an owner merge; the static Block-B PORT-02C
+"5/5" planning label is superseded. The bounded Block-B-to-C refresh is not a
+mandatory 5/5 reread or counter reset and grants no live authority.
