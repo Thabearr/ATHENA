@@ -1,5 +1,65 @@
 # Canonical `athena-run` workflow
 
+## CORE-01A current date and schedule disposition
+
+`ATHENA_CORE_01A_DATE_SCHEDULE_DISPOSITION_V1` records a disposition, not a
+cutover or live authority grant. Its receipt is
+`artifacts/architecture/core_01_schedule_date_disposition_v1.json`; the offline
+audit is `python -m scripts.audit_core_01_schedule_date_disposition`.
+
+- Canonical date authority is
+  `services.athena_run_request_parser.parse_explicit_request`: Africa/Lagos,
+  `ATHENA_REQUEST_DATE_RESOLUTION_LAGOS_V1`. One through seven selected dates
+  resolve once within local today..today+6, sort deterministically, and freeze
+  as concrete `RunRequest` dates before orchestration. Duplicate resolved dates
+  fail closed. Accepted request dates do not change after midnight;
+  `ExecutionEnvelope` binds those exact dates and retains UTC/Z evidence times.
+  `target_legs` and `target_total_odds` remain independent fields.
+- Legacy Current Shadow retains its distinct UTC authority in
+  `domain.current_shadow_fixture_date_request.py`: exact YYYYMMDD, one through
+  seven dates within UTC today..today+6. `today` / `three-day` and both
+  `/athena-shadow` issue-comment grammars remain compatibility surfaces.
+- At 2026-09-24 09:00Z and 22:59Z, both policies' today is September 24.
+  At 23:00Z, Lagos today is September 25 while UTC today is September 24:
+  `UNREPRESENTABLE_WITHOUT_DATE_SHIFT` for equivalent today semantics. The
+  seven-day horizons are respectively September 25..October 1 and
+  September 24..30. Neither policy translates, broadens, or shifts dates.
+- The service bridges only exact canonical dates representable by the retained
+  UTC window; otherwise it returns `SHADOW_DATE_POLICY_UNREPRESENTABLE` before
+  worker/provider work, preserving the original request bytes. The difference
+  in today semantics does not reject every exact canonical date: September 25
+  itself fits both windows at 23:00Z; October 1 does not fit the UTC window.
+- Both `0 9 * * *` schedule surfaces remain **unchanged**. Canonical scheduling
+  remains MAIN, today under Lagos, target 20, no target-total-odds objective,
+  sportybet, `create_share_code=false`, `place_wager=false`:
+  `RETAIN_MAIN_NO_DELIVERY_0900Z_UNCHANGED`. Legacy scheduling remains the SHADOW
+  research compatibility path, target 20, UTC today scope, no explicit date
+  list: `RETAIN_PENDING_CLEAN_SUCCESSOR_AND_OPERATIONAL_DISPOSITION`.
+  Equal cron expressions do not imply equal authority or request semantics.
+- Automatic missed-run backfill is forbidden and absent. R1 desktop does not
+  require unattended scheduling. Schedule/caller migration and workflow
+  retirement are **not authorized**. No workflow-evolution transition is added.
+- Separate legacy post-core email and persistent identity/history ancestry
+  (successful Current Shadow runs and `current-shadow-all-market-request`
+  artifacts) remain retained, unmigrated blockers. CORE-01A sends no email.
+- Run 36345657852 is useful internal execution evidence but authorization-
+  noncompliant because of the share-code side effect outside owner intent.
+  AUTH-01D's offline no-delivery Portfolio-ready proof and PORT-02C's retained
+  installed replay are not clean live successor proof. GitHub success is not
+  business-success proof. Clean successor proof remains **INCOMPLETE / NOT
+  RERUN**; LG-A is **NOT RUN / NOT AUTHORIZED**, a separate owner-authorized gate.
+  P4.4 and Architecture Checkpoint E remain incomplete. Historical evidence is
+  unchanged; this disposition grants no provider, delivery, account or wager
+  authority. `SOURCE_REVIEW_COUNTER` remains 1/5 while CORE-01A is open (2/5 only
+  if subsequently merged by the owner); this bounded refresh is not a 5/5 reset.
+
+The governing C1 and Blueprint refresh used owner-supplied PDF excerpts, plus
+current tracked contracts, #337, AUTH-01D, P4.4H and merged PORT-02C evidence.
+It does not claim that the unavailable original product PDFs were reread.
+
+The following sections preserve earlier phase descriptions; the dated
+CORE-01A disposition above states current schedule/date ownership.
+
 P4.2 adds `.github/workflows/athena-run.yml` as a second thin transport over the
 existing `RunRequest -> AthenaRunService -> RunReceipt` path. It does not add a
 decision engine, alter run-contract semantics, or retire any existing workflow.
