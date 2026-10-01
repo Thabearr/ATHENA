@@ -566,11 +566,18 @@ def test_reviewed_transition_resolver_uses_the_next_revision_historical_fixture(
     auth_transition = ledger["transitions"][7]
     fixture = auth_transition["historical_before_fixture"]
     raw = Path(fixture["path"]).read_bytes().replace(b"\r\n", b"\n")
+    later_fixtures = {
+        item["historical_before_fixture"]["path"]:
+        Path(item["historical_before_fixture"]["path"]).read_bytes().replace(b"\r\n", b"\n")
+        for item in ledger["transitions"][7:]
+        if item.get("workflow_path") == ".github/workflows/athena-run.yml"
+        and item.get("operation") == "MAINTENANCE_REVISE"
+    }
     resolved = audit._resolve_reviewed_transition_after_source(
         ".github/workflows/athena-run.yml",
         "P44M_ATHENA_RUN_PC_UPCOMING_EVIDENCE_PRESERVATION_V1",
         ledger,
-        historical_fixture_bytes={fixture["path"]: raw},
+        historical_fixture_bytes=later_fixtures,
         current_workflow_bytes=Path(".github/workflows/athena-run.yml").read_bytes(),
     )
     assert resolved == raw
