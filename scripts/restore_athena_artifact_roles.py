@@ -67,6 +67,8 @@ class GitHubTransport:
         roles.require(info.get("tag_name") == roles.LEGACY_PRODUCERS["PR119_BOOTSTRAP"]["release"], "release tag differs")
         matches = [item for item in info["assets"] if item.get("name") == roles.BOOTSTRAP_FILENAME]
         roles.require(len(matches) == 1 and type(matches[0].get("id")) is int, "fixed asset missing/ambiguous")
+        self.bootstrap_origin = {"release_id": info["id"], "asset_id": matches[0]["id"],
+                                 "asset_size_bytes": matches[0]["size"]}
         return self.api(f"repos/{roles.REPOSITORY}/releases/assets/{matches[0]['id']}", binary=True)
 
 
@@ -102,7 +104,8 @@ def manifest_root(download: Path) -> Path:
 def legacy_role(role_id: str, candidate: roles.Candidate, download: Path):
     origin = {"source_kind": "LEGACY_ACTIONS", "repository": roles.REPOSITORY,
               "workflow_path": candidate.workflow_path, "run_id": candidate.run_id,
-              "head_sha": candidate.head_sha, "artifact_name": candidate.artifact_name}
+              "head_sha": candidate.head_sha, "artifact_name": candidate.artifact_name,
+              "artifact_id": candidate.artifact_id}
     if role_id == "DURABLE_HISTORY_PRIME":
         root = download
     else:
@@ -179,7 +182,8 @@ def restore_inputs(workspace: Path, transport, *, current_run_id: int,
                 source.mkdir()
                 (source / roles.BOOTSTRAP_FILENAME).write_bytes(transport.bootstrap())
                 origin = {"source_kind": "FIXED_RELEASE", "repository": roles.REPOSITORY,
-                          **roles.LEGACY_PRODUCERS[role_id], "payload_sha256": roles.BOOTSTRAP_SHA256}
+                          **roles.LEGACY_PRODUCERS[role_id], **transport.bootstrap_origin,
+                          "payload_sha256": roles.BOOTSTRAP_SHA256}
                 roles.validate_payload(role_id, source, origin)  # required, before provider execution
                 selected_source = {"source_kind": "FIXED_RELEASE_READ_ONLY_COMPATIBILITY"}
             destination = roles.safe_path(artifact_root, roles.ROLE_ROOTS[role_id])

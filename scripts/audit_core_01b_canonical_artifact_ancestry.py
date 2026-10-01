@@ -161,6 +161,9 @@ def offline_parity() -> dict:
         archives = {111: zip_tree(history), 112: zip_tree(identity)}
 
         class FixtureTransport:
+            bootstrap_origin = {"release_id": 373205103, "asset_id": 521090702,
+                                "asset_size_bytes": 10545099}
+
             def artifact(self, candidate):
                 return archives[candidate.artifact_id]
 

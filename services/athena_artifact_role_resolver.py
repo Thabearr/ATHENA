@@ -153,12 +153,16 @@ def validate_origin(role_id: str, origin: dict[str, Any]) -> None:
         require(role_id == "PR119_BOOTSTRAP" and
                 origin.get("release") == LEGACY_PRODUCERS[role_id]["release"] and
                 origin.get("asset") == BOOTSTRAP_FILENAME and
+                type(origin.get("release_id")) is int and origin["release_id"] > 0 and
+                type(origin.get("asset_id")) is int and origin["asset_id"] > 0 and
+                type(origin.get("asset_size_bytes")) is int and origin["asset_size_bytes"] == 10545099 and
                 origin.get("payload_sha256") == BOOTSTRAP_SHA256, "fixed release origin differs")
     elif kind == "LEGACY_ACTIONS":
         require(role_id in LEGACY_PRODUCERS and role_id != "PR119_BOOTSTRAP", "wrong legacy role origin")
         require(origin.get("workflow_path") == LEGACY_PRODUCERS[role_id]["workflow_path"] and
                 origin.get("artifact_name") == LEGACY_PRODUCERS[role_id]["artifact_name"] and
                 type(origin.get("run_id")) is int and origin["run_id"] > 0 and
+                type(origin.get("artifact_id")) is int and origin["artifact_id"] > 0 and
                 hex_sha(origin.get("head_sha"), 40) and hex_sha(origin.get("inventory_sha256"), 64),
                 "legacy origin binding differs")
     elif kind == "CANONICAL_EXECUTION":

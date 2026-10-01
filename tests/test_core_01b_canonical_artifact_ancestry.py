@@ -64,6 +64,7 @@ def identity_manifest(tmp_path):
     shutil.copytree(state, target)
     origin = {"source_kind": "LEGACY_ACTIONS", "repository": roles.REPOSITORY,
               **roles.LEGACY_PRODUCERS[role_id], "run_id": 12, "head_sha": "a" * 40,
+              "artifact_id": 112,
               "inventory_sha256": roles.sha(roles.canonical(roles.inventory(target)))}
     producer = {"workflow_family": "ATHENA_RUN", "workflow_path": roles.CANONICAL_WORKFLOW,
                 "run_id": 100, "head_sha": "b" * 40, "head_branch": "main",
@@ -220,6 +221,7 @@ def test_wrong_pr119_sha_and_no_fake_prime_role(tmp_path):
     root.mkdir()
     (root / roles.BOOTSTRAP_FILENAME).write_bytes(b"SYNTHETIC_INVALID_BOOTSTRAP")
     origin = {"source_kind": "FIXED_RELEASE", "repository": roles.REPOSITORY,
+              "release_id": 373205103, "asset_id": 521090702, "asset_size_bytes": 10545099,
               **roles.LEGACY_PRODUCERS["PR119_BOOTSTRAP"], "payload_sha256": roles.BOOTSTRAP_SHA256}
     with pytest.raises(roles.ArtifactRoleError):
         roles.validate_payload("PR119_BOOTSTRAP", root, origin)
@@ -234,6 +236,9 @@ def test_wrong_pr119_sha_and_no_fake_prime_role(tmp_path):
 def test_optional_empty_fallback_but_required_bootstrap_failclosed(tmp_path, valid_bootstrap):
     bootstrap = gzip.decompress(audit.tracked(audit.BOOTSTRAP_FIXTURE)[0])
     class FixtureTransport:
+        bootstrap_origin = {"release_id": 373205103, "asset_id": 521090702,
+                            "asset_size_bytes": 10545099}
+
         def artifact(self, candidate):
             pytest.fail("no candidate download expected")
 
