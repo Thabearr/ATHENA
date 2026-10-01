@@ -348,6 +348,22 @@ mandatory 5/5 reread or counter reset and grants no live authority.
 
 ### CORE-01C retained thin compatibility successor
 
+#### LG-A remediation, not a clean successor proof
+
+LG-A run 36846297806 consumed one dispatch and failed before worker command/provider
+execution (`EXECUTOR_UNAVAILABLE`), despite GitHub SUCCESS. The service now adapts
+the same relative run directory with a cwd prefix; WorkerLauncher security remains
+unchanged. Diagnostic failed producers are not canonical restore successors:
+builder enforces the domain-owned exact terminal vocabulary and restore verifies
+the producer receipt independently, rejecting the immutable old true manifest.
+Older canonical/fixed PR119 fallback remains read-only; no workflow YAML/schema/
+evolution transition changes. Historical receipts/snapshots are not repinned.
+
+No live action or retry is authorized. Clean successor proof, P4.4 and Checkpoint E
+remain INCOMPLETE; C4 blocked; migration/retirement unauthorized. Counter 4/5 while
+open; merge would reach 5/5 and require mandatory source/architecture reread and
+reset before another counted mission or separately authorized new LG-A proof.
+
 C3 disposition (current, without rewriting historical census or receipts):
 `NOTIFICATION_EMAIL = EXPLICIT_RETAINED_SECONDARY_NON_AUTHORITATIVE` and
 `ISSUE_COMMENT_COMPATIBILITY = EXPLICIT_RETAINED_THIN_SYNTAX_ADAPTER_NOT_MIGRATED`.

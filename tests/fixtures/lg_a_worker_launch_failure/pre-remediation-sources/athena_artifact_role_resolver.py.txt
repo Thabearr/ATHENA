@@ -85,30 +85,6 @@ def hex_sha(value: Any, length: int) -> bool:
     return type(value) is str and re.fullmatch(rf"[0-9a-f]{{{length}}}", value) is not None
 
 
-def is_restore_eligible_shadow_receipt(receipt) -> bool:
-    """A diagnostic/control-plane failure is not a successful restore producer."""
-    from domain.current_shadow_run_contract_adapter import is_successful_canonical_shadow_terminal_status
-    from domain.run_contracts import RunReceipt
-    return (type(receipt) is RunReceipt and receipt.request.authority_profile == "SHADOW" and
-            is_successful_canonical_shadow_terminal_status(
-                receipt.status, create_share_code=receipt.request.create_share_code) and
-            receipt.wager_placed is False and
-            (receipt.request.create_share_code or
-             (receipt.share_code_result is None and receipt.authority_manifest.share_code_generation is False)))
-
-
-def validate_producer_receipt(raw: bytes, *, request_sha256: str, head_sha: str):
-    """Independent canonical receipt check; never trust manifest eligibility alone."""
-    from domain.run_contracts import RunReceipt, canonical_json_bytes
-    strict_json(raw)  # reject duplicate keys before contract parsing
-    receipt = RunReceipt.from_json_bytes(raw)
-    require(raw == canonical_json_bytes(receipt), "producer receipt bytes are not canonical")
-    require(receipt.request.canonical_sha256 == request_sha256 and receipt.exact_commit_sha == head_sha,
-            "producer receipt request/head mismatch")
-    require(is_restore_eligible_shadow_receipt(receipt), "producer receipt terminal is restore-ineligible")
-    return receipt
-
-
 def safe_path(root: Path, relative: str) -> Path:
     relative = validate_repository_relative_path(relative)
     require(not root.is_symlink(), "symlink root forbidden")

@@ -96,6 +96,9 @@ def inspect_sources(root: Path) -> tuple[dict[str, Any], dict[str, bytes]]:
     identities, payloads = {}, {}
     for path, blob in SOURCE_BLOBS.items():
         raw, identity = read_tracked_head_blob(root, path)
+        if path in {"services/athena_run_service.py", "domain/current_shadow_run_contract_adapter.py"} and identity.git_blob_sha1 != blob:
+            from scripts.audit_lg_a_worker_launch_failure_remediation import historical_source
+            raw, identity = historical_source(path, root=root)
         if path == LEGACY_WORKFLOW and identity.git_blob_sha1 == CORE01C_WORKFLOW_AFTER_BLOB:
             require(identity.git_blob_payload_sha256 == CORE01C_WORKFLOW_AFTER_SHA256, "exact C3 successor SHA differs")
             from scripts.audit_core_01c_notification_comment_compatibility import verify_workflow_authority as verify_c3

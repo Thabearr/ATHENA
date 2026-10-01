@@ -1,5 +1,48 @@
 # Canonical `athena-run` workflow
 
+## LG-A failed launch remediation (offline; no retry authorization)
+
+Run **36846297806**, attempt 1, exact main
+`426f36e60ebb421af003ed3154c4da48007d674a`, consumed the sole owner-authorized
+LG-A dispatch. GitHub SUCCESS was not acceptance: canonical `EXECUTOR_UNAVAILABLE`
+with `WorkerLaunchError` occurred before worker command publication, supervisor
+execution or provider acquisition. The request correctly disabled delivery and
+wager. No inner receipt/source capture exists; clean successor proof remains
+**INCOMPLETE**. Historical artifact **11153681944** remains immutable.
+
+Production supplies relative `artifacts/athena-runs`. At the service worker-launch
+boundary, a relative run directory now receives only a `Path.cwd()` prefix. No
+`.resolve()` or traversal normalization precedes `WorkerCommand`; the existing
+absolute/no-traversal/no-link/junction, exact request SHA and release identity
+validation remains authoritative. Shell/process groups/argv/operation/mode and
+timeout ownership are unchanged. Offline tests replace only OS process spawning
+and prove command publication with the production-shaped relative path.
+
+Diagnostic upload/GitHub SUCCESS/transport exit zero are not restore eligibility.
+The domain adapter owns exact successful terminal vocabulary: no-delivery permits
+only PORTFOLIO_READY and PORTFOLIO_READY_WITH_SHORTFALL; requested delivery permits
+only CODE_VERIFIED and CODE_VERIFIED_WITH_SHORTFALL (full `RESEARCH_SHADOW_` names).
+Unknown, failure, source-incomplete, unsupported and MAIN states are ineligible.
+Publication requires that semantic success, wager false and no-delivery
+code/authority consistency, in addition to existing producer bindings.
+
+The retained failed LG-A manifest incorrectly claimed `restore_eligible=true`.
+It is not rewritten. Canonical archive restore independently verifies exactly one
+producer RunReceipt at the established matching request/prefix location, canonical
+bytes, request SHA, head SHA, successful terminal and safety consistency. The old
+manifest therefore rejects forward, before any of its role bytes can be restored.
+Normal older valid canonical or exact fixed PR119 read-only fallback remains.
+V1 role policies/schema and live workflow YAML remain unchanged.
+
+Receipt: `artifacts/architecture/lg_a_worker_launch_failure_remediation_v1.json`;
+offline audit: `python -m scripts.audit_lg_a_worker_launch_failure_remediation`.
+Remediation performs zero live/provider/share-code/delivery/email/account/wager
+actions. This does not authorize a new LG-A proof, C4, caller/schedule migration
+or retirement. P4.4/Checkpoint E remain incomplete. Counter **4/5 while open**;
+owner merge would reach **5/5**, requiring mandatory source/architecture reread
+and reset to 0/5 before a subsequent counted mission or separately authorized new
+LG-A proof. Failed run 36846297806 is never retried. Stop review-ready, unmerged.
+
 ## CORE-01C current notification/comment disposition
 
 `NOTIFICATION_EMAIL = EXPLICIT_RETAINED_SECONDARY_NON_AUTHORITATIVE`.

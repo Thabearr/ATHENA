@@ -61,6 +61,10 @@ HISTORICAL_BLOBS = {
 
 
 def tracked(path: str):
+    if path in {"services/athena_artifact_role_resolver.py", "scripts/restore_athena_artifact_roles.py",
+                "scripts/build_athena_artifact_role_manifest.py"}:
+        from scripts.audit_lg_a_worker_launch_failure_remediation import historical_source
+        return historical_source(path)
     if path == ".github/workflows/current-shadow-all-market.yml":
         from scripts import audit_core_01_schedule_date_disposition as c1
         raw, identity = read_tracked_head_blob(ROOT, path)
@@ -184,9 +188,15 @@ def offline_parity() -> dict:
                                   legacy_candidates={"DURABLE_HISTORY_PRIME": [history_candidate],
                                                      "PERSISTENT_FIXTURE_IDENTITY_STATE": [identity_candidate]})
         artifact_root = first / "artifacts/athena-run-workflow"
+        from scripts.audit_lg_a_worker_launch_failure_remediation import successful_receipt
+        from domain.run_contracts import canonical_json_bytes
+        synthetic_receipt = successful_receipt(head="b" * 40)
+        synthetic_run = first / "artifacts/athena-runs" / synthetic_receipt.request.canonical_sha256
+        synthetic_run.mkdir(parents=True)
+        (synthetic_run / "athena-run-receipt.json").write_bytes(canonical_json_bytes(synthetic_receipt))
         producer = {"workflow_family": "ATHENA_RUN", "workflow_path": roles.CANONICAL_WORKFLOW,
                     "run_id": 100, "head_sha": "b" * 40, "head_branch": "main",
-                    "event_name": "workflow_dispatch", "request_sha256": "c" * 64}
+                    "event_name": "workflow_dispatch", "request_sha256": synthetic_receipt.request.canonical_sha256}
         manifest = build_manifest(artifact_root, producer=producer,
                                   origins={key: row["origin_provenance"] for key, row in restored["roles"].items()},
                                   restore_eligible=True)

@@ -52,7 +52,7 @@ def publish(workspace: Path, *, run_id: int, head_sha: str, head_branch: str,
             receipt = RunReceipt.from_json_bytes(raw)
             roles.require(canonical_json_bytes(receipt) == raw and receipt.request == request and
                           receipt.exact_commit_sha == head_sha, "canonical receipt/producer binding differs")
-            eligible = roles.is_restore_eligible_shadow_receipt(receipt)
+            eligible = request.authority_profile == "SHADOW"
     provenance_path = roles.safe_path(root, "artifact-role-restore-provenance-v1.json")
     provenance = roles.strict_json(provenance_path.read_bytes()) if provenance_path.is_file() else {}
     for role_id in ("DURABLE_HISTORY_PRIME", "PR119_BOOTSTRAP"):

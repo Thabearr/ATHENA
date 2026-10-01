@@ -101,23 +101,6 @@ def manifest_root(download: Path) -> Path:
     return found[0]
 
 
-def verify_archive_producer_receipt(download: Path, root: Path, manifest_raw: bytes,
-                                  candidate: roles.Candidate) -> None:
-    value = roles.strict_json(manifest_raw)
-    producer = value["producer"]
-    request_sha = producer["request_sha256"]
-    roles.require(roles.hex_sha(request_sha, 64), "producer request SHA invalid")
-    # Closed set of established upload layouts, including prefixed artifacts.
-    relative = f"athena-runs/{request_sha}/athena-run-receipt.json"
-    choices = [roles.safe_path(download, relative), roles.safe_path(download, "artifacts/" + relative)]
-    found = [path for path in choices if path.is_file()]
-    roles.require(len(found) == 1, "canonical producer receipt missing/ambiguous")
-    expected = (download if root == download else root.parent) / relative
-    roles.require(found[0] == expected, "producer receipt does not share manifest archive prefix")
-    roles.validate_producer_receipt(found[0].read_bytes(), request_sha256=request_sha,
-                                    head_sha=candidate.head_sha)
-
-
 def legacy_role(role_id: str, candidate: roles.Candidate, download: Path):
     origin = {"source_kind": "LEGACY_ACTIONS", "repository": roles.REPOSITORY,
               "workflow_path": candidate.workflow_path, "run_id": candidate.run_id,
@@ -161,9 +144,7 @@ def restore_inputs(workspace: Path, transport, *, current_run_id: int,
                     raise roles.ArtifactRoleError("canonical archive download/integrity rejected") from exc
                 downloads[candidate.artifact_id] = target
             root = manifest_root(downloads[candidate.artifact_id])
-            raw = (root / roles.MANIFEST_FILENAME).read_bytes()
-            verify_archive_producer_receipt(downloads[candidate.artifact_id], root, raw, candidate)
-            return root, raw
+            return root, (root / roles.MANIFEST_FILENAME).read_bytes()
 
         for role_id in roles.ROLE_IDS[:3]:
             selected = roles.select_canonical(role_id, canonical_candidates, load, current_run_id=current_run_id)

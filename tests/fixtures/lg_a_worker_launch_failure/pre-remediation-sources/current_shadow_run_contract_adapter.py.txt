@@ -110,15 +110,6 @@ class CurrentShadowRunContractAdapterError(RunContractError):
     """Raised when Current Shadow evidence cannot be mapped without guessing."""
 
 
-def is_successful_canonical_shadow_terminal_status(
-    status: str, *, create_share_code: bool
-) -> bool:
-    """Exact terminal success vocabulary, narrowed by explicit delivery intent."""
-    if type(status) is not str or type(create_share_code) is not bool:
-        return False
-    return status in (_VERIFIED_RECEIPT_STATUSES if create_share_code else _PORTFOLIO_READY_STATUSES)
-
-
 def _mapping(value: Any, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise CurrentShadowRunContractAdapterError(f"{label} must be mapping")
@@ -816,7 +807,6 @@ def adapt_current_shadow_run(
 
 
 __all__ = [
-    "is_successful_canonical_shadow_terminal_status",
     "CURRENT_RECEIPT_DATASET",
     "CURRENT_REQUEST_DATASET",
     "CURRENT_SCOPE_DAY_COUNT",
