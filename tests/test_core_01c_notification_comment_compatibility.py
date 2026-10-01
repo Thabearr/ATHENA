@@ -233,3 +233,13 @@ def test_rederived_receipt_exact_eleven_transition_prefix_and_history():
     assert ledger["transitions"][10]["transition_id"] == audit.TRANSITION_ID
     assert ledger["current_live_workflow_count"] == 39 and ledger["current_p4_3_retired_workflow_count"] == 3
     assert all(value == 0 for value in result["real_side_effect_counts"].values())
+
+
+def test_historical_integrity_does_not_require_ancestor_objects(monkeypatch):
+    original = audit.subprocess.check_output
+    def head_only(args, *positional, **kwargs):
+        if any(audit.BASE_MAIN in str(arg) for arg in args):
+            pytest.fail("C3 audit attempted an unavailable ancestor object")
+        return original(args, *positional, **kwargs)
+    monkeypatch.setattr(audit.subprocess, "check_output", head_only)
+    assert audit.audit()["result"] == "PASS"

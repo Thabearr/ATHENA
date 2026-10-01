@@ -39,6 +39,13 @@ TRANSITION_ID = "CORE01C_CURRENT_SHADOW_COMPATIBILITY_THIN_V1"
 SECRET_NAMES = ("GMAIL_ADDRESS", "GMAIL_APP_PASSWORD", "RECIPIENT_EMAIL")
 SOURCE_PATHS = (WORKFLOW, "services/athena_shadow_issue_comment_compatibility.py",
                 "scripts/resolve_athena_shadow_issue_comment.py", "scripts/send_current_shadow_email.py")
+HISTORICAL_PAYLOAD_SHA256 = {
+    PREDECESSOR_PATH: "615b49bb2e58fac874a46d6b93da8e0e6f2b3af5b4e68b11fc6958cc175876e8",
+    C2_RECEIPT_PATH: "aeaa3044d9dccd1b9860774d2420e5a436468de8513c6b6131894051d621927e",
+    "artifacts/architecture/core_01_schedule_date_disposition_v1.json": "cf335a1a06dc9efb4aa130e6e79de9003ed34935316cdcb4d1aa8ed5420b833f",
+    "artifacts/architecture/p4_4h_current_shadow_canonical_run_migration_review_v1.json": "95707fd03a83fa1c20a5128f9ec2b9494c25b24cf8f23c16a77b5fb62d25da15",
+    "artifacts/architecture/port_02_native_runtime_v1.json": "856844411663a724a9750456d6995f1247829d72772321061c8bb67deda4ed67",
+}
 
 
 def require(condition, message):
@@ -180,13 +187,11 @@ def expected_evidence():
     c2 = json.loads(tracked(C2_RECEIPT_PATH))
     require(c2["canonical_sha256"] == C2_RECEIPT_SHA == evolution.canonical_sha256(c2), "C2 receipt differs")
     historical = {}
-    for path in (PREDECESSOR_PATH, C2_RECEIPT_PATH,
-                 "artifacts/architecture/core_01_schedule_date_disposition_v1.json",
-                 "artifacts/architecture/p4_4h_current_shadow_canonical_run_migration_review_v1.json",
-                 "artifacts/architecture/port_02_native_runtime_v1.json"):
+    # Exact payload hashes were independently checked against the governing base.
+    # Verify HEAD blob bytes without requiring an ancestor object in shallow CI.
+    for path, pinned_sha in HISTORICAL_PAYLOAD_SHA256.items():
         raw = tracked(path)
-        base_raw = subprocess.check_output(["git", "show", f"{BASE_MAIN}:{path}"])
-        require(raw == base_raw, f"historical evidence bytes changed: {path}")
+        require(hashlib.sha256(raw).hexdigest() == pinned_sha, f"historical evidence bytes changed: {path}")
         historical[path] = hashlib.sha256(raw).hexdigest()
     transition = {"transition_id": TRANSITION_ID, "phase_id": "CORE-01C", "operation": "MAINTENANCE_REVISE",
                   "workflow_path": WORKFLOW, "canonical_family": "ATHENA_RUN", "before": BEFORE_IDENTITY,
