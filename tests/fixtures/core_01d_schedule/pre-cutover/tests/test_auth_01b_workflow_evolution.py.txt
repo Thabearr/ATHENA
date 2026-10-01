@@ -357,7 +357,7 @@ def _reviewed_workflows() -> tuple[dict, dict]:
         audit.WORKFLOW_PATH,
         "P44M_ATHENA_RUN_PC_UPCOMING_EVIDENCE_PRESERVATION_V1",
     )
-    after = evolution.resolve_reviewed_transition_after_source(audit.WORKFLOW_PATH, audit.TRANSITION_ID)
+    after = Path(audit.WORKFLOW_PATH).read_bytes().replace(b"\r\n", b"\n")
     return audit._yaml(before, "P4.4M"), audit._yaml(after, "AUTH-01B")
 
 

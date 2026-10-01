@@ -176,3 +176,64 @@ def test_receipt_policy_tamper_rehashed_rejects(monkeypatch, mutation):
     monkeypatch.setattr(a, "expected_receipt", lambda: expected)
     monkeypatch.setattr(a, "raw", lambda p: a.predecessor.canonical(value) if p == a.RECEIPT_PATH else original(p))
     with pytest.raises(ValueError, match="unreviewed"): a.verified_receipt_path()
+
+
+@pytest.mark.parametrize("mutation", ["complete", "blocker", "count", "schedule_lane", "delivery", "binding"])
+def test_forward_checkpoint_tamper_rehashed_rejects(monkeypatch, mutation):
+    original = a.raw
+    schedule = json.loads(original(a.RECEIPT_PATH))
+    matrix = json.loads(original(a.FORWARD_MATRIX))
+    receipt = json.loads(original(a.FORWARD_RECEIPT))
+    if mutation == "complete": receipt["checkpoint_e_status"] = "COMPLETE"
+    elif mutation == "blocker": receipt["remaining_blocker_ids"] = []
+    elif mutation == "count": matrix["trigger_surface_count"] = 58
+    elif mutation in {"schedule_lane", "delivery"}:
+        row = next(r for r in matrix["workflow_rows"] if r["workflow_path"] == a.CANONICAL)
+        surface = next(s for s in row["trigger_surfaces"] if s["trigger_kind"] == "schedule")
+        if mutation == "schedule_lane": surface["schedule_lanes"].pop()
+        else: surface["schedule_lanes"][1]["create_share_code"] = True
+    else: receipt["schedule_ownership_receipt_sha256"] = "0" * 64
+    a.predecessor.seal(matrix)
+    receipt["workflow_matrix_sha256"] = matrix["canonical_sha256"]
+    a.predecessor.seal(receipt)
+    monkeypatch.setattr(a, "expected_receipt", lambda: schedule)
+    monkeypatch.setattr(a, "raw", lambda p: a.predecessor.canonical(matrix) if p == a.FORWARD_MATRIX else
+        a.predecessor.canonical(receipt) if p == a.FORWARD_RECEIPT else original(p))
+    with pytest.raises(ValueError, match="forward Checkpoint-E"): a.audit_forward_checkpoint()
+
+
+@pytest.mark.parametrize("index", range(11))
+def test_every_historical_transition_is_immutable(evidence, index):
+    from scripts.core_01d_historical_source import historical_bytes
+    before = json.loads(historical_bytes(e.LEDGER_PATH.as_posix()))
+    current = copy.deepcopy(evidence[0])
+    current["transitions"][index]["phase_id"] = "P4.4UNREVIEWED"
+    current["canonical_sha256"] = e.canonical_sha256(current)
+    with pytest.raises(e.WorkflowEvolutionError, match="historical transition"):
+        e.validate_evolution_snapshot_extension(before, current)
+
+
+def test_historical_prefix_bytes_and_two_exact_new_snapshots(evidence):
+    from scripts.core_01d_historical_source import historical_bytes
+    ledger, receipts, snapshots = evidence
+    before = json.loads(historical_bytes(e.LEDGER_PATH.as_posix()))
+    prefix = e.canonical_json_bytes(before["transitions"]).strip()[:-1]
+    assert b'"transitions":' + prefix + b"," in a.raw(e.LEDGER_PATH)
+    for index in (11, 12):
+        t = ledger["transitions"][index]
+        snapshot = snapshots[t["checkpoint_snapshot_path"]]
+        receipt = receipts[t["evidence_receipt_path"]]
+        assert snapshot["transitions"] == ledger["transitions"][:index + 1]
+        assert receipt["reviewed_workflow_transition"] == {k: v for k, v in t.items() if k != "evidence_body_sha256"}
+        assert receipt["workflow_evolution_ledger_sha256"] == snapshot["canonical_sha256"]
+        assert e.source_identity(a.raw(t["historical_before_fixture"]["path"])) == t["before"]
+
+
+def test_deleting_legacy_email_step_entirely_rejects(monkeypatch):
+    original = a.raw
+    doc = a.yaml.load(original(a.LEGACY), Loader=a.yaml.BaseLoader)
+    steps = doc["jobs"]["current-shadow-all-market"]["steps"]
+    steps[:] = [s for s in steps if s["name"] != "Email durable Shadow result when configured"]
+    changed = a.yaml.safe_dump(doc).encode()
+    monkeypatch.setattr(a, "raw", lambda p: changed if p == a.LEGACY else original(p))
+    with pytest.raises(ValueError, match="legacy change"): a.validate_workflow_source()

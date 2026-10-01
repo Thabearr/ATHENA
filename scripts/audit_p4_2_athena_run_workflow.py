@@ -367,7 +367,8 @@ def _workflow_contract(workflow: dict[str, Any]) -> dict[str, Any]:
     from scripts.audit_core_01b_canonical_artifact_ancestry import BEFORE_FIXTURE, verify_workflow_authority
     from runtime.source_identity import read_tracked_head_blob
     before_bytes = read_tracked_head_blob(REPOSITORY_ROOT, BEFORE_FIXTURE)[0]
-    current_bytes = read_tracked_head_blob(REPOSITORY_ROOT, WORKFLOW_PATH)[0]
+    from scripts.core_01d_historical_source import historical_tracked
+    current_bytes = historical_tracked(REPOSITORY_ROOT, WORKFLOW_PATH)[0]
     try:
         verify_workflow_authority(before_bytes, current_bytes)
     except ValueError as exc:

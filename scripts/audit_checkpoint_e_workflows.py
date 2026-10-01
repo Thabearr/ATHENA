@@ -492,9 +492,11 @@ def audit():
     from scripts.audit_core_01d_scheduled_shadow_ownership import audit_forward_checkpoint
     forward = audit_forward_checkpoint()
     return {"result": "PASS", "checkpoint_e": receipt["checkpoint_e_status"], "p4_4": receipt["p4_4_status"],
-            "policy_id": POLICY_ID, "receipt_sha256": receipt["canonical_sha256"],
-            "matrix_sha256": matrix["canonical_sha256"], "exact_head": git("rev-parse", "HEAD").decode().strip(),
-            "workflow_count": matrix["workflow_count"], "trigger_surface_count": matrix["trigger_surface_count"],
+            "policy_id": forward["policy_id"], "receipt_sha256": forward["canonical_sha256"],
+            "matrix_sha256": forward["workflow_matrix_sha256"], "exact_head": git("rev-parse", "HEAD").decode().strip(),
+            "workflow_count": forward["live_workflow_count"], "trigger_surface_count": forward["trigger_surface_count"],
+            "historical_v1_receipt_sha256": receipt["canonical_sha256"], "historical_v1_matrix_sha256": matrix["canonical_sha256"],
+            "historical_v1_trigger_surface_count": matrix["trigger_surface_count"],
             "blockers": forward["remaining_blocker_ids"], "live_side_effect_counts": receipt["live_side_effect_counts"],
             "forward_matrix_sha256": forward["workflow_matrix_sha256"], "forward_receipt_sha256": forward["canonical_sha256"]}
 
