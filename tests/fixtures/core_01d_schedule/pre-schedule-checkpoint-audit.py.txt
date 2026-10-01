@@ -123,8 +123,7 @@ def verified_additive_artifact_paths():
         value = strict(raw)
         require(raw == canonical(value) and value.get("canonical_sha256") == expected == self_sha(value),
                 "unreviewed additive C4 artifact identity: " + path)
-    from scripts.audit_core_01d_scheduled_shadow_ownership import verified_receipt_path
-    return (MATRIX_PATH, RECEIPT_PATH, verified_receipt_path())
+    return (MATRIX_PATH, RECEIPT_PATH)
 
 
 def base_input():
