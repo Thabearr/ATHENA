@@ -120,10 +120,17 @@ def test_current_workflow_tree_and_protected_paths_match_reviewed_evolution() ->
     assert len(p44m_snapshot["transitions"]) == 7
     assert ledger["transitions"][:7] == p44m_snapshot["transitions"]
     assert p44m_snapshot["current_workflow_tree_sha1"] == p44m_receipt["workflow_tree_after_sha1"]
-    # Historical ledger stays exact; only the pinned PORT-02C replay workflow
-    # successor is permitted by validate_current_state (all others unchanged).
-    assert ledger["current_workflow_tree_sha1"] == "b93f72b5a352b40021d913c299f039c846476f73"
-    assert evolution.PORT02C_REPLAY_WORKFLOW_TREE_SHA1 == evolution._git(
+    # Historical PORT-02C stays exact. C2 appends maintenance after its nine
+    # transitions; only the exact reviewed current source forwards are allowed.
+    port02c_snapshot = json.loads(Path(
+        "artifacts/architecture/p4_workflow_evolution_snapshots/port_02c_native_runtime_slice_v1.json"
+    ).read_text(encoding="utf-8"))
+    assert port02c_snapshot["current_workflow_tree_sha1"] == "b93f72b5a352b40021d913c299f039c846476f73"
+    assert len(port02c_snapshot["transitions"]) == 9
+    assert ledger["transitions"][:9] == port02c_snapshot["transitions"]
+    assert len(ledger["transitions"]) == 10
+    assert ledger["current_workflow_tree_sha1"] == evolution.CORE01B_WORKFLOW_TREE_SHA1
+    assert evolution.CORE01B_WORKFLOW_TREE_SHA1 == evolution._git(
         "rev-parse", "HEAD:.github/workflows"
     ).decode("ascii").strip()
     assert p44g_receipt["workflow_tree_sha1_after"] == "d58f71b9ac653c8762f1d9b18eede15755ee1a76"
