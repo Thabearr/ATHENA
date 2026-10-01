@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import argparse
 import copy
+from contextlib import redirect_stdout, redirect_stderr
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -142,15 +144,21 @@ def notification_evidence():
                               ("synthetic@example.invalid", "SYNTHETIC_NOT_A_CREDENTIAL", "synthetic@example.invalid")))
             with patch.dict(mail.os.environ, config), patch.object(mail.smtplib, "SMTP", SMTP):
                 result = mail.send_receipt_email(receipt_path=source, delivery_receipt_path=delivery)
+                output, warning = io.StringIO(), io.StringIO()
+                with redirect_stdout(output), redirect_stderr(warning):
+                    exit_code = mail.main(["--receipt", str(source), "--delivery-receipt", str(delivery)])
             status = mail.EMAIL_SKIPPED_UNCONFIGURED if mode == "unconfigured" else mail.EMAIL_DELIVERED if mode == "delivered" else mail.EMAIL_FAILED
             require(result["status"] == status and result["source_receipt_sha256"] == sha and
                     source.read_bytes() == raw and result["secrets_recorded"] is False and result["wager_placed"] is False and
                     result["smtp_successful_send"] == (mode == "delivered"), "notification mutated business result")
             require(mode != "unconfigured" or not calls, "unconfigured SMTP constructed")
+            require(exit_code == 0 and ("WARNING" in warning.getvalue()) == (status == mail.EMAIL_FAILED),
+                    "notification CLI warning/exit behavior differs")
             require("SYNTHETIC_NOT_A_CREDENTIAL" not in delivery.read_text(), "secret recorded")
             rows.append({"case": mode, "status": status, "source_before_sha256": sha, "source_after_sha256": sha,
                          "source_receipt_sha256": result["source_receipt_sha256"], "smtp_successful_send": result["smtp_successful_send"],
-                         "failure_type": result["failure_type"], "secrets_recorded": False, "wager_placed": False})
+                         "failure_type": result["failure_type"], "secrets_recorded": False, "wager_placed": False,
+                         "cli_exit_code": exit_code, "warning_emitted": status == mail.EMAIL_FAILED})
         source.write_bytes(b"INVALID_JSON")
         try:
             mail.send_receipt_email(receipt_path=source, delivery_receipt_path=delivery)
@@ -171,6 +179,15 @@ def expected_evidence():
             "CORE01B_ATHENA_RUN_CANONICAL_ARTIFACT_ANCESTRY_V1", "C2 predecessor differs")
     c2 = json.loads(tracked(C2_RECEIPT_PATH))
     require(c2["canonical_sha256"] == C2_RECEIPT_SHA == evolution.canonical_sha256(c2), "C2 receipt differs")
+    historical = {}
+    for path in (PREDECESSOR_PATH, C2_RECEIPT_PATH,
+                 "artifacts/architecture/core_01_schedule_date_disposition_v1.json",
+                 "artifacts/architecture/p4_4h_current_shadow_canonical_run_migration_review_v1.json",
+                 "artifacts/architecture/port_02_native_runtime_v1.json"):
+        raw = tracked(path)
+        base_raw = subprocess.check_output(["git", "show", f"{BASE_MAIN}:{path}"])
+        require(raw == base_raw, f"historical evidence bytes changed: {path}")
+        historical[path] = hashlib.sha256(raw).hexdigest()
     transition = {"transition_id": TRANSITION_ID, "phase_id": "CORE-01C", "operation": "MAINTENANCE_REVISE",
                   "workflow_path": WORKFLOW, "canonical_family": "ATHENA_RUN", "before": BEFORE_IDENTITY,
                   "after": evolution.source_identity(after), "historical_before_fixture": {"path": BEFORE_FIXTURE, **BEFORE_IDENTITY},
@@ -204,6 +221,7 @@ def expected_evidence():
                "predecessor_checkpoint_sha256": PREDECESSOR_SHA, "predecessor_transition_count": 10,
                "transition_position": 11, "current_live_workflow_count": 39, "current_p4_3_retired_workflow_count": 3,
                "workflow_authority_delta": 0, "historical_receipts_changed": False, "current_shadow": "ACTIVE",
+               "historical_payload_sha256": historical,
                "remaining_blockers": ["SCHEDULED_SHADOW_OWNERSHIP", "LIVE_CANONICAL_SHADOW_PROOF"],
                "safety_counts": dict.fromkeys(("network", "provider", "share_code", "delivery", "email", "live_dispatch",
                                                "login", "cookies", "wallet", "stake", "wager"), 0)}
