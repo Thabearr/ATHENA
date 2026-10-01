@@ -35,10 +35,23 @@ FAILED = roles.Candidate(36846297806, BASE_MAIN, roles.CANONICAL_WORKFLOW, 11153
 REQUEST_SHA = "a35cb4a421e5834a701ca64083d5c8e4494f1d0ded78ff0716f18976151c346b"
 FAILED_RECEIPT_SHA = "f79d20e2a36bf15f8e92d6463fe764472326c2a4cc7a811eadb360a865a0f208"
 MANIFEST_SELF_SHA = "f55b1cc0680ef9a8fee6e049924396dcb1239612cce9266954372c6fe83ff105"
+REVIEWED_RECEIPT_SHA = "aa019106a5880bdace586da52c4e827dd6e8cd0d3663163fc8302305691e4927"
 
 
 def tracked(path):
     return read_tracked_head_blob(ROOT, path)[0]
+
+
+def historical_source(path, *, root=ROOT):
+    """Permit only this sealed remediation successor, preserving old audit pins."""
+    raw, identity = read_tracked_head_blob(root, path)
+    value = roles.strict_json(read_tracked_head_blob(root, RECEIPT_PATH)[0])
+    roles.require(value["canonical_sha256"] == REVIEWED_RECEIPT_SHA == roles.self_sha(value),
+                  "exact reviewed remediation receipt differs")
+    roles.require(path in SOURCE_PATHS and roles.sha(raw) == value["source_payload_sha256"][path],
+                  "unreviewed remediation successor source")
+    fixture = "tests/fixtures/lg_a_worker_launch_failure/pre-remediation-sources/" + Path(path).name + ".txt"
+    return read_tracked_head_blob(root, fixture)
 
 
 def bootstrap():
@@ -192,6 +205,9 @@ def builder_proof():
 def expected_receipt():
     changed = subprocess.check_output(["git", "diff", "--name-only", BASE_MAIN, "HEAD"], cwd=ROOT, text=True).splitlines()
     roles.require(not any(path.startswith(".github/workflows/") for path in changed), "workflow YAML changed")
+    historical_changes = subprocess.check_output(["git", "diff", "--diff-filter=MD", "--name-only", BASE_MAIN,
+                                                  "HEAD", "--", "artifacts"], cwd=ROOT, text=True).splitlines()
+    roles.require(not historical_changes, "historical evidence artifact changed")
     for path in ("runtime/worker_launcher.py", "runtime/worker_entry.py"):
         roles.require(path not in changed, "worker security/operation boundary changed")
     roles.require("--output-root artifacts/athena-runs" in tracked(roles.CANONICAL_WORKFLOW).decode(), "production root changed")

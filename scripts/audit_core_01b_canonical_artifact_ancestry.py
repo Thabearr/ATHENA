@@ -61,6 +61,10 @@ HISTORICAL_BLOBS = {
 
 
 def tracked(path: str):
+    if path in {"services/athena_artifact_role_resolver.py", "scripts/restore_athena_artifact_roles.py",
+                "scripts/build_athena_artifact_role_manifest.py"}:
+        from scripts.audit_lg_a_worker_launch_failure_remediation import historical_source
+        return historical_source(path)
     if path == ".github/workflows/current-shadow-all-market.yml":
         from scripts import audit_core_01_schedule_date_disposition as c1
         raw, identity = read_tracked_head_blob(ROOT, path)
