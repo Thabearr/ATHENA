@@ -28,6 +28,7 @@ BASE = "24aed845e24396d813a91552a70703a76c52ef71"
 POLICY_ID = "ATHENA_CORE_01D_SCHEDULED_SHADOW_OWNERSHIP_V1"
 RECEIPT_PATH = "artifacts/architecture/core_01d_scheduled_shadow_ownership_v1.json"
 PRIOR_DESIGN_SHA = "41dfb5b25d4b92a3137af29bc1717fd52b86b9794239617a2d59845aa312f138"
+RECEIPT_SHA = "8e83fd5443149af74e14ceea44766809d1858ce856772a6500b8f55e073afde6"
 INPUT_PATH = "tests/fixtures/core_01d_schedule/base-source-identities.json"
 INPUT_SHA = "f7a167ac1677915346cd3358a6b53d3ffd507e7422bba14e41769e32247b4674"
 BEFORE_AUDIT = "tests/fixtures/core_01d_schedule/pre-schedule-checkpoint-audit.py.txt"
@@ -140,11 +141,51 @@ def validate_evolution():
     return ledger
 
 
+def artifact_policy_proof(modules):
+    """Synthetic metadata traverses production discovery, without an API call."""
+    roles, transport = modules[ROLES], modules[RESTORE]
+    run = {"id": 100, "repository": {"full_name": roles.REPOSITORY},
+        "head_repository": {"full_name": roles.REPOSITORY}, "path": CANONICAL,
+        "head_branch": "main", "head_sha": BASE, "status": "completed", "conclusion": "success", "event": "schedule"}
+    old = {"id": 200, "name": "athena-run-100", "expired": False,
+        "workflow_run": {"id": 100, "head_sha": BASE, "head_branch": "main"}}
+    suffix = {**old, "id": 201, "name": "athena-run-100-scheduled-shadow"}
+    class Metadata(transport.GitHubTransport):
+        def api(self, *args, **kwargs):
+            raise AssertionError("offline audit forbids GitHub transport")
+        def pages(self, endpoint, field):
+            return [run] if field == "workflow_runs" else artifacts
+    artifacts = [old, suffix]
+    selected, = Metadata().candidates(CANONICAL, canonical_producer=True)
+    require(selected.artifact_id == 201, "scheduled SHADOW transport selection drift")
+    roles.validate_candidate(selected, current_run_id=101, role_id="PR119_BOOTSTRAP", canonical_producer=True)
+    suffix["expired"] = True
+    require(not Metadata().candidates(CANONICAL, canonical_producer=True), "expired suffix downgraded to MAIN")
+    suffix["expired"] = False
+    suffix["workflow_run"] = {**old["workflow_run"], "head_sha": "0" * 40}
+    require(not Metadata().candidates(CANONICAL, canonical_producer=True), "bad-bound suffix downgraded to MAIN")
+    artifacts = [old]
+    historical, = Metadata().candidates(CANONICAL, canonical_producer=True)
+    require(historical.artifact_name == old["name"], "historical schedule fallback drift")
+    run["event"] = "workflow_dispatch"
+    manual, = Metadata().candidates(CANONICAL, canonical_producer=True)
+    require(manual.artifact_name == old["name"], "manual artifact name drift")
+    artifacts = [old, suffix]
+    try:
+        Metadata().candidates(CANONICAL, canonical_producer=True)
+    except roles.ArtifactRoleError:
+        pass
+    else:
+        raise ValueError("manual suffix accepted")
+    return "PRODUCTION_DISCOVERY_AND_CANDIDATE_CHECKS_PASSED_SYNTHETIC_METADATA_NO_API"
+
+
 def expected_receipt():
     verify_inputs()
     validate_workflow_source()
     ledger = validate_evolution()
     modules = actual_modules()
+    artifact_proof = artifact_policy_proof(modules)
     adapter = modules[REQUEST]
     date_rows = []
     for clock in ("09:00", "22:59", "23:00"):
@@ -190,6 +231,7 @@ def expected_receipt():
         "discovery_policy": "UNIQUE_EXACT_SCHEDULE_SUFFIX_FIRST_NO_DOWNGRADE_IF_PRESENT_OLD_EXACT_NAME_ONLY_WHEN_ABSENT_MANUAL_SUFFIX_FORBIDDEN",
         "manifest_schema": modules[ROLES].MANIFEST_POLICY_ID,
         "restore_authority": "INDEPENDENT_SUCCESSFUL_SHADOW_REQUEST_RECEIPT_MANIFEST_ROLE_VALIDATION_NOT_FILENAME",
+        "artifact_policy_offline_proof": artifact_proof,
         "accepted_lg_a": accepted,
         "failed_lg_a": {"run_id": 36846297806, "disposition": "IMMUTABLE_FAILED_NON_RETRYABLE", "restore_eligible": False},
         "evolution": {"transition_count_before": 11, "transition_count_after": 13, "transition_ids": TRANSITION_IDS,
@@ -216,6 +258,7 @@ def expected_receipt():
 
 def verified_receipt_path():
     value = predecessor.strict(raw(RECEIPT_PATH))
+    require(value.get("canonical_sha256") == RECEIPT_SHA == predecessor.self_sha(value), "unreviewed scheduled ownership receipt identity")
     require(value == expected_receipt(), "unreviewed scheduled ownership receipt/source drift")
     return RECEIPT_PATH
 

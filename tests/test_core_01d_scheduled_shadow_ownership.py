@@ -45,7 +45,8 @@ def clock(text="09:00"):
 @pytest.mark.parametrize("text", ["09:00", "22:59", "23:00"])
 def test_main_schedule_exact_predecessor_bytes(proposal, text):
     resolve = proposal[audit.REQUEST].resolve_workflow_request
-    old = current.resolve_workflow_request(event_name="schedule", now=clock(text))
+    old = audit.predecessor.parse_explicit_request(days="today", target_legs=20,
+        profile="main", create_share_code=False, now=clock(text))
     for lane in (None, "main"):
         new = resolve(event_name="schedule", schedule_lane=lane, now=clock(text))
         assert canonical_json_bytes(old) == canonical_json_bytes(new)
@@ -109,6 +110,14 @@ def test_manual_inputs_request_and_metadata_unchanged(proposal, profile, intent,
     new, newmeta = proposal[audit.PERSIST].resolve_and_persist(**args, output_root=tmp_path / "after")
     assert canonical_json_bytes(old) == canonical_json_bytes(new)
     assert oldmeta == newmeta
+    oracle = audit.predecessor.parse_explicit_request(days=inputs["days"], target_legs=int(target),
+        profile=profile, create_share_code=intent == "true", now=clock())
+    assert canonical_json_bytes(new) == canonical_json_bytes(oracle)
+    assert newmeta == {"github_event_name": "workflow_dispatch", "exact_github_sha": audit.BASE,
+        "exact_github_ref": "refs/heads/main", "request_canonical_sha256": oracle.canonical_sha256,
+        "dates": ["2026-10-01", "2026-10-02"], "authority_profile": profile.upper(),
+        "mode": "main_application" if profile == "main" else "research_shadow", "bookie": "sportybet",
+        "create_share_code": intent == "true", "place_wager": False, "timezone": "Africa/Lagos"}
     with pytest.raises(ValueError, match="non-schedule"):
         proposal[audit.REQUEST].resolve_workflow_request(event_name="workflow_dispatch", dispatch_inputs=inputs,
             schedule_lane=profile, now=clock())

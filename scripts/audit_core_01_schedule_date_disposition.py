@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 from domain import current_shadow_fixture_date_request as legacy
 from domain import execution_envelope as envelope
 from domain.run_contracts import canonical_json_bytes
-from runtime.source_identity import read_tracked_head_blob
+from runtime.source_identity import read_tracked_head_blob as read_current_head_blob
 from services.athena_run_request_parser import CLI_TIMEZONE_ID, parse_explicit_request
 from services.athena_run_workflow_request import resolve_workflow_request
 
@@ -61,6 +61,12 @@ class DispositionError(ValueError):
     pass
 
 
+def read_tracked_head_blob(root, path):
+    """This V1 checkpoint inspects authenticated historical source."""
+    from scripts.core_01d_historical_source import historical_tracked
+    return historical_tracked(root, path)
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise DispositionError(message)
@@ -95,8 +101,7 @@ def parse_canonical(raw: bytes) -> dict[str, Any]:
 def inspect_sources(root: Path) -> tuple[dict[str, Any], dict[str, bytes]]:
     identities, payloads = {}, {}
     for path, blob in SOURCE_BLOBS.items():
-        from scripts.core_01d_historical_source import historical_tracked
-        raw, identity = historical_tracked(root, path)
+        raw, identity = read_tracked_head_blob(root, path)
         if path in {"services/athena_run_service.py", "domain/current_shadow_run_contract_adapter.py"} and identity.git_blob_sha1 != blob:
             from scripts.audit_lg_a_worker_launch_failure_remediation import historical_source
             raw, identity = historical_source(path, root=root)
