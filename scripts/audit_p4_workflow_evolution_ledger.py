@@ -762,7 +762,7 @@ PORT02C_REPLAY_WORKFLOW_AFTER = {
     "source_sha256": "5b2f4f8ade4f7b45b0db43023085ee0762b2e178564c6ecebd2a632932e8e07b",
 }
 CORE01B_WORKFLOW_TREE_SHA1 = "b1f3e16acccc543456c330e13476a3019cdbd477"
-CORE01B_LEDGER_SHA256 = "7b032d24afc652d60262e2175e1b39e5be5a540c87e810db0dcfd912a3aa28b6"
+CORE01B_LEDGER_SHA256 = "8a1cea34d67c83414ef107198e8464ee62921665bf62a6ecfce702bac4c5047b"
 
 
 def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha):
