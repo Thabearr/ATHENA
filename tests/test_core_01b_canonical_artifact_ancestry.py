@@ -2,6 +2,7 @@
 from dataclasses import replace
 from datetime import datetime, timezone
 import io
+import gzip
 import json
 from pathlib import Path
 import shutil
@@ -16,7 +17,7 @@ import pytest
 from services import athena_artifact_role_resolver as roles
 from scripts import audit_core_01b_canonical_artifact_ancestry as audit
 from scripts.build_athena_artifact_role_manifest import build_manifest, publish
-from scripts.restore_athena_artifact_roles import extract_verified_paths, GitHubTransport, legacy_role
+from scripts.restore_athena_artifact_roles import extract_verified_paths, GitHubTransport, legacy_role, restore_inputs
 
 
 @pytest.fixture(autouse=True)
@@ -227,6 +228,34 @@ def test_wrong_pr119_sha_and_no_fake_prime_role(tmp_path):
                 "event_name": "workflow_dispatch", "request_sha256": "c" * 64}
     value = build_manifest(tmp_path, producer=producer, origins={}, restore_eligible=False)
     assert value["roles"] == [] and value["restore_eligible"] is False
+
+
+@pytest.mark.parametrize("valid_bootstrap", [True, False])
+def test_optional_empty_fallback_but_required_bootstrap_failclosed(tmp_path, valid_bootstrap):
+    bootstrap = gzip.decompress(audit.tracked(audit.BOOTSTRAP_FIXTURE)[0])
+    class FixtureTransport:
+        def artifact(self, candidate):
+            pytest.fail("no candidate download expected")
+
+        def bootstrap(self):
+            return bootstrap if valid_bootstrap else b"SYNTHETIC_BAD_BOOTSTRAP"
+
+    if not valid_bootstrap:
+        with pytest.raises(roles.ArtifactRoleError, match="PR119"):
+            restore_inputs(tmp_path, FixtureTransport(), current_run_id=100,
+                           canonical_candidates=[], legacy_candidates={})
+        assert not (tmp_path / ".cache/athena-research/pr119-bootstrap").exists()
+    else:
+        restored = restore_inputs(tmp_path, FixtureTransport(), current_run_id=100,
+                                  canonical_candidates=[], legacy_candidates={})
+        assert set(restored["roles"]) == {"PR119_BOOTSTRAP"}
+        assert not Path(restored["identity_state_path"]).exists()
+    assert not (tmp_path / ".cache/athena-research/current-shadow-history-github-binary-cache-v1").exists()
+
+
+def test_corrupt_zip_is_rejected_before_extraction(tmp_path):
+    with pytest.raises(roles.ArtifactRoleError):
+        extract_verified_paths(b"CORRUPTED_ARCHIVE", tmp_path)
 
 
 @pytest.mark.parametrize("name", ["../escape", "/absolute", "C:/absolute", "folder\\file", "folder/../file", "./file"])

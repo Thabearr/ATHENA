@@ -72,6 +72,7 @@ class GitHubTransport:
 
 def extract_verified_paths(raw: bytes, destination: Path) -> None:
     """Never delegate extraction of untrusted ZIP paths to gh or extractall."""
+    roles.require(zipfile.is_zipfile(io.BytesIO(raw)), "artifact is not a ZIP archive")
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         seen = set()
         for item in archive.infolist():
@@ -134,7 +135,10 @@ def restore_inputs(workspace: Path, transport, *, current_run_id: int,
             if candidate.artifact_id not in downloads:
                 target = scratch / f"artifact-{candidate.artifact_id}"
                 target.mkdir()
-                extract_verified_paths(transport.artifact(candidate), target)
+                try:
+                    extract_verified_paths(transport.artifact(candidate), target)
+                except (zipfile.BadZipFile, RuntimeError, subprocess.CalledProcessError) as exc:
+                    raise roles.ArtifactRoleError("canonical archive download/integrity rejected") from exc
                 downloads[candidate.artifact_id] = target
             root = manifest_root(downloads[candidate.artifact_id])
             return root, (root / roles.MANIFEST_FILENAME).read_bytes()
@@ -165,7 +169,8 @@ def restore_inputs(workspace: Path, transport, *, current_run_id: int,
                                            "run_id": candidate.run_id, "head_sha": candidate.head_sha,
                                            "artifact_id": candidate.artifact_id}
                         break
-                    except (ValueError, OSError, KeyError, TypeError):
+                    except (ValueError, OSError, KeyError, TypeError, zipfile.BadZipFile,
+                            subprocess.CalledProcessError):
                         continue
                 if source is None:
                     continue  # preserve existing optional fallback/empty-worker semantics

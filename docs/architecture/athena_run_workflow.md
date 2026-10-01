@@ -1,5 +1,63 @@
 # Canonical `athena-run` workflow
 
+## CORE-01B current durable ancestry ownership
+
+CORE-01B supersedes only the canonical run's persistent identity/history ancestry
+blocker in the historical CORE-01A disposition below. It does not rewrite that
+receipt or close schedule, email, issue-comment, or live-proof blockers.
+
+`ATHENA_CANONICAL_ARTIFACT_ROLES_V1` defines four roles independent of workflow
+and artifact display names: `DURABLE_HISTORY_PRIME`,
+`PERSISTENT_FIXTURE_IDENTITY_STATE`, `PR119_BOOTSTRAP`, and
+`RETAINED_SOURCE_EVIDENCE`. The last role is publication-only in C2. Restore policy
+is in `services/athena_artifact_role_resolver.py`; fixed read-only GitHub transport
+is in `scripts/restore_athena_artifact_roles.py`. Canonical startup uses one
+`--restore-inputs` invocation rather than embedded legacy lookup loops.
+
+For each input role, resolution prefers the newest verified trusted-main canonical
+ATHENA_RUN role, then the exact legacy read-only compatibility source. Rejected
+newest candidates may fall to older valid candidates, never to rejected bytes.
+Actions metadata must bind this repository, successful completed main run, exact
+producer SHA, queried artifact/run association, and non-self run. A canonical
+candidate additionally needs matching manifest producer run/head/event,
+`restore_eligible=true`, canonical self-SHA and closed-world per-role inventory.
+Absolute/traversing/backslash paths, symlinks, duplicates and hash/inventory drift
+fail closed. Names are locations, not evidence or execution authority.
+
+Historical compatibility remains: the reviewed history-prime workflow/artifact
+uses its existing exact-commit cache verifier; the legacy Current Shadow identity
+artifact uses the runtime state-document/binding validators, now with a required
+successful-main filter. PR119 remains the exact fixed release/asset with SHA
+`e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2`.
+History prime and prior identity are optional: no valid source retains existing
+live-transport fallback and configured empty worker-local state respectively,
+without fabricating either. PR119 is required before provider execution.
+
+`ATHENA_CANONICAL_RUN_ARTIFACT_ROLE_MANIFEST_V1` is generated after execution and
+preservation at `artifacts/athena-run-workflow/artifact-role-manifest-v1.json`.
+Diagnostic upload remains `if: always()` with the same name, roots and retention.
+Upload presence is not eligibility. Publication binds the canonical request and
+receipt, producer commit/run, final validated identity state, source evidence and
+verified restored bootstrap/prime roles where applicable. A fallback cache never
+becomes a prime role. Republishing preserves exact legacy origin, receipt and
+inventory provenance; final canonical identity retains restored ancestry.
+
+C2 appends transition **10** after the unchanged nine-transition predecessor,
+including PORT-02C as transition 9. Counts remain 39 live / 3 retired. Its receipt
+is `artifacts/architecture/core_01b_canonical_artifact_ancestry_v1.json` and offline
+audit is `python -m scripts.audit_core_01b_canonical_artifact_ancestry`. Offline
+proof uses explicitly synthetic history/identity fixtures and real retained fixed
+PR119 bytes; it makes no clean live successor claim and performs no provider work.
+
+Schedules, date policies, request resolver, executor, authority, delivery intent,
+notification behavior, Current Shadow and issue-comment grammar are unchanged.
+No live dispatch, LG-A, provider/share-code/email/account/wager action, schedule or
+caller migration, workflow retirement, or historical deletion is authorized.
+Clean successor proof remains INCOMPLETE / NOT RERUN; LG-A NOT RUN / NOT AUTHORIZED;
+P4.4 and Checkpoint E INCOMPLETE. Counter is 2/5 while open, 3/5 only after an owner
+merge. Rollback may revert C2 code/workflow but retains all historical artifacts
+and manifests; verification is never bypassed for continuity.
+
 ## CORE-01A current date and schedule disposition
 
 `ATHENA_CORE_01A_DATE_SCHEDULE_DISPOSITION_V1` records a disposition, not a

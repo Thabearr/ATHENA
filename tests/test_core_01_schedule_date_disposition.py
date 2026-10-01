@@ -223,7 +223,7 @@ def test_schedule_semantics_compatibility_email_and_history(reviewed_sources):
 
 
 def test_successor_and_governance_never_infer_live_proof():
-    value = audit.parse_canonical((audit.ROOT / audit.ARTIFACT_PATH).read_bytes())
+    value = audit.parse_canonical(audit.receipt_bytes())
     proof = value["successor_proof"]
     assert proof["clean_successor_proof"] == "INCOMPLETE"
     assert proof["lg_a"] == "NOT_RUN_NOT_AUTHORIZED"
@@ -239,7 +239,7 @@ def test_successor_and_governance_never_infer_live_proof():
 
 
 def test_one_byte_receipt_mutation_fails_without_repair():
-    raw = (audit.ROOT / audit.ARTIFACT_PATH).read_bytes()
+    raw = audit.receipt_bytes()
     altered = raw.replace(b'"source_review_counter_at_start":1', b'"source_review_counter_at_start":2')
     assert len(altered) == len(raw) and altered != raw
     with pytest.raises(audit.DispositionError, match="self SHA"):

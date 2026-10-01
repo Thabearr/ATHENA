@@ -313,9 +313,14 @@ def expected_receipt(root: Path = ROOT) -> dict[str, Any]:
     return receipt
 
 
+def receipt_bytes(root: Path = ROOT) -> bytes:
+    """Historical receipt identity is its exact tracked blob, not checkout EOLs."""
+    return read_tracked_head_blob(root, ARTIFACT_PATH)[0]
+
+
 def audit(root: Path = ROOT, *, artifact_bytes: bytes | None = None) -> dict[str, Any]:
     expected = expected_receipt(root)
-    raw = (root / ARTIFACT_PATH).read_bytes() if artifact_bytes is None else artifact_bytes
+    raw = receipt_bytes(root) if artifact_bytes is None else artifact_bytes
     actual = parse_canonical(raw)
     # Byte equality also rejects Python's bool/int equality (false == 0).
     require(raw == canonical(expected) + b"\n",
