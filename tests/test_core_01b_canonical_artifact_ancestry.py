@@ -311,7 +311,8 @@ def test_verified_publication_eligibility_and_source_evidence_only(tmp_path, exi
                                       create_share_code=False, now=now)
     engine = AthenaRunService(_test_executor_overrides={
         ("SHADOW", "research_shadow", "sportybet"): lambda *args, **kwargs:
-        ExecutorResult(status="SYNTHETIC_OFFLINE_NO_BET", evidence={"synthetic": True})},
+        ExecutorResult(status="RESEARCH_SHADOW_PORTFOLIO_READY_WITH_SHORTFALL",
+                       selected_legs=({"synthetic": True},), evidence={"synthetic": True})},
         _commit_sha_provider=lambda: "b" * 40, _clock=lambda: now)
     engine.run(request, output_root=tmp_path / "artifacts/athena-runs")
     root = tmp_path / "artifacts/athena-run-workflow"

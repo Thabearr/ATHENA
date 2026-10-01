@@ -193,15 +193,10 @@ def _run_reviewed_shadow_worker(
         raise WorkerLaunchError("Current Shadow worker command commit differs from verified Git HEAD")
     if run_directory.name != request.canonical_sha256:
         raise WorkerLaunchError("Current Shadow worker run directory does not bind the exact request SHA")
-    # Supply the same path in the launcher's required absolute representation.
-    # Do not resolve: traversal/link evidence belongs to WorkerCommand validation.
-    worker_run_directory = run_directory
-    if not worker_run_directory.is_absolute():
-        worker_run_directory = Path.cwd() / worker_run_directory
     command = WorkerCommand(
         operation="CURRENT_SHADOW_REQUEST",
         mode=WORKER_MODE_BY_OPERATION["CURRENT_SHADOW_REQUEST"],
-        run_directory=worker_run_directory,
+        run_directory=run_directory,
         request_artifact_id=request.canonical_sha256,
         envelope_artifact_id=None,
         release_identity_kind=identity.identity_kind,
