@@ -304,7 +304,9 @@ def audit(root: Path = ROOT, *, artifact_bytes: bytes | None = None) -> dict[str
     expected = expected_receipt(root)
     raw = (root / ARTIFACT_PATH).read_bytes() if artifact_bytes is None else artifact_bytes
     actual = parse_canonical(raw)
-    require(actual == expected, "receipt differs from independently reviewed source/disposition")
+    # Byte equality also rejects Python's bool/int equality (false == 0).
+    require(raw == canonical(expected) + b"\n",
+            "receipt differs from independently reviewed source/disposition")
     return {"result": "PASS", "policy_id": POLICY_ID,
             "canonical_sha256": actual["canonical_sha256"],
             "source_identity_count": len(SOURCE_BLOBS), "live_authority": False}

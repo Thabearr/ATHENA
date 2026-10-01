@@ -249,6 +249,7 @@ def test_one_byte_receipt_mutation_fails_without_repair():
     ("schedule_disposition", "schedule_migration", "AUTHORIZED"),
     ("canonical_date_owner", "timezone", "UTC"),
     ("legacy_date_owner", "timezone", "Africa/Lagos"),
+    ("successor_proof", "migration_allowed", 0),
 ])
 def test_resigned_authority_or_date_mutation_still_fails(section, field, value,
                                                        monkeypatch, reviewed_sources):
