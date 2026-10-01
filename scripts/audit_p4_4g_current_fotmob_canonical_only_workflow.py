@@ -724,7 +724,7 @@ def audit(path: Path = RECEIPT_PATH, *, check_live: bool = True) -> dict[str, An
                 "P4.3 retirement history changed"
             )
             current_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
-            if current_tree != ledger.get("current_workflow_tree_sha1"):
+            if current_tree != evolution.current_workflow_tree_sha1(ledger):
                 raise P44GCanonicalOnlyWorkflowAuditError(
                     "current workflow tree differs from the current reviewed evolution ledger"
                 )

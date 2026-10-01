@@ -263,7 +263,7 @@ def check() -> dict[str, Any]:
         raise P44MError("architecture receipt does not bind the exact ledger transition")
     if evolution.receipt_evidence_body_sha256(receipt) != transition.get("evidence_body_sha256"):
         raise P44MError("architecture receipt evidence body hash mismatch")
-    if ledger.get("current_live_workflow_count") != 38 or ledger.get("current_p4_3_retired_workflow_count") != 3:
+    if ledger.get("current_live_workflow_count") != 39 or ledger.get("current_p4_3_retired_workflow_count") != 3:
         raise P44MError("workflow or retirement count changed")
     if snapshot.get("current_workflow_tree_sha1") != receipt.get("workflow_tree_after_sha1"):
         raise P44MError("workflow tree identity differs from the receipt")

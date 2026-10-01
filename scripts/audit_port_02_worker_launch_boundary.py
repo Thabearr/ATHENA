@@ -534,8 +534,13 @@ def _validate_worker_sources(document: dict[str, Any]) -> list[str]:
         raise Port02BAuditError("worker entry no longer shares the reviewed command verifier")
 
     attributes = read_tracked_head_blob(ROOT, ".gitattributes")[1]
-    if attributes.git_blob_sha1 != GITATTRIBUTES_BASE_BLOB:
-        raise Port02BAuditError(".gitattributes changed during PORT-02B")
+    from scripts import audit_port_01_source_identity_parity as port01
+    # Historical PORT-02B anchor remains exact; current byte materialization is
+    # the same narrowly pinned PORT-02C successor verified by the predecessor.
+    successor = port01.PORT02C_GIT_ATTRIBUTES_SUCCESSOR
+    if (attributes.git_blob_sha1 != successor["git_blob_sha1"]
+            or attributes.git_blob_payload_sha256 != successor["git_blob_payload_sha256"]):
+        raise Port02BAuditError(".gitattributes differs from exact PORT-02C byte-materialization successor")
     return moved
 
 

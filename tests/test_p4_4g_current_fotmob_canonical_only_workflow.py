@@ -315,6 +315,11 @@ def test_synthetic_reviewed_cumulative_extension_preserves_p44g_prefix_and_snaps
     current_workflow_paths = original_git(
         "ls-tree", "-r", "--name-only", "HEAD", ".github/workflows"
     )
+    extended["current_live_workflow_count"] = sum(
+        item.endswith((".yml", ".yaml"))
+        for item in current_workflow_paths.decode("utf-8").splitlines()
+    )
+    extended["canonical_sha256"] = evolution.canonical_sha256(extended)
 
     def synthetic_current_git(*args):
         if args == ("rev-parse", "HEAD:.github/workflows"):

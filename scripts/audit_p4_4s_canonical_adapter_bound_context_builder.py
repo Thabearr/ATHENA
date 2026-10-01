@@ -41,6 +41,11 @@ ADAPTER_BEFORE_SHA256 = (
 ADAPTER_AFTER_SHA256 = (
     "bf1a9acff635a378f81bafa73f8274a4b9806e34d8d7c3ca13bad1729e205ce2"
 )
+# Current-source forward only: explicit verified release-resource resolution.
+# The historical P4.4S transition identities above and receipt remain immutable.
+PORT02C_ADAPTER_SUCCESSOR_SHA256 = (
+    "518f0c08022650b7adcf8869e870e6574552e42e8d6bda4abab8a65112f2dff3"
+)
 
 
 class P44SError(AssertionError):
@@ -180,8 +185,8 @@ def verify_receipt(value: dict[str, Any], *, root: Path | None = None) -> str:
             _lf_source_sha256(root, "domain/_current_shadow_quote_binding.py")
             == QUOTE_BINDING_AFTER_SHA256
             and _lf_source_sha256(root, "domain/current_shadow_canonical_core_adapter.py")
-            == ADAPTER_AFTER_SHA256,
-            "P4.4S current source SHA differs from its transition receipt",
+            == PORT02C_ADAPTER_SUCCESSOR_SHA256,
+            "P4.4S current source differs from exact PORT-02C installed-resource successor",
         )
     return digest
 
@@ -340,7 +345,9 @@ def audit(root: Path | None = None) -> dict[str, Any]:
         "receipt_sha256": receipt_sha,
         "historical_p4_4r_receipt_sha256": p4_4r_sha,
         "context_verifier_source_sha256": QUOTE_BINDING_AFTER_SHA256,
-        "canonical_adapter_source_sha256": ADAPTER_AFTER_SHA256,
+        "canonical_adapter_source_sha256": PORT02C_ADAPTER_SUCCESSOR_SHA256,
+        "historical_canonical_adapter_source_sha256": ADAPTER_AFTER_SHA256,
+        "current_source_forward_classification": "PORT02C_EXPLICIT_VERIFIED_RELEASE_RESOURCE_RESOLUTION_ONLY",
         "p4_4r_historical_receipt_count": len(historical_receipts),
         "network_provider_share_wager_actions": 0,
     }

@@ -1,0 +1,182 @@
+name: PORT-02C native runtime
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - packaging/**
+      - scripts/build_dev_bundle.py
+      - scripts/qualify_port_02_native_runtime.py
+      - scripts/audit_port_02_native_runtime.py
+      - scripts/port_02c_offline_composed_replay.py
+      - scripts/port_02c_git_free_launch.py
+      - tests/fixtures/port_02c_run_36345657852/**
+      - tests/native/**
+      - run_desktop.py
+      - artifacts/architecture/port_02_native_runtime_v1.json
+      - .github/workflows/port-02c-native-runtime.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: port-02c-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-slice:
+    name: native slice (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows
+            runner: windows-latest
+            bundle_platform: windows
+          - os: linux
+            runner: ubuntu-24.04
+            bundle_platform: linux
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install runtime and build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r packaging/build-requirements.txt
+
+      - name: Record toolchain versions
+        run: |
+          python --version
+          python -m pip show pyinstaller
+          python -c "import platform; print(platform.platform())"
+
+      - name: Stage and freeze native bundle (Unicode path)
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python scripts/build_dev_bundle.py --platform ${{ matrix.bundle_platform }} --output "${{ runner.temp }}/athena-ünicode-port02c/bundle" --freeze
+
+      - name: Prove no .git inside bundle
+        shell: bash
+        run: |
+          test ! -e "${{ runner.temp }}/athena-ünicode-port02c/bundle/.git"
+          find "${{ runner.temp }}/athena-ünicode-port02c/bundle" -name ".git" | grep . && exit 1 || true
+
+      - name: Make install tree read-only
+        shell: bash
+        run: |
+          chmod -R a-w "${{ runner.temp }}/athena-ünicode-port02c/bundle"
+
+      - name: CASE 1 standard installed run (no git on PATH, unrelated cwd)
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: "0"
+        run: |
+          export PORT02C_BUNDLE="${{ runner.temp }}/athena-ünicode-port02c/bundle"
+          export PORT02C_OS="${{ matrix.os }}"
+          MANIFEST_SHA=$(python -c "import json,os; print(json.load(open(os.path.join(os.environ['PORT02C_BUNDLE'],'build-metadata.json')))['trusted_manifest_sha256'])")
+          EXE_DIR="$PORT02C_BUNDLE/bin/athena-bundle"
+          if [ "$PORT02C_OS" = "windows" ]; then QUAL="$EXE_DIR/athena-port02c-qualify.exe"; WORKER="$EXE_DIR/athena-worker.exe"; else QUAL="$EXE_DIR/athena-port02c-qualify"; WORKER="$EXE_DIR/athena-worker"; fi
+          WORKER_SHA=$(PORT02C_WORKER="$WORKER" python -c "import hashlib,os; print(hashlib.sha256(open(os.environ['PORT02C_WORKER'],'rb').read()).hexdigest())")
+          export PORT02C_WORKER
+          LAUNCHER="${{ github.workspace }}/scripts/port_02c_git_free_launch.py"
+          mkdir -p "${{ runner.temp }}/port02c-out-standard"
+          cd "${{ runner.temp }}"
+          python "$LAUNCHER" "$QUAL" --release-root "$PORT02C_BUNDLE" --trusted-manifest-sha256 "$MANIFEST_SHA" --worker-executable "$WORKER" --worker-sha256 "$WORKER_SHA" --output-dir "${{ runner.temp }}/port02c-out-standard" --variant standard
+          echo "MANIFEST_SHA=$MANIFEST_SHA" >> "$GITHUB_ENV"
+          echo "WORKER_SHA=$WORKER_SHA" >> "$GITHUB_ENV"
+
+      - name: CASE 2 reverse import order
+        shell: bash
+        run: |
+          BUNDLE="${{ runner.temp }}/athena-ünicode-port02c/bundle"
+          EXE_DIR="$BUNDLE/bin/athena-bundle"
+          if [ "${{ matrix.os }}" = "windows" ]; then QUAL="$EXE_DIR/athena-port02c-qualify.exe"; WORKER="$EXE_DIR/athena-worker.exe"; else QUAL="$EXE_DIR/athena-port02c-qualify"; WORKER="$EXE_DIR/athena-worker"; fi
+          mkdir -p "${{ runner.temp }}/port02c-out-reverse"
+          cd "${{ runner.temp }}"
+          python "${{ github.workspace }}/scripts/port_02c_git_free_launch.py" "$QUAL" --release-root "$BUNDLE" --trusted-manifest-sha256 "$MANIFEST_SHA" --worker-executable "$WORKER" --worker-sha256 "$WORKER_SHA" --output-dir "${{ runner.temp }}/port02c-out-reverse" --variant reverse-import
+
+      - name: CASE 3 caches disabled
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          BUNDLE="${{ runner.temp }}/athena-ünicode-port02c/bundle"
+          EXE_DIR="$BUNDLE/bin/athena-bundle"
+          if [ "${{ matrix.os }}" = "windows" ]; then QUAL="$EXE_DIR/athena-port02c-qualify.exe"; WORKER="$EXE_DIR/athena-worker.exe"; else QUAL="$EXE_DIR/athena-port02c-qualify"; WORKER="$EXE_DIR/athena-worker"; fi
+          mkdir -p "${{ runner.temp }}/port02c-out-nocache"
+          cd "${{ runner.temp }}"
+          python "${{ github.workspace }}/scripts/port_02c_git_free_launch.py" "$QUAL" --release-root "$BUNDLE" --trusted-manifest-sha256 "$MANIFEST_SHA" --worker-executable "$WORKER" --worker-sha256 "$WORKER_SHA" --output-dir "${{ runner.temp }}/port02c-out-nocache" --variant caches-disabled
+
+      - name: CASE 4 locked resource read
+        shell: bash
+        run: |
+          BUNDLE="${{ runner.temp }}/athena-ünicode-port02c/bundle"
+          EXE_DIR="$BUNDLE/bin/athena-bundle"
+          if [ "${{ matrix.os }}" = "windows" ]; then QUAL="$EXE_DIR/athena-port02c-qualify.exe"; WORKER="$EXE_DIR/athena-worker.exe"; else QUAL="$EXE_DIR/athena-port02c-qualify"; WORKER="$EXE_DIR/athena-worker"; fi
+          python -c "import time; fh=open(r'$BUNDLE/release-manifest.json','rb'); time.sleep(60)" &
+          LOCK_PID=$!
+          mkdir -p "${{ runner.temp }}/port02c-out-locked"
+          cd "${{ runner.temp }}"
+          python "${{ github.workspace }}/scripts/port_02c_git_free_launch.py" "$QUAL" --release-root "$BUNDLE" --trusted-manifest-sha256 "$MANIFEST_SHA" --worker-executable "$WORKER" --worker-sha256 "$WORKER_SHA" --output-dir "${{ runner.temp }}/port02c-out-locked" --variant standard
+          kill $LOCK_PID || true
+
+      - name: CASE 5 shell offline smoke (bounded)
+        shell: bash
+        run: |
+          BUNDLE="${{ runner.temp }}/athena-ünicode-port02c/bundle"
+          EXE_DIR="$BUNDLE/bin/athena-bundle"
+          if [ "${{ matrix.os }}" = "windows" ]; then SHELL_EXE="$EXE_DIR/athena-shell.exe"; else SHELL_EXE="$EXE_DIR/athena-shell"; fi
+          cd "${{ runner.temp }}"
+          "$SHELL_EXE" --port02c-smoke
+
+      - name: Require variant semantic equality
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          temp = Path(r"${{ runner.temp }}")
+          digests = {}
+          for variant, dirname in (
+              ("standard", "port02c-out-standard"),
+              ("reverse-import", "port02c-out-reverse"),
+              ("caches-disabled", "port02c-out-nocache"),
+          ):
+              doc = json.loads((temp / dirname / f"port02c-qualification-{variant}.json").read_text())
+              assert doc["wager"] is False, variant
+              assert doc["provider_calls"] == 0, variant
+              assert doc["delivery_calls"] == 0, variant
+              assert doc["network_attempts"] == 0, variant
+              assert doc["git_on_path"] is False, variant
+              assert doc["git_calls"] == 0, variant
+              assert doc["bundle_has_no_dot_git"] is True, variant
+              digests[variant] = doc["semantic_replay_sha256"]
+          assert len(set(digests.values())) == 1, digests
+          print("variant semantic equality PASS", digests)
+          PY
+
+      - name: Upload qualification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: port02c-${{ matrix.os }}-evidence
+          path: |
+            ${{ runner.temp }}/athena-ünicode-port02c/bundle/build-metadata.json
+            ${{ runner.temp }}/port02c-out-standard/
+            ${{ runner.temp }}/port02c-out-reverse/
+            ${{ runner.temp }}/port02c-out-nocache/
+            ${{ runner.temp }}/port02c-out-locked/
+          retention-days: 14

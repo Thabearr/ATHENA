@@ -300,9 +300,10 @@ def test_missing_git_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 def test_historical_portability_and_baseline_anchors_remain_exact() -> None:
     document = audit.load_receipt()
     for anchor in document["immutable_anchors"]:
+        current = audit.current_anchor_identity(anchor)
         payload, identity = source_identity.read_tracked_head_blob(ROOT, anchor["path"])
-        assert identity.git_blob_sha1 == anchor["git_blob_sha1"]
-        assert identity.git_blob_payload_sha256 == anchor["git_blob_payload_sha256"]
+        assert identity.git_blob_sha1 == current["git_blob_sha1"]
+        assert identity.git_blob_payload_sha256 == current["git_blob_payload_sha256"]
         if anchor["canonical_sha256"] is not None:
             value = audit._read_json_bytes(payload, anchor["anchor_id"])
             if "canonical_sha256" in value:

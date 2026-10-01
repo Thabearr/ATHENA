@@ -21,6 +21,9 @@ from functools import lru_cache
 from types import MappingProxyType
 from typing import Any
 
+from runtime.release_identity import DevelopmentCheckoutIdentity, InstalledReleaseIdentity
+from runtime.resources import ResourceResolutionError, ResourceResolver
+
 from domain import canonical_core as _core
 from domain import component_authority_registry as _registry
 from domain import current_shadow_all_market_portfolio as _legacy_portfolio
@@ -92,7 +95,9 @@ def _manifest() -> _run_contracts.AuthorityManifest:
     )
 
 
-def _validate_compatibility_aliases(bindings: _core.CanonicalCoreBindings) -> None:
+def _validate_compatibility_aliases(
+    bindings: _core.CanonicalCoreBindings, *, release_identity=None, resources=None,
+) -> None:
     """Require each retained Shadow wrapper to alias the resolved champion.
 
     P1.7 aliases are source-controlled compatibility names, not authority
@@ -102,7 +107,22 @@ def _validate_compatibility_aliases(bindings: _core.CanonicalCoreBindings) -> No
     """
 
     try:
-        registry = _registry.load_default_registry()
+        if release_identity is None:
+            registry = _registry.load_default_registry()
+        else:
+            role = "AUTHORITY_REGISTRY" if type(release_identity) is InstalledReleaseIdentity else None
+            logical = "config/architecture/component-authority-registry-v1.json"
+            registry = _registry.ComponentAuthorityRegistry.from_json_bytes(
+                resources.read_bytes(logical, expected_role=role)
+            )
+            if type(release_identity) is InstalledReleaseIdentity:
+                record = resources.resource_record(logical, expected_role="AUTHORITY_REGISTRY")
+                if record.canonical_sha256 != registry.canonical_sha256:
+                    raise CurrentShadowCanonicalCoreAdapterError(
+                        "installed compatibility registry canonical identity drifted"
+                    )
+        if registry.canonical_sha256 != bindings.registry_canonical_sha256:
+            raise CurrentShadowCanonicalCoreAdapterError("compatibility registry differs from canonical binding")
         for alias_id, responsibility_id in COMPATIBILITY_ALIASES.items():
             alias_record = registry.resolve_component(alias_id)
             owner_record = bindings.record_for(responsibility_id)
@@ -115,18 +135,23 @@ def _validate_compatibility_aliases(bindings: _core.CanonicalCoreBindings) -> No
                 raise CurrentShadowCanonicalCoreAdapterError(
                     f"Current Shadow compatibility alias {alias_id} target drifted"
                 )
-    except _registry.ComponentAuthorityRegistryError as exc:
+    except (_registry.ComponentAuthorityRegistryError, ResourceResolutionError) as exc:
         raise CurrentShadowCanonicalCoreAdapterError(
             "Current Shadow compatibility alias resolution failed closed"
         ) from exc
 
 
-@lru_cache(maxsize=1)
-def resolve_shadow_canonical_core() -> _core.CanonicalCoreBindings:
+def _resolve_shadow_canonical_core(*, release_identity=None, resources=None) -> _core.CanonicalCoreBindings:
     """Resolve exactly the reviewed source-controlled SHADOW champion set."""
 
     try:
-        bindings = _core.resolve_canonical_core(_manifest(), regime_id=REGIME_ID)
+        if release_identity is None:
+            bindings = _core.resolve_canonical_core(_manifest(), regime_id=REGIME_ID)
+        else:
+            bindings = _core.resolve_canonical_core(
+                _manifest(), regime_id=REGIME_ID,
+                release_identity=release_identity, resources=resources,
+            )
     except Exception as exc:
         raise CurrentShadowCanonicalCoreAdapterError(
             "Current Shadow canonical-core resolution failed closed"
@@ -153,18 +178,34 @@ def resolve_shadow_canonical_core() -> _core.CanonicalCoreBindings:
         raise CurrentShadowCanonicalCoreAdapterError(
             "Current Shadow canonical-core SHADOW eligibility drifted"
         )
-    _validate_compatibility_aliases(bindings)
+    _validate_compatibility_aliases(bindings, release_identity=release_identity, resources=resources)
     return bindings
+
+
+@lru_cache(maxsize=1)
+def _resolve_shadow_canonical_core_development() -> _core.CanonicalCoreBindings:
+    return _resolve_shadow_canonical_core()
+
+
+def resolve_shadow_canonical_core(*, release_identity=None, resources=None) -> _core.CanonicalCoreBindings:
+    """Default checkout or explicit verified release; never a global release store."""
+    if release_identity is None and resources is None:
+        return _resolve_shadow_canonical_core_development()
+    if type(release_identity) not in {DevelopmentCheckoutIdentity, InstalledReleaseIdentity}:
+        raise CurrentShadowCanonicalCoreAdapterError("exact reviewed release identity required")
+    if type(resources) is not ResourceResolver or resources.identity is not release_identity:
+        raise CurrentShadowCanonicalCoreAdapterError("resolver must bind the exact release identity")
+    return _resolve_shadow_canonical_core(release_identity=release_identity, resources=resources)
 
 
 def clear_shadow_canonical_core_cache() -> None:
     """Test/process-reload hook; never mutates the source-controlled registry."""
 
-    resolve_shadow_canonical_core.cache_clear()
+    _resolve_shadow_canonical_core_development.cache_clear()
 
 
-def canonical_core_summary() -> MappingProxyType:
-    bindings = resolve_shadow_canonical_core()
+def canonical_core_summary(*, release_identity=None, resources=None) -> MappingProxyType:
+    bindings = resolve_shadow_canonical_core(release_identity=release_identity, resources=resources)
     return MappingProxyType(
         {
             "policy_id": POLICY_ID,
@@ -183,10 +224,12 @@ def canonical_core_summary() -> MappingProxyType:
     )
 
 
-def _require(responsibility_id: str) -> None:
+def _require(responsibility_id: str, *, release_identity=None, resources=None) -> None:
     expected = EXPECTED_COMPONENTS[responsibility_id]
     try:
-        record = resolve_shadow_canonical_core().record_for(responsibility_id)
+        bindings = (resolve_shadow_canonical_core() if release_identity is None and resources is None
+                    else resolve_shadow_canonical_core(release_identity=release_identity, resources=resources))
+        record = bindings.record_for(responsibility_id)
     except (KeyError, _core.CanonicalCoreError, CurrentShadowCanonicalCoreAdapterError) as exc:
         raise CurrentShadowCanonicalCoreAdapterError(
             f"Current Shadow canonical responsibility {responsibility_id} is unavailable"
@@ -197,23 +240,23 @@ def _require(responsibility_id: str) -> None:
         )
 
 
-def _require_price_or_shadow_error() -> None:
+def _require_price_or_shadow_error(*, release_identity=None, resources=None) -> None:
     try:
-        _require("price_all_and_de_vig")
+        _require("price_all_and_de_vig", release_identity=release_identity, resources=resources)
     except CurrentShadowCanonicalCoreAdapterError as exc:
         raise ShadowPriceError("canonical Price-all owner resolution failed") from exc
 
 
-def _require_router_or_shadow_error() -> None:
+def _require_router_or_shadow_error(*, release_identity=None, resources=None) -> None:
     try:
-        _require("market_router")
+        _require("market_router", release_identity=release_identity, resources=resources)
     except CurrentShadowCanonicalCoreAdapterError as exc:
         raise ShadowPriceError("canonical Router owner resolution failed") from exc
 
 
-def _require_portfolio_or_legacy_error() -> None:
+def _require_portfolio_or_legacy_error(*, release_identity=None, resources=None) -> None:
     try:
-        _require("portfolio_optimizer")
+        _require("portfolio_optimizer", release_identity=release_identity, resources=resources)
     except CurrentShadowCanonicalCoreAdapterError as exc:
         raise _legacy_portfolio.CurrentShadowPortfolioError(
             "canonical Portfolio owner resolution failed"
@@ -248,39 +291,39 @@ def verify_current_shadow_price_context(value: Any) -> Any:
     return _underlying_verify_current_shadow_price_context(value)
 
 
-def price_all_shadow_fixture(context: Any) -> Any:
+def price_all_shadow_fixture(context: Any, *, release_identity=None, resources=None) -> Any:
     """Compatibility execution guarded by the canonical Price-all owner."""
 
-    _require_price_or_shadow_error()
+    _require_price_or_shadow_error(release_identity=release_identity, resources=resources)
     return _legacy_price.price_all_shadow_fixture(context)
 
 
-def verify_shadow_price_all_bundle(value: Any) -> Any:
-    _require_price_or_shadow_error()
+def verify_shadow_price_all_bundle(value: Any, *, release_identity=None, resources=None) -> Any:
+    _require_price_or_shadow_error(release_identity=release_identity, resources=resources)
     return _legacy_price.verify_shadow_price_all_bundle(value)
 
 
-def route_shadow_price_results(value: Any) -> Any:
+def route_shadow_price_results(value: Any, *, release_identity=None, resources=None) -> Any:
     """Compatibility execution guarded by the canonical Router owner."""
 
-    _require_router_or_shadow_error()
+    _require_router_or_shadow_error(release_identity=release_identity, resources=resources)
     return _legacy_router.route_shadow_price_results(value)
 
 
-def build_shadow_portfolio_router_input(*args: Any, **kwargs: Any) -> Any:
-    _require_portfolio_or_legacy_error()
+def build_shadow_portfolio_router_input(*args: Any, release_identity=None, resources=None, **kwargs: Any) -> Any:
+    _require_portfolio_or_legacy_error(release_identity=release_identity, resources=resources)
     return _legacy_portfolio.build_shadow_portfolio_router_input(*args, **kwargs)
 
 
-def verify_shadow_portfolio_router_input(value: Any) -> Any:
-    _require_portfolio_or_legacy_error()
+def verify_shadow_portfolio_router_input(value: Any, *, release_identity=None, resources=None) -> Any:
+    _require_portfolio_or_legacy_error(release_identity=release_identity, resources=resources)
     return _legacy_portfolio.verify_shadow_portfolio_router_input(value)
 
 
-def optimize_shadow_portfolio(*args: Any, **kwargs: Any) -> Any:
+def optimize_shadow_portfolio(*args: Any, release_identity=None, resources=None, **kwargs: Any) -> Any:
     """Compatibility execution guarded by the canonical Portfolio owner."""
 
-    _require_portfolio_or_legacy_error()
+    _require_portfolio_or_legacy_error(release_identity=release_identity, resources=resources)
     return _legacy_portfolio.optimize_shadow_portfolio(*args, **kwargs)
 
 

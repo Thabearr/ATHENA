@@ -120,11 +120,14 @@ def test_current_workflow_tree_and_protected_paths_match_reviewed_evolution() ->
     assert len(p44m_snapshot["transitions"]) == 7
     assert ledger["transitions"][:7] == p44m_snapshot["transitions"]
     assert p44m_snapshot["current_workflow_tree_sha1"] == p44m_receipt["workflow_tree_after_sha1"]
-    assert ledger["current_workflow_tree_sha1"] == evolution._git(
+    # Historical ledger stays exact; only the pinned PORT-02C replay workflow
+    # successor is permitted by validate_current_state (all others unchanged).
+    assert ledger["current_workflow_tree_sha1"] == "b93f72b5a352b40021d913c299f039c846476f73"
+    assert evolution.PORT02C_REPLAY_WORKFLOW_TREE_SHA1 == evolution._git(
         "rev-parse", "HEAD:.github/workflows"
     ).decode("ascii").strip()
     assert p44g_receipt["workflow_tree_sha1_after"] == "d58f71b9ac653c8762f1d9b18eede15755ee1a76"
-    assert len(list(Path(".github/workflows").glob("*.yml"))) == 38
+    assert len(list(Path(".github/workflows").glob("*.yml"))) == 39
     assert not evolution._git("diff", "--", ".github/workflows")
     baseline = evolution.baseline_state(retirement.validate_retirement_history())
     latest = {

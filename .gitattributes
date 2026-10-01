@@ -8,3 +8,4 @@ tests/fixtures/architecture/retired_workflows/execute-fotmob-utc-native-successo
 tests/fixtures/architecture/retired_workflows/execute-pr69-primary-time-basis-evidence-campaign.yml -text
 tests/fixtures/architecture/revised_workflows/*.yml -text
 tests/fixtures/architecture/revised_modules/*.py -text
+tests/fixtures/port_02c_run_36345657852/** -text

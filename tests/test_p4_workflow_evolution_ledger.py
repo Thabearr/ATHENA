@@ -183,7 +183,7 @@ def test_current_ledger_preserves_prior_history_and_appends_p44m_after_p44g() ->
         p44m.TRANSITION_ID,
         "AUTH01B_ATHENA_RUN_EXPLICIT_DELIVERY_INTENT_V1",
     ]
-    assert ledger["current_live_workflow_count"] == 38
+    assert ledger["current_live_workflow_count"] == 39
     assert len(ledger["transitions"]) >= 8
     p44g_receipt = json.loads(Path(p44g.RECEIPT_PATH).read_text(encoding="utf-8"))
     p44m_receipt = json.loads(Path("artifacts/architecture/p4_4m_athena_run_pc_upcoming_evidence_preservation_v1.json").read_text(encoding="utf-8"))

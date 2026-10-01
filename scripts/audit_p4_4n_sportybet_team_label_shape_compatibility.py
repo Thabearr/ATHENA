@@ -181,7 +181,7 @@ def _verify_history_and_workflow(root: Path, receipt: dict[str, Any]) -> None:
     from scripts import audit_p4_3_workflow_retirement_ledger as retirement
     live_state = evolution.validate_current_state()
     retired_state = retirement.validate_retirement_history()
-    _require(live_state.get("current_live_workflow_count") == 38 and retired_state.get("current_retired_workflow_count") == 3, "workflow evolution/retirement census drifted")
+    _require(live_state.get("current_live_workflow_count") == 39 and retired_state.get("current_retired_workflow_count") == 3, "workflow evolution/retirement census drifted")
 
 
 def _verify_shape() -> None:

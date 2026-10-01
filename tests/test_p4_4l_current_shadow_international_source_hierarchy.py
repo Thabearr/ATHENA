@@ -105,12 +105,11 @@ def test_current_architecture_identity_uses_checked_out_head_in_shallow_checkout
     assert architecture["workflow_tree_sha1"] == original_git(
         "rev-parse", "HEAD:.github/workflows"
     ).decode("ascii").strip()
-    assert architecture["workflow_count"] == audit.WORKFLOW_COUNT
     ledger = evolution.validate_current_state()
+    assert architecture["workflow_count"] == ledger["current_live_workflow_count"]
     assert architecture["workflow_evolution_transition_count"] == len(ledger["transitions"])
     assert architecture["workflow_evolution_ledger_sha256"] == ledger["canonical_sha256"]
-    assert architecture["workflow_tree_sha1"] == ledger["current_workflow_tree_sha1"]
-    assert architecture["workflow_count"] == ledger["current_live_workflow_count"]
+    assert architecture["workflow_tree_sha1"] == evolution.current_workflow_tree_sha1(ledger)
 
 
 def test_source_identity_hashes_committed_blob_bytes_across_checkout_line_endings() -> None:
