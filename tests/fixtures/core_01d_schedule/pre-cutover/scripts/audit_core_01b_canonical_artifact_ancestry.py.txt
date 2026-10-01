@@ -67,16 +67,14 @@ def tracked(path: str):
         return historical_source(path)
     if path == ".github/workflows/current-shadow-all-market.yml":
         from scripts import audit_core_01_schedule_date_disposition as c1
-        from scripts.core_01d_historical_source import historical_tracked
-        raw, identity = historical_tracked(ROOT, path)
+        raw, identity = read_tracked_head_blob(ROOT, path)
         if identity.git_blob_sha1 == c1.CORE01C_WORKFLOW_AFTER_BLOB:
             roles.require(identity.git_blob_payload_sha256 == c1.CORE01C_WORKFLOW_AFTER_SHA256, "C2/C3 successor SHA differs")
             from scripts.audit_core_01c_notification_comment_compatibility import verify_workflow_authority as verify_c3
             historical, historical_identity = read_tracked_head_blob(ROOT, c1.CORE01C_BEFORE_FIXTURE)
             verify_c3(historical, raw)
             return historical, historical_identity
-    from scripts.core_01d_historical_source import historical_tracked
-    return historical_tracked(ROOT, path)
+    return read_tracked_head_blob(ROOT, path)
 
 
 def verify_workflow_authority(before: bytes, after: bytes) -> None:

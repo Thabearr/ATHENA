@@ -45,22 +45,8 @@ class GitHubTransport:
                     run.get("status") != "completed" or run.get("conclusion") != "success" or
                     type(run.get("id")) is not int or not roles.hex_sha(run.get("head_sha"), 40)):
                 continue
-            if canonical_producer and run.get("event") not in {"schedule", "workflow_dispatch"}:
-                continue
             name = f"athena-run-{run['id']}" if canonical_producer else artifact_name
             artifacts = self.pages(f"repos/{roles.REPOSITORY}/actions/runs/{run['id']}/artifacts?per_page=100", "artifacts")
-            if canonical_producer:
-                suffix = f"athena-run-{run['id']}-scheduled-shadow"
-                suffixed = [item for item in artifacts if item.get("name") == suffix]
-                old = [item for item in artifacts if item.get("name") == name]
-                roles.require(len(suffixed) <= 1 and len(old) <= 1, "ambiguous canonical artifact name")
-                if run.get("event") == "workflow_dispatch":
-                    roles.require(not suffixed, "scheduled suffix on manual event")
-                elif suffixed:
-                    # Never downgrade a known dual-lane producer to its MAIN artifact.
-                    if suffixed[0].get("expired") is not False:
-                        continue
-                    name = suffix
             matches = [item for item in artifacts if item.get("name") == name and item.get("expired") is False]
             if len(matches) != 1:
                 continue

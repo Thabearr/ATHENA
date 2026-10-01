@@ -71,8 +71,6 @@ def resolve_and_persist(
     output_root: Path = DEFAULT_OUTPUT_ROOT,
     github_output_path: Path | None = None,
     now: datetime | None = None,
-    schedule_lane: str | None = None,
-    scheduled_shadow_create_share_code: bool | None = None,
 ) -> tuple[RunRequest, dict[str, object]]:
     """Resolve once, then immediately persist request and non-secret metadata."""
 
@@ -83,8 +81,6 @@ def resolve_and_persist(
         event_name=event_name,
         dispatch_inputs=dispatch_inputs,
         now=now,
-        schedule_lane=schedule_lane,
-        scheduled_shadow_create_share_code=scheduled_shadow_create_share_code,
     )
     request_bytes = canonical_json_bytes(request)
     request_path = output_root / REQUEST_FILENAME
@@ -102,12 +98,6 @@ def resolve_and_persist(
         "place_wager": False,
         "timezone": CLI_TIMEZONE_ID,
     }
-    if event_name == "schedule":
-        metadata.update(
-            schedule_lane=schedule_lane or "main",
-            original_schedule_intent="UTC_TODAY" if schedule_lane == "shadow" else "LAGOS_TODAY",
-            date_policy_status="EXACT_UTC_DATE_REPRESENTABLE" if schedule_lane == "shadow" else "ESTABLISHED_MAIN_DATE_POLICY",
-        )
     _write_consistent(request_path, request_bytes)
     _write_consistent(metadata_path, canonical_json_bytes(metadata))
 
@@ -140,8 +130,6 @@ def _environment_dispatch_inputs(environment: Mapping[str, str]) -> dict[str, st
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
-    parser.add_argument("--schedule-lane", choices=("main", "shadow"))
-    parser.add_argument("--scheduled-shadow-create-share-code", choices=("false", "true"))
     args = parser.parse_args(argv)
     environment = os.environ
     event_name = environment.get("GITHUB_EVENT_NAME", "")
@@ -149,8 +137,6 @@ def main(argv: list[str] | None = None) -> int:
     output_value = environment.get("GITHUB_OUTPUT")
     try:
         request, metadata = resolve_and_persist(
-            schedule_lane=args.schedule_lane,
-            scheduled_shadow_create_share_code=(None if args.scheduled_shadow_create_share_code is None else args.scheduled_shadow_create_share_code == "true"),
             event_name=event_name,
             dispatch_inputs=dispatch,
             github_sha=environment.get("GITHUB_SHA", ""),

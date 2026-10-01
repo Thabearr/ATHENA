@@ -126,10 +126,7 @@ def _yaml(raw: bytes) -> dict[str, Any]:
 
 def verify_permissions_and_artifacts() -> dict[str, Any]:
     old = _yaml(verify_historical_fixture())
-    # This retirement checkpoint retains its exact predecessor contract;
-    # CORE-01D independently verifies the new lane-specific transport names.
-    from scripts.core_01d_historical_source import historical_tracked
-    new = _yaml(historical_tracked(p42.REPOSITORY_ROOT, SUCCESSOR)[0])
+    new = _yaml(Path(SUCCESSOR).read_bytes())
     if old.get("permissions") != {"contents": "read"} or new.get("permissions") != {"contents": "read", "actions": "read"}:
         raise P43BRetirementError("workflow permission comparison drifted")
     old_job = old["jobs"]["request"]

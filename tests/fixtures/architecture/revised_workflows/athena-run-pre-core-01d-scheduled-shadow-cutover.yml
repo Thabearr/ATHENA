@@ -48,15 +48,12 @@ permissions:
   contents: read
   actions: read
 
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.profile == 'shadow' && 'current-shadow-all-market' || 'athena-run-main' }}
+  cancel-in-progress: false
+
 jobs:
   canonical-run:
-    strategy:
-      fail-fast: false
-      matrix:
-        lane: ${{ github.event_name == 'schedule' && fromJSON('["main","shadow"]') || fromJSON(format('["{0}"]', inputs.profile)) }}
-    concurrency:
-      group: ${{ matrix.lane == 'shadow' && 'current-shadow-all-market' || 'athena-run-main' }}
-      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -77,7 +74,6 @@ jobs:
         id: resolve_request
         if: success()
         env:
-          SCHEDULE_LANE: ${{ github.event_name == 'schedule' && matrix.lane || '' }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           INPUT_DAYS: ${{ inputs.days }}
           INPUT_TARGET_LEGS: ${{ inputs.target_legs }}
@@ -87,16 +83,7 @@ jobs:
           INPUT_CREATE_SHARE_CODE: ${{ inputs.create_share_code }}
           PYTHONPATH: ${{ github.workspace }}
         shell: bash
-        run: |
-          args=(--output-root artifacts/athena-run-workflow)
-          if [ -n "${SCHEDULE_LANE}" ]; then
-            args+=(--schedule-lane "${SCHEDULE_LANE}")
-            if [ "${SCHEDULE_LANE}" = shadow ]; then
-              # Explicit owner policy: scheduled delivery intentionally deprecated.
-              args+=(--scheduled-shadow-create-share-code false)
-            fi
-          fi
-          python -m scripts.resolve_athena_run_workflow_request "${args[@]}"
+        run: python -m scripts.resolve_athena_run_workflow_request --output-root artifacts/athena-run-workflow
 
       - name: Set up Python 3.12
         id: setup_python
@@ -197,7 +184,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: athena-run-${{ github.run_id }}${{ github.event_name == 'schedule' && matrix.lane == 'shadow' && '-scheduled-shadow' || '' }}
+          name: athena-run-${{ github.run_id }}
           path: |
             artifacts/athena-run-workflow
             artifacts/athena-runs

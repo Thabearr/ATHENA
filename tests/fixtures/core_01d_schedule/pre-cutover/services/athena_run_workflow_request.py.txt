@@ -7,7 +7,7 @@ filesystem, network, provider, subprocess, or service work.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import datetime
 import re
 from types import MappingProxyType
 
@@ -73,17 +73,11 @@ def resolve_workflow_request(
     event_name: str,
     dispatch_inputs: Mapping[str, str] | None = None,
     now: datetime | None = None,
-    schedule_lane: str | None = None,
-    scheduled_shadow_create_share_code: bool | None = None,
 ) -> RunRequest:
     """Resolve one supported GitHub event through the P4.1 parser exactly once."""
 
     if type(event_name) is not str:
         raise AthenaRunWorkflowRequestError("event_name must be exact text")
-    if schedule_lane is not None and (type(schedule_lane) is not str or schedule_lane not in {"main", "shadow"}):
-        raise AthenaRunWorkflowRequestError("unsupported schedule lane")
-    if event_name != "schedule" and (schedule_lane is not None or scheduled_shadow_create_share_code is not None):
-        raise AthenaRunWorkflowRequestError("schedule contract forbidden for non-schedule event")
     if event_name == "schedule":
         if dispatch_inputs not in (None, {}):
             raise AthenaRunWorkflowRequestError("schedule events cannot supply dispatch inputs")
@@ -93,18 +87,6 @@ def resolve_workflow_request(
         bookie = SCHEDULE_BOOKIE
         profile = SCHEDULE_PROFILE
         create_share_code = SCHEDULE_CREATE_SHARE_CODE
-        if schedule_lane == "shadow":
-            if type(scheduled_shadow_create_share_code) is not bool:
-                raise AthenaRunWorkflowRequestError("scheduled delivery policy must be explicit; no profile default")
-            now = datetime.now(timezone.utc) if now is None else now
-            if type(now) is not datetime or now.tzinfo is None or now.utcoffset() is None:
-                raise AthenaRunWorkflowRequestError("schedule clock must be timezone-aware")
-            # Freeze legacy UTC today before Lagos validation. Never shift it.
-            days = now.astimezone(timezone.utc).date().isoformat()
-            profile = "shadow"
-            create_share_code = scheduled_shadow_create_share_code
-        elif scheduled_shadow_create_share_code is not None:
-            raise AthenaRunWorkflowRequestError("MAIN schedule cannot receive SHADOW delivery policy")
     elif event_name == "workflow_dispatch":
         values = _validate_dispatch_inputs(dispatch_inputs)
         days = values["days"]

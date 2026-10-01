@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 from domain import current_shadow_fixture_date_request as legacy
 from domain import execution_envelope as envelope
 from domain.run_contracts import canonical_json_bytes
-from runtime.source_identity import read_tracked_head_blob as read_current_head_blob
+from runtime.source_identity import read_tracked_head_blob
 from services.athena_run_request_parser import CLI_TIMEZONE_ID, parse_explicit_request
 from services.athena_run_workflow_request import resolve_workflow_request
 
@@ -59,12 +59,6 @@ SOURCE_BLOBS = {
 
 class DispositionError(ValueError):
     pass
-
-
-def read_tracked_head_blob(root, path):
-    """This V1 checkpoint inspects authenticated historical source."""
-    from scripts.core_01d_historical_source import historical_tracked
-    return historical_tracked(root, path)
 
 
 def require(condition: bool, message: str) -> None:
