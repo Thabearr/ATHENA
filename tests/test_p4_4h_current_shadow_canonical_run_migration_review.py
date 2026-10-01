@@ -464,7 +464,13 @@ def test_seven_day_horizon_diverges_at_utc_lagos_midnight() -> None:
 
 
 def test_comment_grammar_is_exact_and_not_broadened() -> None:
-    workflow = Path(audit.CURRENT_SHADOW).read_text(encoding="utf-8")
+    from services import athena_shadow_issue_comment_compatibility as compatibility
+    from scripts import audit_core_01c_notification_comment_compatibility as c3
+    workflow = Path(c3.BEFORE_FIXTURE).read_text(encoding="utf-8")
+    current = Path(audit.CURRENT_SHADOW).read_text(encoding="utf-8")
+    assert "scripts.resolve_athena_shadow_issue_comment" in current
+    assert compatibility.SCOPE_GRAMMAR == r"/athena-shadow target=([0-9]+) scope=(today|three-day)"
+    assert compatibility.EXPLICIT_DATES_GRAMMAR == r"/athena-shadow target=([0-9]+) dates=([0-9]{8}(?:,[0-9]{8}){0,6})"
     scope = re.compile(r"/athena-shadow target=([0-9]+) scope=(today|three-day)")
     dates = re.compile(r"/athena-shadow target=([0-9]+) dates=([0-9]{8}(?:,[0-9]{8}){0,6})")
     assert scope.fullmatch("/athena-shadow target=20 scope=today")

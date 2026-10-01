@@ -371,12 +371,13 @@ def test_tenth_transition_and_immutable_ninth_checkpoint():
     ledger = audit.evolution.validate_current_state()
     assert len(predecessor["transitions"]) == 9
     assert predecessor["transitions"][8]["transition_id"] == "PORT02C_NATIVE_RUNTIME_SLICE_ADD_V1"
-    assert len(ledger["transitions"]) == 10 and ledger["transitions"][:9] == predecessor["transitions"]
+    assert len(ledger["transitions"]) >= 10 and ledger["transitions"][:9] == predecessor["transitions"]
     assert ledger["transitions"][9]["transition_id"] == audit.TRANSITION_ID
     assert ledger["current_live_workflow_count"] == 39 and ledger["current_p4_3_retired_workflow_count"] == 3
     snapshot = roles.strict_json(audit.tracked(audit.SNAPSHOT_PATH)[0])
     receipt = roles.strict_json(audit.tracked(audit.RECEIPT_PATH)[0])
-    assert snapshot == ledger and receipt["workflow_evolution_ledger_sha256"] == snapshot["canonical_sha256"]
+    assert snapshot["transitions"] == ledger["transitions"][:10]
+    assert len(snapshot["transitions"]) == 10 and receipt["workflow_evolution_ledger_sha256"] == snapshot["canonical_sha256"]
     transition = predecessor["transitions"][8]
     old_receipt = roles.strict_json(audit.tracked(transition["evidence_receipt_path"])[0])
     assert old_receipt["workflow_evolution_ledger_sha256"] == audit.PREDECESSOR_SHA

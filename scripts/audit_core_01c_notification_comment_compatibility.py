@@ -59,9 +59,9 @@ def verify_workflow_authority(before: bytes, after: bytes) -> None:
     steps = expected["jobs"]["current-shadow-all-market"]["steps"]
     resolve = next(row for row in steps if row["name"] == "Resolve daily/on-demand request")
     run = resolve["run"]
-    start = run.index('      parsed="$(python - <<\'PY\'')
+    start = run.index('    parsed="$(python - <<\'PY\'')
     end = run.index(')" || {', start) + len(')"')
-    resolve["run"] = run[:start] + '      parsed="$(python -m scripts.resolve_athena_shadow_issue_comment)"' + run[end:]
+    resolve["run"] = run[:start] + '    parsed="$(python -m scripts.resolve_athena_shadow_issue_comment)"' + run[end:]
     require(new == expected, "CORE-01C workflow authority drift beyond exact comment parser delegation")
     require(comment.SCOPE_GRAMMAR == r"/athena-shadow target=([0-9]+) scope=(today|three-day)" and
             comment.EXPLICIT_DATES_GRAMMAR == r"/athena-shadow target=([0-9]+) dates=([0-9]{8}(?:,[0-9]{8}){0,6})",

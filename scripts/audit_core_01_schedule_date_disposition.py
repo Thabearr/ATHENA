@@ -32,6 +32,9 @@ PORT_PATH = "artifacts/architecture/port_02_native_runtime_v1.json"
 CORE01B_WORKFLOW_AFTER_BLOB = "684122f69c29946a82c6fb1713db71bd8cf86afc"
 CORE01B_WORKFLOW_AFTER_SHA256 = "1aa9f8f94deb80249dc079e828b719121e381f3a7e1289ee42ea797ff31afdac"
 CORE01B_BEFORE_FIXTURE = "tests/fixtures/architecture/revised_workflows/athena-run-pre-core-01b-canonical-artifact-ancestry.yml"
+CORE01C_WORKFLOW_AFTER_BLOB = "7ebeabcd0e4b0b388363760f6284afb63d97cad7"
+CORE01C_WORKFLOW_AFTER_SHA256 = "fb54376740a7cff8e100a15c629cdbd9b1a34dc6fe8005362a8a2bbcee2faed2"
+CORE01C_BEFORE_FIXTURE = "tests/fixtures/architecture/revised_workflows/current-shadow-all-market-pre-core-01c-compatibility-thin.yml"
 
 # Exact reviewed main blobs, not repinned predecessor self-identities. Full
 # payload verification and filtered worktree verification use PORT-01's helper.
@@ -93,6 +96,13 @@ def inspect_sources(root: Path) -> tuple[dict[str, Any], dict[str, bytes]]:
     identities, payloads = {}, {}
     for path, blob in SOURCE_BLOBS.items():
         raw, identity = read_tracked_head_blob(root, path)
+        if path == LEGACY_WORKFLOW and identity.git_blob_sha1 == CORE01C_WORKFLOW_AFTER_BLOB:
+            require(identity.git_blob_payload_sha256 == CORE01C_WORKFLOW_AFTER_SHA256, "exact C3 successor SHA differs")
+            from scripts.audit_core_01c_notification_comment_compatibility import verify_workflow_authority as verify_c3
+            historical, historical_identity = read_tracked_head_blob(root, CORE01C_BEFORE_FIXTURE)
+            require(historical_identity.git_blob_sha1 == blob, "C1/C3 historical before fixture differs")
+            verify_c3(historical, raw)
+            raw, identity = historical, historical_identity
         if path == CANONICAL_WORKFLOW and identity.git_blob_sha1 == CORE01B_WORKFLOW_AFTER_BLOB:
             require(identity.git_blob_payload_sha256 == CORE01B_WORKFLOW_AFTER_SHA256,
                     "exact C2 successor SHA differs")

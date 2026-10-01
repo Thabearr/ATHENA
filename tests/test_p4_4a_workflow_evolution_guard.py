@@ -128,9 +128,15 @@ def test_current_workflow_tree_and_protected_paths_match_reviewed_evolution() ->
     assert port02c_snapshot["current_workflow_tree_sha1"] == "b93f72b5a352b40021d913c299f039c846476f73"
     assert len(port02c_snapshot["transitions"]) == 9
     assert ledger["transitions"][:9] == port02c_snapshot["transitions"]
-    assert len(ledger["transitions"]) == 10
-    assert ledger["current_workflow_tree_sha1"] == evolution.CORE01B_WORKFLOW_TREE_SHA1
-    assert evolution.CORE01B_WORKFLOW_TREE_SHA1 == evolution._git(
+    c2_snapshot = json.loads(Path(
+        "artifacts/architecture/p4_workflow_evolution_snapshots/core_01b_athena_run_canonical_artifact_ancestry_v1.json"
+    ).read_text(encoding="utf-8"))
+    assert len(c2_snapshot["transitions"]) == 10
+    assert ledger["transitions"][:10] == c2_snapshot["transitions"]
+    assert c2_snapshot["current_workflow_tree_sha1"] == evolution.CORE01B_WORKFLOW_TREE_SHA1
+    assert len(ledger["transitions"]) == 11
+    assert ledger["current_workflow_tree_sha1"] == evolution.CORE01C_WORKFLOW_TREE_SHA1
+    assert evolution.CORE01C_WORKFLOW_TREE_SHA1 == evolution._git(
         "rev-parse", "HEAD:.github/workflows"
     ).decode("ascii").strip()
     assert p44g_receipt["workflow_tree_sha1_after"] == "d58f71b9ac653c8762f1d9b18eede15755ee1a76"

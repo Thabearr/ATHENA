@@ -191,7 +191,7 @@ def test_unrepresentable_exact_bridge_precedes_provider_and_delivery(tmp_path, d
 
 @pytest.fixture(scope="module")
 def reviewed_sources():
-    paths = [*audit.SOURCE_BLOBS, audit.CORE01B_BEFORE_FIXTURE]
+    paths = [*audit.SOURCE_BLOBS, audit.CORE01B_BEFORE_FIXTURE, audit.CORE01C_BEFORE_FIXTURE]
     return {path: audit.read_tracked_head_blob(audit.ROOT, path) for path in paths}
 
 
@@ -216,8 +216,9 @@ def test_schedule_semantics_compatibility_email_and_history(reviewed_sources):
             assert "current-shadow-all-market.yml/runs?status=success" in text
         else:
             assert "scripts.restore_athena_artifact_roles --restore-inputs" in text
-    text = reviewed_sources[audit.LEGACY_WORKFLOW][0].decode()
+    text = reviewed_sources[audit.CORE01C_BEFORE_FIXTURE][0].decode()
     assert "scope=(today|three-day)" in text and "dates=([0-9]{8}" in text
+    assert "scripts.resolve_athena_shadow_issue_comment" in reviewed_sources[audit.LEGACY_WORKFLOW][0].decode()
     assert text.index("scripts.execute_current_shadow_request") < text.index("scripts.send_current_shadow_email")
     assert "issue_comment:" not in reviewed_sources[audit.CANONICAL_WORKFLOW][0].decode()
 
