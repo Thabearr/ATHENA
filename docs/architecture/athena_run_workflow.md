@@ -1,5 +1,63 @@
 # Canonical `athena-run` workflow
 
+## CORE-01C current notification/comment disposition
+
+`NOTIFICATION_EMAIL = EXPLICIT_RETAINED_SECONDARY_NON_AUTHORITATIVE`.
+Current Shadow finalizes its durable business receipt before optional notification;
+the source-evidence preservation step precedes email. `scripts.send_current_shadow_email`
+reads that finalized receipt and writes only the separate delivery receipt. Missing
+configuration yields `EMAIL_SKIPPED_UNCONFIGURED`; mocked successful SMTP proves
+`EMAIL_DELIVERED`; ordinary SMTP/network transport errors yield `EMAIL_FAILED`, a
+visible CLI warning and exit zero. They do not replace the core result, re-execute
+acquisition or mutate the source receipt. Missing/invalid supplied receipts, wrong
+dataset, unsafe flags, unverified code exposure and nested mismatches still fail
+closed. No blanket `continue-on-error` hides security or programming errors.
+
+Only existing `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, `RECIPIENT_EMAIL` configure
+the existing Gmail SMTP :587 transport, scoped only to the retained email step.
+No values are recorded; the failure receipt records only exception type and exact
+source SHA. Desktop email remains **NOT_ENABLED_PENDING_RECIPIENT_CONSENT_TRANSPORT_LIFECYCLE_REVIEW**.
+
+`ISSUE_COMMENT_COMPATIBILITY = EXPLICIT_RETAINED_THIN_SYNTAX_ADAPTER_NOT_MIGRATED`.
+The trigger remains Current Shadow, issue #276, repository-owner commenter,
+`/athena-shadow ` prefix. Exact full-match grammars remain:
+
+```
+/athena-shadow target=([0-9]+) scope=(today|three-day)
+/athena-shadow target=([0-9]+) dates=([0-9]{8}(?:,[0-9]{8}){0,6})
+```
+
+The pure owner is `services/athena_shadow_issue_comment_compatibility.py`, policy
+`ATHENA_SHADOW_ISSUE_COMMENT_COMPATIBILITY_V1`; the thin CLI is
+`scripts.resolve_athena_shadow_issue_comment`. It validates legacy UTC dates and
+emits the unchanged target/scope/dates handoff. It never dispatches or executes
+canonical core and owns no football semantics. Equivalent representable intent
+delegates to the canonical explicit parser for identical request bytes/digest:
+SHADOW, SportyBet, identical concrete dates/target, no odds objective,
+`create_share_code=true` (historical compatibility intent only), `place_wager=false`.
+
+At 09:00Z and 22:59Z on 2026-09-24, UTC today has exact canonical parity. At
+23:00Z, UTC Sep 24 is outside the Lagos horizon: today/three-day/explicit intent
+containing it is retained, unshifted, with no canonical payload or digest. Valid
+future explicit dates remain representable. No fallback to Lagos today, coercion,
+horizon extension or date-policy change occurs. Live execution stays on
+`scripts.execute_current_shadow_request`; `athena-run` gains no comment trigger.
+
+C3 appends maintenance transition **11** after the unchanged ten-transition C2
+prefix; counts stay 39 live / 3 retired. Receipt and offline audit are
+`artifacts/architecture/core_01c_notification_comment_compatibility_v1.json` and
+`python -m scripts.audit_core_01c_notification_comment_compatibility`.
+Historical C1/C2/P4.4H descriptions below remain checkpoint truth, not current
+notification/parser ownership. Only the notification/comment separability blockers
+are dispositioned; scheduled SHADOW ownership and clean live canonical SHADOW
+proof remain open. Current Shadow is active; no caller/schedule migration or
+retirement is authorized. P4.4/Checkpoint E remain incomplete; clean successor proof
+INCOMPLETE / NOT RERUN; LG-A NOT RUN / NOT AUTHORIZED. All C3 execution validation
+is offline with mocked SMTP, not live email/provider/share-code/account/wager work.
+Counter stays 3/5 while open, 4/5 only after owner merge; no mandatory reread is due.
+Rollback retains this explicit compatibility wrapper; never shift dates or bypass
+integrity checks to achieve apparent parity.
+
 ## CORE-01B current durable ancestry ownership
 
 CORE-01B supersedes only the canonical run's persistent identity/history ancestry

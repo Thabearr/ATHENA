@@ -423,7 +423,7 @@ def apply_transitions(
         identifiers.add(identifier)
         phase = transition["phase_id"]
         if not isinstance(phase, str) or not re.fullmatch(
-            r"(?:P[0-9]+(?:\.[0-9]+)?[A-Z0-9_.-]*|AUTH-01B|CORE-01B)", phase
+            r"(?:P[0-9]+(?:\.[0-9]+)?[A-Z0-9_.-]*|AUTH-01B|CORE-01B|CORE-01C)", phase
         ):
             raise WorkflowEvolutionError(f"workflow transition phase is invalid: {path}")
         if operation == "MAINTENANCE_REVISE":
@@ -763,6 +763,8 @@ PORT02C_REPLAY_WORKFLOW_AFTER = {
 }
 CORE01B_WORKFLOW_TREE_SHA1 = "b1f3e16acccc543456c330e13476a3019cdbd477"
 CORE01B_LEDGER_SHA256 = "15115996d087e6a4786065f4cbe676ff6cd8317d36dc3302e1dd1ba64d335901"
+CORE01C_WORKFLOW_TREE_SHA1 = "134cdd8bfa54488770f562c93571e46ac84a8187"
+CORE01C_LEDGER_SHA256 = "d01539f234955ef873bcd549faa83502d51eb96043eed627dbd2da450409f1e7"
 
 
 def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha):
@@ -774,6 +776,7 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
     reviewed_contexts = {
         (PORT02C_REPLAY_WORKFLOW_TREE_SHA1, "d1c8d79ac48bf0521a609e29991014513bd2f7afed2389c5e3a9d6ec8bfba8a2"),
         (CORE01B_WORKFLOW_TREE_SHA1, CORE01B_LEDGER_SHA256),
+        (CORE01C_WORKFLOW_TREE_SHA1, CORE01C_LEDGER_SHA256),
     }
     if ((head_tree, ledger_sha) not in reviewed_contexts
             or derived.get(PORT02C_REPLAY_WORKFLOW_PATH) != PORT02C_REPLAY_WORKFLOW_BEFORE

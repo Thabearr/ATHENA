@@ -159,10 +159,10 @@ def test_smtp_failure_writes_failed_receipt_without_secrets(tmp_path, monkeypatc
 
     monkeypatch.setattr(mail.smtplib, "SMTP", SMTP)
     delivery = tmp_path / "delivery.json"
-    with pytest.raises(mail.CurrentShadowEmailError, match="EMAIL_FAILED"):
-        mail.send_receipt_email(
-            receipt_path=_write_receipt(tmp_path), delivery_receipt_path=delivery
-        )
+    result = mail.send_receipt_email(
+        receipt_path=_write_receipt(tmp_path), delivery_receipt_path=delivery
+    )
+    assert result["status"] == mail.EMAIL_FAILED
     value = __import__("json").loads(delivery.read_text(encoding="utf-8"))
     assert value["status"] == mail.EMAIL_FAILED
     raw = delivery.read_text(encoding="utf-8")

@@ -346,6 +346,32 @@ mandatory 5/5 reread or counter reset and grants no live authority.
 
 ## CORE-01B canonical-run ancestry successor
 
+### CORE-01C retained thin compatibility successor
+
+C3 disposition (current, without rewriting historical census or receipts):
+`NOTIFICATION_EMAIL = EXPLICIT_RETAINED_SECONDARY_NON_AUTHORITATIVE` and
+`ISSUE_COMMENT_COMPATIBILITY = EXPLICIT_RETAINED_THIN_SYNTAX_ADAPTER_NOT_MIGRATED`.
+Email reads a finalized business receipt; ordinary SMTP transport failure is a
+separate `EMAIL_FAILED` warning/zero exit, never core mutation or retry. Security
+and integrity errors still fail closed. Existing three secret names stay
+notification-step-only. Desktop email is disabled pending recipient/consent/
+transport lifecycle review.
+
+The exact owner/issue #276 guard and two `/athena-shadow` grammars are retained;
+only syntax parsing moves to the pure source-controlled adapter. Canonical request
+bytes/digests match for exactly representable intent; at 23:00Z, legacy UTC dates
+outside Lagos's horizon remain unshifted with no canonical payload/digest. Legacy
+delivery-enabled intent is recorded, not a new live permission. Current Shadow
+still executes the requests; no `athena-run` comment trigger or caller migration.
+
+Ten immutable transitions precede C3 maintenance at position 11. Counts are 39 live
+and 3 retired. C1 dates/schedules and C2 canonical ancestry stay authoritative.
+Scheduled SHADOW ownership and clean live canonical SHADOW proof remain open;
+P4.4/Checkpoint E incomplete; LG-A unauthorized/not run. Counter 3/5 while open,
+4/5 only after owner merge. No live action, schedule migration, retirement or
+historical evidence rewrite is authorized. See `athena_run_workflow.md` for exact
+grammar, notification matrix and retained lifecycle details.
+
 Canonical run now restores verified semantic artifact roles rather than requiring
 legacy producer names as authority. Canonical-first selection retains exact legacy
 read-only fallback, required successful-main filtering (including old identity

@@ -11,8 +11,11 @@ def test_current_shadow_workflow_is_single_daily_and_on_demand_surface():
     assert "github.event.issue.number == 276" in text
     assert "github.event.comment.user.login == github.repository_owner" in text
     assert "'/athena-shadow '" in text
-    assert r"/athena-shadow target=([0-9]+) scope=(today|three-day)" in text
-    assert r"/athena-shadow target=([0-9]+) dates=([0-9]{8}(?:,[0-9]{8}){0,6})" in text
+    from services import athena_shadow_issue_comment_compatibility as compatibility
+    assert compatibility.SCOPE_GRAMMAR == r"/athena-shadow target=([0-9]+) scope=(today|three-day)"
+    assert compatibility.EXPLICIT_DATES_GRAMMAR == r"/athena-shadow target=([0-9]+) dates=([0-9]{8}(?:,[0-9]{8}){0,6})"
+    assert "python -m scripts.resolve_athena_shadow_issue_comment" in text
+    assert "re.fullmatch" not in text
     assert 'default: "20"' in text
     assert "fixture_scope:" in text
     assert "fixture_dates:" in text

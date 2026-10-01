@@ -115,7 +115,31 @@ jobs:
               fixture_dates="${INPUT_FIXTURE_DATES}"
               ;;
             issue_comment)
-              parsed="$(python -m scripts.resolve_athena_shadow_issue_comment)" || {
+              parsed="$(python - <<'PY'
+          import os
+          import re
+
+          body = os.environ.get("COMMENT_BODY", "")
+          legacy = re.fullmatch(
+              r"/athena-shadow target=([0-9]+) scope=(today|three-day)",
+              body,
+          )
+          explicit = re.fullmatch(
+              r"/athena-shadow target=([0-9]+) dates=([0-9]{8}(?:,[0-9]{8}){0,6})",
+              body,
+          )
+          if legacy is not None:
+              print(legacy.group(1))
+              print(legacy.group(2))
+              print("")
+          elif explicit is not None:
+              print(explicit.group(1))
+              print("today")
+              print(explicit.group(2))
+          else:
+              raise SystemExit(2)
+          PY
+              )" || {
                 echo "ATHENA request comment does not match the reviewed command grammar" >&2
                 exit 2
               }

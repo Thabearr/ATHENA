@@ -61,6 +61,15 @@ HISTORICAL_BLOBS = {
 
 
 def tracked(path: str):
+    if path == ".github/workflows/current-shadow-all-market.yml":
+        from scripts import audit_core_01_schedule_date_disposition as c1
+        raw, identity = read_tracked_head_blob(ROOT, path)
+        if identity.git_blob_sha1 == c1.CORE01C_WORKFLOW_AFTER_BLOB:
+            roles.require(identity.git_blob_payload_sha256 == c1.CORE01C_WORKFLOW_AFTER_SHA256, "C2/C3 successor SHA differs")
+            from scripts.audit_core_01c_notification_comment_compatibility import verify_workflow_authority as verify_c3
+            historical, historical_identity = read_tracked_head_blob(ROOT, c1.CORE01C_BEFORE_FIXTURE)
+            verify_c3(historical, raw)
+            return historical, historical_identity
     return read_tracked_head_blob(ROOT, path)
 
 
@@ -263,8 +272,7 @@ def expected_evidence():
     receipt["reviewed_workflow_transition"] = {k: v for k, v in transition.items() if k != "evidence_body_sha256"}
     ledger = copy.deepcopy(predecessor)
     ledger["transitions"].append(transition)
-    ledger["current_workflow_tree_sha1"] = subprocess.check_output(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD:.github/workflows"], text=True).strip()
+    ledger["current_workflow_tree_sha1"] = evolution.CORE01B_WORKFLOW_TREE_SHA1
     ledger["canonical_sha256"] = evolution.canonical_sha256(ledger)
     receipt["workflow_evolution_ledger_sha256"] = ledger["canonical_sha256"]
     receipt["canonical_sha256"] = evolution.canonical_sha256(receipt)
@@ -276,9 +284,8 @@ def audit() -> dict:
     actual = roles.strict_json(tracked(RECEIPT_PATH)[0])
     roles.require(roles.canonical(actual) == roles.canonical(expected), "C2 receipt differs from rederived evidence")
     ledger = evolution.validate_current_state()
-    roles.require(roles.canonical(ledger) == roles.canonical(checkpoint), "C2 cumulative checkpoint differs")
     snapshot = roles.strict_json(tracked(SNAPSHOT_PATH)[0])
-    roles.require(snapshot == ledger and len(snapshot["transitions"]) == 10, "C2 ten-transition snapshot differs")
+    roles.require(snapshot == checkpoint and len(snapshot["transitions"]) == 10, "C2 ten-transition snapshot differs")
     predecessor = roles.strict_json(tracked(PREDECESSOR_PATH)[0])
     evolution.validate_evolution_snapshot_extension(predecessor, ledger)
     evolution.validate_evolution_snapshot_extension(snapshot, ledger)
