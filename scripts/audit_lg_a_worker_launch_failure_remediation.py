@@ -60,6 +60,10 @@ def bootstrap():
     return raw
 
 
+def fixture_bytes(name):
+    return tracked("tests/fixtures/lg_a_worker_launch_failure/" + name)
+
+
 def successful_receipt(request=None, *, head=BASE_MAIN, status="RESEARCH_SHADOW_PORTFOLIO_READY_WITH_SHORTFALL"):
     request = request or RunRequest(dates=(date(2026, 10, 1),), target_legs=20, target_total_odds=None,
         bookie="sportybet", mode="research_shadow", authority_profile="SHADOW", create_share_code=False, place_wager=False)
@@ -72,8 +76,8 @@ def successful_receipt(request=None, *, head=BASE_MAIN, status="RESEARCH_SHADOW_
 
 
 def failed_archive(*, older=False):
-    manifest = json.loads((FIXTURE / "artifact-role-manifest-v1.json").read_bytes())
-    receipt = (FIXTURE / "athena-run-receipt.json").read_bytes()
+    manifest = json.loads(fixture_bytes("artifact-role-manifest-v1.json"))
+    receipt = fixture_bytes("athena-run-receipt.json")
     if older:
         manifest["producer"]["run_id"] = FAILED.run_id - 1
         receipt = canonical_json_bytes(successful_receipt())
@@ -96,9 +100,9 @@ class OfflineTransport:
 
 
 def historical_producer_proof():
-    roles.require(roles.sha((FIXTURE / "resolved-run-request.json").read_bytes()) == REQUEST_SHA, "failed request changed")
-    roles.require(roles.sha((FIXTURE / "athena-run-receipt.json").read_bytes()) == FAILED_RECEIPT_SHA, "failed receipt changed")
-    manifest_raw = (FIXTURE / "artifact-role-manifest-v1.json").read_bytes()
+    roles.require(roles.sha(fixture_bytes("resolved-run-request.json")) == REQUEST_SHA, "failed request changed")
+    roles.require(roles.sha(fixture_bytes("athena-run-receipt.json")) == FAILED_RECEIPT_SHA, "failed receipt changed")
+    manifest_raw = fixture_bytes("artifact-role-manifest-v1.json")
     manifest = roles.strict_json(manifest_raw)
     roles.require(manifest["canonical_sha256"] == MANIFEST_SELF_SHA == roles.self_sha(manifest), "old manifest changed")
     roles.require(manifest["restore_eligible"] is True, "historical bad eligibility must remain true")

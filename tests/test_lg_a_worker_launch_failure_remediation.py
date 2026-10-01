@@ -74,12 +74,22 @@ def test_caller_does_not_weaken_worker_validation(tmp_path, monkeypatch, bad):
     "EXECUTOR_UNAVAILABLE", "CODE_VERIFICATION_FAILED", "SHADOW_DATE_POLICY_UNREPRESENTABLE",
     "TARGET_TOTAL_ODDS_NOT_SUPPORTED", "MAIN_PHASE6_AUTHORITY_REQUIRED", "RESEARCH_SHADOW_PORTFOLIO_READY_EXTRA", "UNKNOWN"])
 @pytest.mark.parametrize("delivery", [False, True])
-def test_exact_domain_status_vocabulary_and_delivery_intent(status, delivery):
+def test_exact_domain_status_vocabulary_and_delivery_intent(status, delivery, tmp_path):
     successes = ({"RESEARCH_SHADOW_CODE_VERIFIED", "RESEARCH_SHADOW_CODE_VERIFIED_WITH_SHORTFALL"} if delivery else
                  {"RESEARCH_SHADOW_PORTFOLIO_READY", "RESEARCH_SHADOW_PORTFOLIO_READY_WITH_SHORTFALL"})
     assert terminal(status, create_share_code=delivery) == (status in successes)
     request = replace(audit.successful_receipt().request, create_share_code=delivery)
-    assert roles.is_restore_eligible_shadow_receipt(audit.successful_receipt(request, status=status)) == (status in successes)
+    receipt = audit.successful_receipt(request, status=status)
+    assert roles.is_restore_eligible_shadow_receipt(receipt) == (status in successes)
+    workflow = tmp_path / "artifacts/athena-run-workflow"
+    workflow.mkdir(parents=True)
+    (workflow / "resolved-run-request.json").write_bytes(canonical_json_bytes(request))
+    run = tmp_path / "artifacts/athena-runs" / request.canonical_sha256
+    run.mkdir(parents=True)
+    (run / "athena-run-receipt.json").write_bytes(canonical_json_bytes(receipt))
+    assert audit.publish(tmp_path, run_id=3, head_sha=audit.BASE_MAIN, head_branch="main",
+                         event_name="workflow_dispatch", execution_exit_code="0",
+                         preservation_result="success")["restore_eligible"] == (status in successes)
 
 
 def test_invalid_status_or_delivery_type_is_not_success():
@@ -140,3 +150,29 @@ def test_independent_archive_receipt_binding_rejections(tmp_path, bad):
 def test_receipt_matches_independent_audit():
     expected = audit.expected_receipt()
     assert json.loads(audit.tracked(audit.RECEIPT_PATH)) == expected
+
+
+@pytest.mark.parametrize("prefix", ["", "artifacts/"])
+def test_established_matching_archive_prefixes(tmp_path, prefix):
+    import io
+    import zipfile
+    original = zipfile.ZipFile(io.BytesIO(audit.failed_archive(older=True)))
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as z:
+        for name in original.namelist(): z.writestr(prefix+name, original.read(name))
+    extract_verified_paths(output.getvalue(), tmp_path)
+    root = manifest_root(tmp_path)
+    candidate = replace(audit.FAILED, run_id=audit.FAILED.run_id-1,
+                         artifact_name=f"athena-run-{audit.FAILED.run_id-1}")
+    verify_archive_producer_receipt(tmp_path, root, (root/roles.MANIFEST_FILENAME).read_bytes(), candidate)
+
+
+def test_wrong_archive_prefix_does_not_bind_receipt(tmp_path):
+    extract_verified_paths(audit.failed_archive(older=True), tmp_path)
+    root = manifest_root(tmp_path)
+    path = tmp_path / "athena-runs" / audit.REQUEST_SHA / "athena-run-receipt.json"
+    wrong = tmp_path / "artifacts" / path.relative_to(tmp_path)
+    wrong.parent.mkdir(parents=True)
+    path.rename(wrong)
+    with pytest.raises(roles.ArtifactRoleError, match="prefix"):
+        verify_archive_producer_receipt(tmp_path, root, (root/roles.MANIFEST_FILENAME).read_bytes(), audit.FAILED)
