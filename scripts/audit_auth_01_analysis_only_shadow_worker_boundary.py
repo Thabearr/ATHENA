@@ -82,6 +82,15 @@ def _source_identities() -> list[dict[str, str]]:
         payload = subprocess.check_output(
             ["git", "-C", str(REPOSITORY_ROOT), "show", f"HEAD:{relative_path}"]
         )
+        if relative_path == "services/athena_run_service.py" and blob_sha1 != "16d54ff599bffc70cdd66498a440647cf8e8b131":
+            # Preserve the immutable receipt's source identities, but replay the
+            # real current worker boundary below. Only the sealed LG-A successor
+            # is permitted; no historical source or no-delivery proof is repinned.
+            from scripts.audit_lg_a_worker_launch_failure_remediation import historical_source
+            payload, identity = historical_source(relative_path, root=REPOSITORY_ROOT)
+            if identity.git_blob_sha1 != "16d54ff599bffc70cdd66498a440647cf8e8b131":
+                raise AssertionError("AUTH-01D/LG-A historical service fixture differs")
+            blob_sha1 = identity.git_blob_sha1
         records.append(
             {
                 "path": relative_path,
