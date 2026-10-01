@@ -343,3 +343,27 @@ P4.4 and Checkpoint E remain incomplete. Actual merge-count governance is 1/5
 while CORE-01A is open, 2/5 only after an owner merge; the static Block-B PORT-02C
 "5/5" planning label is superseded. The bounded Block-B-to-C refresh is not a
 mandatory 5/5 reread or counter reset and grants no live authority.
+
+## CORE-01B canonical-run ancestry successor
+
+Canonical run now restores verified semantic artifact roles rather than requiring
+legacy producer names as authority. Canonical-first selection retains exact legacy
+read-only fallback, required successful-main filtering (including old identity
+artifacts), commit/run/manifest/inventory verification and unchanged PR119 SHA.
+Role publication preserves old origins and never fabricates a prime from a fallback
+cache. Diagnostic upload is not restore eligibility. Source evidence is publication
+only. See `athena_run_workflow.md` for the role, provenance and optional/required rules.
+
+Only `PERSISTENT_IDENTITY_ANCESTRY` for canonical run is closed by this successor;
+historical P4.4H/CORE-01A ancestry descriptions remain true at their checkpoints.
+Scheduled SHADOW ownership, notification/email, issue-comment compatibility and
+clean live canonical SHADOW proof remain open. Current Shadow stays active;
+other workflows and all date/schedule/authority surfaces are unchanged.
+No clean successor proof or LG-A is inferred from offline restore parity or
+GitHub success. P4.4 and Checkpoint E remain incomplete.
+
+The exact nine-transition prefix (PORT-02C at position 9) is preserved, followed
+by CORE-01B `MAINTENANCE_REVISE` at position 10; 39 live workflows and 3 historical
+retirements remain. Counter is 2/5 while open, 3/5 only after later owner merge;
+no mandatory reread is due. No live action, caller/schedule migration, retirement,
+historical deletion or evidence rewrite is authorized.
