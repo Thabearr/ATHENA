@@ -207,13 +207,20 @@ def builder_proof():
 
 
 def expected_receipt():
-    changed = subprocess.check_output(["git", "diff", "--name-only", BASE_MAIN, "HEAD"], cwd=ROOT, text=True).splitlines()
-    roles.require(not any(path.startswith(".github/workflows/") for path in changed), "workflow YAML changed")
-    historical_changes = subprocess.check_output(["git", "diff", "--diff-filter=MD", "--name-only", BASE_MAIN,
-                                                  "HEAD", "--", "artifacts"], cwd=ROOT, text=True).splitlines()
-    roles.require(not historical_changes, "historical evidence artifact changed")
-    for path in ("runtime/worker_launcher.py", "runtime/worker_entry.py"):
-        roles.require(path not in changed, "worker security/operation boundary changed")
+    # Independently captured exact-base pins; HEAD-only verification also works
+    # in shallow hosted checkouts without fetching any ancestor or network data.
+    tree = subprocess.check_output(["git", "rev-parse", "HEAD:.github/workflows"], cwd=ROOT, text=True).strip()
+    roles.require(tree == "134cdd8bfa54488770f562c93571e46ac84a8187", "workflow YAML changed")
+    rows = subprocess.check_output(["git", "ls-tree", "-r", "--full-tree", "HEAD", "--", "artifacts"], cwd=ROOT)
+    historical_inventory = b"".join(row for row in rows.splitlines(keepends=True)
+                                    if row.split(b"\t", 1)[1].strip() != RECEIPT_PATH.encode())
+    roles.require(roles.sha(historical_inventory) == "3c18a753208cffcb9f5deeb409fa58ee06be394582bec9c969586c5f1b666f87",
+                  "historical evidence artifact inventory changed")
+    for path, digest in {
+        "runtime/worker_launcher.py": "5474b2622a4ab980fa136ce6eb3c63c448d915aa351e4d51f0474c85f1fdbcdd",
+        "runtime/worker_entry.py": "feaf4a9364fd064f081c9a4d086b65fdc31620075f0071ae1385bcbfa5cdaf94",
+    }.items():
+        roles.require(roles.sha(tracked(path)) == digest, "worker security/operation boundary changed")
     roles.require("--output-root artifacts/athena-runs" in tracked(roles.CANONICAL_WORKFLOW).decode(), "production root changed")
     value = {"schema_version": 1, "policy_id": POLICY_ID, "base_main": BASE_MAIN,
         "failed_live_proof": {"run_id": FAILED.run_id, "attempt": 1, "head": BASE_MAIN, "github_conclusion": "SUCCESS",

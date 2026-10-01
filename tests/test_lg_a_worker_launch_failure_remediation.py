@@ -152,6 +152,15 @@ def test_receipt_matches_independent_audit():
     assert json.loads(audit.tracked(audit.RECEIPT_PATH)) == expected
 
 
+def test_audit_verifies_shallow_head_without_ancestor_objects(monkeypatch):
+    original = audit.subprocess.check_output
+    def head_only(args, *positional, **kwargs):
+        assert not any(audit.BASE_MAIN in str(arg) for arg in args), "audit attempted an ancestor object"
+        return original(args, *positional, **kwargs)
+    monkeypatch.setattr(audit.subprocess, "check_output", head_only)
+    assert json.loads(audit.tracked(audit.RECEIPT_PATH)) == audit.expected_receipt()
+
+
 @pytest.mark.parametrize("prefix", ["", "artifacts/"])
 def test_established_matching_archive_prefixes(tmp_path, prefix):
     import io
