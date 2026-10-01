@@ -423,7 +423,7 @@ def apply_transitions(
         identifiers.add(identifier)
         phase = transition["phase_id"]
         if not isinstance(phase, str) or not re.fullmatch(
-            r"(?:P[0-9]+(?:\.[0-9]+)?[A-Z0-9_.-]*|AUTH-01B)", phase
+            r"(?:P[0-9]+(?:\.[0-9]+)?[A-Z0-9_.-]*|AUTH-01B|CORE-01B)", phase
         ):
             raise WorkflowEvolutionError(f"workflow transition phase is invalid: {path}")
         if operation == "MAINTENANCE_REVISE":

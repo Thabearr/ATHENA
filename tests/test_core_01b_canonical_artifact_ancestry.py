@@ -1,5 +1,6 @@
 """Offline role restore/parity/tamper gates; synthetic history is explicitly labelled."""
 from dataclasses import replace
+from datetime import datetime, timezone
 import io
 import json
 from pathlib import Path
@@ -233,8 +234,13 @@ def test_zip_path_escape_rejection(tmp_path, name):
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w") as archive:
         archive.writestr(name, b"untrusted")
+    raw = stream.getvalue()
+    if "\\" in name:
+        # ZipInfo's writer normalizes Windows separators; inject original ZIP
+        # member bytes to exercise the untrusted reader, not writer convenience.
+        raw = raw.replace(name.replace("\\", "/").encode(), name.encode())
     with pytest.raises(ValueError):
-        extract_verified_paths(stream.getvalue(), tmp_path)
+        extract_verified_paths(raw, tmp_path)
 
 
 def test_zip_duplicate_and_symlink_rejection(tmp_path):
@@ -256,6 +262,64 @@ def test_publication_without_verified_receipt_is_diagnostic_not_restore_source(t
     value = publish(tmp_path, run_id=100, head_sha="b" * 40, head_branch="main",
                     event_name="workflow_dispatch", execution_exit_code="0", preservation_result="success")
     assert value["restore_eligible"] is False and value["roles"] == []
+
+
+@pytest.mark.parametrize("exit_code,preserved,branch,eligible", [
+    ("0", "success", "main", True), ("1", "success", "main", False),
+    ("0", "failure", "main", False), ("0", "success", "feature", False),
+])
+def test_verified_publication_eligibility_and_source_evidence_only(tmp_path, exit_code, preserved, branch, eligible):
+    from domain.run_contracts import canonical_json_bytes
+    from services.athena_run_request_parser import parse_explicit_request
+    from services.athena_run_service import AthenaRunService, ExecutorResult
+    now = datetime(2026, 9, 24, 9, tzinfo=timezone.utc)
+    request = parse_explicit_request(days="today", target_legs=20, profile="shadow",
+                                      create_share_code=False, now=now)
+    engine = AthenaRunService(_test_executor_overrides={
+        ("SHADOW", "research_shadow", "sportybet"): lambda *args, **kwargs:
+        ExecutorResult(status="SYNTHETIC_OFFLINE_NO_BET", evidence={"synthetic": True})},
+        _commit_sha_provider=lambda: "b" * 40, _clock=lambda: now)
+    engine.run(request, output_root=tmp_path / "artifacts/athena-runs")
+    root = tmp_path / "artifacts/athena-run-workflow"
+    root.mkdir()
+    (root / "resolved-run-request.json").write_bytes(canonical_json_bytes(request))
+    source = root / "source-evidence"
+    source.mkdir()
+    (source / "SYNTHETIC.txt").write_bytes(b"synthetic retained source example; no provider acquisition")
+    value = publish(tmp_path, run_id=100, head_sha="b" * 40, head_branch=branch,
+                    event_name="workflow_dispatch", execution_exit_code=exit_code, preservation_result=preserved)
+    assert value["restore_eligible"] is eligible
+    assert [row["role_id"] for row in value["roles"]] == ["RETAINED_SOURCE_EVIDENCE"]
+    assert "DURABLE_HISTORY_PRIME" not in [row["role_id"] for row in value["roles"]]
+
+
+@pytest.mark.parametrize("change", ["wrong_run", "wrong_head", "nonmain", "expired", "wrong_repository", "wrong_workflow"])
+def test_transport_metadata_binds_artifact_to_exact_trusted_main_run(change):
+    workflow = roles.CANONICAL_WORKFLOW
+    run = {"id": 100, "path": workflow, "repository": {"full_name": roles.REPOSITORY},
+           "head_repository": {"full_name": roles.REPOSITORY}, "head_branch": "main",
+           "status": "completed", "conclusion": "success", "head_sha": "b" * 40,
+           "event": "workflow_dispatch"}
+    artifact = {"id": 200, "name": "athena-run-100", "expired": False,
+                "workflow_run": {"id": 100, "head_sha": "b" * 40, "head_branch": "main"}}
+    class FixtureMetadata(GitHubTransport):
+        def pages(self, endpoint, field):
+            return [run] if field == "workflow_runs" else [artifact]
+    transport = FixtureMetadata()
+    assert len(transport.candidates(workflow, canonical_producer=True)) == 1
+    if change == "wrong_run":
+        artifact["workflow_run"]["id"] = 99
+    elif change == "wrong_head":
+        artifact["workflow_run"]["head_sha"] = "d" * 40
+    elif change == "nonmain":
+        run["head_branch"] = "feature"
+    elif change == "expired":
+        artifact["expired"] = True
+    elif change == "wrong_repository":
+        run["head_repository"]["full_name"] = "Other/Repo"
+    else:
+        run["path"] = ".github/workflows/other.yml"
+    assert transport.candidates(workflow, canonical_producer=True) == []
 
 
 def test_workflow_authority_and_exact_before_fixture():
@@ -287,7 +351,7 @@ def test_tenth_transition_and_immutable_ninth_checkpoint():
 @pytest.mark.parametrize("change", ["delete", "reorder", "modify", "insert_before", "replace"])
 def test_ninth_transition_rewrite_or_reorder_fails(change):
     predecessor = roles.strict_json(audit.tracked(audit.PREDECESSOR_PATH)[0])
-    ledger = roles.strict_json(audit.tracked(str(audit.evolution.LEDGER_PATH))[0])
+    ledger = roles.strict_json(audit.tracked(audit.evolution.LEDGER_PATH.as_posix())[0])
     if change == "delete":
         del ledger["transitions"][8]
     elif change == "reorder":

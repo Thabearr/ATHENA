@@ -75,6 +75,8 @@ def extract_verified_paths(raw: bytes, destination: Path) -> None:
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         seen = set()
         for item in archive.infolist():
+            roles.require(item.orig_filename == item.filename, "ZIP path normalization forbidden")
+            roles.require("\\" not in item.orig_filename, "ZIP backslash path forbidden")
             name = item.filename.rstrip("/") if item.is_dir() else item.filename
             target = roles.safe_path(destination, name)
             roles.require(name not in seen, "duplicate ZIP member")

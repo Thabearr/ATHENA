@@ -198,6 +198,12 @@ def offline_parity() -> dict:
 
 
 def expected_evidence():
+    roles.require(roles.POLICY_ID == "ATHENA_CANONICAL_ARTIFACT_ROLES_V1" and
+                  roles.MANIFEST_POLICY_ID == "ATHENA_CANONICAL_RUN_ARTIFACT_ROLE_MANIFEST_V1" and
+                  roles.ROLE_IDS == ("DURABLE_HISTORY_PRIME", "PERSISTENT_FIXTURE_IDENTITY_STATE",
+                                     "PR119_BOOTSTRAP", "RETAINED_SOURCE_EVIDENCE") and
+                  roles.BOOTSTRAP_SHA256 == "e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2",
+                  "exact canonical role policy drift")
     predecessor = roles.strict_json(tracked(PREDECESSOR_PATH)[0])
     roles.require(predecessor["canonical_sha256"] == PREDECESSOR_SHA == evolution.canonical_sha256(predecessor) and
                   len(predecessor["transitions"]) == 9 and
