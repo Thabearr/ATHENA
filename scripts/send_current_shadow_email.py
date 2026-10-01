@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import smtplib
+import sys
 from typing import Any, Mapping
 
 
@@ -204,6 +205,10 @@ def send_receipt_email(
 ) -> dict[str, Any]:
     receipt = _load_receipt(receipt_path)
     delivery_path = delivery_receipt_path or receipt_path.with_name(DELIVERY_RECEIPT_FILENAME)
+    if delivery_path.is_symlink() or delivery_path.resolve() == receipt_path.resolve() or (
+        delivery_path.exists() and delivery_path.samefile(receipt_path)
+    ):
+        raise CurrentShadowEmailError("delivery receipt must not alias the finalized business receipt")
     source_sha = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
     plain = render_plain_text(receipt)
     html = render_html(receipt)
@@ -230,14 +235,13 @@ def send_receipt_email(
             server.starttls()
             server.login(sender, password)
             server.send_message(message)
-    except Exception as exc:
-        _write_delivery_receipt(
+    except (smtplib.SMTPException, OSError) as exc:
+        return _write_delivery_receipt(
             path=delivery_path,
             status=EMAIL_FAILED,
             source_receipt_sha256=source_sha,
             failure_type=type(exc).__name__,
         )
-        raise CurrentShadowEmailError("SMTP send failed; durable EMAIL_FAILED receipt written") from exc
     return _write_delivery_receipt(
         path=delivery_path,
         status=EMAIL_DELIVERED,
@@ -259,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
         delivery_receipt_path=args.delivery_receipt,
     )
     print(f"ATHENA current Shadow email status: {result['status']}")
+    if result["status"] == EMAIL_FAILED:
+        print("WARNING: optional SMTP notification failed; finalized business receipt is unchanged.", file=sys.stderr)
     return 0
 
 
