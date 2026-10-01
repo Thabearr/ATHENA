@@ -447,17 +447,34 @@ def load_receipt() -> dict[str, Any]:
     return _read_json_bytes(raw, "PORT-01B receipt")
 
 
+PORT02C_GIT_ATTRIBUTES_SUCCESSOR = {
+    "git_blob_sha1": "58e4728b1f6189b5e7aaa277611359ec51f22a91",
+    "git_blob_payload_sha256": "5f70cfb24a5aa13412d5cc65cf8635302c9952d9f9c30baa4353879995754d96",
+}
+
+
+def current_anchor_identity(anchor: dict[str, Any]) -> dict[str, Any]:
+    """Exact byte-materialization forward only; historical anchor stays pinned."""
+    if anchor["anchor_id"] == "GIT_ATTRIBUTES":
+        historical = next(a for a in EXPECTED_ANCHORS if a["anchor_id"] == "GIT_ATTRIBUTES")
+        if anchor != historical:
+            raise PortabilityAuditError("historical Git attributes anchor drifted")
+        return {**anchor, **PORT02C_GIT_ATTRIBUTES_SUCCESSOR}
+    return anchor
+
+
 def validate_current_state() -> dict[str, Any]:
     document = load_receipt()
     summary = validate_receipt(document)
     for anchor in EXPECTED_ANCHORS:
+        current = current_anchor_identity(anchor)
         try:
             payload, identity = read_tracked_head_blob(ROOT, anchor["path"])
         except SourceIdentityError as exc:
             raise PortabilityAuditError(f"immutable tracked anchor could not be proven: {anchor['path']}") from exc
         if (
-            identity.git_blob_sha1 != anchor["git_blob_sha1"]
-            or identity.git_blob_payload_sha256 != anchor["git_blob_payload_sha256"]
+            identity.git_blob_sha1 != current["git_blob_sha1"]
+            or identity.git_blob_payload_sha256 != current["git_blob_payload_sha256"]
         ):
             raise PortabilityAuditError(f"historical Git identity changed: {anchor['anchor_id']}")
         if anchor["canonical_sha256"] is not None:

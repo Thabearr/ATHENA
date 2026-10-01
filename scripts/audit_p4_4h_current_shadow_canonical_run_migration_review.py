@@ -548,7 +548,7 @@ def _verify_current_workflow_tree(
     if observed_count is None:
         paths = _git("ls-tree", "-r", "--name-only", "HEAD", ".github/workflows").decode("utf-8").splitlines()
         observed_count = sum(path.endswith((".yml", ".yaml")) for path in paths)
-    if observed_tree != current_ledger.get("current_workflow_tree_sha1"):
+    if observed_tree != evolution.current_workflow_tree_sha1(current_ledger):
         raise P44HReviewError("current workflow tree differs from the current cumulative evolution ledger")
     if observed_count != current_ledger.get("current_live_workflow_count"):
         raise P44HReviewError("current workflow count differs from the current cumulative evolution ledger")

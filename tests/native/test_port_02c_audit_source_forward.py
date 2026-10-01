@@ -7,6 +7,7 @@ import pytest
 
 from scripts import audit_p4_workflow_evolution_ledger as evolution
 from scripts import audit_p4_4s_canonical_adapter_bound_context_builder as p44s
+from scripts import audit_port_01_source_identity_parity as port01
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -32,3 +33,11 @@ def test_workflow_forward_rejects_arbitrary_future_source(mutation):
     else: observed[path]["source_sha256"] = "0" * 64
     with pytest.raises(evolution.WorkflowEvolutionError):
         evolution._port02c_current_source_forward(derived, observed, head_tree=tree, ledger_sha=ledger)
+
+
+def test_attributes_current_forward_keeps_historical_anchor_exact():
+    historical = next(a for a in port01.EXPECTED_ANCHORS if a["anchor_id"] == "GIT_ATTRIBUTES")
+    assert historical["git_blob_sha1"] == "39ccd8d38ce17c105a906e2f1416f68e64fcc862"
+    assert port01.current_anchor_identity(historical)["git_blob_sha1"] == "58e4728b1f6189b5e7aaa277611359ec51f22a91"
+    with pytest.raises(port01.PortabilityAuditError):
+        port01.current_anchor_identity({**historical, "git_blob_sha1": "0" * 40})

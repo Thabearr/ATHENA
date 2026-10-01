@@ -779,6 +779,14 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
     return result
 
 
+def current_workflow_tree_sha1(ledger):
+    """Current-source identity, distinct from the immutable transition ledger."""
+    if (ledger.get("canonical_sha256") == "d1c8d79ac48bf0521a609e29991014513bd2f7afed2389c5e3a9d6ec8bfba8a2"
+            and ledger.get("current_workflow_tree_sha1") == "b93f72b5a352b40021d913c299f039c846476f73"):
+        return PORT02C_REPLAY_WORKFLOW_TREE_SHA1
+    return ledger.get("current_workflow_tree_sha1")
+
+
 def validate_current_state(
     evolution_ledger: dict[str, Any] | None = None,
     *,

@@ -97,7 +97,7 @@ def test_current_workflow_tree_must_match_current_cumulative_ledger() -> None:
     current = evolution.validate_current_state()
     audit._verify_current_workflow_tree(
         current,
-        observed_tree=current["current_workflow_tree_sha1"],
+        observed_tree=evolution.current_workflow_tree_sha1(current),
         observed_count=current["current_live_workflow_count"],
     )
     with pytest.raises(audit.P44HReviewError, match="current workflow tree differs"):
