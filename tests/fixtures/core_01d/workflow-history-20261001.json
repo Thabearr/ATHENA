@@ -1,0 +1,1009 @@
+{
+  "base_main_sha": "f61ee8416025a97a3acf8233dbdb34e29f48bac5",
+  "read_only": true,
+  "workflow_history": {
+    ".github/workflows/athena-draft-ready-bridge.yml": {
+      "latest": {
+        "id": 36857387971,
+        "head_sha": "426f36e60ebb421af003ed3154c4da48007d674a",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:45:44Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857387971",
+        "path": ".github/workflows/athena-draft-ready-bridge.yml"
+      },
+      "last_successful": null
+    },
+    ".github/workflows/athena-ingest.yml": {
+      "latest": {
+        "id": 36729667017,
+        "head_sha": "2d01a591f8b5da2d9e536f93a995c09ed407efc7",
+        "head_branch": "main",
+        "event": "schedule",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-30T14:30:43Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36729667017",
+        "path": ".github/workflows/athena-ingest.yml"
+      },
+      "last_successful": {
+        "id": 36729667017,
+        "head_sha": "2d01a591f8b5da2d9e536f93a995c09ed407efc7",
+        "head_branch": "main",
+        "event": "schedule",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-30T14:30:43Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36729667017",
+        "path": ".github/workflows/athena-ingest.yml"
+      }
+    },
+    ".github/workflows/athena-patch-bridge.yml": {
+      "latest": {
+        "id": 36857387736,
+        "head_sha": "426f36e60ebb421af003ed3154c4da48007d674a",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:45:43Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857387736",
+        "path": ".github/workflows/athena-patch-bridge.yml"
+      },
+      "last_successful": {
+        "id": 34246886958,
+        "head_sha": "ed8be3027ad9f22925b416a613d72d3e7f4607a7",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-08T15:46:14Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/34246886958",
+        "path": ".github/workflows/athena-patch-bridge.yml"
+      }
+    },
+    ".github/workflows/athena-run.yml": {
+      "latest": {
+        "id": 36860297707,
+        "head_sha": "f61ee8416025a97a3acf8233dbdb34e29f48bac5",
+        "head_branch": "main",
+        "event": "workflow_dispatch",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-01T12:13:07Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36860297707",
+        "path": ".github/workflows/athena-run.yml"
+      },
+      "last_successful": {
+        "id": 36860297707,
+        "head_sha": "f61ee8416025a97a3acf8233dbdb34e29f48bac5",
+        "head_branch": "main",
+        "event": "workflow_dispatch",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-01T12:13:07Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36860297707",
+        "path": ".github/workflows/athena-run.yml"
+      }
+    },
+    ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml": {
+      "latest": {
+        "id": 36857387869,
+        "head_sha": "426f36e60ebb421af003ed3154c4da48007d674a",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:45:43Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857387869",
+        "path": ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml"
+      },
+      "last_successful": {
+        "id": 33774944900,
+        "head_sha": "73eae73e2047930d2eb42b76e3ec4f91cf281fd3",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-03T15:49:42Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/33774944900",
+        "path": ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml"
+      }
+    },
+    ".github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml": {
+      "latest": {
+        "id": 36874034662,
+        "head_sha": "f61ee8416025a97a3acf8233dbdb34e29f48bac5",
+        "head_branch": "main",
+        "event": "workflow_run",
+        "run_attempt": 1,
+        "status": "in_progress",
+        "conclusion": null,
+        "created_at": "2026-10-01T14:08:41Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36874034662",
+        "path": ".github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml"
+      },
+      "last_successful": {
+        "id": 36825868332,
+        "head_sha": "50867a67b08eb6a5be653d41962d132fd2d81a58",
+        "head_branch": "main",
+        "event": "workflow_run",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-01T06:38:40Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36825868332",
+        "path": ".github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml"
+      }
+    },
+    ".github/workflows/build-historical-warehouse.yml": {
+      "latest": {
+        "id": 33541247244,
+        "head_sha": "5c0ccfd21e421c432217bf229ca94ab71f783a1f",
+        "head_branch": "main",
+        "event": "push",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-01T18:01:59Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/33541247244",
+        "path": ".github/workflows/build-historical-warehouse.yml"
+      },
+      "last_successful": {
+        "id": 33541247244,
+        "head_sha": "5c0ccfd21e421c432217bf229ca94ab71f783a1f",
+        "head_branch": "main",
+        "event": "push",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-01T18:01:59Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/33541247244",
+        "path": ".github/workflows/build-historical-warehouse.yml"
+      }
+    },
+    ".github/workflows/capture-saturday-2026-08-22-fixture-universe.yml": {
+      "latest": {
+        "id": 36857232435,
+        "head_sha": "9567d1cc510c0b5fc7a6441838105c8946695387",
+        "head_branch": "fix/lg-a-worker-launch-restore-eligibility",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:44:15Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857232435",
+        "path": ".github/workflows/capture-saturday-2026-08-22-fixture-universe.yml"
+      },
+      "last_successful": {
+        "id": 32455713912,
+        "head_sha": "b879b2140d0bc3fb64fa8fec4c73c735240a3b41",
+        "head_branch": "evidence/saturday-2026-08-22-fixture-universe-capture",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-21T06:45:49Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32455713912",
+        "path": ".github/workflows/capture-saturday-2026-08-22-fixture-universe.yml"
+      }
+    },
+    ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml": {
+      "latest": {
+        "id": 33168982533,
+        "head_sha": "a9626e33de59ab5932321b85007f38201fbd11ad",
+        "head_branch": "codex/sportybet-end-to-end-current-code",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-28T11:55:10Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/33168982533",
+        "path": ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml"
+      },
+      "last_successful": {
+        "id": 33168982533,
+        "head_sha": "a9626e33de59ab5932321b85007f38201fbd11ad",
+        "head_branch": "codex/sportybet-end-to-end-current-code",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-28T11:55:10Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/33168982533",
+        "path": ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml"
+      }
+    },
+    ".github/workflows/current-shadow-all-market.yml": {
+      "latest": {
+        "id": 36857387877,
+        "head_sha": "426f36e60ebb421af003ed3154c4da48007d674a",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:45:43Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857387877",
+        "path": ".github/workflows/current-shadow-all-market.yml"
+      },
+      "last_successful": {
+        "id": 34141385342,
+        "head_sha": "012f15f8ea81dc32c3404880a854815e5e7078ca",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-07T16:03:19Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/34141385342",
+        "path": ".github/workflows/current-shadow-all-market.yml"
+      }
+    },
+    ".github/workflows/current-shadow-history-cache-prime.yml": {
+      "latest": {
+        "id": 36857387853,
+        "head_sha": "426f36e60ebb421af003ed3154c4da48007d674a",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:45:43Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857387853",
+        "path": ".github/workflows/current-shadow-history-cache-prime.yml"
+      },
+      "last_successful": {
+        "id": 33935014096,
+        "head_sha": "0079f549a1250227d21c0adde5b364eccaf60903",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-05T01:04:10Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/33935014096",
+        "path": ".github/workflows/current-shadow-history-cache-prime.yml"
+      }
+    },
+    ".github/workflows/current-shadow-sportybet-source-diagnostic.yml": {
+      "latest": {
+        "id": 36857387864,
+        "head_sha": "426f36e60ebb421af003ed3154c4da48007d674a",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:45:43Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857387864",
+        "path": ".github/workflows/current-shadow-sportybet-source-diagnostic.yml"
+      },
+      "last_successful": {
+        "id": 34897587697,
+        "head_sha": "18576eff9e62c643666702838302ff32bf8d70bc",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-14T21:13:41Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/34897587697",
+        "path": ".github/workflows/current-shadow-sportybet-source-diagnostic.yml"
+      }
+    },
+    ".github/workflows/execute-fotmob-ordinary-ft-source-history-campaign.yml": {
+      "latest": {
+        "id": 36857387919,
+        "head_sha": "426f36e60ebb421af003ed3154c4da48007d674a",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:45:44Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857387919",
+        "path": ".github/workflows/execute-fotmob-ordinary-ft-source-history-campaign.yml"
+      },
+      "last_successful": {
+        "id": 31887523012,
+        "head_sha": "12a32de1cca8ffb657f67fa4a8d3106aec6ce31b",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-15T13:33:23Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/31887523012",
+        "path": ".github/workflows/execute-fotmob-ordinary-ft-source-history-campaign.yml"
+      }
+    },
+    ".github/workflows/execute-fotmob-prospective-player-context-campaign.yml": {
+      "latest": {
+        "id": 36857232481,
+        "head_sha": "9567d1cc510c0b5fc7a6441838105c8946695387",
+        "head_branch": "fix/lg-a-worker-launch-restore-eligibility",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:44:15Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857232481",
+        "path": ".github/workflows/execute-fotmob-prospective-player-context-campaign.yml"
+      },
+      "last_successful": {
+        "id": 32410775191,
+        "head_sha": "46f76e8033d3d498131c6f893111b437b6b459a9",
+        "head_branch": "evidence/fotmob-prospective-player-context-campaign",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-20T19:49:44Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32410775191",
+        "path": ".github/workflows/execute-fotmob-prospective-player-context-campaign.yml"
+      }
+    },
+    ".github/workflows/execute-fotmob-utc-native-expected-goals-model-validation.yml": {
+      "latest": {
+        "id": 36857387724,
+        "head_sha": "426f36e60ebb421af003ed3154c4da48007d674a",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:45:43Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857387724",
+        "path": ".github/workflows/execute-fotmob-utc-native-expected-goals-model-validation.yml"
+      },
+      "last_successful": {
+        "id": 32049714066,
+        "head_sha": "b8ddc00f7529c5533c9da2daad613d997498cbf2",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-17T17:18:08Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32049714066",
+        "path": ".github/workflows/execute-fotmob-utc-native-expected-goals-model-validation.yml"
+      }
+    },
+    ".github/workflows/execute-fotmob-utc-native-successor-feature-qualification-v2.yml": {
+      "latest": {
+        "id": 36857387759,
+        "head_sha": "426f36e60ebb421af003ed3154c4da48007d674a",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:45:43Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857387759",
+        "path": ".github/workflows/execute-fotmob-utc-native-successor-feature-qualification-v2.yml"
+      },
+      "last_successful": {
+        "id": 31990121181,
+        "head_sha": "cd67be14f6a4f09484d18a57de360b8a5d4c51d7",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-17T03:07:29Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/31990121181",
+        "path": ".github/workflows/execute-fotmob-utc-native-successor-feature-qualification-v2.yml"
+      }
+    },
+    ".github/workflows/execute-pr69-primary-time-basis-evidence-campaign-v2.yml": {
+      "latest": {
+        "id": 36857387794,
+        "head_sha": "426f36e60ebb421af003ed3154c4da48007d674a",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:45:43Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857387794",
+        "path": ".github/workflows/execute-pr69-primary-time-basis-evidence-campaign-v2.yml"
+      },
+      "last_successful": {
+        "id": 31974333489,
+        "head_sha": "4a2ca10af4b14194253ba6fc84bca780e2b03d58",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-16T21:43:22Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/31974333489",
+        "path": ".github/workflows/execute-pr69-primary-time-basis-evidence-campaign-v2.yml"
+      }
+    },
+    ".github/workflows/fotmob-utc-native-xg-fresh-holdout-release-receipts.yml": {
+      "latest": {
+        "id": 33203369860,
+        "head_sha": "2a4bfdce503f22def972f3d7d5d161eae814a1fb",
+        "head_branch": "main",
+        "event": "workflow_run",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-28T19:19:43Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/33203369860",
+        "path": ".github/workflows/fotmob-utc-native-xg-fresh-holdout-release-receipts.yml"
+      },
+      "last_successful": {
+        "id": 33203369860,
+        "head_sha": "2a4bfdce503f22def972f3d7d5d161eae814a1fb",
+        "head_branch": "main",
+        "event": "workflow_run",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-28T19:19:43Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/33203369860",
+        "path": ".github/workflows/fotmob-utc-native-xg-fresh-holdout-release-receipts.yml"
+      }
+    },
+    ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml": {
+      "latest": {
+        "id": 36874018332,
+        "head_sha": "f61ee8416025a97a3acf8233dbdb34e29f48bac5",
+        "head_branch": "main",
+        "event": "workflow_dispatch",
+        "run_attempt": 1,
+        "status": "queued",
+        "conclusion": null,
+        "created_at": "2026-10-01T14:08:34Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36874018332",
+        "path": ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
+      },
+      "last_successful": {
+        "id": 36825859229,
+        "head_sha": "50867a67b08eb6a5be653d41962d132fd2d81a58",
+        "head_branch": "main",
+        "event": "workflow_dispatch",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-01T06:38:34Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36825859229",
+        "path": ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
+      }
+    },
+    ".github/workflows/issue-current-fotmob-reviewed-source.yml": {
+      "latest": {
+        "id": 34761344932,
+        "head_sha": "7e50835f1ffa85c96553d7da29ce5a44502ec182",
+        "head_branch": "main",
+        "event": "workflow_dispatch",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-13T13:59:09Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/34761344932",
+        "path": ".github/workflows/issue-current-fotmob-reviewed-source.yml"
+      },
+      "last_successful": {
+        "id": 34761344932,
+        "head_sha": "7e50835f1ffa85c96553d7da29ce5a44502ec182",
+        "head_branch": "main",
+        "event": "workflow_dispatch",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-13T13:59:09Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/34761344932",
+        "path": ".github/workflows/issue-current-fotmob-reviewed-source.yml"
+      }
+    },
+    ".github/workflows/p3-0-comparison-evidence-capture.yml": {
+      "latest": {
+        "id": 35527434555,
+        "head_sha": "e4c028d08b19f2a3b46d85b490a4c6ea4fcd790a",
+        "head_branch": "main",
+        "event": "workflow_dispatch",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "failure",
+        "created_at": "2026-09-20T17:56:07Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/35527434555",
+        "path": ".github/workflows/p3-0-comparison-evidence-capture.yml"
+      },
+      "last_successful": {
+        "id": 35502639963,
+        "head_sha": "83fa9c4707a04742e9146a410154f5e668c6c2ea",
+        "head_branch": "main",
+        "event": "workflow_dispatch",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-20T09:33:31Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/35502639963",
+        "path": ".github/workflows/p3-0-comparison-evidence-capture.yml"
+      }
+    },
+    ".github/workflows/p3-0-e1-owner-dispatch-bridge.yml": {
+      "latest": {
+        "id": 36857387749,
+        "head_sha": "426f36e60ebb421af003ed3154c4da48007d674a",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:45:43Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857387749",
+        "path": ".github/workflows/p3-0-e1-owner-dispatch-bridge.yml"
+      },
+      "last_successful": {
+        "id": 35527425994,
+        "head_sha": "e4c028d08b19f2a3b46d85b490a4c6ea4fcd790a",
+        "head_branch": "main",
+        "event": "issue_comment",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-20T17:55:58Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/35527425994",
+        "path": ".github/workflows/p3-0-e1-owner-dispatch-bridge.yml"
+      }
+    },
+    ".github/workflows/port-02c-native-runtime.yml": {
+      "latest": {
+        "id": 36797930444,
+        "head_sha": "979a93077be7846164a2c8600a2a5dca83eb5d12",
+        "head_branch": "feat/port-02c-native-installed-runtime-slice",
+        "event": "workflow_dispatch",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-01T00:47:33Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36797930444",
+        "path": ".github/workflows/port-02c-native-runtime.yml"
+      },
+      "last_successful": {
+        "id": 36797930444,
+        "head_sha": "979a93077be7846164a2c8600a2a5dca83eb5d12",
+        "head_branch": "feat/port-02c-native-installed-runtime-slice",
+        "event": "workflow_dispatch",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-01T00:47:33Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36797930444",
+        "path": ".github/workflows/port-02c-native-runtime.yml"
+      }
+    },
+    ".github/workflows/pr258-sportybet-live-transport-proof.yml": {
+      "latest": {
+        "id": 36852273851,
+        "head_sha": "9567d1cc510c0b5fc7a6441838105c8946695387",
+        "head_branch": "fix/lg-a-worker-launch-restore-eligibility",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T10:56:53Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36852273851",
+        "path": ".github/workflows/pr258-sportybet-live-transport-proof.yml"
+      },
+      "last_successful": {
+        "id": 33238889550,
+        "head_sha": "d159bf959e15ce23f8d56766f105dbd03f1b6549",
+        "head_branch": "feature/pr258-research-shadow-sportybet-field-trial",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-29T06:36:53Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/33238889550",
+        "path": ".github/workflows/pr258-sportybet-live-transport-proof.yml"
+      }
+    },
+    ".github/workflows/prb-sportybet-semantic-registry-proof.yml": {
+      "latest": {
+        "id": 36852273843,
+        "head_sha": "9567d1cc510c0b5fc7a6441838105c8946695387",
+        "head_branch": "fix/lg-a-worker-launch-restore-eligibility",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T10:56:53Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36852273843",
+        "path": ".github/workflows/prb-sportybet-semantic-registry-proof.yml"
+      },
+      "last_successful": {
+        "id": 33256897804,
+        "head_sha": "7cdae45d10ca0398d1049bf7c6a092c281cca045",
+        "head_branch": "feat/prb-sportybet-semantic-registry",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-29T14:10:35Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/33256897804",
+        "path": ".github/workflows/prb-sportybet-semantic-registry-proof.yml"
+      }
+    },
+    ".github/workflows/prepare-canonical-drive-transfer.yml": {
+      "latest": {
+        "id": 32635585415,
+        "head_sha": "d2145f0e5ba74fb516797768f5d8a8681a3c3ffa",
+        "head_branch": "main",
+        "event": "push",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-23T11:06:04Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32635585415",
+        "path": ".github/workflows/prepare-canonical-drive-transfer.yml"
+      },
+      "last_successful": {
+        "id": 32635585415,
+        "head_sha": "d2145f0e5ba74fb516797768f5d8a8681a3c3ffa",
+        "head_branch": "main",
+        "event": "push",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-23T11:06:04Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32635585415",
+        "path": ".github/workflows/prepare-canonical-drive-transfer.yml"
+      }
+    },
+    ".github/workflows/probe-sportybet-direct-20-markets.yml": {
+      "latest": {
+        "id": 32563398849,
+        "head_sha": "fab36bf65b455e3ad28edb6f476f3dd312a2a648",
+        "head_branch": "integration/sportybet-parse-booking-code",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-22T08:51:50Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32563398849",
+        "path": ".github/workflows/probe-sportybet-direct-20-markets.yml"
+      },
+      "last_successful": {
+        "id": 32563398849,
+        "head_sha": "fab36bf65b455e3ad28edb6f476f3dd312a2a648",
+        "head_branch": "integration/sportybet-parse-booking-code",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-22T08:51:50Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32563398849",
+        "path": ".github/workflows/probe-sportybet-direct-20-markets.yml"
+      }
+    },
+    ".github/workflows/prove-sportybet-direct-share-code.yml": {
+      "latest": {
+        "id": 33168982468,
+        "head_sha": "a9626e33de59ab5932321b85007f38201fbd11ad",
+        "head_branch": "codex/sportybet-end-to-end-current-code",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-28T11:55:10Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/33168982468",
+        "path": ".github/workflows/prove-sportybet-direct-share-code.yml"
+      },
+      "last_successful": {
+        "id": 33168982468,
+        "head_sha": "a9626e33de59ab5932321b85007f38201fbd11ad",
+        "head_branch": "codex/sportybet-end-to-end-current-code",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-28T11:55:10Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/33168982468",
+        "path": ".github/workflows/prove-sportybet-direct-share-code.yml"
+      }
+    },
+    ".github/workflows/tests.yml": {
+      "latest": {
+        "id": 36858147084,
+        "head_sha": "f61ee8416025a97a3acf8233dbdb34e29f48bac5",
+        "head_branch": "main",
+        "event": "push",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-01T11:52:54Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36858147084",
+        "path": ".github/workflows/tests.yml"
+      },
+      "last_successful": {
+        "id": 36858147084,
+        "head_sha": "f61ee8416025a97a3acf8233dbdb34e29f48bac5",
+        "head_branch": "main",
+        "event": "push",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-01T11:52:54Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36858147084",
+        "path": ".github/workflows/tests.yml"
+      }
+    },
+    ".github/workflows/validate-win-either-half-campaign-commitment.yml": {
+      "latest": {
+        "id": 32344480243,
+        "head_sha": "e9a2b82dd781a943e189e8f8b308d257ea7b4d6a",
+        "head_branch": "model/win-either-half-frozen-prospective-inference",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-20T07:32:23Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32344480243",
+        "path": ".github/workflows/validate-win-either-half-campaign-commitment.yml"
+      },
+      "last_successful": {
+        "id": 32344480243,
+        "head_sha": "e9a2b82dd781a943e189e8f8b308d257ea7b4d6a",
+        "head_branch": "model/win-either-half-frozen-prospective-inference",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-20T07:32:23Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32344480243",
+        "path": ".github/workflows/validate-win-either-half-campaign-commitment.yml"
+      }
+    },
+    ".github/workflows/verify-competition-review-priority-tests.yml": {
+      "latest": {
+        "id": 36852273865,
+        "head_sha": "9567d1cc510c0b5fc7a6441838105c8946695387",
+        "head_branch": "fix/lg-a-worker-launch-restore-eligibility",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T10:56:53Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36852273865",
+        "path": ".github/workflows/verify-competition-review-priority-tests.yml"
+      },
+      "last_successful": {
+        "id": 32457975289,
+        "head_sha": "7a93b553b785bc7b3518b32575da9cb212c8cdd4",
+        "head_branch": "policy/competition-fixture-review-priority",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-21T07:17:26Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32457975289",
+        "path": ".github/workflows/verify-competition-review-priority-tests.yml"
+      }
+    },
+    ".github/workflows/verify-fotmob-fresh-holdout-history-pagination.yml": {
+      "latest": {
+        "id": 33929534127,
+        "head_sha": "c779137154691c042e79bf6ba9c5a9c277e82f13",
+        "head_branch": "fix/current-shadow-history-and-schedule-control",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-04T23:26:53Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/33929534127",
+        "path": ".github/workflows/verify-fotmob-fresh-holdout-history-pagination.yml"
+      },
+      "last_successful": {
+        "id": 33929534127,
+        "head_sha": "c779137154691c042e79bf6ba9c5a9c277e82f13",
+        "head_branch": "fix/current-shadow-history-and-schedule-control",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-09-04T23:26:53Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/33929534127",
+        "path": ".github/workflows/verify-fotmob-fresh-holdout-history-pagination.yml"
+      }
+    },
+    ".github/workflows/verify-fotmob-real-player-context-array-admission.yml": {
+      "latest": {
+        "id": 36857232609,
+        "head_sha": "9567d1cc510c0b5fc7a6441838105c8946695387",
+        "head_branch": "fix/lg-a-worker-launch-restore-eligibility",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:44:15Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857232609",
+        "path": ".github/workflows/verify-fotmob-real-player-context-array-admission.yml"
+      },
+      "last_successful": {
+        "id": 32415833967,
+        "head_sha": "384d3791a819112d46fac4330c23493390be94b8",
+        "head_branch": "evidence/fotmob-real-player-context-array-admission",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-20T20:45:42Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32415833967",
+        "path": ".github/workflows/verify-fotmob-real-player-context-array-admission.yml"
+      }
+    },
+    ".github/workflows/verify-fotmob-real-player-context-authoritative-bridge.yml": {
+      "latest": {
+        "id": 36857232475,
+        "head_sha": "9567d1cc510c0b5fc7a6441838105c8946695387",
+        "head_branch": "fix/lg-a-worker-launch-restore-eligibility",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:44:15Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857232475",
+        "path": ".github/workflows/verify-fotmob-real-player-context-authoritative-bridge.yml"
+      },
+      "last_successful": {
+        "id": 32448966521,
+        "head_sha": "bac9648b5717c5a743ddf47411df754f9650da36",
+        "head_branch": "model/fotmob-real-player-context-authoritative-bridge",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-21T05:00:30Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32448966521",
+        "path": ".github/workflows/verify-fotmob-real-player-context-authoritative-bridge.yml"
+      }
+    },
+    ".github/workflows/verify-fotmob-real-player-context-team-strength-handoff.yml": {
+      "latest": {
+        "id": 36857232659,
+        "head_sha": "9567d1cc510c0b5fc7a6441838105c8946695387",
+        "head_branch": "fix/lg-a-worker-launch-restore-eligibility",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T11:44:15Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36857232659",
+        "path": ".github/workflows/verify-fotmob-real-player-context-team-strength-handoff.yml"
+      },
+      "last_successful": {
+        "id": 32418761791,
+        "head_sha": "c1902a4497c9ffdb78be0f371cb43e6a9fc49624",
+        "head_branch": "model/fotmob-real-player-context-team-strength-handoff",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-20T21:18:52Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32418761791",
+        "path": ".github/workflows/verify-fotmob-real-player-context-team-strength-handoff.yml"
+      }
+    },
+    ".github/workflows/verify-saturday-2026-08-22-fixture-identity-review.yml": {
+      "latest": {
+        "id": 36852273871,
+        "head_sha": "9567d1cc510c0b5fc7a6441838105c8946695387",
+        "head_branch": "fix/lg-a-worker-launch-restore-eligibility",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T10:56:53Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36852273871",
+        "path": ".github/workflows/verify-saturday-2026-08-22-fixture-identity-review.yml"
+      },
+      "last_successful": {
+        "id": 32460062462,
+        "head_sha": "090487c7cbb46996fb819790afed6b5b67d260ab",
+        "head_branch": "evidence/saturday-2026-08-22-fixture-identity-review",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-21T07:45:43Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32460062462",
+        "path": ".github/workflows/verify-saturday-2026-08-22-fixture-identity-review.yml"
+      }
+    },
+    ".github/workflows/verify-saturday-2026-08-22-reviewed-fixture-catalog.yml": {
+      "latest": {
+        "id": 36858147115,
+        "head_sha": "f61ee8416025a97a3acf8233dbdb34e29f48bac5",
+        "head_branch": "main",
+        "event": "push",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-01T11:52:54Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36858147115",
+        "path": ".github/workflows/verify-saturday-2026-08-22-reviewed-fixture-catalog.yml"
+      },
+      "last_successful": {
+        "id": 36858147115,
+        "head_sha": "f61ee8416025a97a3acf8233dbdb34e29f48bac5",
+        "head_branch": "main",
+        "event": "push",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-01T11:52:54Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36858147115",
+        "path": ".github/workflows/verify-saturday-2026-08-22-reviewed-fixture-catalog.yml"
+      }
+    },
+    ".github/workflows/verify-saturday-competition-review-priority.yml": {
+      "latest": {
+        "id": 36852273804,
+        "head_sha": "9567d1cc510c0b5fc7a6441838105c8946695387",
+        "head_branch": "fix/lg-a-worker-launch-restore-eligibility",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-01T10:56:53Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36852273804",
+        "path": ".github/workflows/verify-saturday-competition-review-priority.yml"
+      },
+      "last_successful": {
+        "id": 32457975325,
+        "head_sha": "7a93b553b785bc7b3518b32575da9cb212c8cdd4",
+        "head_branch": "policy/competition-fixture-review-priority",
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-21T07:17:26Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32457975325",
+        "path": ".github/workflows/verify-saturday-competition-review-priority.yml"
+      }
+    },
+    ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml": {
+      "latest": {
+        "id": 36871508446,
+        "head_sha": "f61ee8416025a97a3acf8233dbdb34e29f48bac5",
+        "head_branch": "main",
+        "event": "schedule",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-01T13:49:04Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36871508446",
+        "path": ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml"
+      },
+      "last_successful": {
+        "id": 36871508446,
+        "head_sha": "f61ee8416025a97a3acf8233dbdb34e29f48bac5",
+        "head_branch": "main",
+        "event": "schedule",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-01T13:49:04Z",
+        "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/36871508446",
+        "path": ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml"
+      }
+    }
+  }
+}

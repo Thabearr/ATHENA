@@ -212,14 +212,8 @@ def expected_receipt():
     tree = subprocess.check_output(["git", "rev-parse", "HEAD:.github/workflows"], cwd=ROOT, text=True).strip()
     roles.require(tree == "134cdd8bfa54488770f562c93571e46ac84a8187", "workflow YAML changed")
     rows = subprocess.check_output(["git", "ls-tree", "-r", "--full-tree", "HEAD", "--", "artifacts"], cwd=ROOT)
-    # The immutable remediation checkpoint predates these two additive C4
-    # documents. Authenticate their exact sealed identities before excluding
-    # them from the historical inventory; every old artifact remains pinned.
-    from scripts.audit_checkpoint_e_workflows import verified_additive_artifact_paths
-    additive_paths = verified_additive_artifact_paths()
     historical_inventory = b"".join(row for row in rows.splitlines(keepends=True)
-                                    if row.split(b"\t", 1)[1].strip() not in
-                                    {RECEIPT_PATH.encode(), *(path.encode() for path in additive_paths)})
+                                    if row.split(b"\t", 1)[1].strip() != RECEIPT_PATH.encode())
     roles.require(roles.sha(historical_inventory) == "3c18a753208cffcb9f5deeb409fa58ee06be394582bec9c969586c5f1b666f87",
                   "historical evidence artifact inventory changed")
     for path, digest in {
