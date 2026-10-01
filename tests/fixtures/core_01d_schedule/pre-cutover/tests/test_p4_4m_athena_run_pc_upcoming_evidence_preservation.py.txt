@@ -62,7 +62,7 @@ def test_workflow_contract_is_identical_except_the_single_evidence_root() -> Non
 
 
 def test_identity_state_and_canonical_artifact_upload_contract_are_unchanged() -> None:
-    current = _workflow(_p44m_after())
+    current = _workflow(audit._workflow_bytes(Path(audit.WORKFLOW_PATH)))
     run = _step(current, "preserve_shadow_evidence")["run"]
     assert 'identity_path="${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH:-}"' in run
     assert "artifacts/athena-run-workflow/identity-state" in run

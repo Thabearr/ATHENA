@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 INVENTORY = "tests/fixtures/core_01d_schedule/pre-cutover/identities.json"
-INVENTORY_SHA = "18b283bdd2562b4362fbf9b75aad5502392b1613038c283e3d2977d5e70a605f"
+INVENTORY_SHA = "0379809a228303031e5dd2c5c7329f3754960115535cbc08277ae87554f0dca3"
 CURRENT_RECEIPT_SHA = "8e83fd5443149af74e14ceea44766809d1858ce856772a6500b8f55e073afde6"
 
 
