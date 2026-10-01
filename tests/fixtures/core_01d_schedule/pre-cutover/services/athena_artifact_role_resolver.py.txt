@@ -162,9 +162,7 @@ def validate_candidate(candidate: Candidate, *, current_run_id: int, role_id: st
             candidate.artifact_id > 0 and hex_sha(candidate.head_sha, 40), "invalid/self producer")
     if canonical_producer:
         require(candidate.workflow_path == CANONICAL_WORKFLOW and
-                candidate.artifact_name in ({f"athena-run-{candidate.run_id}",
-                    f"athena-run-{candidate.run_id}-scheduled-shadow"} if candidate.event_name == "schedule"
-                    else {f"athena-run-{candidate.run_id}"}) and
+                candidate.artifact_name == f"athena-run-{candidate.run_id}" and
                 candidate.event_name in {"workflow_dispatch", "schedule"}, "wrong canonical producer")
     else:
         require(role_id in LEGACY_PRODUCERS and role_id != "PR119_BOOTSTRAP", "no legacy Actions producer")

@@ -39,14 +39,12 @@ REVIEWED_RECEIPT_SHA = "aa019106a5880bdace586da52c4e827dd6e8cd0d3663163fc8302305
 
 
 def tracked(path):
-    from scripts.core_01d_historical_source import historical_tracked
-    return historical_tracked(ROOT, path)[0]
+    return read_tracked_head_blob(ROOT, path)[0]
 
 
 def historical_source(path, *, root=ROOT):
     """Permit only this sealed remediation successor, preserving old audit pins."""
-    from scripts.core_01d_historical_source import historical_tracked
-    raw, identity = historical_tracked(root, path)
+    raw, identity = read_tracked_head_blob(root, path)
     value = roles.strict_json(read_tracked_head_blob(root, RECEIPT_PATH)[0])
     roles.require(value["canonical_sha256"] == REVIEWED_RECEIPT_SHA == roles.self_sha(value),
                   "exact reviewed remediation receipt differs")
@@ -211,20 +209,14 @@ def builder_proof():
 def expected_receipt():
     # Independently captured exact-base pins; HEAD-only verification also works
     # in shallow hosted checkouts without fetching any ancestor or network data.
-    from scripts.audit_p4_workflow_evolution_ledger import validate_current_state
-    validate_current_state()
+    tree = subprocess.check_output(["git", "rev-parse", "HEAD:.github/workflows"], cwd=ROOT, text=True).strip()
+    roles.require(tree == "134cdd8bfa54488770f562c93571e46ac84a8187", "workflow YAML changed")
     rows = subprocess.check_output(["git", "ls-tree", "-r", "--full-tree", "HEAD", "--", "artifacts"], cwd=ROOT)
     # The immutable remediation checkpoint predates these two additive C4
     # documents. Authenticate their exact sealed identities before excluding
     # them from the historical inventory; every old artifact remains pinned.
     from scripts.audit_checkpoint_e_workflows import verified_additive_artifact_paths
     additive_paths = verified_additive_artifact_paths()
-    from scripts.core_01d_historical_source import identities
-    old_ledger_blob = identities()["artifacts/architecture/p4_workflow_evolution_ledger_v1.json"]["git_blob_sha1"].encode()
-    rows = b"".join(
-        row.split(b"\t", 1)[0].rsplit(b" ", 1)[0] + b" " + old_ledger_blob + b"\t" + row.split(b"\t", 1)[1]
-        if row.split(b"\t", 1)[1].strip() == b"artifacts/architecture/p4_workflow_evolution_ledger_v1.json" else row
-        for row in rows.splitlines(keepends=True))
     historical_inventory = b"".join(row for row in rows.splitlines(keepends=True)
                                     if row.split(b"\t", 1)[1].strip() not in
                                     {RECEIPT_PATH.encode(), *(path.encode() for path in additive_paths)})

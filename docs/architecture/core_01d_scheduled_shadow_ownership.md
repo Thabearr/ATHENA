@@ -1,86 +1,80 @@
-# Scheduled SHADOW ownership: architecture projection, policy blocked
+# Scheduled SHADOW: authorized source cutover, unmerged PR #431
 
-Base main: `24aed845e24396d813a91552a70703a76c52ef71`; predecessor #430.
-This is **not a deployed schedule migration**. The two production YAML files,
-request adapters, restore transport/resolver, manifest builder, service, model,
-provider and notification implementation remain unchanged. No live proof occurs.
+Base main: `24aed845e24396d813a91552a70703a76c52ef71`.
+**Source cutover implemented on an unmerged PR; not deployed on main.**
+No live validation, provider acquisition, share-code, email or account action
+was performed. Merge would activate the changed schedule ownership on main.
+**DO NOT MERGE until independent owner review.**
 
-## Delivery and email decisions still required
+## Explicit owner policy
 
-AUTH-01's `CAP-SHADOW-DELIVERY-COMPATIBILITY` requires explicit intent and separate
-external authorization. The legacy schedule omits `--create-share-code` and
-therefore retains `LEGACY_CREATE_SHARE_CODE_DEFAULT=true`. A new no-delivery
-schedule is not byte/intent parity with it. Neither preservation of that implicit
-scheduled delivery nor its deprecation has explicit new owner-policy disposition
-in the reviewed governing evidence.
+- `LEGACY_SCHEDULED_DELIVERY_DEPRECATED_BY_EXPLICIT_OWNER_POLICY`:
+  canonical scheduled SHADOW explicitly passes `create_share_code=false`.
+  This is intentional delivery deprecation, **not legacy byte/intention parity**.
+- `LEGACY_SCHEDULE_EMAIL_EXPLICITLY_RETIRED_BY_OWNER_POLICY`:
+  only the legacy scheduled email path is retired. Its declared schedule trigger
+  is removed; manual dispatch and issue comments retain delivery/email behavior.
+- No canonical email subsystem or hidden delivery default is introduced.
 
-Delivery: **SCHEDULE_DELIVERY_POLICY_DECISION_REQUIRED** (option C).
-Notification: **SCHEDULE_NOTIFICATION_DISPOSITION_REQUIRED**.
-The owner must explicitly choose preserved scheduled delivery or intentional
-no-delivery deprecation, and either a reviewed post-core secondary email consumer
-or explicit scheduled-email retirement. No desktop email. Ordinary SMTP failure
-must remain a warning, integrity/security failure fail-closed, business receipt
-unchanged. Manual/comment compatibility must retain its existing email behavior.
+## Atomic source ownership
 
-## Tested proposal — not another workflow/execution authority
+One `canonical-run` job in `athena-run.yml` runs schedule lanes `main,shadow`;
+manual dispatch has exactly one lane, the explicit input profile. Matrix
+fail-fast is false. Cron remains 09:00Z. MAIN canonical request bytes remain
+unchanged: MAIN/main_application, Lagos today, target 20, SportyBet, no odds
+objective, no delivery and no wager.
 
-`scripts/audit_core_01d_scheduled_shadow_ownership.py` rederives exact bounded
-changes to **copies of five existing seams**, in memory. It never writes those
-copies to production paths or runs any business/provider executor. The normal
-production adapter still defaults scheduled resolution to MAIN only. Reviewers
-can export the text-only proposal with `--export-proposal <new external path>`.
+SHADOW freezes UTC today before canonical Lagos validation: 09:00Z and 22:59Z
+are exact; 23:00Z rejects before request persistence/provider work. No date
+shift or substitution with Lagos today. SHADOW/research_shadow, target 20,
+SportyBet, no odds objective, explicit no-delivery and no-wager.
 
-- One `canonical-run` job definition in `athena-run.yml`; schedule matrix
-  `main,shadow`; manual matrix exactly the explicit `inputs.profile`.
-- Matrix `fail-fast=false`: one lane's failure cannot cancel the other lane.
-- Job concurrency: MAIN `athena-run-main`; SHADOW `current-shadow-all-market`;
-  `cancel-in-progress=false`. The retained legacy manual/comment workflow uses
-  the same repository-wide SHADOW group. Jobs have independent hosted workspaces.
-- Explicit `--schedule-lane` reaches the existing pure request adapter. MAIN
-  requests remain byte-identical; manual requests/metadata remain unchanged.
-- SHADOW first freezes UTC today to a concrete ISO date, then delegates to the
-  canonical Lagos parser. 09:00Z and 22:59Z map exactly; 23:00Z rejects before
-  request persistence/provider work. No clock-derived profile or date repair.
-- Delivery is an independent exact bool, required for scheduled SHADOW. No bool
-  is inferred from the lane. Both choices are tested offline; neither is selected
-  as production policy. The proposed YAML deliberately leaves this input empty
-  and fails closed. It is **not a deployable cutover bundle** until policy is set.
-- Existing manual MAIN/SHADOW and scheduled MAIN upload
-  `athena-run-<run_id>`; only new scheduled SHADOW uses
-  `athena-run-<run_id>-scheduled-shadow`.
-- Discovery returns at most one canonical candidate per run. Schedule prefers
-  the unique live suffix. Old name fallback is allowed only if the suffix is
-  absent. A present-but-expired/bad-bound suffix cannot downgrade to MAIN.
-  Duplicates and manual suffix/event mismatch fail closed.
-- Candidate naming is a closed vocabulary, not `athena-run-*`. Trusted repository,
-  canonical workflow, main branch, completed/success and exact IDs remain required.
-- V1 manifest producer schema remains unchanged. Transport identity + event +
-  request SHA distinguish the lane; independent successful SHADOW receipt and
-  exact delivery-success vocabulary still decide restore eligibility.
-  The builder's internal old-name candidate remains valid for the same schedule
-  run/request/event; no artifact-name field or schema bump is necessary.
+Job-level concurrency remains repository-wide: MAIN `athena-run-main`, SHADOW
+`current-shadow-all-market`, cancellation false. Retained legacy manual/comment
+SHADOW uses the same exclusion group. Jobs have isolated runner workspaces.
 
-## Deployment gate and history
+Existing manual and scheduled MAIN artifacts retain `athena-run-<run_id>`.
+Only scheduled SHADOW uses `athena-run-<run_id>-scheduled-shadow`. Discovery
+selects a unique live exact suffix first. A present expired/bad-bound suffix
+never downgrades to MAIN. Only an absent suffix permits historical exact-name
+fallback. Ambiguity and manual suffixes fail closed. Filename is transport
+identity, not restore authority: successful SHADOW receipt, request, manifest
+and role checks remain independently mandatory. Manifest V1 is unchanged.
 
-**Canonical scheduled SHADOW is not active. Legacy schedule is not removed.**
-There is no dual-live SHADOW schedule. Manual/comment grammars, #276/owner guards,
-UTC dates and email remain unchanged. MAIN schedule remains unchanged.
+`current-shadow-all-market.yml` loses only its declared schedule trigger.
+Dispatch inputs, #276/owner guard, both command grammars, UTC validation,
+legacy delivery intent, optional secondary email, artifact name and concurrency
+remain unchanged. No workflow is deleted.
 
-Before a future atomic cutover, resolve delivery/email policy, apply reviewed
-seam changes, remove only legacy `schedule`, append exactly one ownership
-transition/new snapshot and pass all fourteen cutover checks and exact-head CI.
-Do not paste this incomplete proposal into Actions.
+## Evolution and immutable history
 
-The current eleven-transition evolution prefix and every historical receipt/
-snapshot remain byte-identical. No production naming/concurrency/ownership change
-requires a transition in this design-only PR. The merged C4 audit has only an
-exact, source-bounded forward to authenticate this one additive receipt before
-the old remediation auditor excludes it from its historical artifact inventory.
-Its pre-forward source is preserved as a fixture; neither old receipt is rewritten.
+The first eleven transitions are unchanged. Two retained survivor revisions
+require **two ordered MAINTENANCE_REVISE transitions**, not the prior design's
+one-transition proposal:
 
-The accepted LG-A archive 36860297707 remains independently verifiable; failed
-36846297806 remains permanently failed, non-retryable and restore-ineligible.
-No claim is made about CORE-01D blocker 2, which remains untouched.
+12. `CORE01D_ATHENA_RUN_SCHEDULED_SHADOW_CUTOVER_V1`
+13. `CORE01D_CURRENT_SHADOW_SCHEDULE_RETIRE_V1`
 
-P4.4 and Checkpoint E: **INCOMPLETE**. Source review counter **1/5 while open**,
-2/5 only if the owner later merges; mandatory reread is not due. **DO NOT MERGE.**
+Each has a distinct exact before-fixture, a single-transition evidence receipt
+and cumulative prefix snapshot. Live workflows remain 39, P4.3 retirements 3.
+
+The existing PORT-02C replay successor is not changed and receives **no new
+transition**. Explicit owner authorization adds one fourth exact closed context:
+
+- workflow tree: `9060b6fb263febc45332a7cf9c9da8448284b471`
+- evolution ledger: `b582a5ba8a31ddfba94324f8869dd253460dcc01102ef356327a3337275b8335`
+
+The before/after identities and three predecessor contexts stay exact. No
+wildcard, runtime learning, phase or transition-count authority is allowed.
+
+Merged Checkpoint-E V1 files remain byte-identical. Authenticated frozen source
+evaluates V1 as history; V2 records current 39-workflow/57-trigger source.
+Scheduled MAIN+SHADOW are two lanes of one schedule event, not two trigger kinds.
+The prior design receipt SHA remains recorded in the advanced same-PR receipt.
+Accepted LG-A `36860297707` remains valid; failed `36846297806` remains immutable,
+failed, non-retryable and restore-ineligible. Historical receipts are not rewritten.
+
+P4.4 and Checkpoint E remain **INCOMPLETE**. Blocker 2—retained-family authority,
+dynamic reachability and durable retention—is untouched and requires a separate
+review. Source review counter is **1/5 while open**, **2/5 if later owner-merged**;
+mandatory reread is not due. **DO NOT MERGE.**

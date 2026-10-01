@@ -1,4 +1,4 @@
-"""Actual source cutover contracts; every external transport is denied."""
+"""Non-deployed canonical seam projection; every external transport is denied."""
 from dataclasses import replace
 from datetime import datetime, timezone
 import io
@@ -35,7 +35,7 @@ def deny_external_transport(monkeypatch):
 
 @pytest.fixture(scope="module")
 def proposal():
-    return audit.actual_modules()
+    return audit.load_projection()
 
 
 def clock(text="09:00"):
@@ -272,9 +272,9 @@ def test_scheduled_suffix_archive_v1_actual_verification(proposal, tmp_path):
             current_run_id=0, role_id="PR119_BOOTSTRAP")
 
 
-def test_workflow_source_collision_concurrency_no_copy_paste():
-    audit.validate_workflow_source()
-    projected = audit.yaml.load(audit.raw(audit.CANONICAL), Loader=audit.yaml.BaseLoader)
+def test_workflow_projection_collision_concurrency_no_copy_paste():
+    audit.validate_workflow_design()
+    projected = audit.yaml.load(audit.projected_sources()[audit.CANONICAL], Loader=audit.yaml.BaseLoader)
     assert len(projected["jobs"]) == 1 and "concurrency" not in projected
     assert projected["jobs"]["canonical-run"]["strategy"]["fail-fast"] == "false"
     cases = [("workflow_dispatch", "main"), ("workflow_dispatch", "shadow"), ("schedule", "main"), ("schedule", "shadow")]
@@ -283,13 +283,12 @@ def test_workflow_source_collision_concurrency_no_copy_paste():
     assert len(set(names[-2:])) == 2
 
 
-def test_owner_policy_source_cutover_no_dual_live_schedule_no_history_edits():
+def test_policy_blocked_no_dual_live_schedule_no_history_edits():
     expected = audit.expected_receipt()
-    assert expected["delivery_disposition"] == audit.DELIVERY
-    assert expected["notification_disposition"] == audit.NOTIFICATION
-    assert expected["canonical_scheduled_shadow_active"] and expected["legacy_schedule_trigger_removed"]
-    assert not expected["deployed_on_main"] and not expected["legacy_delivery_byte_or_intention_parity_claimed"]
-    assert expected["evolution"]["transition_count_after"] == 13
+    assert expected["delivery_disposition"] == "SCHEDULE_DELIVERY_POLICY_DECISION_REQUIRED"
+    assert expected["notification_disposition"] == "SCHEDULE_NOTIFICATION_DISPOSITION_REQUIRED"
+    assert not expected["canonical_scheduled_shadow_active"] and not expected["legacy_schedule_trigger_removed"]
+    assert expected["evolution"]["transition_count"] == 11
     assert expected["source_review_counter_while_open"] == "1/5"
     assert audit.audit()["result"] == "PASS"
 
@@ -335,7 +334,7 @@ def test_tampered_inventory_and_rehashed_receipt_reject(monkeypatch):
     with pytest.raises(ValueError, match="inventory drift"): audit.verify_inputs()
     monkeypatch.setattr(audit, "raw", original)
     value = audit.predecessor.strict(original(audit.RECEIPT_PATH))
-    value["canonical_scheduled_shadow_active"] = False
+    value["canonical_scheduled_shadow_active"] = True
     audit.predecessor.seal(value)
     monkeypatch.setattr(audit, "raw", lambda path: audit.predecessor.canonical(value) if path == audit.RECEIPT_PATH else original(path))
     with pytest.raises(ValueError, match="unreviewed"): audit.verified_receipt_path()

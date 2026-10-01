@@ -1,33 +1,36 @@
-"""Offline, non-deployed schedule design projection; grants no cutover authority.
+"""Offline proof of the owner-authorized source cutover on unmerged PR #431.
 
-The projection modifies copies of the existing seams in memory. It is not an
-executor, another workflow family, or a production request adapter. Delivery
-and scheduled-email policy remain owner decisions; operational source is pinned.
+No executor, worker, provider, SMTP or GitHub transport is called. Immutable
+predecessors and the pre-cutover design remain independently authenticated.
 """
 from __future__ import annotations
 
 import argparse
+import copy
 from datetime import datetime
 import hashlib
+import importlib
 import json
 from pathlib import Path
 import subprocess
-import sys
-from types import ModuleType
+import tempfile
 
 import yaml
 
 from domain.run_contracts import canonical_json_bytes
 from scripts import audit_checkpoint_e_workflows as predecessor
+from scripts import audit_p4_workflow_evolution_ledger as evolution
+from scripts.core_01d_historical_source import historical_bytes, identities
+from services.athena_run_request_parser import parse_explicit_request
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = "24aed845e24396d813a91552a70703a76c52ef71"
 POLICY_ID = "ATHENA_CORE_01D_SCHEDULED_SHADOW_OWNERSHIP_V1"
 RECEIPT_PATH = "artifacts/architecture/core_01d_scheduled_shadow_ownership_v1.json"
+PRIOR_DESIGN_SHA = "41dfb5b25d4b92a3137af29bc1717fd52b86b9794239617a2d59845aa312f138"
 INPUT_PATH = "tests/fixtures/core_01d_schedule/base-source-identities.json"
-BEFORE_AUDIT = "tests/fixtures/core_01d_schedule/pre-schedule-checkpoint-audit.py.txt"
 INPUT_SHA = "f7a167ac1677915346cd3358a6b53d3ffd507e7422bba14e41769e32247b4674"
-RECEIPT_SHA = "41dfb5b25d4b92a3137af29bc1717fd52b86b9794239617a2d59845aa312f138"
+BEFORE_AUDIT = "tests/fixtures/core_01d_schedule/pre-schedule-checkpoint-audit.py.txt"
 CANONICAL = ".github/workflows/athena-run.yml"
 LEGACY = ".github/workflows/current-shadow-all-market.yml"
 REQUEST = "services/athena_run_workflow_request.py"
@@ -38,6 +41,12 @@ OLD_AUDIT = "scripts/audit_checkpoint_e_workflows.py"
 LANE_EXPRESSION = "${{ github.event_name == 'schedule' && fromJSON('[\"main\",\"shadow\"]') || fromJSON(format('[\"{0}\"]', inputs.profile)) }}"
 GROUP_EXPRESSION = "${{ matrix.lane == 'shadow' && 'current-shadow-all-market' || 'athena-run-main' }}"
 ARTIFACT_EXPRESSION = "athena-run-${{ github.run_id }}${{ github.event_name == 'schedule' && matrix.lane == 'shadow' && '-scheduled-shadow' || '' }}"
+DELIVERY = "LEGACY_SCHEDULED_DELIVERY_DEPRECATED_BY_EXPLICIT_OWNER_POLICY"
+NOTIFICATION = "LEGACY_SCHEDULE_EMAIL_EXPLICITLY_RETIRED_BY_OWNER_POLICY"
+BLOCKER = "all_retained_workflow_authority_and_dynamic_reachability_review_complete"
+FORWARD_MATRIX = "artifacts/architecture/checkpoint_e_workflow_capability_matrix_v2.json"
+FORWARD_RECEIPT = "artifacts/architecture/checkpoint_e_workflow_consolidation_v2.json"
+TRANSITION_IDS = ["CORE01D_ATHENA_RUN_SCHEDULED_SHADOW_CUTOVER_V1", "CORE01D_CURRENT_SHADOW_SCHEDULE_RETIRE_V1"]
 
 
 def require(value, message):
@@ -57,9 +66,9 @@ def blob(value):
     return hashlib.sha1(b"blob " + str(len(value)).encode() + b"\0" + value).hexdigest()
 
 
-def replace_one(source, before, after):
-    require(source.count(before) == 1, "proposal source anchor missing/ambiguous")
-    return source.replace(before, after)
+def actual_modules():
+    return {path: importlib.import_module(path[:-3].replace("/", "."))
+            for path in (REQUEST, PERSIST, ROLES, RESTORE)}
 
 
 def verify_inputs():
@@ -68,277 +77,235 @@ def verify_inputs():
     value = predecessor.strict(payload)
     require(value["base_sha"] == BASE and value["canonical_sha256"] == predecessor.self_sha(value), "base source identity differs")
     for path, identity in value["inputs"].items():
-        inspected = raw(BEFORE_AUDIT if path == OLD_AUDIT else path)
-        require(blob(inspected) == identity["git_blob_sha1"], "protected source/receipt drift: " + path)
-    before = raw(BEFORE_AUDIT).decode()
-    expected = replace_one(before, "    return (MATRIX_PATH, RECEIPT_PATH)\n",
-        "    from scripts.audit_core_01d_scheduled_shadow_ownership import verified_receipt_path\n"
-        "    return (MATRIX_PATH, RECEIPT_PATH, verified_receipt_path())\n")
-    require(raw(OLD_AUDIT).decode() == expected, "predecessor audit forward exceeds exact additive receipt allowance")
+        inspected = raw(BEFORE_AUDIT) if path == OLD_AUDIT else historical_bytes(path)
+        require(blob(inspected) == identity["git_blob_sha1"], "protected historical source drift: " + path)
+    old = predecessor.strict(historical_bytes(RECEIPT_PATH))
+    require(old["canonical_sha256"] == PRIOR_DESIGN_SHA == predecessor.self_sha(old), "prior design receipt lineage drift")
     return value
 
 
-def verified_receipt_path():
-    payload = raw(RECEIPT_PATH)
-    value = predecessor.strict(payload)
-    require(payload == predecessor.canonical(value) and value.get("canonical_sha256") == RECEIPT_SHA == predecessor.self_sha(value),
-            "unreviewed scheduled-shadow additive receipt")
-    return RECEIPT_PATH
-
-
-def projected_sources():
-    """Exact proposed deltas, never written to production paths or dispatched."""
-    sources = {path: raw(path).decode() for path in (CANONICAL, REQUEST, PERSIST, ROLES, RESTORE)}
-    request = sources[REQUEST]
-    request = replace_one(request, "from datetime import datetime\n", "from datetime import datetime, timezone\n")
-    request = replace_one(request, "    now: datetime | None = None,\n) -> RunRequest:",
-        "    now: datetime | None = None,\n    schedule_lane: str | None = None,\n"
-        "    scheduled_shadow_create_share_code: bool | None = None,\n) -> RunRequest:")
-    request = replace_one(request, "    if event_name == \"schedule\":\n",
-        "    if schedule_lane is not None and (type(schedule_lane) is not str or schedule_lane not in {'main', 'shadow'}):\n"
-        "        raise AthenaRunWorkflowRequestError('unsupported schedule lane')\n"
-        "    if event_name != 'schedule' and (schedule_lane is not None or scheduled_shadow_create_share_code is not None):\n"
-        "        raise AthenaRunWorkflowRequestError('schedule contract forbidden for non-schedule event')\n"
-        "    if event_name == \"schedule\":\n")
-    request = replace_one(request, "        create_share_code = SCHEDULE_CREATE_SHARE_CODE\n",
-        "        create_share_code = SCHEDULE_CREATE_SHARE_CODE\n"
-        "        if schedule_lane == 'shadow':\n"
-        "            if type(scheduled_shadow_create_share_code) is not bool:\n"
-        "                raise AthenaRunWorkflowRequestError('scheduled delivery policy must be explicit; no profile default')\n"
-        "            now = datetime.now(timezone.utc) if now is None else now\n"
-        "            if type(now) is not datetime or now.tzinfo is None or now.utcoffset() is None:\n"
-        "                raise AthenaRunWorkflowRequestError('schedule clock must be timezone-aware')\n"
-        "            from domain.current_shadow_fixture_date_request import validate_fixture_dates\n"
-        "            utc_day = now.astimezone(timezone.utc).date()\n"
-        "            validate_fixture_dates((utc_day.strftime('%Y%m%d'),), current_utc=now)\n"
-        "            days = utc_day.isoformat()  # freeze UTC today; canonical parser rejects, never shifts\n"
-        "            profile = 'shadow'\n"
-        "            create_share_code = scheduled_shadow_create_share_code\n"
-        "        elif scheduled_shadow_create_share_code is not None:\n"
-        "            raise AthenaRunWorkflowRequestError('MAIN schedule cannot receive SHADOW delivery policy')\n")
-    sources[REQUEST] = request
-    persist = sources[PERSIST]
-    persist = replace_one(persist, "    now: datetime | None = None,\n) -> tuple", "    now: datetime | None = None,\n    schedule_lane: str | None = None,\n    scheduled_shadow_create_share_code: bool | None = None,\n) -> tuple")
-    persist = replace_one(persist, "        now=now,\n    )\n", "        now=now,\n        schedule_lane=schedule_lane,\n        scheduled_shadow_create_share_code=scheduled_shadow_create_share_code,\n    )\n")
-    persist = replace_one(persist, "    _write_consistent(request_path, request_bytes)\n",
-        "    if event_name == 'schedule':\n"
-        "        metadata.update(schedule_lane=schedule_lane or 'main',\n"
-        "            original_schedule_intent='UTC_TODAY' if schedule_lane == 'shadow' else 'LAGOS_TODAY',\n"
-        "            date_policy_status='EXACT_UTC_DATE_REPRESENTABLE' if schedule_lane == 'shadow' else 'ESTABLISHED_MAIN_DATE_POLICY')\n"
-        "    _write_consistent(request_path, request_bytes)\n")
-    persist = replace_one(persist, "    args = parser.parse_args(argv)\n",
-        "    parser.add_argument('--schedule-lane', choices=('main', 'shadow'))\n"
-        "    parser.add_argument('--scheduled-shadow-create-share-code', choices=('true', 'false'))\n"
-        "    args = parser.parse_args(argv)\n")
-    persist = replace_one(persist, "            event_name=event_name,\n",
-        "            schedule_lane=args.schedule_lane,\n"
-        "            scheduled_shadow_create_share_code=(None if args.scheduled_shadow_create_share_code is None else args.scheduled_shadow_create_share_code == 'true'),\n"
-        "            event_name=event_name,\n")
-    sources[PERSIST] = persist
-    sources[ROLES] = replace_one(sources[ROLES],
-        '                candidate.artifact_name == f"athena-run-{candidate.run_id}" and\n',
-        '                candidate.artifact_name in ({f"athena-run-{candidate.run_id}",\n'
-        '                    f"athena-run-{candidate.run_id}-scheduled-shadow"} if candidate.event_name == "schedule"\n'
-        '                    else {f"athena-run-{candidate.run_id}"}) and\n')
-    restore = sources[RESTORE]
-    restore = replace_one(restore, '            name = f"athena-run-{run[\'id\']}" if canonical_producer else artifact_name\n',
-        '            if canonical_producer and run.get("event") not in {"schedule", "workflow_dispatch"}:\n'
-        '                continue\n'
-        '            name = f"athena-run-{run[\'id\']}" if canonical_producer else artifact_name\n')
-    restore = replace_one(restore, '            matches = [item for item in artifacts if item.get("name") == name and item.get("expired") is False]\n',
-        '            if canonical_producer:\n'
-        '                suffix = f"athena-run-{run[\'id\']}-scheduled-shadow"\n'
-        '                suffixed = [item for item in artifacts if item.get("name") == suffix]\n'
-        '                old = [item for item in artifacts if item.get("name") == name]\n'
-        '                roles.require(len(suffixed) <= 1 and len(old) <= 1, "ambiguous canonical artifact name")\n'
-        '                if run.get("event") == "workflow_dispatch":\n'
-        '                    roles.require(not suffixed, "scheduled suffix on manual event")\n'
-        '                elif suffixed:\n'
-        '                    # A known dual-lane producer must never downgrade to MAIN\n'
-        '                    # when its SHADOW artifact expires or has bad binding.\n'
-        '                    if suffixed[0].get("expired") is not False:\n'
-        '                        continue\n'
-        '                    name = suffix\n'
-        '            matches = [item for item in artifacts if item.get("name") == name and item.get("expired") is False]\n')
-    sources[RESTORE] = restore
-    workflow = sources[CANONICAL]
-    workflow = replace_one(workflow, "concurrency:\n  group: ${{ github.event_name == 'workflow_dispatch' && inputs.profile == 'shadow' && 'current-shadow-all-market' || 'athena-run-main' }}\n  cancel-in-progress: false\n\n", "")
-    workflow = replace_one(workflow, "  canonical-run:\n    runs-on:",
-        "  canonical-run:\n    strategy:\n      fail-fast: false\n      matrix:\n        lane: " + LANE_EXPRESSION + "\n"
-        "    concurrency:\n      group: " + GROUP_EXPRESSION + "\n      cancel-in-progress: false\n"
-        "    runs-on:")
-    workflow = replace_one(workflow, "          GITHUB_EVENT_NAME: ${{ github.event_name }}\n",
-        "          SCHEDULE_LANE: ${{ github.event_name == 'schedule' && matrix.lane || '' }}\n"
-        "          # UNDECIDED: no live deployment until delivery/email policy is approved.\n"
-        "          SCHEDULE_SHADOW_DELIVERY: \"\"\n"
-        "          GITHUB_EVENT_NAME: ${{ github.event_name }}\n")
-    workflow = replace_one(workflow, "        run: python -m scripts.resolve_athena_run_workflow_request --output-root artifacts/athena-run-workflow\n",
-        "        run: |\n"
-        "          args=(--output-root artifacts/athena-run-workflow)\n"
-        "          if [ -n \"${SCHEDULE_LANE}\" ]; then\n"
-        "            args+=(--schedule-lane \"${SCHEDULE_LANE}\")\n"
-        "            if [ \"${SCHEDULE_LANE}\" = shadow ]; then\n"
-        "              test \"${SCHEDULE_SHADOW_DELIVERY}\" = true || test \"${SCHEDULE_SHADOW_DELIVERY}\" = false || exit 2\n"
-        "              args+=(--scheduled-shadow-create-share-code \"${SCHEDULE_SHADOW_DELIVERY}\")\n"
-        "            fi\n"
-        "          fi\n"
-        "          python -m scripts.resolve_athena_run_workflow_request \"${args[@]}\"\n")
-    workflow = replace_one(workflow, "          name: athena-run-${{ github.run_id }}\n", "          name: " + ARTIFACT_EXPRESSION + "\n")
-    sources[CANONICAL] = workflow
-    return sources
-
-
-def load_projection():
-    """Trusted projected source only; never mutate installed production modules."""
-    modules = {}
-    for path, source in projected_sources().items():
-        if path.endswith(".yml"):
-            continue
-        name = "_athena_core01d_schedule_design_" + Path(path).stem
-        module = ModuleType(name)
-        module.__file__ = str(ROOT / path)
-        sys.modules[name] = module  # dataclass introspection needs its own namespace
-        exec(compile(source, "<NON_DEPLOYED_PROJECTION:" + path + ">", "exec"), module.__dict__)
-        modules[path] = module
-    modules[PERSIST].resolve_workflow_request = modules[REQUEST].resolve_workflow_request
-    modules[RESTORE].roles = modules[ROLES]
-    return modules
-
-
-def validate_workflow_design():
-    projected = yaml.load(projected_sources()[CANONICAL], Loader=yaml.BaseLoader)
+def validate_workflow_source():
     current = yaml.load(raw(CANONICAL), Loader=yaml.BaseLoader)
+    old = yaml.load(historical_bytes(CANONICAL), Loader=yaml.BaseLoader)
     legacy = yaml.load(raw(LEGACY), Loader=yaml.BaseLoader)
-    job = projected["jobs"]["canonical-run"]
-    require(projected["on"] == current["on"] and set(projected["jobs"]) == {"canonical-run"}, "new workflow/trigger family or manual input drift")
-    require("concurrency" not in projected and job["concurrency"] == {"group": GROUP_EXPRESSION, "cancel-in-progress": "false"}, "lane concurrency collision")
-    require(job["strategy"] == {"fail-fast": "false", "matrix": {"lane": LANE_EXPRESSION}}, "lane cardinality drift")
-    require(legacy["concurrency"]["group"] == "current-shadow-all-market", "legacy exclusion drift")
-    steps = job["steps"]
-    old = current["jobs"]["canonical-run"]["steps"]
-    require([step.get("id") for step in steps] == [step.get("id") for step in old], "business/control-plane step ownership drift")
-    for before, after in zip(old, steps):
-        if before["id"] not in {"resolve_request", "upload_evidence"}:
-            require(before == after, "projection changed non-schedule business step")
-    upload = next(step for step in steps if step["id"] == "upload_evidence")
-    require(upload["with"]["name"] == ARTIFACT_EXPRESSION, "artifact name collision")
-    require(len(projected_sources()) == 5, "unbounded proposal scope")
+    old_legacy = yaml.load(historical_bytes(LEGACY), Loader=yaml.BaseLoader)
+    require(current["on"] == old["on"] and set(current["jobs"]) == {"canonical-run"}, "canonical trigger/manual input drift")
+    require(current["on"]["schedule"] == [{"cron": "0 9 * * *"}], "MAIN cron drift")
+    job = current["jobs"]["canonical-run"]
+    require("concurrency" not in current and job["concurrency"] == {"group": GROUP_EXPRESSION, "cancel-in-progress": "false"}, "lane concurrency drift")
+    require(job["strategy"] == {"fail-fast": "false", "matrix": {"lane": LANE_EXPRESSION}}, "schedule/manual lane cardinality drift")
+    expected_legacy = copy.deepcopy(old_legacy)
+    del expected_legacy["on"]["schedule"]
+    require(legacy == expected_legacy and set(legacy["on"]) == {"workflow_dispatch", "issue_comment"}, "legacy change beyond schedule removal")
+    require(legacy["concurrency"] == {"group": "current-shadow-all-market", "cancel-in-progress": "false"}, "legacy SHADOW exclusion drift")
+    expected = copy.deepcopy(old)
+    del expected["concurrency"]
+    expected_job = expected["jobs"]["canonical-run"]
+    expected_job["concurrency"] = job["concurrency"]
+    expected_job["strategy"] = job["strategy"]
+    step = next(s for s in expected_job["steps"] if s["id"] == "resolve_request")
+    step["env"]["SCHEDULE_LANE"] = "${{ github.event_name == 'schedule' && matrix.lane || '' }}"
+    step["run"] = (
+        'args=(--output-root artifacts/athena-run-workflow)\n'
+        'if [ -n "${SCHEDULE_LANE}" ]; then\n'
+        '  args+=(--schedule-lane "${SCHEDULE_LANE}")\n'
+        '  if [ "${SCHEDULE_LANE}" = shadow ]; then\n'
+        '    # Explicit owner policy: scheduled delivery intentionally deprecated.\n'
+        '    args+=(--scheduled-shadow-create-share-code false)\n'
+        '  fi\n'
+        'fi\n'
+        'python -m scripts.resolve_athena_run_workflow_request "${args[@]}"\n')
+    next(s for s in expected_job["steps"] if s["id"] == "upload_evidence")["with"]["name"] = ARTIFACT_EXPRESSION
+    require(current == expected, "canonical workflow change beyond reviewed lane/request/concurrency/artifact seams")
+    from services import athena_shadow_issue_comment_compatibility as comment
+    require(comment.SCOPE_GRAMMAR == r"/athena-shadow target=([0-9]+) scope=(today|three-day)" and
+            comment.EXPLICIT_DATES_GRAMMAR == r"/athena-shadow target=([0-9]+) dates=([0-9]{8}(?:,[0-9]{8}){0,6})", "comment grammar drift")
+
+
+def validate_evolution():
+    ledger = evolution.validate_current_state()
+    before = json.loads(historical_bytes(evolution.LEDGER_PATH.as_posix()))
+    require(ledger["transitions"][:11] == before["transitions"] and len(ledger["transitions"]) == 13, "eleven-transition prefix/two-transition cutover drift")
+    require([t["transition_id"] for t in ledger["transitions"][11:]] == TRANSITION_IDS, "CORE-01D transition order drift")
+    require(ledger["canonical_sha256"] == evolution.CORE01D_LEDGER_SHA256 and
+            ledger["current_workflow_tree_sha1"] == evolution.CORE01D_WORKFLOW_TREE_SHA1, "exact fourth PORT-02C context drift")
+    transitions = [t for t in ledger["transitions"] if t["workflow_path"] == evolution.PORT02C_REPLAY_WORKFLOW_PATH]
+    require(len(transitions) == 1 and transitions[0]["transition_id"] == "PORT02C_NATIVE_RUNTIME_SLICE_ADD_V1", "false new PORT-02C transition")
+    require(evolution.source_identity(raw(evolution.PORT02C_REPLAY_WORKFLOW_PATH)) == evolution.PORT02C_REPLAY_WORKFLOW_AFTER, "PORT-02C successor source drift")
+    for t, path, contract in zip(ledger["transitions"][11:], (CANONICAL, LEGACY),
+                               (evolution.CORE01D_SCHEDULE_OWNER_CONTRACT, evolution.CORE01D_SCHEDULE_RETIRE_CONTRACT)):
+        require(t["workflow_path"] == path and t["operation"] == "MAINTENANCE_REVISE" and
+                t["phase_id"] == "CORE-01D" and t["canonical_family"] == "ATHENA_RUN" and
+                t["maintenance_contract"] == contract and t["before"] == evolution.source_identity(historical_bytes(path)), "CORE-01D maintenance identity drift")
+    return ledger
 
 
 def expected_receipt():
-    inputs = verify_inputs()
-    validate_workflow_design()
-    modules = load_projection()
+    verify_inputs()
+    validate_workflow_source()
+    ledger = validate_evolution()
+    modules = actual_modules()
     adapter = modules[REQUEST]
     date_rows = []
     for clock in ("09:00", "22:59", "23:00"):
         now = datetime.fromisoformat("2026-10-01T" + clock + ":00+00:00")
         main = adapter.resolve_workflow_request(event_name="schedule", schedule_lane="main", now=now)
-        old_main = predecessor.resolve_workflow_request(event_name="schedule", now=now)
+        old_main = parse_explicit_request(days="today", target_legs=20, profile="main", create_share_code=False, now=now)
         require(canonical_json_bytes(main) == canonical_json_bytes(old_main), "MAIN schedule byte regression")
-        for intent in (False, True):
+        with tempfile.TemporaryDirectory(prefix="athena-core01d-no-provider-") as directory:
+            root = Path(directory) / "request"
             try:
-                request = adapter.resolve_workflow_request(event_name="schedule", schedule_lane="shadow",
-                    scheduled_shadow_create_share_code=intent, now=now)
+                request, metadata = modules[PERSIST].resolve_and_persist(event_name="schedule", dispatch_inputs=None,
+                    schedule_lane="shadow", scheduled_shadow_create_share_code=False, now=now,
+                    github_sha=BASE, github_ref="refs/heads/main", output_root=root)
             except adapter.AthenaRunWorkflowRequestError:
-                require(clock == "23:00", "unexpected scheduled UTC rejection")
-                date_rows.append({"clock_utc": now.isoformat(), "create_share_code": intent,
-                                  "status": "UNREPRESENTABLE_FAIL_CLOSED_BEFORE_PROVIDER", "request_sha256": None})
+                require(clock == "23:00" and not root.exists(), "UTC date rejection/persistence drift")
+                date_rows.append({"clock_utc": now.isoformat(), "status": "UNREPRESENTABLE_FAIL_CLOSED_BEFORE_PERSISTENCE_OR_PROVIDER", "request_sha256": None})
             else:
-                require(clock != "23:00" and request.dates[0].isoformat() == "2026-10-01", "legacy UTC date shifted")
-                date_rows.append({"clock_utc": now.isoformat(), "create_share_code": intent,
-                                  "status": "EXACT_UTC_DATE_REPRESENTABLE", "request_sha256": request.canonical_sha256})
-    predecessor_receipt = predecessor.strict(raw(predecessor.RECEIPT_PATH))
-    require(predecessor_receipt["canonical_sha256"] == predecessor.CHECKPOINT_RECEIPT_SHA, "merged CORE-01D receipt drift")
-    auth = predecessor.strict(raw("artifacts/architecture/auth_01_analysis_only_shadow_v1.json"))
-    require(any(row.get("state") == "RETAINED_COMPATIBILITY_REQUIRES_EXPLICIT_INTENT_AND_SEPARATE_EXTERNAL_AUTHORIZATION" for row in auth["capability_snapshot"]), "delivery authority anchor changed")
+                require(clock != "23:00" and request.dates[0].isoformat() == "2026-10-01" and
+                    (request.authority_profile, request.mode, request.target_legs, request.bookie, request.target_total_odds,
+                     request.create_share_code, request.place_wager) == ("SHADOW", "research_shadow", 20, "sportybet", None, False, False), "scheduled SHADOW contract drift")
+                require(metadata["schedule_lane"] == "shadow" and metadata["original_schedule_intent"] == "UTC_TODAY" and
+                        metadata["request_canonical_sha256"] == request.canonical_sha256, "schedule metadata drift")
+                date_rows.append({"clock_utc": now.isoformat(), "status": "EXACT_UTC_DATE_REPRESENTABLE", "request_sha256": request.canonical_sha256})
+    from scripts import audit_lg_a_worker_launch_failure_remediation as lg
+    failed = lg.historical_producer_proof()
+    accepted = predecessor.accepted_evidence()
+    require(failed["historical_manifest_true_unchanged"] and accepted["restore_eligible"], "LG-A history drift")
     return predecessor.seal({
         "schema_version": 1, "policy_id": POLICY_ID, "exact_base_main_sha": BASE,
-        "exact_final_head_derivation": "git rev-parse HEAD in audit output",
-        "master_issue": 337, "predecessor_pr": 430, "predecessor_reviewed_head": "ff761afe51bb1ea94ef3acb7d1c5eab805468501",
-        "predecessor_merge": BASE, "post_merge_state_comment": 5935622452,
-        "predecessor_receipt_sha256": predecessor_receipt["canonical_sha256"],
-        "source_review_counter_while_open": "1/5", "source_review_counter_if_merged": "2/5", "mandatory_reread_due": False,
-        "design_status": "SOURCE_BOUND_OFFLINE_PROJECTION_NOT_DEPLOYED",
-        "projection_owner": "EXISTING_CANONICAL_SEAMS_NO_SECOND_BUSINESS_EXECUTION_OWNER",
-        "proposal_source_sha256": {path: predecessor.sha(source.encode()) for path, source in projected_sources().items()},
-        "base_source_inventory_sha256": INPUT_SHA,
-        "main_schedule_before_after": {"cron": "0 9 * * *", "profile": "MAIN", "mode": "main_application", "target": 20, "bookie": "sportybet", "create_share_code": False, "place_wager": False, "byte_parity": True, "active_change": False},
-        "legacy_shadow_before": {"cron": "0 9 * * *", "utc_scope": "today", "target": 20, "create_share_code": True, "email": "OPTIONAL_SECONDARY", "active_after": "UNCHANGED"},
-        "intended_shadow_request": {"profile": "SHADOW", "mode": "research_shadow", "target": 20, "odds": None, "bookie": "sportybet", "place_wager": False, "date_intent": "UTC_TODAY_CONCRETE_BEFORE_LAGOS_VALIDATION", "create_share_code": "EXACT_BOOL_REQUIRED_NO_DEFAULT_POLICY_UNDECIDED"},
-        "date_matrix": date_rows, "date_shift": False,
-        "delivery_disposition": "SCHEDULE_DELIVERY_POLICY_DECISION_REQUIRED",
-        "delivery_authority_source": {"path": "artifacts/architecture/auth_01_analysis_only_shadow_v1.json", "sha256": auth["canonical_sha256"], "contract": "EXPLICIT_INTENT_AND_SEPARATE_EXTERNAL_AUTHORIZATION"},
-        "delivery_options": {"true": "BYTE_INTENT_PARITY_TESTED_NOT_AUTHORIZED_AS_NEW_SCHEDULE_POLICY", "false": "INTENTIONAL_DEPRECATION_NOT_PARITY_REQUIRES_EXPLICIT_OWNER_POLICY"},
-        "notification_disposition": "SCHEDULE_NOTIFICATION_DISPOSITION_REQUIRED",
-        "notification_clearance": "OWNER_EXPLICIT_RETIREMENT_OR_REVIEWED_NON_AUTHORITATIVE_POST_CORE_CONSUMER_NO_DESKTOP",
-        "concurrency_proposal": {"main": "athena-run-main", "shadow": "current-shadow-all-market", "legacy_manual_comment": "current-shadow-all-market", "placement": "JOB_LEVEL_SAME_GROUP_ACROSS_WORKFLOWS", "cancel_in_progress": False, "production": "UNCHANGED"},
-        "artifact_name_proposal": {"manual_main": "athena-run-<run_id>", "manual_shadow": "athena-run-<run_id>", "scheduled_main": "athena-run-<run_id>", "scheduled_shadow": "athena-run-<run_id>-scheduled-shadow", "production": "UNCHANGED"},
-        "restore_discovery_proposal": {"per_run_candidates": 1, "manual": "EXACT_OLD_NAME_ONLY", "schedule": "UNIQUE_LIVE_SUFFIX_FIRST_OLD_ONLY_IF_SUFFIX_ABSENT", "expired_suffix": "NO_DOWNGRADE_TO_MAIN", "duplicate_name": "FAIL_CLOSED", "wrong_event_suffix": "FAIL_CLOSED", "filename_eligibility": False},
-        "manifest_schema_disposition": "V1_UNCHANGED_REQUEST_SHA_AND_EVENT_PLUS_TRANSPORT_IDENTITY_SUFFICIENT",
-        "builder_disposition": "UNCHANGED_INTERNAL_HISTORICAL_NAME_VALIDATES_SAME_REQUEST_RUN_EVENT_NO_SCHEMA_FIELD_NEEDED",
-        "historical_compatibility": "OLD_CANONICAL_AND_LEGACY_ROLE_PROVENANCE_UNCHANGED_ACCEPTED_LGA_RETAINED_FAILED_LGA_REJECTED_FORWARD",
-        "schedule_cutover_status": "POLICY_BLOCKED_NOT_DEPLOYED", "legacy_schedule_trigger_removed": False,
-        "canonical_scheduled_shadow_active": False, "dual_live_schedule": False,
-        "manual_dispatch_changed": False, "issue_comment_changed": False,
-        "evolution": {"transition_count": 11, "new_transition": False, "reason": "NO_PRODUCTION_OWNERSHIP_NAMING_OR_CONCURRENCY_CHANGE_MEMORY_ONLY_PROPOSAL", "future_cutover": "EXACTLY_ONE_APPEND_ONLY_TRANSITION_AND_NEW_SNAPSHOT_REQUIRED"},
-        "cutover_gate": {"date_contract": True, "explicit_delivery_policy": False, "explicit_notification_policy": False,
-                         "artifact_design": True, "concurrency_design": True, "production_deployment": False},
-        "blockers": ["SCHEDULE_DELIVERY_POLICY_DECISION_REQUIRED", "SCHEDULE_NOTIFICATION_DISPOSITION_REQUIRED"],
-        "blocker_2_scope": "CORE_01D_RETAINED_FAMILY_AUTHORITY_REACHABILITY_BLOCKER_UNTOUCHED",
-        "p4_4_status": "INCOMPLETE", "checkpoint_e_status": "INCOMPLETE",
-        "rollback_identities": {path: inputs["inputs"][path] for path in (CANONICAL, LEGACY, REQUEST, PERSIST, ROLES, RESTORE)},
-        "side_effect_counts": dict.fromkeys(("provider", "live_run", "dispatch", "share_code_create", "share_code_reload", "delivery", "email", "login", "cookies", "wallet", "stake", "wager"), 0),
-        "outside_control_plane_semantic_delta": 0,
+        "prior_design_receipt_sha256": PRIOR_DESIGN_SHA, "prior_design_receipt_fixture": identities()[RECEIPT_PATH]["fixture"],
+        "owner_authorization": "EXPLICIT_SCHEDULED_DELIVERY_DEPRECATION_SCHEDULE_EMAIL_RETIREMENT_ATOMIC_SOURCE_CUTOVER_AND_EXACT_PORT02C_FORWARD_CONTEXT_NO_MERGE_NO_LIVE_ACTION",
+        "master_issue": 337, "pr": 431, "source_review_counter_while_open": "1/5", "source_review_counter_if_owner_merges": "2/5",
+        "delivery_disposition": DELIVERY, "notification_disposition": NOTIFICATION,
+        "legacy_delivery_byte_or_intention_parity_claimed": False,
+        "scheduled_shadow_create_share_code": False, "scheduled_shadow_email": False,
+        "retained_manual_comment_delivery_and_email": "UNCHANGED",
+        "source_cutover_implemented_on_unmerged_pr": True, "deployed_on_main": False,
+        "canonical_scheduled_shadow_active": True, "legacy_schedule_trigger_removed": True, "dual_live_schedule_in_pr_source": False,
+        "date_matrix": date_rows, "main_schedule": "UNCHANGED_09Z_MAIN_LAGOS_TODAY_TARGET20_SPORTYBET_NO_DELIVERY_NO_WAGER",
+        "concurrency": {"main": "athena-run-main", "shadow": "current-shadow-all-market", "placement": "JOB_LEVEL", "cancel_in_progress": False},
+        "artifact_names": {"manual_main": "athena-run-<run_id>", "manual_shadow": "athena-run-<run_id>",
+                           "scheduled_main": "athena-run-<run_id>", "scheduled_shadow": "athena-run-<run_id>-scheduled-shadow"},
+        "discovery_policy": "UNIQUE_EXACT_SCHEDULE_SUFFIX_FIRST_NO_DOWNGRADE_IF_PRESENT_OLD_EXACT_NAME_ONLY_WHEN_ABSENT_MANUAL_SUFFIX_FORBIDDEN",
+        "manifest_schema": modules[ROLES].MANIFEST_POLICY_ID,
+        "restore_authority": "INDEPENDENT_SUCCESSFUL_SHADOW_REQUEST_RECEIPT_MANIFEST_ROLE_VALIDATION_NOT_FILENAME",
+        "accepted_lg_a": accepted,
+        "failed_lg_a": {"run_id": 36846297806, "disposition": "IMMUTABLE_FAILED_NON_RETRYABLE", "restore_eligible": False},
+        "evolution": {"transition_count_before": 11, "transition_count_after": 13, "transition_ids": TRANSITION_IDS,
+            "ledger_sha256": ledger["canonical_sha256"], "workflow_tree_before": evolution.CORE01C_WORKFLOW_TREE_SHA1,
+            "workflow_tree_after": ledger["current_workflow_tree_sha1"],
+            "checkpoints": [{"receipt_path": t["evidence_receipt_path"], "receipt_sha256": json.loads(raw(t["evidence_receipt_path"]))["canonical_sha256"],
+                "snapshot_path": t["checkpoint_snapshot_path"], "snapshot_sha256": json.loads(raw(t["checkpoint_snapshot_path"]))["canonical_sha256"]}
+                for t in ledger["transitions"][11:]]},
+        "port02c_forward_context": {"classification": "EXACT_EXISTING_SUCCESSOR_CONTEXT_EXTENSION_NO_NEW_WORKFLOW_TRANSITION",
+            "workflow_path": evolution.PORT02C_REPLAY_WORKFLOW_PATH,
+            "transition_history_identity": evolution.PORT02C_REPLAY_WORKFLOW_BEFORE,
+            "current_reviewed_successor_identity": evolution.PORT02C_REPLAY_WORKFLOW_AFTER,
+            "core01d_workflow_tree_sha1": evolution.CORE01D_WORKFLOW_TREE_SHA1,
+            "core01d_evolution_ledger_sha256": evolution.CORE01D_LEDGER_SHA256,
+            "new_port02c_transition": False, "context_count_before": 3, "context_count_after": 4},
+        "production_source_identities": {p: evolution.source_identity(raw(p)) for p in (CANONICAL, LEGACY, REQUEST, PERSIST, ROLES, RESTORE)},
+        "checkpoint_forward_paths": [FORWARD_MATRIX, FORWARD_RECEIPT],
+        "checkpoint_e_status": "INCOMPLETE", "p4_4_status": "INCOMPLETE", "blockers": [BLOCKER],
+        "blocker_2_scope": "RETAINED_FAMILY_AUTHORITY_DYNAMIC_REACHABILITY_DURABLE_RETENTION_UNTOUCHED",
+        "live_side_effect_counts": dict.fromkeys(("provider", "live_run", "dispatch", "share_code_create", "share_code_reload", "delivery", "email", "login", "cookies", "wallet", "stake", "wager"), 0),
+        "semantic_delta": dict.fromkeys(("model", "probability", "calibration", "xg", "elo", "price_all", "router", "portfolio", "provider_market", "share_code_implementation"), 0),
     })
 
 
+def verified_receipt_path():
+    value = predecessor.strict(raw(RECEIPT_PATH))
+    require(value == expected_receipt(), "unreviewed scheduled ownership receipt/source drift")
+    return RECEIPT_PATH
+
+
+def expected_forward_documents(schedule):
+    old_matrix = predecessor.strict(raw(predecessor.MATRIX_PATH))
+    old_receipt = predecessor.strict(raw(predecessor.RECEIPT_PATH))
+    require(old_matrix["canonical_sha256"] == predecessor.CHECKPOINT_MATRIX_SHA == predecessor.self_sha(old_matrix) and
+            old_receipt["canonical_sha256"] == predecessor.CHECKPOINT_RECEIPT_SHA == predecessor.self_sha(old_receipt), "immutable Checkpoint-E V1 drift")
+    matrix = copy.deepcopy(old_matrix)
+    matrix.update(schema_version=2, policy_id="ATHENA_CORE_01D_TRIGGER_CAPABILITY_MATRIX_V2",
+        predecessor_matrix_sha256=old_matrix["canonical_sha256"], predecessor_receipt_sha256=old_receipt["canonical_sha256"],
+        schedule_ownership_receipt_sha256=schedule["canonical_sha256"], evolution_ledger_sha256=evolution.CORE01D_LEDGER_SHA256,
+        current_workflow_tree_sha1=evolution.CORE01D_WORKFLOW_TREE_SHA1)
+    for row in matrix["workflow_rows"]:
+        path = row["workflow_path"]
+        doc = yaml.load(raw(path), Loader=yaml.BaseLoader)
+        row["trigger_surfaces"] = [s for s in row["trigger_surfaces"] if s["trigger_kind"] in doc["on"]]
+        row["git_blob_sha1"] = blob(raw(path))
+        row["source_sha256"] = predecessor.sha(raw(path))
+        row["current_callers_and_references"]["scan_basis"] = "IMMUTABLE_V1_REFERENCE_INVENTORY_NOT_CURRENT_DYNAMIC_REACHABILITY_PROOF"
+        if path == CANONICAL:
+            steps = predecessor.census._steps(doc)
+            uploads, downloads = predecessor.census._artifacts(steps)
+            row.update(artifact_uploads=uploads, artifact_downloads=downloads,
+                       artifact_names=sorted({u["name"] for u in uploads if u["name"]}))
+            surface = next(s for s in row["trigger_surfaces"] if s["trigger_kind"] == "schedule")
+            surface.update(authority_profile="MAIN_AND_SHADOW_EXPLICIT_LANES", acquisition_authority="EXPLICIT_SHADOW_ONLY",
+                delivery_authority=False, date_timezone_semantics="MAIN_LAGOS_TODAY_SHADOW_UTC_TODAY_FROZEN_THEN_LAGOS_VALIDATED_NO_SHIFT",
+                successor_request_parity="MAIN_UNCHANGED_SHADOW_DELIVERY_INTENTIONALLY_DEPRECATED_BY_OWNER_POLICY",
+                schedule_lanes=[{"lane": "main", "authority_profile": "MAIN", "create_share_code": False, "date_intent": "LAGOS_TODAY"},
+                                {"lane": "shadow", "authority_profile": "SHADOW", "create_share_code": False, "date_intent": "UTC_TODAY"}])
+        require([s["trigger_kind"] for s in row["trigger_surfaces"]] == sorted(doc["on"]), "forward trigger enumeration drift")
+    matrix["trigger_surface_count"] = sum(len(r["trigger_surfaces"]) for r in matrix["workflow_rows"])
+    require(matrix["workflow_count"] == len(matrix["workflow_rows"]) == 39 and matrix["trigger_surface_count"] == 57, "forward workflow/trigger census drift")
+    predecessor.seal(matrix)
+    criteria = copy.deepcopy(old_receipt["checkpoint_criteria"])
+    criteria["scheduled_shadow_canonical_ownership_proven_preserving_main"] = True
+    status, blockers = predecessor.checkpoint_status(criteria)
+    require(status == "INCOMPLETE" and blockers == [BLOCKER], "unsupported Checkpoint-E completion")
+    receipt = predecessor.seal({"schema_version": 2, "policy_id": "ATHENA_CORE_01D_WORKFLOW_CONSOLIDATION_CHECKPOINT_E_V2",
+        "predecessor_matrix_sha256": old_matrix["canonical_sha256"], "predecessor_receipt_sha256": old_receipt["canonical_sha256"],
+        "schedule_ownership_receipt_sha256": schedule["canonical_sha256"], "evolution_ledger_sha256": evolution.CORE01D_LEDGER_SHA256,
+        "current_workflow_tree_sha1": evolution.CORE01D_WORKFLOW_TREE_SHA1,
+        "workflow_matrix_path": FORWARD_MATRIX, "workflow_matrix_sha256": matrix["canonical_sha256"],
+        "live_workflow_count": 39, "trigger_surface_count": 57, "historical_p4_3_retired_count": 3,
+        "checkpoint_criteria": criteria, "checkpoint_e_status": status, "p4_4_status": status,
+        "remaining_blocker_ids": blockers, "remaining_blocker": "RETAINED_FAMILY_AUTHORITY_DYNAMIC_REACHABILITY_DURABLE_RETENTION_REVIEW",
+        "source_cutover_on_unmerged_pr": True, "deployed_on_main": False,
+        "retired_workflows": [], "live_side_effect_counts": schedule["live_side_effect_counts"]})
+    return matrix, receipt
+
+
+def audit_forward_checkpoint():
+    schedule = expected_receipt()
+    require(predecessor.strict(raw(RECEIPT_PATH)) == schedule, "schedule receipt drift")
+    matrix, receipt = expected_forward_documents(schedule)
+    require(predecessor.strict(raw(FORWARD_MATRIX)) == matrix and predecessor.strict(raw(FORWARD_RECEIPT)) == receipt, "forward Checkpoint-E evidence drift")
+    return receipt
+
+
+def additive_paths():
+    audit_forward_checkpoint()
+    ledger = json.loads(raw(evolution.LEDGER_PATH))
+    return (RECEIPT_PATH, FORWARD_MATRIX, FORWARD_RECEIPT,
+            *(p for t in ledger["transitions"][11:] for p in (t["evidence_receipt_path"], t["checkpoint_snapshot_path"])))
+
+
 def audit():
-    expected = expected_receipt()
     verified_receipt_path()
-    require(predecessor.strict(raw(RECEIPT_PATH)) == expected, "scheduled-shadow receipt differs from independently rederived design")
-    predecessor.audit()
-    return {"result": "PASS", "design_status": expected["design_status"], "cutover": expected["schedule_cutover_status"],
-            "exact_head": git("rev-parse", "HEAD").decode().strip(), "policy_id": POLICY_ID,
-            "receipt_sha256": expected["canonical_sha256"], "blockers": expected["blockers"], "side_effect_counts": expected["side_effect_counts"]}
+    forward = audit_forward_checkpoint()
+    return {"result": "PASS", "terminal": "CORE_01D_SCHEDULED_SHADOW_OWNERSHIP_REVIEW_READY_CUTOVER_PROVEN_DO_NOT_MERGE",
+            "exact_head": git("rev-parse", "HEAD").decode().strip(), "receipt_sha256": json.loads(raw(RECEIPT_PATH))["canonical_sha256"],
+            "workflow_tree_sha1": evolution.CORE01D_WORKFLOW_TREE_SHA1, "ledger_sha256": evolution.CORE01D_LEDGER_SHA256,
+            "workflow_count": 39, "trigger_surface_count": 57, "checkpoint_e": "INCOMPLETE", "blockers": forward["remaining_blocker_ids"]}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--capture-base", action="store_true")
     parser.add_argument("--write", action="store_true")
-    parser.add_argument("--export-proposal", type=Path)
     args = parser.parse_args()
-    if args.capture_base:
-        require(git("rev-parse", "HEAD").decode().strip() == BASE, "capture only on exact authorized base")
-        paths = {CANONICAL, LEGACY, REQUEST, PERSIST, ROLES, RESTORE, OLD_AUDIT,
-                 "scripts/build_athena_artifact_role_manifest.py", "services/athena_run_service.py", "scripts/execute_current_shadow_request.py",
-                 "domain/current_shadow_fixture_date_request.py", "domain/current_shadow_run_contract_adapter.py",
-                 "services/athena_run_request_parser.py", "services/athena_shadow_issue_comment_compatibility.py"}
-        rows = git("ls-tree", "-r", "HEAD", "--", "artifacts/architecture", "artifacts/product").decode().splitlines()
-        paths.update(row.split("\t", 1)[1] for row in rows)
-        inputs = {path: {"git_blob_sha1": git("rev-parse", "HEAD:" + path).decode().strip()} for path in sorted(paths)}
-        (ROOT / INPUT_PATH).parent.mkdir(parents=True, exist_ok=True)
-        (ROOT / BEFORE_AUDIT).write_bytes(git("show", "HEAD:" + OLD_AUDIT))
-        value = predecessor.seal({"base_sha": BASE, "inputs": inputs})
-        (ROOT / INPUT_PATH).write_bytes(predecessor.canonical(value))
-        print(json.dumps({"input_sha": predecessor.sha(predecessor.canonical(value)), "input_count": len(inputs)}))
-    elif args.write:
-        value = expected_receipt()
-        (ROOT / RECEIPT_PATH).write_bytes(predecessor.canonical(value))
-        print(value["canonical_sha256"])
-    elif args.export_proposal:
-        verify_inputs()
-        require(not args.export_proposal.exists(), "proposal export refuses overwrite")
-        for path, text in projected_sources().items():
-            target = args.export_proposal / (path + ".txt")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(text, encoding="utf-8", newline="\n")
-        print("NON_DEPLOYED_PROPOSAL_ONLY", args.export_proposal)
+    if args.write:
+        schedule = expected_receipt()
+        matrix, receipt = expected_forward_documents(schedule)
+        for path, value in ((RECEIPT_PATH, schedule), (FORWARD_MATRIX, matrix), (FORWARD_RECEIPT, receipt)):
+            (ROOT / path).write_bytes(predecessor.canonical(value))
+        print(json.dumps({"schedule_receipt_sha256": schedule["canonical_sha256"], "matrix_sha256": matrix["canonical_sha256"], "checkpoint_receipt_sha256": receipt["canonical_sha256"]}, sort_keys=True))
     else:
         print(json.dumps(audit(), sort_keys=True))
-    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

@@ -74,9 +74,7 @@ def seal(value):
 
 
 def read(path):
-    # V1 describes the merged predecessor, not the unmerged source cutover.
-    from scripts.core_01d_historical_source import historical_bytes
-    return historical_bytes(path)
+    return (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
 
 
 def strict(raw):
@@ -95,9 +93,6 @@ def git_inventory():
             mode, kind, identity = metadata.decode().split()
             require(kind == "blob", "unexpected non-blob tracked entry")
             result[path.decode()] = {"mode": mode, "git_blob_sha1": identity}
-    from scripts.core_01d_historical_source import identities
-    for path, entry in identities().items():
-        result[path]["git_blob_sha1"] = entry["git_blob_sha1"]
     return result
 
 
@@ -128,9 +123,8 @@ def verified_additive_artifact_paths():
         value = strict(raw)
         require(raw == canonical(value) and value.get("canonical_sha256") == expected == self_sha(value),
                 "unreviewed additive C4 artifact identity: " + path)
-    from scripts.audit_core_01d_scheduled_shadow_ownership import verified_receipt_path, additive_paths
-    verified_receipt_path()
-    return (MATRIX_PATH, RECEIPT_PATH, *additive_paths())
+    from scripts.audit_core_01d_scheduled_shadow_ownership import verified_receipt_path
+    return (MATRIX_PATH, RECEIPT_PATH, verified_receipt_path())
 
 
 def base_input():
@@ -154,13 +148,9 @@ def base_input():
     ).stdout.decode().splitlines()
     require(len(hashed) == len(value["scan_paths"]), "worktree filtered hash inventory incomplete")
     for path, actual in zip(value["scan_paths"], hashed):
-        from scripts.core_01d_historical_source import identities
-        if path in identities():
-            inspected = read(path)
-            actual = hashlib.sha1(b"blob " + str(len(inspected)).encode() + b"\0" + inspected).hexdigest()
         expected_blob = audit_after if path == HISTORICAL_AUDIT else value["files"][path]["git_blob_sha1"]
         require(actual == expected_blob, f"worktree source differs: {path}")
-    require(value["workflow_tree_sha1"] == "134cdd8bfa54488770f562c93571e46ac84a8187", "immutable V1 workflow tree changed")
+    require(git("rev-parse", "HEAD:.github/workflows").decode().strip() == value["workflow_tree_sha1"], "workflow tree ownership changed without C4 transition")
     return value
 
 
@@ -489,14 +479,11 @@ def audit():
     require(strict(read(MATRIX_PATH)) == matrix, "committed capability matrix differs from source-derived evidence")
     require(strict(read(RECEIPT_PATH)) == receipt, "committed Checkpoint-E receipt differs from independent evidence")
     evolution.validate_current_state()
-    from scripts.audit_core_01d_scheduled_shadow_ownership import audit_forward_checkpoint
-    forward = audit_forward_checkpoint()
     return {"result": "PASS", "checkpoint_e": receipt["checkpoint_e_status"], "p4_4": receipt["p4_4_status"],
             "policy_id": POLICY_ID, "receipt_sha256": receipt["canonical_sha256"],
             "matrix_sha256": matrix["canonical_sha256"], "exact_head": git("rev-parse", "HEAD").decode().strip(),
             "workflow_count": matrix["workflow_count"], "trigger_surface_count": matrix["trigger_surface_count"],
-            "blockers": forward["remaining_blocker_ids"], "live_side_effect_counts": receipt["live_side_effect_counts"],
-            "forward_matrix_sha256": forward["workflow_matrix_sha256"], "forward_receipt_sha256": forward["canonical_sha256"]}
+            "blockers": receipt["remaining_blocker_ids"], "live_side_effect_counts": receipt["live_side_effect_counts"]}
 
 
 def main():

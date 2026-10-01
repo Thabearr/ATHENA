@@ -95,8 +95,7 @@ def parse_canonical(raw: bytes) -> dict[str, Any]:
 def inspect_sources(root: Path) -> tuple[dict[str, Any], dict[str, bytes]]:
     identities, payloads = {}, {}
     for path, blob in SOURCE_BLOBS.items():
-        from scripts.core_01d_historical_source import historical_tracked
-        raw, identity = historical_tracked(root, path)
+        raw, identity = read_tracked_head_blob(root, path)
         if path in {"services/athena_run_service.py", "domain/current_shadow_run_contract_adapter.py"} and identity.git_blob_sha1 != blob:
             from scripts.audit_lg_a_worker_launch_failure_remediation import historical_source
             raw, identity = historical_source(path, root=root)

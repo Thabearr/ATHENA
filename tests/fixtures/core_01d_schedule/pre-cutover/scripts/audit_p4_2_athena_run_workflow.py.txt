@@ -249,9 +249,7 @@ def _supervisor_timeout_constants() -> tuple[int | None, int | None]:
 
 def _load_workflow() -> dict[str, Any]:
     try:
-        # Preserve the P4.2 checkpoint contract; CORE-01D audits current lanes.
-        from scripts.core_01d_historical_source import historical_bytes
-        value = yaml.load(historical_bytes(WORKFLOW_PATH), Loader=yaml.BaseLoader)
+        value = yaml.load((REPOSITORY_ROOT / WORKFLOW_PATH).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     except (OSError, yaml.YAMLError) as exc:
         raise P42AuditError("canonical workflow YAML is missing or invalid") from exc
     if type(value) is not dict:
