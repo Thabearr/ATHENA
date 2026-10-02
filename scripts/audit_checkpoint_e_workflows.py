@@ -33,6 +33,7 @@ POLICY_ID = "ATHENA_CORE_01D_WORKFLOW_CONSOLIDATION_CHECKPOINT_E_V1"
 MATRIX_POLICY_ID = "ATHENA_CORE_01D_TRIGGER_CAPABILITY_MATRIX_V1"
 RECEIPT_PATH = "artifacts/architecture/checkpoint_e_workflow_consolidation_v1.json"
 MATRIX_PATH = "artifacts/architecture/checkpoint_e_workflow_capability_matrix_v1.json"
+RETAINED_STATUS_PATH = "artifacts/architecture/core_01d_retained_workflow_status_v1.json"
 BASE_PATH = "tests/fixtures/core_01d/exact-main-source-inventory.json"
 HISTORY_PATH = "tests/fixtures/core_01d/workflow-history-20261001.json"
 ZIP_PATH = "tests/fixtures/core_01d/accepted-athena-run-36860297707.zip"
@@ -130,7 +131,11 @@ def verified_additive_artifact_paths():
                 "unreviewed additive C4 artifact identity: " + path)
     from scripts.audit_core_01d_scheduled_shadow_ownership import verified_receipt_path, additive_paths
     verified_receipt_path()
-    return (MATRIX_PATH, RECEIPT_PATH, *additive_paths())
+    from scripts.audit_core_01d_retained_workflow_status import audit as audit_retained_status
+    retained_status = audit_retained_status()
+    require(retained_status.get("result") == "PASS",
+            "supplementary retained-workflow status receipt failed authentication")
+    return (MATRIX_PATH, RECEIPT_PATH, *additive_paths(), RETAINED_STATUS_PATH)
 
 
 def base_input():
