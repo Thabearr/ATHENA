@@ -142,7 +142,7 @@ non-authoritative. At this V1 source cut there was no provider/live action; its
 source review counter was 2/5 while open and would have become 3/5 if owner-merged.
 **Checkpoint E: INCOMPLETE. P4.4: INCOMPLETE. DO NOT MERGE.**
 
-## Current Pass-1 status: fixed-release bootstrap only
+## Historical Pass-1 status: fixed-release bootstrap only
 
 The immutable V1 receipt above remains the exact before-state. The additive,
 source-derived V2 receipt is
@@ -172,7 +172,7 @@ authority, or backfill contract is expanded. Checkpoint E and P4.4 remain
 **INCOMPLETE**. The source review counter is 3/5 while open and would be 4/5
 only if owner-merged; mandatory reread is not due. **Do not merge.**
 
-## Current Pass-2 status: PR145 completed and spent
+## Historical Pass-2 status: PR145 completed and spent
 
 Pass 2 corrects only the stale PR145 live-dependency classification. The
 additive V3 receipt, `artifacts/architecture/core_01d_retained_workflow_status_v3.json`,
@@ -219,3 +219,79 @@ the preexisting inventory hash remains enforced. Source review is 4/5 while
 this PR is open and would be 5/5 if owner-merged; the mandatory governing-source
 reread becomes due immediately after that merge and before any further
 remediation. **Do not merge.**
+
+## Current Pass-3: canonical Drive transfer completed, retained non-executable history
+
+Pass 1 closed blocker A through the fixed-release bootstrap; Pass 2 closed B
+as a live PR145 dependency while preserving its historical retention defects.
+Pass 3 records successful canonical transfer-preparation run `32635585415`,
+`push` on `d2145f0e5ba74fb516797768f5d8a8681a3c3ffa`, completed successfully
+on 2026-08-23. The immutable P4.4C migration review and workflow-history fixture
+corroborate that success; read-only GitHub metadata confirms it in this pass.
+
+`prepare-canonical-drive-transfer.yml` is now an explicit completed retained
+historical/non-executable capability. Its YAML, permissions, exact archive
+contract, and both physical triggers (`workflow_dispatch` and path-filtered
+`push` on `main`) remain present and unchanged. This disposition is an evidence
+classification, not a newly implemented runtime interlock. No current supported
+transfer operation, dispatch or replay is authorized; the historical preparation
+must not be rerun from the unavailable exact source.
+
+Source warehouse run `32628985683` and successful transfer run `32635585415`
+both returned zero current Actions artifacts in read-only GET observations.
+Artifact `9491418446` remains unavailable from that source listing. This does
+not establish any disappearance date, actor or cause, and does not rewrite the
+successful historical transfer. Exact archive identity remains
+`athena-history-canonical.zip`, 2,149,256,220 bytes, SHA-256
+`a783886d0906e357e26851fcb3eb182bb06bdcc184d21f2b6578bb3d1fa61511`.
+
+The current external-copy state remains `PARTIAL_DURABLE_COPY_RECOVERED`:
+12/23 wrapper parts, `000`–`010` and `022`, with `011`–`021` missing.
+Exact reconstruction is currently unavailable. These normalized facts come
+from the prior validated recovery evidence, preserved in V3 and reaffirmed in
+the owner handoff; this pass did not independently list Drive or download/hash
+parts. The fixture binds recovery report SHA-256
+`0934cc3b511e8fee8e4fee24b0e89e0180f1869df0eec968f4718e67ba766e26`.
+Manifest `athena-canonical-drive-manifest.zip`, file ID
+`1GOim4jFrLxcc0mhsHtLH2YH2haezpUL3`, has prior observed wrapper SHA-256
+`fc314c7623f2c4f7f9c381c082e8f9c70d3e4c04f15b2da6fedab064f779a28b`;
+that handoff observation is not fresh byte verification. CI queries neither
+Drive nor Gmail; Gmail corroboration is not used for this disposition.
+
+Additive V4 `core_01d_retained_workflow_status_v4.json` preserves immutable V3
+SHA-256 `fe6ff060c6d8a1a829e7ad385eda8db350715b24983729803492dba64982317a`.
+Only artifact `9491418446` and its two relationship lifecycles/dispositions
+change: `COMPLETED_HISTORICAL_TRANSFER_RETAIN`,
+`RETAINED_NONEXECUTABLE_HISTORY`, and
+`HISTORICAL_TRANSFER_LINEAGE_AND_RETENTION_ONLY`. Both rows remain represented
+because the triggers remain physically present. All eight existing relation
+authorizations remain false; dispatch is also explicitly unauthorized.
+The source-derived counts remain 8 artifacts, 12 artifact/workflow edges and
+14 artifact/trigger relationships: zero live and 14 historical/spent/non-executable.
+No missing-artifact relationship remains a supported live execution dependency.
+
+Blocker C, `CANONICAL_HISTORY_TRANSFER_SOURCE_NOT_FULLY_DURABLE`, closes **only
+as a current operational dependency**. The archive is not recovered or fully
+durable. Blocker D, `HISTORICAL_REPLAY_ARCHIVES_UNAVAILABLE`, remains the exact
+historical retention blocker and explicitly includes artifacts `9249856559`,
+`9422055017`, `9437181220`, `9266604353`, `9274313978`, `9275052993`,
+`9292984849` and `9491418446`, plus the separately preserved PR145 successful
+result `9294215497` observation (retention not reviewed). No retention acceptance,
+deprecation, retirement or deletion decision is made; those are separate Pass-4
+material requiring their own authorization.
+
+The Pass-3 receipt and deterministic retention snapshot bind the historical
+success, current empty listings, partial external copy, workflow source identity
+and all false authorizations. Workflow tree remains
+`9b08653f1a12bb1b3d964fbd910396ff955740da`, 39 workflows and 57 trigger
+surfaces; evolution ledger SHA remains
+`73e1eb3fe6593558c821600dd0f103353d45c15a139ab470a996c7cbb35da531`,
+with 14 transitions. P4.3 retirement and PORT-02C context are unchanged.
+No live/provider operation, workflow dispatch/rerun/cancel, Drive/Gmail mutation,
+warehouse rebuild, source regeneration, model validation/training, email or
+other operational action occurred. Git/PR/master-issue evidence publication is
+the separately authorized repository administration boundary.
+
+The mandatory governing-source reread completed after #434 before this mission.
+SOURCE_REVIEW_COUNTER is **0/5 while open**, **1/5 if owner-merged**; mandatory
+reread is not due. **Checkpoint E: INCOMPLETE. P4.4: INCOMPLETE. DO NOT MERGE.**
