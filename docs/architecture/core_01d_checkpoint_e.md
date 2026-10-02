@@ -385,3 +385,99 @@ Repository evidence publication is the separately authorized Git/PR/#337 boundar
 
 SOURCE_REVIEW_COUNTER is **1/5 while open**, **2/5 if later owner-merged**;
 mandatory reread is not due. **DO NOT MERGE. Owner independent review required.**
+
+## Current Authority/Reachability Pass A
+
+PR #436 merged as `11d4ee1cb52ba3f766698e2ed335e57d0547a475`, tree
+`96629b79a6ffaa13ab497fae58a9411cec4bc846`. The read-only recheck of post-merge
+Tests `37051054827` confirms syntax, shards 1–8, aggregate and overall SUCCESS
+on that exact `push` head. A/B/C/D remain closed with historical limitations
+preserved. No missing-artifact relationship is live; all fourteen remain
+historical/spent/non-executable. Retained V5, retention acceptance, matrix V2
+and completion V1 are immutable predecessors.
+
+Pass A reviews exactly **15 workflow files / 21 trigger surfaces**. It resolves
+**18 surfaces** and records **3 partial surfaces**. Global unreviewed authority
+therefore falls from **53 to 35**, comprising the unchanged 32 out-of-scope
+surfaces and these three incomplete reviews:
+
+| Surface | Exact proof gap | Safest next action |
+| --- | --- | --- |
+| `athena-patch-bridge.yml#issue_comment` | Synthetic pytest executes dynamically selected test files; no global transport-denial fixture proves every selected path is offline | Separate source-only CI transport/caller review; preserve the proven bounded PR-head write contract |
+| `tests.yml#pull_request` | All `tests/test_*.py` are selected dynamically; no shared global network-denial fixture, and sampled monkeypatch tests are not an exhaustive proof | Separate CI offline-boundary proof; do not invoke a provider or edit runtime in this pass |
+| `tests.yml#push` | Same dynamic pytest transport gap as the PR surface | Same source-only proof mission, without widening this PR |
+
+For these partial rows, provider/sportsbook/share-code/wager, user delivery,
+notification, external-storage transport and complete dynamic reachability
+remain explicit evidence gaps. This does not claim that CI performed a live
+operation or that any of those operations is authorized. GitHub read permissions,
+synthetic patch hash/path/head/base guards, transient validation artifact transport
+and the patch bridge's final non-force draft PR-head push are independently
+recorded. Neither absence of secrets nor a successful test run proves global
+transport absence. Counts are not forced to the preferred 21/21 and 32 remaining.
+
+The source inventory binds each workflow blob/SHA, all trigger filters,
+permissions/job/step guards, the semantic scripts/modules inspected, immutable
+predecessor contracts, lexical discovery obligations and fixed repository
+callers. The authority receipt separates reachable capability, trigger-granted
+scope, permitted persistent effects and fail-closed boundaries. Importing a
+mutator/provider does not grant its authority, and a grep signal does not prove
+an action. Callee inspection adds no out-of-scope trigger classification.
+
+Specific reviewed boundaries include:
+
+- Draft Ready changes only the exact open same-repository draft PR state under
+  its owner/head/main-base guards; it neither writes a branch nor dispatches.
+- Canonical ingest authorizes bounded FotMob UTC/NGA GET acquisition on exact
+  main and an explicit live flag. Its canonical store update is a JSON evidence
+  artifact, not an external database commit. Schedule and manual date requests
+  remain separately bound to their source contracts.
+- History cache prime reads verified GitHub history transport and publishes a
+  worker-local cache; it grants no provider acquisition or canonical admission.
+  SportyBet source diagnostics perform anonymous catalogue/tournament GETs and
+  publish evidence, with no share-code/account/wager route invoked.
+- Protected fresh-holdout collection preserves prospective-only/no-backfill,
+  exact fixed PR119 bootstrap and no production xG/Price-all/Router/Portfolio
+  authority. Its audit/receipt bridges inspect GitHub evidence and publish only
+  guarded status or exact release receipts; they do not inherit provider authority.
+- The watchdog owner-comment trigger repairs only primary scheduler registration.
+  Its natural schedule additionally permits one fixed future continuity dispatch
+  after exact source/main/window/natural-delivery checks. Neither path itself
+  calls FotMob.
+- The reviewed FotMob issuer accepts only UTC/NGA on exact main, with one-date
+  live acquisition and source evidence publication. P3 paired capture separately
+  permits FotMob acquisition and anonymous SportyBet reads through the reviewed
+  pre-Router boundary, stopping at research Price-All/Router evidence. The owner
+  bridge dispatches only that fixed P3 capture on main after uniqueness, cooldown,
+  rolling-attempt and active-run checks; callee acquisition is not bridge authority.
+
+Completion V2 reruns all nineteen predecessor criteria against authenticated
+unchanged operational sources, then overlays only the eighteen resolved keys.
+The three partial keys and all 32 out-of-scope rows remain exactly inherited;
+no key appears in both resolved and unreviewed sets. V1's source, receipt,
+criteria and strict inventory hash remain unchanged. Its audit is rerun in an
+explicit historical Git inventory projection that removes only the independently
+source-authenticated additive Pass-A files, with no criterion or failure override.
+The current master audit points to independently authenticated completion V2.
+
+**Architecture Checkpoint E: INCOMPLETE. P4.4: INCOMPLETE.** Seventeen criteria
+remain green. Criteria 11
+`all_retained_workflow_authority_and_dynamic_reachability_review_complete` and 14
+`no_unknown_current_artifact_or_notification_authority` remain FALSE while the
+35 unresolved global surfaces remain. Retention acceptance is not full authority
+review, and Pass A cannot complete Checkpoint E.
+
+Workflow tree stays `9b08653f1a12bb1b3d964fbd910396ff955740da`; evolution ledger
+stays `73e1eb3fe6593558c821600dd0f103353d45c15a139ab470a996c7cbb35da531`,
+with fourteen transitions and three retired workflows. Workflow/trigger edits,
+retirement/deletion, caller migration, live/provider/SportyBet execution,
+dispatch/rerun/cancel, release mutation, live artifact download/upload, SMTP,
+share-code/wallet/stake/wager and protected runtime semantic changes are zero.
+Implementation branch/PR publication and the final #337 evidence comment are
+separately authorized repository administration, not reviewed operational effects.
+
+Pass B and Pass C remain future bounded review scopes; no classification for
+those scopes is included here. The three CI transport proof gaps require explicit
+follow-up evidence and are not silently resolved by this pass.
+SOURCE_REVIEW_COUNTER is **2/5 while open**, **3/5 if later owner-merged**;
+mandatory governing-source reread is not due. **DO NOT MERGE.**

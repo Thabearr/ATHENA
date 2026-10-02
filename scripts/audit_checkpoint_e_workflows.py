@@ -267,9 +267,9 @@ def verified_additive_artifact_paths():
             "canonical transfer completed-history receipts failed authentication")
     from scripts import audit_core_01d_historical_retention_acceptance as retention
     from scripts import audit_core_01d_retained_workflow_status_v5 as retained_v5
-    from scripts import audit_core_01d_checkpoint_e_completion as completion
-    # The independent audit authenticates all three committed documents against
-    # one source-derived chain; avoid treating V5 as completion authority.
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion
+    # The independent audit authenticates the committed evidence chain;
+    # retained V5 alone is never completion authority.
     require(completion.audit().get("result") == "PASS",
             "Pass-4 retention and independent completion evidence failed authentication")
     return (
@@ -283,6 +283,8 @@ def verified_additive_artifact_paths():
         transfer.RECEIPT_PATH,
         retention.RECEIPT_PATH,
         retained_v5.RECEIPT_PATH,
+        completion.v1.RECEIPT_PATH,
+        completion.review.RECEIPT_PATH,
         completion.RECEIPT_PATH,
     )
 
@@ -733,7 +735,7 @@ def audit():
     evolution.validate_current_state()
     from scripts.audit_core_01d_scheduled_shadow_ownership import audit_forward_checkpoint
     forward = audit_forward_checkpoint()
-    from scripts import audit_core_01d_checkpoint_e_completion as completion
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion
     current = completion.audit()
     completion_value = strict((ROOT / completion.RECEIPT_PATH).read_bytes())
     return {"result": "PASS", "checkpoint_e": current["checkpoint_e"], "p4_4": current["p4_4"],
@@ -743,8 +745,11 @@ def audit():
             "historical_v1_receipt_sha256": receipt["canonical_sha256"], "historical_v1_matrix_sha256": matrix["canonical_sha256"],
             "historical_v1_trigger_surface_count": matrix["trigger_surface_count"],
             "blockers": current["remaining_blockers"], "live_side_effect_counts": receipt["live_side_effect_counts"],
-            "current_retained_status_sha256": completion_value["retained_status_v5"]["canonical_sha256"],
+            "current_retained_status_sha256": completion_value["retained_v5"]["canonical_sha256"],
             "current_completion_receipt_sha256": current["receipt_sha256"],
+            "historical_completion_v1_receipt_sha256": completion.review.COMPLETION_V1_SHA,
+            "current_authority_review_sha256": completion_value["pass_a_review"]["canonical_sha256"],
+            "remaining_unreviewed_surface_count": current["remaining_unreviewed_surface_count"],
             "current_live_missing_artifact_relation_count": completion_value["live_missing_artifact_relation_count"],
             "historical_v1_checkpoint_e_status": receipt["checkpoint_e_status"],
             "historical_forward_v2_checkpoint_e_status": forward["checkpoint_e_status"],
