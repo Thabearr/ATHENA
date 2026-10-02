@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE_MAIN_SHA = "0e6d2c622ef7a12f82c4405d80906f49d97b523d"
 BASE_TREE_SHA = "fed8664d63391aefdbd48197375e0ecf331b733c"
 WORKFLOW_TREE_SHA1 = "9060b6fb263febc45332a7cf9c9da8448284b471"
+EXPECTED_REFERENCE_INVENTORY_SHA256 = "bdd26ade8f917d278ea5815523eec95b154a86e65c708af6c0f457d4738b1664"
+EXPECTED_REFERENCE_SOURCE_FILES_SHA256 = "19023d3025d90d694afe07daf9549aa1d7854bf232881eba41c5f2211da03a83"
 POLICY_ID = "ATHENA_CORE_01D_RETAINED_WORKFLOW_STATUS_V1"
 RECEIPT_PATH = "artifacts/architecture/core_01d_retained_workflow_status_v1.json"
 MATRIX_V2_PATH = "artifacts/architecture/checkpoint_e_workflow_capability_matrix_v2.json"
@@ -531,6 +533,13 @@ def _read_tree_blob(treeish: str, path: str) -> bytes:
     return _git("show", f"{treeish}:{path}")
 
 
+def _object_exists(revision: str) -> bool:
+    return subprocess.run(
+        ["git", "cat-file", "-e", f"{revision}^{{commit}}"],
+        cwd=ROOT, capture_output=True,
+    ).returncode == 0
+
+
 def _worktree_blob(path: str) -> str:
     return subprocess.run(
         ["git", "hash-object", f"--path={path}", "--stdin"],
@@ -539,40 +548,57 @@ def _worktree_blob(path: str) -> str:
     ).stdout.decode().strip()
 
 
-def _workflow_inventory() -> tuple[list[dict], str]:
-    base_entries = _tree_entries(BASE_MAIN_SHA)
+def _workflow_inventory(*, base_available: bool, seed: dict | None) -> tuple[list[dict], str]:
+    if base_available:
+        baseline_entries = _tree_entries(BASE_MAIN_SHA)
+    else:
+        require(seed is not None, "shallow checkout requires the committed source inventory seed")
+        baseline_entries = {
+            row["path"]: row["git_blob_sha1"]
+            for row in seed["workflow_source_inventory"]
+        }
     head_entries = _tree_entries("HEAD")
-    require(len(base_entries) == 39, "pinned base workflow count is not 39")
-    require(head_entries == base_entries, "current workflow path/blob inventory differs from exact base")
+    require(len(baseline_entries) == 39, "pinned base workflow count is not 39")
+    require(head_entries == baseline_entries, "current workflow path/blob inventory differs from pinned base source")
     current_worktree_paths = sorted(
         path.relative_to(ROOT).as_posix()
         for path in (ROOT / ".github" / "workflows").iterdir()
         if path.suffix in {".yml", ".yaml"}
     )
-    require(current_worktree_paths == sorted(base_entries), "working-tree workflow inventory differs from base")
+    require(current_worktree_paths == sorted(baseline_entries), "working-tree workflow inventory differs from base")
     rows = []
-    for path in sorted(base_entries):
-        expected = _read_tree_blob(BASE_MAIN_SHA, path)
+    treeish = BASE_MAIN_SHA if base_available else "HEAD"
+    for path in sorted(baseline_entries):
+        expected = _read_tree_blob(treeish, path)
         filtered_blob = _worktree_blob(path)
-        require(filtered_blob == base_entries[path],
+        require(filtered_blob == baseline_entries[path],
                 f"working-tree workflow source differs from base after Git filters: {path}")
         rows.append({
             "path": path,
-            "git_blob_sha1": base_entries[path],
+            "git_blob_sha1": baseline_entries[path],
             "source_sha256": sha256(expected),
         })
-    base_tree = _git("rev-parse", f"{BASE_MAIN_SHA}:.github/workflows").decode().strip()
     head_tree = _git("rev-parse", "HEAD:.github/workflows").decode().strip()
-    require(base_tree == head_tree == WORKFLOW_TREE_SHA1,
+    require(head_tree == WORKFLOW_TREE_SHA1,
             "current .github/workflows tree differs from reviewed #431 workflow tree")
+    if base_available:
+        base_tree = _git("rev-parse", f"{BASE_MAIN_SHA}:.github/workflows").decode().strip()
+        require(base_tree == head_tree, "pinned base workflow tree differs from current tree")
+    else:
+        require(seed["workflow_tree_sha1"] == WORKFLOW_TREE_SHA1 and
+                seed["workflow_source_inventory_sha256"] == sha256(canonical_bytes(rows)),
+                "shallow-checkout workflow seed identity drift")
     return rows, sha256(canonical_bytes(rows))
 
 
-def _source_matches(treeish: str) -> list[dict]:
+def _source_matches(treeish: str, paths: list[str] | None = None) -> list[dict]:
     matches = []
     patterns = [part for artifact_id in ARTIFACT_IDS for part in ("-e", artifact_id)]
+    command = ["git", "grep", "-n", "-F", *patterns, treeish, "--"]
+    if paths is not None:
+        command.extend(paths)
     result = subprocess.run(
-        ["git", "grep", "-n", "-F", *patterns, treeish, "--"],
+        command,
         cwd=ROOT, capture_output=True,
     )
     if result.returncode not in (0, 1):
@@ -604,15 +630,36 @@ def _source_matches(treeish: str) -> list[dict]:
     return sorted(matches, key=lambda row: (row["artifact_id"], row["path"], row["line"]))
 
 
-def _reference_inventory(workflow_rows: list[dict]) -> dict:
-    # Use exact reviewed main for a non-self-referential inventory. Added receipt,
-    # audit, test, and doc references in this PR cannot inflate the base counts.
-    matches = _source_matches(BASE_MAIN_SHA)
-    current_matches = _source_matches("HEAD")
+def _reference_inventory(workflow_rows: list[dict], *, base_available: bool,
+                         seed: dict | None) -> dict:
+    # Keep this inventory pinned to files which carried an artifact-ID reference
+    # at the exact base. This excludes this PR's own receipt, audit, tests, and
+    # documentation while allowing offline audits in depth-1 CI checkouts.
+    if base_available:
+        matches = _source_matches(BASE_MAIN_SHA)
+    else:
+        require(seed is not None, "shallow checkout requires the committed reference inventory seed")
+        source_files = seed["source_reference_inventory"]["reference_source_files"]
+        require(seed["source_reference_inventory"]["reference_source_files_sha256"] ==
+                sha256(canonical_bytes(source_files)) == EXPECTED_REFERENCE_SOURCE_FILES_SHA256 and
+                len(source_files) == 76,
+                "shallow-checkout source-file inventory hash/count mismatch")
+        for source in source_files:
+            current_oid = _git("rev-parse", f"HEAD:{source['path']}").decode().strip()
+            require(current_oid == source["git_blob_sha1"],
+                    f"pinned reference source differs from current tracked blob: {source['path']}")
+            require(sha256(_read_tree_blob("HEAD", source["path"])) == source["source_sha256"],
+                    f"pinned reference source SHA-256 mismatch: {source['path']}")
+        matches = _source_matches("HEAD", [source["path"] for source in source_files])
+        require(sha256(canonical_bytes(matches)) == EXPECTED_REFERENCE_INVENTORY_SHA256,
+                "shallow-checkout matching references differ from exact-base inventory")
     workflow_matches = [row for row in matches if row["path"].startswith(".github/workflows/")]
-    current_workflow_matches = [row for row in current_matches if row["path"].startswith(".github/workflows/")]
-    require(current_workflow_matches == workflow_matches,
-            "current workflow artifact reference inventory differs from exact base")
+    if base_available:
+        current_workflow_matches = _source_matches(
+            "HEAD", sorted({row["path"] for row in workflow_matches})
+        )
+        require(current_workflow_matches == workflow_matches,
+                "current workflow artifact reference inventory differs from exact base")
     counts_by_id = {}
     workflow_counts_by_id = {}
     for artifact_id in ARTIFACT_IDS:
@@ -630,6 +677,21 @@ def _reference_inventory(workflow_rows: list[dict]) -> dict:
     edge_keys = sorted({(row["artifact_id"], row["path"]) for row in workflow_matches})
     require(len(paths) == 11, f"unique workflow path count drift: {len(paths)}")
     require(len(edge_keys) == 13, f"artifact/workflow edge count drift: {len(edge_keys)}")
+
+    if base_available:
+        reference_paths = sorted({row["path"] for row in matches})
+        source_files = [{
+            "path": path,
+            "git_blob_sha1": _git("rev-parse", f"{BASE_MAIN_SHA}:{path}").decode().strip(),
+            "source_sha256": sha256(_read_tree_blob(BASE_MAIN_SHA, path)),
+        } for path in reference_paths]
+    else:
+        source_files = seed["source_reference_inventory"]["reference_source_files"]
+    source_files_sha256 = sha256(canonical_bytes(source_files))
+    require(source_files_sha256 == EXPECTED_REFERENCE_SOURCE_FILES_SHA256,
+            "exact-base source-file inventory differs from pinned inventory")
+    require(sha256(canonical_bytes(matches)) == EXPECTED_REFERENCE_INVENTORY_SHA256,
+            "exact-base matching references differ from pinned inventory")
 
     by_path = {row["path"]: row for row in workflow_rows}
     edge_rows = []
@@ -657,6 +719,8 @@ def _reference_inventory(workflow_rows: list[dict]) -> dict:
         "artifact_workflow_edge_count": len(edge_keys),
         "reference_inventory_sha256": sha256(canonical_bytes(matches)),
         "workflow_reference_inventory_sha256": sha256(canonical_bytes(workflow_matches)),
+        "reference_source_files_sha256": source_files_sha256,
+        "reference_source_files": source_files,
         "workflow_reference_edges": edge_rows,
     }
 
@@ -694,8 +758,9 @@ def _load_predecessors() -> dict:
             "historical Checkpoint E/P4.4 state drift")
     require(_worktree_blob(EVOLUTION_PATH) == _git("rev-parse", f"HEAD:{EVOLUTION_PATH}").decode().strip(),
             "workflow evolution ledger worktree source differs from HEAD")
-    require(_worktree_blob(EVOLUTION_PATH) == _git("rev-parse", f"{BASE_MAIN_SHA}:{EVOLUTION_PATH}").decode().strip(),
-            "workflow evolution ledger changed from exact base")
+    if _object_exists(BASE_MAIN_SHA):
+        require(_worktree_blob(EVOLUTION_PATH) == _git("rev-parse", f"{BASE_MAIN_SHA}:{EVOLUTION_PATH}").decode().strip(),
+                "workflow evolution ledger changed from exact base")
     return {"matrix": matrix, "checkpoint": checkpoint, "schedule": schedule, "ledger": ledger}
 
 
@@ -758,12 +823,30 @@ def _build_relations(workflow_rows: list[dict], reference_inventory: dict) -> li
 
 
 def build_receipt() -> dict:
-    require(_git("rev-parse", BASE_MAIN_SHA).decode().strip() == BASE_MAIN_SHA,
-            "exact base main commit unavailable")
-    require(_git("show", "-s", "--format=%T", BASE_MAIN_SHA).decode().strip() == BASE_TREE_SHA,
-            "exact base main tree identity drift")
-    workflows, workflow_inventory_sha = _workflow_inventory()
-    references = _reference_inventory(workflows)
+    base_available = _object_exists(BASE_MAIN_SHA)
+    seed = None
+    if base_available:
+        require(_git("rev-parse", BASE_MAIN_SHA).decode().strip() == BASE_MAIN_SHA,
+                "exact base main commit identity drift")
+        require(_git("show", "-s", "--format=%T", BASE_MAIN_SHA).decode().strip() == BASE_TREE_SHA,
+                "exact base main tree identity drift")
+    else:
+        seed_raw = (ROOT / RECEIPT_PATH).read_bytes()
+        seed = _strict_json(seed_raw, RECEIPT_PATH)
+        require(seed_raw == canonical_bytes(seed) and
+                seed.get("canonical_sha256") == self_sha(seed),
+                "shallow-checkout receipt seed is not canonical/self-authenticating")
+        require(seed.get("exact_base_main_sha") == BASE_MAIN_SHA and
+                seed.get("exact_base_tree_sha") == BASE_TREE_SHA and
+                seed.get("workflow_tree_sha1") == WORKFLOW_TREE_SHA1 and
+                seed.get("evolution_ledger_sha256") == EVOLUTION_LEDGER_SHA256,
+                "shallow-checkout receipt seed source identity drift")
+    workflows, workflow_inventory_sha = _workflow_inventory(
+        base_available=base_available, seed=seed
+    )
+    references = _reference_inventory(
+        workflows, base_available=base_available, seed=seed
+    )
     _load_predecessors()
     relations = _build_relations(workflows, references)
     artifacts = json.loads(json.dumps(ARTIFACTS))

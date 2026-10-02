@@ -75,10 +75,23 @@ def test_source_inventory_rederives_reviewed_counts(receipt):
         "9292984849": 1, "9491418446": 2,
     }
     assert len(inventory["workflow_reference_edges"]) == 13
+    assert len(inventory["reference_source_files"]) == 76
+    assert inventory["reference_source_files_sha256"] == audit.EXPECTED_REFERENCE_SOURCE_FILES_SHA256
     assert receipt["workflow_source_inventory_sha256"]
     assert inventory["reference_inventory_sha256"]
     assert inventory["workflow_reference_inventory_sha256"]
     assert receipt["workflow_tree_sha1_before"] == receipt["workflow_tree_sha1_after"] == audit.WORKFLOW_TREE_SHA1
+
+
+def test_shallow_checkout_uses_pinned_exact_base_source_inventory(monkeypatch, receipt):
+    monkeypatch.setattr(audit, "_object_exists", lambda _revision: False)
+    assert audit.build_receipt() == receipt
+
+
+def test_historical_inventory_forward_authenticates_supplementary_receipt():
+    from scripts.audit_checkpoint_e_workflows import verified_additive_artifact_paths
+
+    assert audit.RECEIPT_PATH in verified_additive_artifact_paths()
 
 
 def test_all_eight_exact_artifact_identities_and_recovery_states(receipt):
@@ -242,11 +255,17 @@ def test_volatile_runtime_observations_cannot_define_static_classification(recei
 
 
 def test_workflows_and_evolution_ledger_are_unchanged():
-    workflow_diff = subprocess.run(
-        ["git", "diff", "--exit-code", audit.BASE_MAIN_SHA, "HEAD", "--", ".github/workflows"],
-        cwd=audit.ROOT, capture_output=True,
-    )
-    assert workflow_diff.returncode == 0, workflow_diff.stderr.decode("utf-8", "replace")
+    assert audit._git("rev-parse", "HEAD:.github/workflows").decode().strip() == audit.WORKFLOW_TREE_SHA1
+    if audit._object_exists(audit.BASE_MAIN_SHA):
+        workflow_diff = subprocess.run(
+            ["git", "diff", "--exit-code", audit.BASE_MAIN_SHA, "HEAD", "--", ".github/workflows"],
+            cwd=audit.ROOT, capture_output=True,
+        )
+        assert workflow_diff.returncode == 0, workflow_diff.stderr.decode("utf-8", "replace")
+        ledger_base_oid = audit._git(
+            "rev-parse", f"{audit.BASE_MAIN_SHA}:{audit.EVOLUTION_PATH}"
+        ).decode().strip()
+        assert audit._worktree_blob(audit.EVOLUTION_PATH) == ledger_base_oid
     working_diff = subprocess.run(
         ["git", "diff", "--exit-code", "--", ".github/workflows"],
         cwd=audit.ROOT, capture_output=True,
@@ -256,5 +275,5 @@ def test_workflows_and_evolution_ledger_are_unchanged():
     assert ledger["canonical_sha256"] == audit.EVOLUTION_LEDGER_SHA256
     assert len(ledger["transitions"]) == 13
     assert audit._worktree_blob(audit.EVOLUTION_PATH) == audit._git(
-        "rev-parse", f"{audit.BASE_MAIN_SHA}:{audit.EVOLUTION_PATH}"
+        "rev-parse", f"HEAD:{audit.EVOLUTION_PATH}"
     ).decode().strip()

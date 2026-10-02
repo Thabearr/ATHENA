@@ -106,6 +106,10 @@ matching lines: 27 in workflows and 81 in other tracked source. The 39/57
 workflow-trigger census, #431 workflow tree, and 13-transition evolution ledger
 remain unchanged.
 
+The existing Checkpoint-E audit authenticates this exact supplementary receipt
+before excluding its additive artifact path from the immutable historical
+inventory forward. Its prior checkpoint receipt and status are not rewritten.
+
 No workflow retirement, deletion, trigger change, caller migration, replay
 authority, provider reacquisition, evidence substitution, or synthetic backfill
 is authorized. In particular:
