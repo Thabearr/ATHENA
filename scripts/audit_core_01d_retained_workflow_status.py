@@ -35,6 +35,7 @@ PREDECESSOR_V2_MATRIX_SHA256 = "3c3cfec8b37e55161b24185941e72c3e096a00f38456a2c0
 PREDECESSOR_V2_RECEIPT_SHA256 = "af167895b51d19271766fdab99e6da645da8f579dbc9159df100dcea41f5cc23"
 SCHEDULE_OWNERSHIP_RECEIPT_SHA256 = "8e83fd5443149af74e14ceea44766809d1858ce856772a6500b8f55e073afde6"
 EVOLUTION_LEDGER_SHA256 = "b582a5ba8a31ddfba94324f8869dd253460dcc01102ef356327a3337275b8335"
+IMMUTABLE_V1_RECEIPT_SHA256 = "267fae49a33137c44951c8b0e7499dfda8713e99adbf73e977129bf279081837"
 
 EXTERNAL_REPORTS = {
     "recovery_receipt_json": {
@@ -961,9 +962,38 @@ def validate_receipt(value: dict, expected: dict | None = None) -> None:
 
 
 def audit() -> dict:
+    from scripts import audit_p4_workflow_evolution_ledger as evolution
+
+    current_ledger = evolution.validate_current_state()
+    if len(current_ledger["transitions"]) == 14:
+        raw = (ROOT / RECEIPT_PATH).read_bytes()
+        committed = _read_repo_json(RECEIPT_PATH)
+        require(raw.replace(b"\r\n", b"\n") == canonical_bytes(committed),
+                "immutable retained-status V1 is not canonical JSON")
+        require(committed.get("canonical_sha256") == IMMUTABLE_V1_RECEIPT_SHA256
+                and self_sha(committed) == IMMUTABLE_V1_RECEIPT_SHA256,
+                "immutable retained-status V1 identity drift")
+        require(committed.get("evolution_transition_count") == 13
+                and committed.get("workflow_source_changed") is False
+                and committed.get("checkpoint_e_status") == committed.get("p4_4_status") == "INCOMPLETE",
+                "immutable retained-status V1 predecessor facts drift")
+        return {
+            "result": "PASS",
+            "terminal": "CORE_01D_RETAINED_WORKFLOW_STATUS_V1_IMMUTABLE_HISTORICAL_INPUT",
+            "historical_snapshot": True,
+            "receipt_sha256": committed["canonical_sha256"],
+            "workflow_tree_sha1": committed["workflow_tree_sha1"],
+            "evolution_ledger_sha256": committed["evolution_ledger_sha256"],
+            "evolution_transition_count": committed["evolution_transition_count"],
+            "workflow_count": committed["workflow_count"],
+            "trigger_surface_count": committed["trigger_surface_count"],
+            "artifact_trigger_relationship_count": committed["reviewed_artifact_trigger_relationship_count"],
+            "p4_4": committed["p4_4_status"],
+            "checkpoint_e": committed["checkpoint_e_status"],
+        }
     expected = build_receipt()
     committed = _read_repo_json(RECEIPT_PATH)
-    require((ROOT / RECEIPT_PATH).read_bytes() == canonical_bytes(committed),
+    require((ROOT / RECEIPT_PATH).read_bytes().replace(b"\r\n", b"\n") == canonical_bytes(committed),
             "retained-status receipt is not canonical JSON")
     validate_receipt(committed, expected)
     return {
@@ -993,16 +1023,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--write", action="store_true", help="write the source-derived receipt")
     args = parser.parse_args(argv)
     try:
-        expected = build_receipt()
         if args.write:
+            expected = build_receipt()
             (ROOT / RECEIPT_PATH).write_bytes(canonical_bytes(expected))
             result = {"result": "WROTE", "receipt_sha256": expected["canonical_sha256"],
                       "terminal": expected["terminal"]}
         else:
-            committed = _read_repo_json(RECEIPT_PATH)
-            require((ROOT / RECEIPT_PATH).read_bytes() == canonical_bytes(committed),
-                    "retained-status receipt is not canonical JSON")
-            validate_receipt(committed, expected)
             result = audit()
         print(json.dumps(result, sort_keys=True))
         return 0

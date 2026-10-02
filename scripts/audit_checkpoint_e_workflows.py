@@ -34,6 +34,106 @@ MATRIX_POLICY_ID = "ATHENA_CORE_01D_TRIGGER_CAPABILITY_MATRIX_V1"
 RECEIPT_PATH = "artifacts/architecture/checkpoint_e_workflow_consolidation_v1.json"
 MATRIX_PATH = "artifacts/architecture/checkpoint_e_workflow_capability_matrix_v1.json"
 RETAINED_STATUS_PATH = "artifacts/architecture/core_01d_retained_workflow_status_v1.json"
+PASS1_SUPPORTING_SOURCE_PATHS = (
+    ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml",
+    ".github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml",
+    ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml",
+    "docs/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.md",
+    "docs/fotmob_utc_native_expected_goals_fresh_holdout_pr119_bootstrap_recovery.md",
+    "domain/current_fotmob_latest_durable_fresh_history.py",
+    "scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py",
+    "scripts/audit_p4_3_workflow_retirement_ledger.py",
+    "tests/test_fotmob_fresh_holdout_actions_lineage_audit_pr175_projection.py",
+    "tests/test_fotmob_fresh_holdout_continuity_workflow.py",
+    "tests/test_fotmob_fresh_holdout_pr119_bootstrap_recovery.py",
+    "tests/test_fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.py",
+    "tests/test_fresh_holdout_release_visibility_race_hotfix.py",
+    "tests/test_p4_2_athena_run_workflow.py",
+    "tests/test_p4_4a1_baseline_workflow_maintenance_revision_authority.py",
+)
+PASS1_V1_BASE_SOURCE_FIXTURES = {
+    ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml": (
+        "tests/fixtures/core_01d/pass1-v1-source/audit-lineage.yml",
+        "0ba12d02fc2cd5f7a7d9fb1458eeec5cbe3bbd23",
+        "13d8888ea802b2ef996b3e296a668f087a20a50fd0ee51ee8c5cbbc26673a274",
+    ),
+    ".github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml": (
+        "tests/fixtures/core_01d/pass1-v1-source/bridge-continuity-receipts.yml",
+        "74bfd162bd5fe67b79dd6c91550dbbb557b502e9",
+        "6902f337ee1e33aaf9cd742cdd42796ef6f1a6e299097d4a204959b872b47ebd",
+    ),
+    ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml": (
+        "tests/fixtures/architecture/revised_workflows/"
+        "fotmob-utc-native-xg-fresh-holdout-pre-core-01d-pr119-release-only-bootstrap.yml",
+        "1efe1e34d4459b2aeea17d5da8ba77bd4e2442f2",
+        "9ee4a81f508196716ccd4454b24644f8f5c9aece479103f4a17f8f9a13cfdbb9",
+    ),
+    "docs/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.md": (
+        "tests/fixtures/core_01d/pass1-v1-source/fotmob-activation-runner.md",
+        "847d4f5466c8b5493d6a2bf0b784957d72c84d03",
+        "d2482da65d38b36d10ca0edb87f6d710e380ad4cefa0660be2af587102355bb8",
+    ),
+    "docs/fotmob_utc_native_expected_goals_fresh_holdout_pr119_bootstrap_recovery.md": (
+        "tests/fixtures/core_01d/pass1-v1-source/pr119-bootstrap-recovery.md",
+        "1c76953ae04773ee19d7a701c9aa4a6f3b2aed21",
+        "32b324f8cf92206abf7b4d1eb6fcdcc05a49776fae8b146811afc6027d5e1aa9",
+    ),
+    "domain/current_fotmob_latest_durable_fresh_history.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/current-latest-fresh-history.py",
+        "bc3a9a81211a1ecd08f0ab05427d765a09bf2eea",
+        "692ea083ad5a115b51a9d3e33da874b4bce7902f07d81034f9adc3fc7a979996",
+    ),
+    "scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/schedule-recovery-lineage-projection.py",
+        "4f9c0ffda3841434bacd5001164aeae29de8fcc4",
+        "5fef00a24611cb134bb35409e9f9c668f942cca68ed6eb94404dc5804378ea03",
+    ),
+    "scripts/audit_p4_3_workflow_retirement_ledger.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/audit-p4-3-retirement-ledger.py",
+        "4d1b7f131079bdc97877fe6fdba557fa03239266",
+        "82b38665fdeaaf5a8478ae818d790aef67cb75458e2c5e8487661976c01799b6",
+    ),
+    "tests/test_fotmob_fresh_holdout_actions_lineage_audit_pr175_projection.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/test-lineage-pr175-projection.py",
+        "abf4a91dd7060a5a5f4af70f4285fdc40c3b5d2a",
+        "2708445ce510256952d98c4b4ba2d1f1f34fc09abc1de5801e44d55489b0ea15",
+    ),
+    "tests/test_fotmob_fresh_holdout_continuity_workflow.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/test-continuity-workflow.py",
+        "2ffb1642e782ea0bc993302ca40a6e2645013fc3",
+        "5333e445bb2a5fabc52717a322df688cf30d983cc8e45f3e36de5ad65a264987",
+    ),
+    "tests/test_fotmob_fresh_holdout_pr119_bootstrap_recovery.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/test-pr119-bootstrap-recovery.py",
+        "a63368d629f00f24c4c2d900961d139abcda109f",
+        "b7f718aa851964a4fa123ca8388fc77d4da45aaa788adeeb6ecf6b5022fb7aa9",
+    ),
+    ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml": (
+        "tests/fixtures/core_01d/pass1-v1-source/scheduler-liveness.yml",
+        "f613211018417435cb4ad7a22529b1ff0a38d690",
+        "2c77dfc4070bdf76a26b2209622f3ffc5fd82758f1203504729e9c90d375da21",
+    ),
+    "tests/test_fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/test-activation-runner.py",
+        "7a2a3be430896fb05717bf2d293c8b88e6570a65",
+        "941427ed48f0c2f96c97f69a728ec47e69bcbea4d625e296c211c38bc0895c7d",
+    ),
+    "tests/test_fresh_holdout_release_visibility_race_hotfix.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/test-visibility-race-hotfix.py",
+        "43ffef4866e6ea3ba57f5d6d52457be9b80703a0",
+        "09fd0d346bf6c7a62a0369e9767de19743578c5cb03d908a2ffe337abbb148b4",
+    ),
+    "tests/test_p4_2_athena_run_workflow.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/test-p42-athena-run-workflow.py",
+        "84f520e3f35c11a0556fd02c4d5db37463bde1f7",
+        "f6003ed26ab05d475f0ad28b6a87a6d0323b25f808a4dc5d15e2a317a6b50b73",
+    ),
+    "tests/test_p4_4a1_baseline_workflow_maintenance_revision_authority.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/test-p44a1-maintenance-authority.py",
+        "ac77ec10776758b0a5209cbc227d8f50eb511d8e",
+        "baabb01e1361139952b50f03df19b5f72cd78edc7d85b5795eba60fdef2dc438",
+    ),
+}
 BASE_PATH = "tests/fixtures/core_01d/exact-main-source-inventory.json"
 HISTORY_PATH = "tests/fixtures/core_01d/workflow-history-20261001.json"
 ZIP_PATH = "tests/fixtures/core_01d/accepted-athena-run-36860297707.zip"
@@ -77,6 +177,29 @@ def seal(value):
 def read(path):
     # V1 describes the merged predecessor, not the unmerged source cutover.
     from scripts.core_01d_historical_source import historical_bytes
+    if path in PASS1_V1_BASE_SOURCE_FIXTURES:
+        # These immutable V1 inputs are carried as source fixtures so shallow
+        # checkouts can reproduce the original census without fetching history.
+        # Pass 1's current versions are separately authenticated by status V2.
+        fixture, expected_blob, expected_sha = PASS1_V1_BASE_SOURCE_FIXTURES[path]
+        inventory_raw = (ROOT / BASE_PATH).read_bytes().replace(b"\r\n", b"\n")
+        require(sha(inventory_raw) == BASE_INPUT_SHA, "exact-main base inventory identity drift")
+        inventory = strict(inventory_raw)
+        require(
+            inventory.get("base_main_sha") == BASE
+            and inventory.get("canonical_sha256") == self_sha(inventory)
+            and inventory.get("files", {}).get(path, {}).get("git_blob_sha1") == expected_blob,
+            "pinned Checkpoint E V1 source identity drift: " + path,
+        )
+        raw = (ROOT / fixture).read_bytes().replace(b"\r\n", b"\n")
+        observed_blob = hashlib.sha1(
+            b"blob " + str(len(raw)).encode() + b"\0" + raw
+        ).hexdigest()
+        require(
+            observed_blob == expected_blob and sha(raw) == expected_sha,
+            "pinned Checkpoint E V1 source fixture drift: " + path,
+        )
+        return raw
     return historical_bytes(path)
 
 
@@ -138,6 +261,64 @@ def verified_additive_artifact_paths():
     return (MATRIX_PATH, RECEIPT_PATH, *additive_paths(), RETAINED_STATUS_PATH)
 
 
+def _authenticate_pr119_release_only_workflow_forward(current, before):
+    """Allow only transition 14's exact protected-workflow source identity."""
+    path = ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
+    from scripts import audit_p4_workflow_evolution_ledger as evolution
+    from scripts import audit_core_01d_retained_workflow_status_v2 as retained_status_v2
+
+    require(
+        tuple(retained_status_v2.SUPPORTING_SOURCE_PATHS) == PASS1_SUPPORTING_SOURCE_PATHS,
+        "checkpoint and retained-status V2 supporting-source contracts differ",
+    )
+    ledger = evolution.validate_current_state()
+    require(
+        len(ledger["transitions"]) == 14
+        and ledger["canonical_sha256"] == evolution.CORE01D_PR119_LEDGER_SHA256
+        and ledger["current_workflow_tree_sha1"] == evolution.CORE01D_PR119_WORKFLOW_TREE_SHA1,
+        "fresh-holdout forward is not the exact authenticated transition-14 tree/ledger tuple",
+    )
+    transition = ledger["transitions"][-1]
+    observed = current.get(path)
+    require(
+        transition["transition_id"] == "CORE01D_FRESH_HOLDOUT_PR119_RELEASE_ONLY_BOOTSTRAP_V1"
+        and transition["workflow_path"] == path
+        and transition["operation"] == "MAINTENANCE_REVISE"
+        and transition["phase_id"] == "CORE-01D"
+        and transition["canonical_family"] == "PROTECTED_RESEARCH"
+        and transition["before"]["git_blob_sha1"] == before["git_blob_sha1"]
+        and observed is not None
+        and observed["mode"] == before["mode"]
+        and observed["git_blob_sha1"] == transition["after"]["git_blob_sha1"],
+        "fresh-holdout current source differs from its exact transition-14 identity",
+    )
+    status = retained_status_v2.audit()
+    require(
+        status.get("result") == "PASS"
+        and status.get("evolution_ledger_sha256") == evolution.CORE01D_PR119_LEDGER_SHA256
+        and status.get("workflow_tree_sha1") == evolution.CORE01D_PR119_WORKFLOW_TREE_SHA1,
+        "current retained-status V2 did not authenticate the exact transition-14 source",
+    )
+    supporting = retained_status_v2.build_receipt()["pass1_supporting_source_inventory"]
+    require(
+        [row["path"] for row in supporting] == list(retained_status_v2.SUPPORTING_SOURCE_PATHS),
+        "Pass-1 supporting source inventory path set drift",
+    )
+    for row in supporting:
+        observed_support = current.get(row["path"])
+        require(
+            observed_support is not None
+            and observed_support["git_blob_sha1"] == row["git_blob_sha1"],
+            "Pass-1 supporting source differs from its V2 authenticated identity: " + row["path"],
+        )
+    return {
+        "workflow_blob": transition["after"]["git_blob_sha1"],
+        "supporting_source_blobs": {
+            row["path"]: row["git_blob_sha1"] for row in supporting
+        },
+    }
+
+
 def base_input():
     raw = read(BASE_PATH)
     require(sha(raw) == BASE_INPUT_SHA, "exact-main base inventory identity drift")
@@ -145,9 +326,34 @@ def base_input():
     require(value["base_main_sha"] == BASE and value["canonical_sha256"] == self_sha(value), "base input binding drift")
     current = git_inventory()
     _, audit_after = historical_audit_forward(value)
+    fresh_workflow_path = ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
+    fresh_workflow_after_blob = None
+    supporting_source_blobs = {}
+    if current.get(fresh_workflow_path) != value["files"].get(fresh_workflow_path):
+        forward = _authenticate_pr119_release_only_workflow_forward(
+            current, value["files"][fresh_workflow_path]
+        )
+        fresh_workflow_after_blob = forward["workflow_blob"]
+        supporting_source_blobs = forward["supporting_source_blobs"]
     for path, identity in value["files"].items():
         if path == HISTORICAL_AUDIT:
             require(current.get(path) in (identity, {"mode": identity["mode"], "git_blob_sha1": audit_after}), "historical audit forward Git identity differs")
+        elif path == fresh_workflow_path and fresh_workflow_after_blob:
+            require(
+                current.get(path) == {
+                    "mode": identity["mode"],
+                    "git_blob_sha1": fresh_workflow_after_blob,
+                },
+                "fresh-holdout workflow differs from its transition-14 identity",
+            )
+        elif path in supporting_source_blobs:
+            require(
+                current.get(path) == {
+                    "mode": identity["mode"],
+                    "git_blob_sha1": supporting_source_blobs[path],
+                },
+                "Pass-1 supporting source differs from its V2 authenticated identity: " + path,
+            )
         else:
             require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
     # Git can be clean while the working tree has edits. Verify inspected source
@@ -163,7 +369,12 @@ def base_input():
         if path in identities():
             inspected = read(path)
             actual = hashlib.sha1(b"blob " + str(len(inspected)).encode() + b"\0" + inspected).hexdigest()
-        expected_blob = audit_after if path == HISTORICAL_AUDIT else value["files"][path]["git_blob_sha1"]
+        expected_blob = (
+            audit_after if path == HISTORICAL_AUDIT
+            else fresh_workflow_after_blob if path == fresh_workflow_path and fresh_workflow_after_blob
+            else supporting_source_blobs[path] if path in supporting_source_blobs
+            else value["files"][path]["git_blob_sha1"]
+        )
         require(actual == expected_blob, f"worktree source differs: {path}")
     require(value["workflow_tree_sha1"] == "134cdd8bfa54488770f562c93571e46ac84a8187", "immutable V1 workflow tree changed")
     return value

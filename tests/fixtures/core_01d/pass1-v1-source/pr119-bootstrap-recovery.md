@@ -4,13 +4,6 @@
 
 `RESEARCH_ONLY_FAIL_CLOSED_BOOTSTRAP_RECOVERY`
 
-> **Historical behavior record.** This document preserves the recovery behavior
-> introduced for PR #175. Pass 1 supersedes that runtime fallback: the current
-> protected workflow uses only the authenticated fixed PR119 release projection
-> described in `fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.md`.
-> Artifact `9249856559` remains unrecovered historical evidence and is not a
-> current bootstrap source.
-
 ## Evidence that opened this boundary
 
 After PR #174 merged, the next ordinary scheduled fresh-holdout collection run was GitHub Actions run `32236046186` on exact `main` `30520e8b5f451cb505b55fec80b505c18a1b529f`.
@@ -49,7 +42,7 @@ Frozen blob:
 
 That executor accepts the preserved PR119 artifact ZIP directly, replays the reviewed historical adapter/materialization chain offline, and emits the exact frozen PR119 projection.
 
-## Historical recovery behavior at PR #175 (superseded)
+## Recovery behavior
 
 When the bootstrap Release cache does not already contain the exact reviewed projection, the scheduled workflow now:
 

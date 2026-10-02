@@ -21,37 +21,27 @@ The runner fails closed against the exact merged implementation/control chain:
 - reviewed ordinary-FT adapter blob `868563206e09010fce74b4ba7954028930baad54`;
 - PR119 materialization executor blob `2409676b4993a25024e2e8554e84e3525e7c5e6e`.
 
-## Fixed PR119 bootstrap release
+## Exact historical bootstrap
 
-The feature-history ledger remains rooted in the exact reviewed PR119 projection:
+The feature-history ledger is always rooted in the exact reviewed PR119 projection:
 
 - SHA-256 `e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2`;
 - size `10,545,099` bytes;
 - rows `21,326`.
 
-The protected workflow now accepts only the exact fixed-release role:
+The workflow first looks for the dedicated immutable bootstrap release asset:
 
-- repository `Thabearr/ATHENA`;
-- release `athena-fresh-holdout-bootstrap-v1`, ID `373205103`, name
-  `PR119 Materialized Bootstrap Projection`, not draft or prerelease;
-- asset `pr119-materialized.ndjson`, ID `521090702`, uploaded state, size
-  `10,545,099`, and reviewed SHA-256
-  `e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2`.
+`athena-fresh-holdout-bootstrap-v1 / pr119-materialized.ndjson`
 
-The workflow authenticates release metadata by release ID, requires exactly one
-asset matching the fixed asset identity, downloads by asset ID, then verifies
-the exact bytes and all `21,326` rows with the existing reviewed parser before
-the collection step can run. Any metadata, download, payload, or target-file
-failure stops before provider acquisition.
+If it does not yet exist, the workflow downloads the already-reviewed historical campaign artifact:
 
-There is no fallback to historical artifact `9249856559`, local rematerialization,
-provider reconstruction, latest-release lookup, or release publication from the
-bootstrap step. Artifact `9249856559` remains `METADATA_ONLY_NO_BYTES`; it was
-not recovered or replaced. The spent PR139 historical replay dependency on the
-original ZIP remains separate.
+- source run `31887523012`;
+- artifact ID `9249856559`;
+- artifact name `fotmob-ordinary-ft-source-history-campaign-31887523012`;
+- ZIP size `61,886,753`;
+- ZIP SHA-256 `7c2fa200efed098bd5fca22fc139af816256c74967b98d8cb2c62fe3e793508f`.
 
-The offline repository fixture contains the exact retained fixed-release bytes
-and proves the same parser/hash/size/row contract without network access.
+It then re-executes PR119 locally and accepts the materialized projection only if its exact frozen hash, size, and row count match. The projection is uploaded once as the bootstrap release asset. A partially created bootstrap release with a missing or wrong asset fails closed instead of silently regenerating a second authority.
 
 ## Schedule identity and cron slot isolation
 
@@ -71,17 +61,9 @@ A delayed `:07` event arriving after `:37` is never re-slotted to `:37`; it reta
 
 The workflow obtains the current Actions run `created_at` from GitHub and resolves the latest occurrence of the event's own nominal minute not later than that creation time. A nominal slot is control identity only.
 
-The authenticated `workflow_dispatch` continuity path is distinct from an
-operator-selected manual slot: it requires the completed natural watchdog run,
-the exact future slot and cron identity, the current-main binding, and
-`PROSPECTIVE_ONLY_NO_BACKFILL_V1`. It can address only that prospective target;
-it cannot replay a missed slot.
-
 The actual FotMob capture manifest `observed_at` remains the only observation time used by PR #149. A capture whose actual `observed_at` predates its nominal slot is rejected. A delayed capture remains delayed; it is never backdated to the cron slot.
 
-There is no generic `workflow_dispatch` path that accepts an operator-invented
-slot. Only the separately authenticated prospective continuity inputs above
-are retained.
+There is no `workflow_dispatch` activation path in this boundary. That prevents a manual run from inventing a prospective slot.
 
 ## Scheduler gaps
 
@@ -129,9 +111,7 @@ To satisfy ATHENA's evidence-preservation contract, raw live captures are staged
 
 ## Zero PyPI runtime dependencies
 
-The entire activation runner execution path (runner, FotMob data/matches capture,
-fixed-release PR119 bootstrap metadata/asset validation, PR149 fresh-holdout core,
-and ordinary-FT adapter) is implemented strictly using the Python 3.12 standard library.
+The entire activation runner execution path (runner, FotMob data/matches capture, PR119 bootstrap materialization, PR149 fresh-holdout core, and ordinary-FT adapter) is implemented strictly using the Python 3.12 standard library.
 
 The scheduled collection workflow performs zero `pip install` commands and avoids unpinned PyPI dependencies.
 

@@ -145,11 +145,6 @@ def test_fresh_holdout_workflow_and_mirror_pins_match_the_reviewed_base() -> Non
             # checked by the hotfix receipt/tests.
             old_transport = Path(hotfix["transport_before_fixture_path"]).read_bytes()
             assert evolution.source_identity(old_transport)["git_blob_sha1"] == blob
-        elif path in evolution.CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES:
-            historical = evolution.resolve_p43a_historical_workflow_source(
-                path, evolution_ledger=current
-            )
-            assert evolution.source_identity(historical)["git_blob_sha1"] == blob
         else:
             identity_commit = authority.BASE_MAIN_SHA if authority._base_commit_available() else "HEAD"
             assert _git("rev-parse", f"{identity_commit}:{path}") == blob
@@ -186,11 +181,8 @@ def test_p44a1_historical_sources_and_current_maintenance_identities_are_indepen
         assert Path(fixture_path).read_bytes() == historical
         assert evolution.source_identity(historical) == transition["before"]
         current_bytes = Path(path).read_bytes().replace(b"\r\n", b"\n")
-        expected_current = evolution.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD.get(
-            path, (None, transition["after"])
-        )[1]
-        assert evolution.source_identity(current_bytes) == expected_current
-        assert _git("rev-parse", f"HEAD:{path}") == expected_current["git_blob_sha1"]
+        assert evolution.source_identity(current_bytes) == transition["after"]
+        assert _git("rev-parse", f"HEAD:{path}") == transition["after"]["git_blob_sha1"]
 
     hotfix = json.loads(
         Path("artifacts/architecture/fresh_holdout_release_visibility_race_hotfix_v1.json")

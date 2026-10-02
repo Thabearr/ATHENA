@@ -140,12 +140,15 @@ def test_current_workflow_tree_and_protected_paths_match_reviewed_evolution() ->
     assert len(c3_snapshot["transitions"]) == 11
     assert ledger["transitions"][:11] == c3_snapshot["transitions"]
     assert c3_snapshot["current_workflow_tree_sha1"] == evolution.CORE01C_WORKFLOW_TREE_SHA1
-    assert len(ledger["transitions"]) == 13
+    assert len(ledger["transitions"]) == 14
     assert [t["transition_id"] for t in ledger["transitions"][11:]] == [
-        "CORE01D_ATHENA_RUN_SCHEDULED_SHADOW_CUTOVER_V1", "CORE01D_CURRENT_SHADOW_SCHEDULE_RETIRE_V1"]
-    assert ledger["canonical_sha256"] == evolution.CORE01D_LEDGER_SHA256
-    assert ledger["current_workflow_tree_sha1"] == evolution.CORE01D_WORKFLOW_TREE_SHA1
-    assert evolution.CORE01D_WORKFLOW_TREE_SHA1 == evolution._git(
+        "CORE01D_ATHENA_RUN_SCHEDULED_SHADOW_CUTOVER_V1",
+        "CORE01D_CURRENT_SHADOW_SCHEDULE_RETIRE_V1",
+        "CORE01D_FRESH_HOLDOUT_PR119_RELEASE_ONLY_BOOTSTRAP_V1",
+    ]
+    assert ledger["canonical_sha256"] == evolution.CORE01D_PR119_LEDGER_SHA256
+    assert ledger["current_workflow_tree_sha1"] == evolution.CORE01D_PR119_WORKFLOW_TREE_SHA1
+    assert evolution.CORE01D_PR119_WORKFLOW_TREE_SHA1 == evolution._git(
         "rev-parse", "HEAD:.github/workflows"
     ).decode("ascii").strip()
     assert p44g_receipt["workflow_tree_sha1_after"] == "d58f71b9ac653c8762f1d9b18eede15755ee1a76"
@@ -156,6 +159,13 @@ def test_current_workflow_tree_and_protected_paths_match_reviewed_evolution() ->
         item["workflow_path"]: item["after"]
         for item in ledger["transitions"]
     }
+    latest.update(
+        {
+            path: after
+            for path, (_before, after)
+            in evolution.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD.items()
+        }
+    )
     for path in evolution.PROTECTED:
         assert path in baseline
         raw = Path(path).read_bytes().replace(b"\r\n", b"\n")

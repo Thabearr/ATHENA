@@ -77,13 +77,28 @@ CORE01D_SCHEDULE_RETIRE_CONTRACT = {
     "event_trigger_kinds_changed": True,
     "concurrency_changed": False,
 }
+CORE01D_PR119_RELEASE_ONLY_CONTRACT = {
+    **AUTHORITY_SURFACE_MAINTENANCE_CONTRACT_V2,
+    "policy_id": "ATHENA_P4_BASELINE_WORKFLOW_MAINTENANCE_REVISE_V3_CORE01D_PR119_RELEASE_ONLY_BOOTSTRAP",
+    "workflow_dispatch_input_surface_changed": False,
+}
 CORE01D_CONTRACT_PATHS = {
     CORE01D_SCHEDULE_OWNER_CONTRACT["policy_id"]: ".github/workflows/athena-run.yml",
     CORE01D_SCHEDULE_RETIRE_CONTRACT["policy_id"]: ".github/workflows/current-shadow-all-market.yml",
+    CORE01D_PR119_RELEASE_ONLY_CONTRACT["policy_id"]: ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml",
+}
+CORE01D_CONTRACT_FAMILIES = {
+    CORE01D_SCHEDULE_OWNER_CONTRACT["policy_id"]: "ATHENA_RUN",
+    CORE01D_SCHEDULE_RETIRE_CONTRACT["policy_id"]: "ATHENA_RUN",
+    CORE01D_PR119_RELEASE_ONLY_CONTRACT["policy_id"]: "PROTECTED_RESEARCH",
 }
 MAINTENANCE_CONTRACTS.update({
     contract["policy_id"]: contract
-    for contract in (CORE01D_SCHEDULE_OWNER_CONTRACT, CORE01D_SCHEDULE_RETIRE_CONTRACT)
+    for contract in (
+        CORE01D_SCHEDULE_OWNER_CONTRACT,
+        CORE01D_SCHEDULE_RETIRE_CONTRACT,
+        CORE01D_PR119_RELEASE_ONLY_CONTRACT,
+    )
 })
 REVISED_WORKFLOW_FIXTURE_ROOT = "tests/fixtures/architecture/revised_workflows/"
 PROTECTED = retirement.PROTECTED_LIVE | {".github/workflows/current-shadow-sportybet-source-diagnostic.yml"}
@@ -453,9 +468,12 @@ def apply_transitions(
             if transition["canonical_family"] != baseline_families[path]:
                 raise WorkflowEvolutionError(f"MAINTENANCE_REVISE canonical family differs from P4.3A: {path}")
             _validate_maintenance_contract(transition["maintenance_contract"])
-            core01d_path = CORE01D_CONTRACT_PATHS.get(transition["maintenance_contract"]["policy_id"])
+            core01d_policy = transition["maintenance_contract"]["policy_id"]
+            core01d_path = CORE01D_CONTRACT_PATHS.get(core01d_policy)
             if core01d_path is not None and (
-                phase != "CORE-01D" or path != core01d_path or transition["canonical_family"] != "ATHENA_RUN"
+                phase != "CORE-01D"
+                or path != core01d_path
+                or transition["canonical_family"] != CORE01D_CONTRACT_FAMILIES[core01d_policy]
             ):
                 raise WorkflowEvolutionError("CORE-01D maintenance contract is reserved for its exact phase/path/family")
             if transition["maintenance_contract"].get("policy_id") == AUTHORITY_SURFACE_MAINTENANCE_CONTRACT_V2["policy_id"] and (
@@ -588,6 +606,42 @@ def resolve_p43a_historical_workflow_source(
         item for item in evolution_ledger.get("transitions", [])
         if item.get("operation") == "MAINTENANCE_REVISE" and item.get("workflow_path") == path
     ]
+    if not revisions and path in CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES:
+        fixture_path, expected = CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES[path]
+        if (
+            evolution_ledger.get("canonical_sha256") != CORE01D_PR119_LEDGER_SHA256
+            or canonical_sha256(evolution_ledger) != CORE01D_PR119_LEDGER_SHA256
+            or evolution_ledger.get("current_workflow_tree_sha1")
+            != CORE01D_PR119_WORKFLOW_TREE_SHA1
+            or not evolution_ledger.get("transitions")
+            or evolution_ledger["transitions"][-1].get("transition_id")
+            != "CORE01D_FRESH_HOLDOUT_PR119_RELEASE_ONLY_BOOTSTRAP_V1"
+            or _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
+            != CORE01D_PR119_WORKFLOW_TREE_SHA1
+        ):
+            raise WorkflowEvolutionError(
+                "P4.3A historical source forward is outside the exact PR119 workflow context"
+            )
+        if {key: row.get(key) for key in IDENTITY_KEYS} != expected:
+            raise WorkflowEvolutionError(
+                f"PR119 historical source fixture differs from the frozen P4.3A matrix: {path}"
+            )
+        fixture = Path(__file__).resolve().parents[1] / fixture_path
+        if not fixture.is_file() or fixture.is_symlink():
+            raise WorkflowEvolutionError(
+                f"PR119 historical source fixture is unavailable: {fixture_path}"
+            )
+        raw = fixture.read_bytes()
+        if (
+            source_identity(raw) != expected
+            or source_identity(_git("show", f"HEAD:{fixture_path}")) != expected
+            or source_identity(_git("show", f"HEAD:{path}"))
+            != CORE01D_PR119_CONTROL_WORKFLOW_FORWARD[path][1]
+        ):
+            raise WorkflowEvolutionError(
+                f"PR119 historical source fixture/current forward identity changed: {path}"
+            )
+        return raw
     if not revisions:
         return retirement.resolve_reviewed_workflow_source(path, ledger=history)
     first = revisions[0]
@@ -793,6 +847,56 @@ CORE01C_WORKFLOW_TREE_SHA1 = "134cdd8bfa54488770f562c93571e46ac84a8187"
 CORE01C_LEDGER_SHA256 = "d01539f234955ef873bcd549faa83502d51eb96043eed627dbd2da450409f1e7"
 CORE01D_WORKFLOW_TREE_SHA1 = "9060b6fb263febc45332a7cf9c9da8448284b471"
 CORE01D_LEDGER_SHA256 = "b582a5ba8a31ddfba94324f8869dd253460dcc01102ef356327a3337275b8335"
+CORE01D_PR119_WORKFLOW_TREE_SHA1 = "9b08653f1a12bb1b3d964fbd910396ff955740da"
+CORE01D_PR119_LEDGER_SHA256 = "73e1eb3fe6593558c821600dd0f103353d45c15a139ab470a996c7cbb35da531"
+CORE01D_PR119_CONTROL_WORKFLOW_FORWARD = {
+    ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml": (
+        {
+            "git_blob_sha1": "0ba12d02fc2cd5f7a7d9fb1458eeec5cbe3bbd23",
+            "source_sha256": "13d8888ea802b2ef996b3e296a668f087a20a50fd0ee51ee8c5cbbc26673a274",
+        },
+        {
+            "git_blob_sha1": "2bee954fdfb8ea4eaed8dee82f0c46657cae9033",
+            "source_sha256": "df803347f9153c050b24af4589cbc051a576fa0e20c09a55c5ecd38eb7a51a74",
+        },
+    ),
+    ".github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml": (
+        {
+            "git_blob_sha1": "74bfd162bd5fe67b79dd6c91550dbbb557b502e9",
+            "source_sha256": "6902f337ee1e33aaf9cd742cdd42796ef6f1a6e299097d4a204959b872b47ebd",
+        },
+        {
+            "git_blob_sha1": "9e07461c0cc6682fe004a77ec3aff6b1e144f246",
+            "source_sha256": "777b7a47dba0a6d6592dadba1e06017c38ccabfc8e339ea294ee332042b54557",
+        },
+    ),
+    ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml": (
+        {
+            "git_blob_sha1": "f613211018417435cb4ad7a22529b1ff0a38d690",
+            "source_sha256": "2c77dfc4070bdf76a26b2209622f3ffc5fd82758f1203504729e9c90d375da21",
+        },
+        {
+            "git_blob_sha1": "a7454258e2c434f96e416d405997135855579d71",
+            "source_sha256": "549616e8518502e7b4fde6ebde7fe9442c0058f6de0a48fcb1ebe5b20a200ec6",
+        },
+    ),
+}
+CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES = {
+    ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml": (
+        "tests/fixtures/core_01d/pass1-v1-source/audit-lineage.yml",
+        {
+            "git_blob_sha1": "0ba12d02fc2cd5f7a7d9fb1458eeec5cbe3bbd23",
+            "source_sha256": "13d8888ea802b2ef996b3e296a668f087a20a50fd0ee51ee8c5cbbc26673a274",
+        },
+    ),
+    ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml": (
+        "tests/fixtures/core_01d/pass1-v1-source/scheduler-liveness.yml",
+        {
+            "git_blob_sha1": "f613211018417435cb4ad7a22529b1ff0a38d690",
+            "source_sha256": "2c77dfc4070bdf76a26b2209622f3ffc5fd82758f1203504729e9c90d375da21",
+        },
+    ),
+}
 
 
 def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha):
@@ -806,6 +910,7 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
         (CORE01B_WORKFLOW_TREE_SHA1, CORE01B_LEDGER_SHA256),
         (CORE01C_WORKFLOW_TREE_SHA1, CORE01C_LEDGER_SHA256),
         (CORE01D_WORKFLOW_TREE_SHA1, CORE01D_LEDGER_SHA256),
+        (CORE01D_PR119_WORKFLOW_TREE_SHA1, CORE01D_PR119_LEDGER_SHA256),
     }
     if ((head_tree, ledger_sha) not in reviewed_contexts
             or derived.get(PORT02C_REPLAY_WORKFLOW_PATH) != PORT02C_REPLAY_WORKFLOW_BEFORE
@@ -813,6 +918,17 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
         raise WorkflowEvolutionError("workflow tree differs without exact PORT-02C replay successor")
     result = dict(derived)
     result[PORT02C_REPLAY_WORKFLOW_PATH] = dict(PORT02C_REPLAY_WORKFLOW_AFTER)
+    if (head_tree, ledger_sha) == (
+        CORE01D_PR119_WORKFLOW_TREE_SHA1,
+        CORE01D_PR119_LEDGER_SHA256,
+    ):
+        for path, (before, after) in CORE01D_PR119_CONTROL_WORKFLOW_FORWARD.items():
+            if derived.get(path) != before or observed.get(path) != after:
+                raise WorkflowEvolutionError(
+                    "PR119 control-workflow pin forward differs from exact source identities: "
+                    + path
+                )
+            result[path] = dict(after)
     return result
 
 

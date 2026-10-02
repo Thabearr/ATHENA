@@ -32,9 +32,12 @@ SHA = "a" * 40
 
 
 def _git_blob_sha(path: Path) -> str:
-    import subprocess
+    import hashlib
 
-    return subprocess.check_output(["git", "hash-object", str(path)]).decode("ascii").strip()
+    raw = path.read_bytes()
+    return hashlib.sha1(
+        b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
+    ).hexdigest()
 
 
 def _continuity_runs(*, target: str = "2026-08-29T07:07:00Z"):
@@ -127,17 +130,14 @@ def test_projection_retains_historical_pr175_pin_and_recovery_owns_current_workf
         recovery_projection.PRE_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA
         == projection.POST_PR175_WORKFLOW_BLOB_SHA
     )
-    assert recovery_projection.POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA == (
-        "1efe1e34d4459b2aeea17d5da8ba77bd4e2442f2"
-    )
     assert (
-        recovery_projection.POST_PR119_WORKFLOW_BLOB_SHA
+        recovery_projection.POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA
         == _git_blob_sha(COLLECTION_WORKFLOW)
     )
     # Historical producer identity remains preserved as provenance, while the
     # recovery projection owns the exact current continuity-capable producer.
     assert "eb6cfd3966d7040f630fc3a51c6cad41b171bcfb" != (
-        recovery_projection.POST_PR119_WORKFLOW_BLOB_SHA
+        recovery_projection.POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA
     )
 
 
