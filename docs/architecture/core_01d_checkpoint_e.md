@@ -220,7 +220,7 @@ this PR is open and would be 5/5 if owner-merged; the mandatory governing-source
 reread becomes due immediately after that merge and before any further
 remediation. **Do not merge.**
 
-## Current Pass-3: canonical Drive transfer completed, retained non-executable history
+## Historical Pass-3: canonical Drive transfer completed, retained non-executable history
 
 Pass 1 closed blocker A through the fixed-release bootstrap; Pass 2 closed B
 as a live PR145 dependency while preserving its historical retention defects.
@@ -295,3 +295,93 @@ the separately authorized repository administration boundary.
 The mandatory governing-source reread completed after #434 before this mission.
 SOURCE_REVIEW_COUNTER is **0/5 while open**, **1/5 if owner-merged**; mandatory
 reread is not due. **Checkpoint E: INCOMPLETE. P4.4: INCOMPLETE. DO NOT MERGE.**
+
+## Current Pass-4: owner accepts retention limitations; completion still unproven
+
+PR #435 merged as `bccb33f009d57b9874243e52e79ebcb42c195be4`, repository tree
+`ec6817b0bf58261ed0c9b38af5b1e24c25c50297`. Post-merge Tests `37033465783`
+passed syntax, shards 1–8, aggregate and overall on that exact `push` head.
+V4 remains immutable at canonical SHA-256
+`aee531727b1c1db3e382062b89d197b05ab9080126eeb2a596be23336e848410`.
+A, B and C retain their prior closures; D was the sole missing-artifact retention
+blocker at this handoff.
+
+The owner explicitly authorizes `ACCEPTED_HISTORICAL_RETENTION_LIMITATION` for
+all eight D identities and the separate PR145 successful result `9294215497`.
+The new `core_01d_historical_retention_acceptance_v1.json` closes
+`HISTORICAL_REPLAY_ARCHIVES_UNAVAILABLE` by policy acceptance, not byte recovery,
+substitution, replay, deprecation of historical truth, retirement or deletion.
+All nine queried current Actions listings returned zero artifacts. The
+source-controlled availability snapshot records exact run/artifact pairs,
+read-only endpoints and UTC observation timestamps, without inferring any
+expiration/deletion date, actor, cause or never-existed state.
+
+| Artifact | Retained limitation | Historical meaning preserved |
+| --- | --- | --- |
+| 9249856559 | Unavailable exact historical replay source | Spent PR139 replay unavailable; PR119 fixed projection is distinct successor evidence, not original ZIP recovery |
+| 9422055017 | Unavailable exact historical verification source | PR193/194/197 raw replay unavailable; PR193 derived output is not raw source |
+| 9437181220 | Unavailable exact historical verification source | PR200/201/202 replay unavailable; PR202 catalog admission remains UNPROVEN, candidate upload and later owner SHA comment are not admission, store step skipped |
+| 9266604353 | Unavailable historical lineage archive | PR130 V2 metadata reconciliation is neither V1 bytes nor semantic qualification |
+| 9274313978 | Unavailable forensic failure archive | Failure before runner/source acquisition remains failure, not qualification evidence |
+| 9275052993 | Unavailable exact historical replay source | PR145 successful one-shot history preserved; original raw replay unavailable |
+| 9292984849 | Unavailable forensic pre-attempt archive | Pre-attempt HTTP 403 preserved; no marker/checkout/download/validator/training, not validator input or success |
+| 9491418446 | Partial historical archive retention | Transfer-preparation run 32635585415 succeeded; current archive cannot be reconstructed |
+| 9294215497 | Unavailable successful result archive with source-controlled review | Mixed/weak result and no-successor decision preserved; review is not a byte-equivalent ZIP substitute |
+
+No exact archive bytes were recovered. `9491418446` remains
+`PARTIAL_DURABLE_COPY_RECOVERED`, with visible wrappers `000`–`010`, `022`
+(12/23) and missing `011`–`021`. The prior recovery-report SHA-256
+`0934cc3b511e8fee8e4fee24b0e89e0180f1869df0eec968f4718e67ba766e26`
+and immutable Pass-3 snapshot bind these external facts. No fresh Drive/Gmail
+query or part rehash is claimed; CI requires no external account access.
+
+The limitation policy keeps exact historical identities, sizes, hashes, lineage
+and nuanced meanings. All supported current runtime dependencies, available
+replays and authorized replay/reacquisition/backfill/substitution counts are
+zero. Workflows and exact-byte guards remain fail-closed; metadata cannot replace
+missing bytes. Later-discovered exact bytes require additive evidence review
+without rewriting prior observations or granting replay.
+
+Retained-status V5 preserves V4's eight artifact rows and all fourteen relation
+rows exactly, then adds a separate acceptance layer including `9294215497`.
+Counts remain 12 artifact/workflow edges, zero live and fourteen
+historical/spent/non-executable relationships. V5's empty blocker list is scoped
+to these retention dependencies. Its completion candidate is explicitly delegated
+to `core_01d_checkpoint_e_completion_v1.json`; V5 itself is not completion
+publication authority.
+
+The independent completion audit authenticates the current 39/57 source census,
+canonical artifact roles, failed-producer guard, secondary non-authoritative
+notification, clean successor gate, scheduled-SHADOW ownership, historical
+prefixes, current evolution and retirement ledger. It evaluates all nineteen
+mandatory criteria: **17 pass; criteria 11 and 14 remain unproven**:
+
+- `all_retained_workflow_authority_and_dynamic_reachability_review_complete`
+- `no_unknown_current_artifact_or_notification_authority`
+
+The authenticated forward capability matrix still contains 53 trigger surfaces
+with unreviewed authority fields. The completion receipt binds those surfaces
+to current unchanged workflow source hashes and preserves the exact failure
+evidence. Explicit retention acceptance does not supply a missing authority or
+dynamic-caller review. No retirement proof is required to close Checkpoint E;
+these failures are unproven completion criteria, not a demand to retire or delete
+workflows. This pass does not widen scope to manufacture such a review.
+
+**Architecture Checkpoint E: INCOMPLETE. P4.4: INCOMPLETE.** Blocker D is closed
+by owner acceptance, while the two completion-criterion blockers above remain.
+The master audit reads current status only from the independently authenticated
+completion receipt; historical V1/V2 INCOMPLETE states and V1–V4 retained-status
+receipts are never rewritten. Zero live missing-artifact dependencies alone do
+not prove all nineteen criteria.
+
+Workflow tree remains `9b08653f1a12bb1b3d964fbd910396ff955740da`; evolution
+ledger remains `73e1eb3fe6593558c821600dd0f103353d45c15a139ab470a996c7cbb35da531`
+with fourteen transitions, and the three-workflow retirement ledger and PORT-02C
+contexts remain unchanged. No workflow/trigger edits, retirement, deletion,
+provider operation, dispatch/rerun/cancel, reconstruction, warehouse rebuild,
+source regeneration, Drive/Gmail mutation, model validation/training, SMTP,
+share code, login/cookies/wallet/stake/wager or protected semantic change occurred.
+Repository evidence publication is the separately authorized Git/PR/#337 boundary.
+
+SOURCE_REVIEW_COUNTER is **1/5 while open**, **2/5 if later owner-merged**;
+mandatory reread is not due. **DO NOT MERGE. Owner independent review required.**

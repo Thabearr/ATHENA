@@ -196,11 +196,12 @@ def test_committed_receipts_are_authenticated():
     assert transfer.audit()["result"] == "PASS"
 
 
-def test_checkpoint_additive_seam_authenticates_v4_and_reports_only_d():
+def test_checkpoint_additive_seam_preserves_v4_but_delegates_current_status():
     from scripts import audit_checkpoint_e_workflows as checkpoint
     paths = checkpoint.verified_additive_artifact_paths()
     assert v4.RECEIPT_PATH in paths and transfer.RECEIPT_PATH in paths
     result = checkpoint.audit()
-    assert result["blockers"] == [v4.BLOCKER_D]
+    from scripts import audit_core_01d_checkpoint_e_completion as completion
+    assert result["blockers"] == completion.audit()["remaining_blockers"]
     assert result["current_live_missing_artifact_relation_count"] == 0
     assert result["checkpoint_e"] == result["p4_4"] == "INCOMPLETE"
