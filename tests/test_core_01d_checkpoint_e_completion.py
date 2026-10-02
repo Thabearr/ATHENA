@@ -9,7 +9,8 @@ from scripts import audit_core_01d_historical_retention_acceptance as policy
 
 @pytest.fixture(scope="module")
 def receipt():
-    return completion.build_receipt()
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as current
+    return current.historical_v1_receipt()
 
 
 def test_all_nineteen_green_are_required_for_complete():
@@ -76,7 +77,9 @@ def test_boolean_and_inventory_criterion_contract_is_strict():
 
 
 def test_scope_rejects_an_extra_runtime_file_without_base_commit_in_ci():
-    raw = policy.v4.v3._git("ls-tree", "-r", "HEAD")
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as current
+    with current.historical_v1_git_view():
+        raw = policy.v4.v3._git("ls-tree", "-r", "HEAD")
     completion.validate_bounded_inventory(raw)
     forged = raw + b"100644 blob 0000000000000000000000000000000000000000\tmodels/unapproved.py\n"
     with pytest.raises(policy.RetentionAcceptanceError, match="unapproved repository change"):
@@ -92,7 +95,8 @@ def test_completion_does_not_invoke_any_sender_even_a_mock(monkeypatch):
     monkeypatch.setattr(mail, "send_receipt_email", deny)
     monkeypatch.setattr(smtplib, "SMTP", deny)
     monkeypatch.setattr(socket, "create_connection", deny)
-    assert completion.build_receipt()["checkpoint_criteria"]["notification_explicit_and_non_authoritative"] is True
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as current
+    assert current.historical_v1_receipt()["checkpoint_criteria"]["notification_explicit_and_non_authoritative"] is True
 
 
 def test_immutable_tree_evolution_retirement_and_false_authority(receipt):
@@ -108,7 +112,10 @@ def test_immutable_tree_evolution_retirement_and_false_authority(receipt):
 def test_master_current_status_is_independently_authenticated(receipt):
     from scripts import audit_checkpoint_e_workflows as master
     result = master.audit()
-    assert result["current_completion_receipt_sha256"] == receipt["canonical_sha256"]
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as current
+    assert result["historical_completion_v1_receipt_sha256"] == receipt["canonical_sha256"]
+    assert result["current_completion_receipt_sha256"] == current.audit()["receipt_sha256"]
     assert result["blockers"] == receipt["remaining_blocker_ids"]
     assert result["checkpoint_e"] == result["p4_4"] == "INCOMPLETE"
-    assert completion.audit()["result"] == "PASS"
+    with current.historical_v1_git_view():
+        assert completion.audit()["result"] == "PASS"
