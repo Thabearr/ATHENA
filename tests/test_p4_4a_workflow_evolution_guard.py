@@ -159,6 +159,13 @@ def test_current_workflow_tree_and_protected_paths_match_reviewed_evolution() ->
         item["workflow_path"]: item["after"]
         for item in ledger["transitions"]
     }
+    latest.update(
+        {
+            path: after
+            for path, (_before, after)
+            in evolution.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD.items()
+        }
+    )
     for path in evolution.PROTECTED:
         assert path in baseline
         raw = Path(path).read_bytes().replace(b"\r\n", b"\n")

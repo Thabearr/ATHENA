@@ -606,6 +606,42 @@ def resolve_p43a_historical_workflow_source(
         item for item in evolution_ledger.get("transitions", [])
         if item.get("operation") == "MAINTENANCE_REVISE" and item.get("workflow_path") == path
     ]
+    if not revisions and path in CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES:
+        fixture_path, expected = CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES[path]
+        if (
+            evolution_ledger.get("canonical_sha256") != CORE01D_PR119_LEDGER_SHA256
+            or canonical_sha256(evolution_ledger) != CORE01D_PR119_LEDGER_SHA256
+            or evolution_ledger.get("current_workflow_tree_sha1")
+            != CORE01D_PR119_WORKFLOW_TREE_SHA1
+            or not evolution_ledger.get("transitions")
+            or evolution_ledger["transitions"][-1].get("transition_id")
+            != "CORE01D_FRESH_HOLDOUT_PR119_RELEASE_ONLY_BOOTSTRAP_V1"
+            or _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
+            != CORE01D_PR119_WORKFLOW_TREE_SHA1
+        ):
+            raise WorkflowEvolutionError(
+                "P4.3A historical source forward is outside the exact PR119 workflow context"
+            )
+        if {key: row.get(key) for key in IDENTITY_KEYS} != expected:
+            raise WorkflowEvolutionError(
+                f"PR119 historical source fixture differs from the frozen P4.3A matrix: {path}"
+            )
+        fixture = Path(__file__).resolve().parents[1] / fixture_path
+        if not fixture.is_file() or fixture.is_symlink():
+            raise WorkflowEvolutionError(
+                f"PR119 historical source fixture is unavailable: {fixture_path}"
+            )
+        raw = fixture.read_bytes()
+        if (
+            source_identity(raw) != expected
+            or source_identity(_git("show", f"HEAD:{fixture_path}")) != expected
+            or source_identity(_git("show", f"HEAD:{path}"))
+            != CORE01D_PR119_CONTROL_WORKFLOW_FORWARD[path][1]
+        ):
+            raise WorkflowEvolutionError(
+                f"PR119 historical source fixture/current forward identity changed: {path}"
+            )
+        return raw
     if not revisions:
         return retirement.resolve_reviewed_workflow_source(path, ledger=history)
     first = revisions[0]
@@ -842,6 +878,22 @@ CORE01D_PR119_CONTROL_WORKFLOW_FORWARD = {
         {
             "git_blob_sha1": "a7454258e2c434f96e416d405997135855579d71",
             "source_sha256": "549616e8518502e7b4fde6ebde7fe9442c0058f6de0a48fcb1ebe5b20a200ec6",
+        },
+    ),
+}
+CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES = {
+    ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml": (
+        "tests/fixtures/core_01d/pass1-v1-source/audit-lineage.yml",
+        {
+            "git_blob_sha1": "0ba12d02fc2cd5f7a7d9fb1458eeec5cbe3bbd23",
+            "source_sha256": "13d8888ea802b2ef996b3e296a668f087a20a50fd0ee51ee8c5cbbc26673a274",
+        },
+    ),
+    ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml": (
+        "tests/fixtures/core_01d/pass1-v1-source/scheduler-liveness.yml",
+        {
+            "git_blob_sha1": "f613211018417435cb4ad7a22529b1ff0a38d690",
+            "source_sha256": "2c77dfc4070bdf76a26b2209622f3ffc5fd82758f1203504729e9c90d375da21",
         },
     ),
 }

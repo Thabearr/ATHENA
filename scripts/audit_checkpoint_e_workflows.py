@@ -42,6 +42,7 @@ PASS1_SUPPORTING_SOURCE_PATHS = (
     "docs/fotmob_utc_native_expected_goals_fresh_holdout_pr119_bootstrap_recovery.md",
     "domain/current_fotmob_latest_durable_fresh_history.py",
     "scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py",
+    "scripts/audit_p4_3_workflow_retirement_ledger.py",
     "tests/test_fotmob_fresh_holdout_actions_lineage_audit_pr175_projection.py",
     "tests/test_fotmob_fresh_holdout_continuity_workflow.py",
     "tests/test_fotmob_fresh_holdout_pr119_bootstrap_recovery.py",
@@ -84,6 +85,11 @@ PASS1_V1_BASE_SOURCE_FIXTURES = {
         "tests/fixtures/core_01d/pass1-v1-source/schedule-recovery-lineage-projection.py",
         "4f9c0ffda3841434bacd5001164aeae29de8fcc4",
         "5fef00a24611cb134bb35409e9f9c668f942cca68ed6eb94404dc5804378ea03",
+    ),
+    "scripts/audit_p4_3_workflow_retirement_ledger.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/audit-p4-3-retirement-ledger.py",
+        "4d1b7f131079bdc97877fe6fdba557fa03239266",
+        "82b38665fdeaaf5a8478ae818d790aef67cb75458e2c5e8487661976c01799b6",
     ),
     "tests/test_fotmob_fresh_holdout_actions_lineage_audit_pr175_projection.py": (
         "tests/fixtures/core_01d/pass1-v1-source/test-lineage-pr175-projection.py",

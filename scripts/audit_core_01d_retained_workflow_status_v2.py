@@ -42,6 +42,7 @@ SUPPORTING_SOURCE_PATHS = (
     "docs/fotmob_utc_native_expected_goals_fresh_holdout_pr119_bootstrap_recovery.md",
     "domain/current_fotmob_latest_durable_fresh_history.py",
     "scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py",
+    "scripts/audit_p4_3_workflow_retirement_ledger.py",
     "tests/test_fotmob_fresh_holdout_actions_lineage_audit_pr175_projection.py",
     "tests/test_fotmob_fresh_holdout_continuity_workflow.py",
     "tests/test_fotmob_fresh_holdout_pr119_bootstrap_recovery.py",

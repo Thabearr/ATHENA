@@ -154,7 +154,7 @@ def verify_preserved_historical_sources() -> dict[str, str]:
     for relative, expected in PRESERVED_FILE_GIT_BLOB_SHA1.items():
         if relative == RETIRED_WORKFLOW_PATH:
             continue
-        if relative in maintained:
+        if relative in maintained or relative in evolution.CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES:
             try:
                 original = evolution.resolve_p43a_historical_workflow_source(
                     relative,
