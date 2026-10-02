@@ -262,6 +262,9 @@ def verified_additive_artifact_paths():
     pr145_status = pr145.audit()
     require(pr145_status.get("result") == "PASS",
             "PR145 retained-status and disposition receipts failed authentication")
+    from scripts import audit_core_01d_canonical_drive_transfer_completed_history as transfer
+    require(transfer.audit().get("result") == "PASS",
+            "canonical transfer completed-history receipts failed authentication")
     return (
         MATRIX_PATH,
         RECEIPT_PATH,
@@ -269,6 +272,8 @@ def verified_additive_artifact_paths():
         RETAINED_STATUS_PATH,
         pr145.V3_RECEIPT_PATH,
         pr145.RECEIPT_PATH,
+        transfer.v4.RECEIPT_PATH,
+        transfer.RECEIPT_PATH,
     )
 
 
@@ -718,13 +723,17 @@ def audit():
     evolution.validate_current_state()
     from scripts.audit_core_01d_scheduled_shadow_ownership import audit_forward_checkpoint
     forward = audit_forward_checkpoint()
+    from scripts import audit_core_01d_retained_workflow_status_v4 as retained_v4
+    current = retained_v4.audit()
     return {"result": "PASS", "checkpoint_e": receipt["checkpoint_e_status"], "p4_4": receipt["p4_4_status"],
             "policy_id": forward["policy_id"], "receipt_sha256": forward["canonical_sha256"],
             "matrix_sha256": forward["workflow_matrix_sha256"], "exact_head": git("rev-parse", "HEAD").decode().strip(),
             "workflow_count": forward["live_workflow_count"], "trigger_surface_count": forward["trigger_surface_count"],
             "historical_v1_receipt_sha256": receipt["canonical_sha256"], "historical_v1_matrix_sha256": matrix["canonical_sha256"],
             "historical_v1_trigger_surface_count": matrix["trigger_surface_count"],
-            "blockers": forward["remaining_blocker_ids"], "live_side_effect_counts": receipt["live_side_effect_counts"],
+            "blockers": current["remaining_blockers"], "live_side_effect_counts": receipt["live_side_effect_counts"],
+            "current_retained_status_sha256": current["receipt_sha256"],
+            "current_live_missing_artifact_relation_count": current["live_relation_count"],
             "forward_matrix_sha256": forward["workflow_matrix_sha256"], "forward_receipt_sha256": forward["canonical_sha256"]}
 
 
