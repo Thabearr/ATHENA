@@ -216,6 +216,9 @@ def test_pass2_audits_are_network_and_action_denied(monkeypatch):
     def guarded_run(command, *args, **kwargs):
         argv = [str(item).lower() for item in command]
         assert argv and argv[0] == "git", f"external action/process denied: {argv!r}"
+        assert retained_v3.BASE_MAIN_SHA.lower() not in argv, (
+            "receipt audits must not require ancestor Git objects in shallow CI"
+        )
         forbidden = {
             "push", "pull", "fetch", "checkout", "reset", "clean", "commit", "merge",
             "dispatch", "rerun", "cancel", "upload", "release", "comment", "issue",

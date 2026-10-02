@@ -213,7 +213,9 @@ historical/spent. Blocker A remains closed; blocker B is closed only as a live
 execution dependency; blockers C and D remain, including the exact canonical
 history transfer and historical replay archives. No workflow, trigger,
 provider, model, evidence, or authority action occurred. Checkpoint E and P4.4
-remain **INCOMPLETE**. Source review is 4/5 while this PR is open and would be
-5/5 if owner-merged; the mandatory governing-source reread becomes due
-immediately after that merge and before any further remediation. **Do not
-merge.**
+remain **INCOMPLETE**. The historical artifact-inventory audit accepts the V3
+and Pass-2 receipts only after their independent source-derived audits pass;
+the preexisting inventory hash remains enforced. Source review is 4/5 while
+this PR is open and would be 5/5 if owner-merged; the mandatory governing-source
+reread becomes due immediately after that merge and before any further
+remediation. **Do not merge.**

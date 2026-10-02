@@ -205,3 +205,5 @@ def test_checkpoint_e_authenticates_current_v2_and_pass1_additive_artifacts():
     assert audit.RECEIPT_PATH in paths
     assert "artifacts/architecture/core_01d_fresh_holdout_pr119_release_only_bootstrap_v1.json" in paths
     assert "artifacts/architecture/p4_workflow_evolution_snapshots/core_01d_fresh_holdout_pr119_release_only_bootstrap_v1.json" in paths
+    assert "artifacts/architecture/core_01d_retained_workflow_status_v3.json" in paths
+    assert "artifacts/architecture/core_01d_pr145_completed_one_shot_disposition_v1.json" in paths

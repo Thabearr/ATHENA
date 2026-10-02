@@ -258,7 +258,18 @@ def verified_additive_artifact_paths():
     retained_status = audit_retained_status()
     require(retained_status.get("result") == "PASS",
             "supplementary retained-workflow status receipt failed authentication")
-    return (MATRIX_PATH, RECEIPT_PATH, *additive_paths(), RETAINED_STATUS_PATH)
+    from scripts import audit_core_01d_pr145_completed_one_shot_disposition as pr145
+    pr145_status = pr145.audit()
+    require(pr145_status.get("result") == "PASS",
+            "PR145 retained-status and disposition receipts failed authentication")
+    return (
+        MATRIX_PATH,
+        RECEIPT_PATH,
+        *additive_paths(),
+        RETAINED_STATUS_PATH,
+        pr145.V3_RECEIPT_PATH,
+        pr145.RECEIPT_PATH,
+    )
 
 
 def _authenticate_pr119_release_only_workflow_forward(current, before):

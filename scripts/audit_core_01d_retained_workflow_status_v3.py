@@ -23,8 +23,7 @@ BASE_TREE_SHA = "0d6df2679d5ac4ca39327c4d93d1c1229981f795"
 WORKFLOW_TREE_SHA1 = "9b08653f1a12bb1b3d964fbd910396ff955740da"
 EVOLUTION_LEDGER_SHA256 = "73e1eb3fe6593558c821600dd0f103353d45c15a139ab470a996c7cbb35da531"
 EVOLUTION_TRANSITION_COUNT = 14
-P43_LEDGER_PATH = "artifacts/architecture/p4_3_workflow_retirement_ledger_v1.json"
-EVOLUTION_LEDGER_PATH = "artifacts/architecture/p4_workflow_evolution_ledger_v1.json"
+P43_LEDGER_SHA256 = "afa4a082f5225d83ca1ab32aab396b02bedf6f43dc57b6467a4187a720a0d56a"
 PR145_WORKFLOW = (
     ".github/workflows/execute-fotmob-utc-native-expected-goals-model-validation.yml"
 )
@@ -109,18 +108,6 @@ def _source_identity(path: str, *, must_match_head: bool = True) -> dict[str, st
         "git_blob_sha1": blob,
         "source_sha256": sha256(normalized),
     }
-
-
-def _require_unchanged_from_base(path: str) -> None:
-    result = subprocess.run(
-        ["git", "diff", "--quiet", BASE_MAIN_SHA, "--", path],
-        cwd=ROOT,
-        capture_output=True,
-    )
-    require(
-        result.returncode == 0,
-        f"protected source changed from pass-2 base {BASE_MAIN_SHA}: {path}",
-    )
 
 
 def _expected_comment_bodies() -> dict[int, str]:
@@ -374,14 +361,14 @@ def _validate_successor_sources() -> tuple[dict, dict, dict[str, dict[str, str]]
 
 def _validate_workflow_and_prior_fixture() -> dict[str, dict[str, str]]:
     workflow = _blob(PR145_WORKFLOW)
-    base_workflow = _blob(PR145_WORKFLOW, BASE_MAIN_SHA)
-    require(workflow == base_workflow, "PR145 workflow changed from pass-2 base")
-    _require_unchanged_from_base(".github/workflows")
-    _require_unchanged_from_base(EVOLUTION_LEDGER_PATH)
-    _require_unchanged_from_base(P43_LEDGER_PATH)
-    require(hashlib.sha1(b"blob " + str(len(workflow)).encode() + b"\0" + workflow).hexdigest()
-            == hashlib.sha1(b"blob " + str(len(base_workflow)).encode() + b"\0" + base_workflow).hexdigest(),
-            "PR145 workflow blob identity changed")
+    workflow_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
+    require(workflow_tree == WORKFLOW_TREE_SHA1,
+            "PR145 workflow directory differs from the exact pass-2 base tree")
+    from scripts import audit_p4_3_workflow_retirement_ledger as p43
+
+    p43_ledger = p43.validate_retirement_history()
+    require(p43_ledger.get("canonical_sha256") == P43_LEDGER_SHA256,
+            "P4.3 retirement ledger differs from the exact pass-2 base identity")
     for needle in (
         "issue_comment:",
         ATTEMPT_MARKER,
@@ -391,9 +378,10 @@ def _validate_workflow_and_prior_fixture() -> dict[str, dict[str, str]]:
         require(needle.encode("utf-8") in workflow,
                 f"PR145 one-shot source guard missing: {needle}")
     workflow_identity = _source_identity(PR145_WORKFLOW)
-    require(workflow_identity["source_sha256"]
+    require(workflow_identity["git_blob_sha1"] == "52958ce34e07179226c6d14c86daf7b2d229459b"
+            and workflow_identity["source_sha256"]
             == "d1fcc4453d84875bbbe73e95bb1a769d3e27bdc3fec0cb93662ca114c25d9bf6",
-            "PR145 workflow source SHA-256 drift")
+            "PR145 workflow base blob/source identity drift")
 
     old_fixture_raw = (ROOT / CORROBORATING_HISTORY_PATH).read_bytes()
     v2._require_head_file_identity(CORROBORATING_HISTORY_PATH, old_fixture_raw)
