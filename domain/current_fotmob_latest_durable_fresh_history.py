@@ -47,7 +47,7 @@ SOURCE_SCOPE = (
 
 RAW_AUDIT_BLOB_SHA = "e3cdb18845403d92f94933f68c2bd06e55660de0"
 PR175_PROJECTION_BLOB_SHA = "522b99260137fbeea1914495b3aaa368961ba455"
-SCHEDULE_RECOVERY_PROJECTION_BLOB_SHA = "4f9c0ffda3841434bacd5001164aeae29de8fcc4"
+SCHEDULE_RECOVERY_PROJECTION_BLOB_SHA = "e703bc7c3bc184f8effdc953278ab36c07e8532e"
 
 # This is not a general relaxation of PR174's cumulative-journal semantics.
 # It is the one observed current-only redundant declaration: two real execution
@@ -255,7 +255,7 @@ def _verify_current_projected_audit_dependencies(
     old_failure = lineage_audit.FAILURE_LINEAGE_BLOB_SHA
     try:
         lineage_audit.WORKFLOW_BLOB_SHA = (
-            recovery_projection.POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA
+            recovery_projection.POST_PR119_WORKFLOW_BLOB_SHA
         )
         lineage_audit.FAILURE_LINEAGE_BLOB_SHA = (
             pr175_projection.POST_PREACQUISITION_FALLBACK_BLOB_SHA

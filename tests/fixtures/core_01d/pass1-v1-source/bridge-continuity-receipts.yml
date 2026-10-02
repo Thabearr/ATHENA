@@ -140,8 +140,7 @@ jobs:
             echo "unknown receipt bridge mode during checkout verification: ${MODE}" >&2
             exit 1
           fi
-          # Historical pre-PR119 collection workflow blob retained as provenance: 1efe1e34d4459b2aeea17d5da8ba77bd4e2442f2
-          test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "b442737831d74b4a900c1da5d9c87a434bac3874"
+          test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "1efe1e34d4459b2aeea17d5da8ba77bd4e2442f2"
           test "$(git rev-parse HEAD:domain/fotmob_fresh_holdout_continuity.py)" = "ac8ba91b8f3e1086f01d35f3ca6d6aa356417623"
           test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py)" = "0f880bfb161d2dd9547326611505a066019b7f06"
           test "$(git rev-parse HEAD:domain/fotmob_fresh_holdout_bridge_noop.py)" = "88f97ecb4ae626be9d10e3561f1e52eaebe89242"

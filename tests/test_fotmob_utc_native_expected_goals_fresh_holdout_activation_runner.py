@@ -819,7 +819,11 @@ def test_workflow_installs_no_pypi_packages() -> None:
     assert "Authenticate continuity dispatch source" in text
     assert "PROSPECTIVE_ONLY_NO_BACKFILL_V1" in text
     assert "--execute-live-network" in text
-    assert "athena-fresh-holdout-bootstrap-v1" in text
+    assert "python scripts/restore_fotmob_pr119_bootstrap_release.py pr119-materialized.ndjson" in text
+    bootstrap_helper = (
+        repo_root / "scripts/restore_fotmob_pr119_bootstrap_release.py"
+    ).read_text(encoding="utf-8")
+    assert 'RELEASE_TAG = "athena-fresh-holdout-bootstrap-v1"' in bootstrap_helper
     assert "success_asset" in text
     assert "failure_asset" in text
     assert "retention-days: 90" in text

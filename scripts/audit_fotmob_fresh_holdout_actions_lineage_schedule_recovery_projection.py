@@ -57,6 +57,7 @@ import scripts.run_fotmob_fresh_holdout_release_receipt_mirror as receipt_mirror
 
 PRE_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = pr175.POST_PR175_WORKFLOW_BLOB_SHA
 POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = "1efe1e34d4459b2aeea17d5da8ba77bd4e2442f2"
+POST_PR119_WORKFLOW_BLOB_SHA = "b442737831d74b4a900c1da5d9c87a434bac3874"
 SCHEDULE_RECOVERY_BLOB_SHA = "0f880bfb161d2dd9547326611505a066019b7f06"
 SCHEDULE_RECOVERY_PATH = (
     "domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py"
@@ -1556,7 +1557,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "reviewed audit engine failure-lineage pin drifted before schedule-recovery projection"
         )
     _verify_projection_dependencies()
-    audit.WORKFLOW_BLOB_SHA = POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA
+    audit.WORKFLOW_BLOB_SHA = POST_PR119_WORKFLOW_BLOB_SHA
     audit.FAILURE_LINEAGE_BLOB_SHA = pr175.POST_PREACQUISITION_FALLBACK_BLOB_SHA
     audit._gh_download = pr175._gh_download_compatible
     audit.audit_actions_lineage = _audit_actions_lineage_compatible

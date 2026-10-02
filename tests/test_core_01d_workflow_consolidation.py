@@ -1,6 +1,7 @@
 """Source-safe C4 regressions; no live executor, provider or SMTP transport."""
 from copy import deepcopy
 from datetime import datetime, timezone
+import hashlib
 import io
 import json
 import zipfile
@@ -188,6 +189,21 @@ def test_base_input_tamper_rejected_before_any_git_scan(monkeypatch):
     original = audit.read
     monkeypatch.setattr(audit, "read", lambda path: b'{"base_main_sha":"TAMPERED"}' if path == audit.BASE_PATH else original(path))
     with pytest.raises(ValueError, match="base inventory identity drift"): audit.base_input()
+
+
+@pytest.mark.parametrize("path", sorted(audit.PASS1_V1_BASE_SOURCE_FIXTURES))
+def test_checkpoint_v1_base_source_fixtures_are_shallow_checkout_safe(path, monkeypatch):
+    def reject_base_git_show(*args):
+        if args[:1] == ("show",) and len(args) > 1 and args[1].startswith(f"{audit.BASE}:"):
+            pytest.fail("immutable Checkpoint E V1 source must not require deep Git history")
+        return original_git(*args)
+
+    original_git = audit.git
+    monkeypatch.setattr(audit, "git", reject_base_git_show)
+    raw = audit.read(path)
+    expected_blob, expected_sha = audit.PASS1_V1_BASE_SOURCE_FIXTURES[path][1:]
+    assert hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() == expected_blob
+    assert audit.sha(raw) == expected_sha
 
 
 def test_additive_artifacts_are_authenticated_not_blanket_excluded(monkeypatch):

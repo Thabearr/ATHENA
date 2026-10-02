@@ -126,7 +126,12 @@ def test_hotfix_phase_changes_only_two_workflow_pins_and_preserves_guarded_sourc
     assert phase_snapshot["transitions"] == ledger["transitions"][:2]
     assert len(list(Path(".github/workflows").glob("*.yml"))) == ledger["current_live_workflow_count"]
     assert _git("rev-parse", "HEAD:scripts/mirror_fotmob_fresh_holdout_release_receipt.py") == receipt["frozen_core_mirror_blob_after"]
-    assert _git("rev-parse", "HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml") == receipt["collection_workflow_blob_unchanged"]
+    pr119_transition = next(
+        item for item in ledger["transitions"]
+        if item["transition_id"] == "CORE01D_FRESH_HOLDOUT_PR119_RELEASE_ONLY_BOOTSTRAP_V1"
+    )
+    assert receipt["collection_workflow_blob_unchanged"] == pr119_transition["before"]["git_blob_sha1"]
+    assert _git("rev-parse", "HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml") == pr119_transition["after"]["git_blob_sha1"]
     assert _git("rev-parse", "HEAD:.github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml") == receipt["watchdog_workflow_blob_unchanged"]
     assert _git("rev-parse", "HEAD:.github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml") == receipt["lineage_audit_workflow_blob_unchanged"]
     assert _git("rev-parse", "HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage.py") == receipt["lineage_auditor_blob_unchanged"]

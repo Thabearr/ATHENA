@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
+import subprocess
 
 
 def _repo_root() -> Path:
@@ -9,10 +9,7 @@ def _repo_root() -> Path:
 
 
 def _git_blob_sha(path: Path) -> str:
-    raw = path.read_bytes()
-    return hashlib.sha1(
-        b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
-    ).hexdigest()
+    return subprocess.check_output(["git", "hash-object", str(path)]).decode("ascii").strip()
 
 
 def test_primary_continuity_dispatch_authenticates_completed_watchdog_before_state() -> None:

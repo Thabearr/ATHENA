@@ -35,10 +35,51 @@ RECEIPT_PATH = "artifacts/architecture/checkpoint_e_workflow_consolidation_v1.js
 MATRIX_PATH = "artifacts/architecture/checkpoint_e_workflow_capability_matrix_v1.json"
 RETAINED_STATUS_PATH = "artifacts/architecture/core_01d_retained_workflow_status_v1.json"
 PASS1_SUPPORTING_SOURCE_PATHS = (
+    ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml",
+    ".github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml",
+    ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml",
     "docs/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.md",
     "docs/fotmob_utc_native_expected_goals_fresh_holdout_pr119_bootstrap_recovery.md",
     "tests/test_fotmob_fresh_holdout_pr119_bootstrap_recovery.py",
 )
+PASS1_V1_BASE_SOURCE_FIXTURES = {
+    ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml": (
+        "tests/fixtures/core_01d/pass1-v1-source/audit-lineage.yml",
+        "0ba12d02fc2cd5f7a7d9fb1458eeec5cbe3bbd23",
+        "13d8888ea802b2ef996b3e296a668f087a20a50fd0ee51ee8c5cbbc26673a274",
+    ),
+    ".github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml": (
+        "tests/fixtures/core_01d/pass1-v1-source/bridge-continuity-receipts.yml",
+        "74bfd162bd5fe67b79dd6c91550dbbb557b502e9",
+        "6902f337ee1e33aaf9cd742cdd42796ef6f1a6e299097d4a204959b872b47ebd",
+    ),
+    ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml": (
+        "tests/fixtures/architecture/revised_workflows/"
+        "fotmob-utc-native-xg-fresh-holdout-pre-core-01d-pr119-release-only-bootstrap.yml",
+        "1efe1e34d4459b2aeea17d5da8ba77bd4e2442f2",
+        "9ee4a81f508196716ccd4454b24644f8f5c9aece479103f4a17f8f9a13cfdbb9",
+    ),
+    "docs/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.md": (
+        "tests/fixtures/core_01d/pass1-v1-source/fotmob-activation-runner.md",
+        "847d4f5466c8b5493d6a2bf0b784957d72c84d03",
+        "d2482da65d38b36d10ca0edb87f6d710e380ad4cefa0660be2af587102355bb8",
+    ),
+    "docs/fotmob_utc_native_expected_goals_fresh_holdout_pr119_bootstrap_recovery.md": (
+        "tests/fixtures/core_01d/pass1-v1-source/pr119-bootstrap-recovery.md",
+        "1c76953ae04773ee19d7a701c9aa4a6f3b2aed21",
+        "32b324f8cf92206abf7b4d1eb6fcdcc05a49776fae8b146811afc6027d5e1aa9",
+    ),
+    "tests/test_fotmob_fresh_holdout_pr119_bootstrap_recovery.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/test-pr119-bootstrap-recovery.py",
+        "a63368d629f00f24c4c2d900961d139abcda109f",
+        "b7f718aa851964a4fa123ca8388fc77d4da45aaa788adeeb6ecf6b5022fb7aa9",
+    ),
+    ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml": (
+        "tests/fixtures/core_01d/pass1-v1-source/scheduler-liveness.yml",
+        "f613211018417435cb4ad7a22529b1ff0a38d690",
+        "2c77dfc4070bdf76a26b2209622f3ffc5fd82758f1203504729e9c90d375da21",
+    ),
+}
 BASE_PATH = "tests/fixtures/core_01d/exact-main-source-inventory.json"
 HISTORY_PATH = "tests/fixtures/core_01d/workflow-history-20261001.json"
 ZIP_PATH = "tests/fixtures/core_01d/accepted-athena-run-36860297707.zip"
@@ -82,13 +123,29 @@ def seal(value):
 def read(path):
     # V1 describes the merged predecessor, not the unmerged source cutover.
     from scripts.core_01d_historical_source import historical_bytes
-    if path in {
-        ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml",
-        *PASS1_SUPPORTING_SOURCE_PATHS,
-    }:
-        # Keep the immutable V1 capability census on its exact checkpoint base.
-        # Pass 1's current source is independently authenticated by status V2.
-        return git("show", f"{BASE}:{path}")
+    if path in PASS1_V1_BASE_SOURCE_FIXTURES:
+        # These immutable V1 inputs are carried as source fixtures so shallow
+        # checkouts can reproduce the original census without fetching history.
+        # Pass 1's current versions are separately authenticated by status V2.
+        fixture, expected_blob, expected_sha = PASS1_V1_BASE_SOURCE_FIXTURES[path]
+        inventory_raw = (ROOT / BASE_PATH).read_bytes().replace(b"\r\n", b"\n")
+        require(sha(inventory_raw) == BASE_INPUT_SHA, "exact-main base inventory identity drift")
+        inventory = strict(inventory_raw)
+        require(
+            inventory.get("base_main_sha") == BASE
+            and inventory.get("canonical_sha256") == self_sha(inventory)
+            and inventory.get("files", {}).get(path, {}).get("git_blob_sha1") == expected_blob,
+            "pinned Checkpoint E V1 source identity drift: " + path,
+        )
+        raw = (ROOT / fixture).read_bytes().replace(b"\r\n", b"\n")
+        observed_blob = hashlib.sha1(
+            b"blob " + str(len(raw)).encode() + b"\0" + raw
+        ).hexdigest()
+        require(
+            observed_blob == expected_blob and sha(raw) == expected_sha,
+            "pinned Checkpoint E V1 source fixture drift: " + path,
+        )
+        return raw
     return historical_bytes(path)
 
 
@@ -218,13 +275,23 @@ def base_input():
     fresh_workflow_path = ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
     fresh_workflow_after_blob = None
     supporting_source_blobs = {}
+    if current.get(fresh_workflow_path) != value["files"].get(fresh_workflow_path):
+        forward = _authenticate_pr119_release_only_workflow_forward(
+            current, value["files"][fresh_workflow_path]
+        )
+        fresh_workflow_after_blob = forward["workflow_blob"]
+        supporting_source_blobs = forward["supporting_source_blobs"]
     for path, identity in value["files"].items():
         if path == HISTORICAL_AUDIT:
             require(current.get(path) in (identity, {"mode": identity["mode"], "git_blob_sha1": audit_after}), "historical audit forward Git identity differs")
-        elif path == fresh_workflow_path and current.get(path) != identity:
-            forward = _authenticate_pr119_release_only_workflow_forward(current, identity)
-            fresh_workflow_after_blob = forward["workflow_blob"]
-            supporting_source_blobs = forward["supporting_source_blobs"]
+        elif path == fresh_workflow_path and fresh_workflow_after_blob:
+            require(
+                current.get(path) == {
+                    "mode": identity["mode"],
+                    "git_blob_sha1": fresh_workflow_after_blob,
+                },
+                "fresh-holdout workflow differs from its transition-14 identity",
+            )
         elif path in supporting_source_blobs:
             require(
                 current.get(path) == {

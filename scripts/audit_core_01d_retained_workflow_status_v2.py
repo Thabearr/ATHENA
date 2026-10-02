@@ -35,6 +35,9 @@ RELEASE_METADATA_FIXTURE = (
     "tests/fixtures/core_01b_artifact_roles/pr119-bootstrap-release-metadata.json"
 )
 SUPPORTING_SOURCE_PATHS = (
+    ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml",
+    ".github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml",
+    ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml",
     "docs/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.md",
     "docs/fotmob_utc_native_expected_goals_fresh_holdout_pr119_bootstrap_recovery.md",
     "tests/test_fotmob_fresh_holdout_pr119_bootstrap_recovery.py",
