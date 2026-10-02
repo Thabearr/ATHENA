@@ -138,6 +138,60 @@ def verified_additive_artifact_paths():
     return (MATRIX_PATH, RECEIPT_PATH, *additive_paths(), RETAINED_STATUS_PATH)
 
 
+def _authenticate_pr119_release_only_workflow_forward(current, before):
+    """Allow only transition 14's exact protected-workflow source identity."""
+    path = ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
+    from scripts import audit_p4_workflow_evolution_ledger as evolution
+    from scripts import audit_core_01d_retained_workflow_status_v2 as retained_status_v2
+
+    ledger = evolution.validate_current_state()
+    require(
+        len(ledger["transitions"]) == 14
+        and ledger["canonical_sha256"] == evolution.CORE01D_PR119_LEDGER_SHA256
+        and ledger["current_workflow_tree_sha1"] == evolution.CORE01D_PR119_WORKFLOW_TREE_SHA1,
+        "fresh-holdout forward is not the exact authenticated transition-14 tree/ledger tuple",
+    )
+    transition = ledger["transitions"][-1]
+    observed = current.get(path)
+    require(
+        transition["transition_id"] == "CORE01D_FRESH_HOLDOUT_PR119_RELEASE_ONLY_BOOTSTRAP_V1"
+        and transition["workflow_path"] == path
+        and transition["operation"] == "MAINTENANCE_REVISE"
+        and transition["phase_id"] == "CORE-01D"
+        and transition["canonical_family"] == "PROTECTED_RESEARCH"
+        and transition["before"]["git_blob_sha1"] == before["git_blob_sha1"]
+        and observed is not None
+        and observed["mode"] == before["mode"]
+        and observed["git_blob_sha1"] == transition["after"]["git_blob_sha1"],
+        "fresh-holdout current source differs from its exact transition-14 identity",
+    )
+    status = retained_status_v2.audit()
+    require(
+        status.get("result") == "PASS"
+        and status.get("evolution_ledger_sha256") == evolution.CORE01D_PR119_LEDGER_SHA256
+        and status.get("workflow_tree_sha1") == evolution.CORE01D_PR119_WORKFLOW_TREE_SHA1,
+        "current retained-status V2 did not authenticate the exact transition-14 source",
+    )
+    supporting = retained_status_v2.build_receipt()["pass1_supporting_source_inventory"]
+    require(
+        [row["path"] for row in supporting] == list(retained_status_v2.SUPPORTING_SOURCE_PATHS),
+        "Pass-1 supporting source inventory path set drift",
+    )
+    for row in supporting:
+        observed_support = current.get(row["path"])
+        require(
+            observed_support is not None
+            and observed_support["git_blob_sha1"] == row["git_blob_sha1"],
+            "Pass-1 supporting source differs from its V2 authenticated identity: " + row["path"],
+        )
+    return {
+        "workflow_blob": transition["after"]["git_blob_sha1"],
+        "supporting_source_blobs": {
+            row["path"]: row["git_blob_sha1"] for row in supporting
+        },
+    }
+
+
 def base_input():
     raw = read(BASE_PATH)
     require(sha(raw) == BASE_INPUT_SHA, "exact-main base inventory identity drift")
@@ -145,9 +199,24 @@ def base_input():
     require(value["base_main_sha"] == BASE and value["canonical_sha256"] == self_sha(value), "base input binding drift")
     current = git_inventory()
     _, audit_after = historical_audit_forward(value)
+    fresh_workflow_path = ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
+    fresh_workflow_after_blob = None
+    supporting_source_blobs = {}
     for path, identity in value["files"].items():
         if path == HISTORICAL_AUDIT:
             require(current.get(path) in (identity, {"mode": identity["mode"], "git_blob_sha1": audit_after}), "historical audit forward Git identity differs")
+        elif path == fresh_workflow_path and current.get(path) != identity:
+            forward = _authenticate_pr119_release_only_workflow_forward(current, identity)
+            fresh_workflow_after_blob = forward["workflow_blob"]
+            supporting_source_blobs = forward["supporting_source_blobs"]
+        elif path in supporting_source_blobs:
+            require(
+                current.get(path) == {
+                    "mode": identity["mode"],
+                    "git_blob_sha1": supporting_source_blobs[path],
+                },
+                "Pass-1 supporting source differs from its V2 authenticated identity: " + path,
+            )
         else:
             require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
     # Git can be clean while the working tree has edits. Verify inspected source
@@ -163,7 +232,12 @@ def base_input():
         if path in identities():
             inspected = read(path)
             actual = hashlib.sha1(b"blob " + str(len(inspected)).encode() + b"\0" + inspected).hexdigest()
-        expected_blob = audit_after if path == HISTORICAL_AUDIT else value["files"][path]["git_blob_sha1"]
+        expected_blob = (
+            audit_after if path == HISTORICAL_AUDIT
+            else fresh_workflow_after_blob if path == fresh_workflow_path and fresh_workflow_after_blob
+            else supporting_source_blobs[path] if path in supporting_source_blobs
+            else value["files"][path]["git_blob_sha1"]
+        )
         require(actual == expected_blob, f"worktree source differs: {path}")
     require(value["workflow_tree_sha1"] == "134cdd8bfa54488770f562c93571e46ac84a8187", "immutable V1 workflow tree changed")
     return value

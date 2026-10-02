@@ -34,6 +34,11 @@ PAYLOAD_FIXTURE = "tests/fixtures/core_01b_artifact_roles/pr119-bootstrap.ndjson
 RELEASE_METADATA_FIXTURE = (
     "tests/fixtures/core_01b_artifact_roles/pr119-bootstrap-release-metadata.json"
 )
+SUPPORTING_SOURCE_PATHS = (
+    "docs/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.md",
+    "docs/fotmob_utc_native_expected_goals_fresh_holdout_pr119_bootstrap_recovery.md",
+    "tests/test_fotmob_fresh_holdout_pr119_bootstrap_recovery.py",
+)
 PAYLOAD_FIXTURE_SHA256 = "d596baef519ef1ac3ad459b0f49f4acf58557d416c549c159f3bd30d13b15ad0"
 HISTORICAL_BLOCKER = "PROTECTED_FRESH_HOLDOUT_PR119_EXACT_FALLBACK_NOT_DURABLY_RECOVERED"
 REMAINING_BLOCKER_IDS = (
@@ -139,6 +144,21 @@ def _current_workflows() -> tuple[list[str], dict[str, bytes], int]:
     require(len(paths) == 39, f"current workflow count drift: {len(paths)}")
     require(trigger_count == 57, f"current trigger-surface count drift: {trigger_count}")
     return paths, sources, trigger_count
+
+
+def _supporting_source_inventory() -> list[dict[str, str]]:
+    rows = []
+    for path in SUPPORTING_SOURCE_PATHS:
+        raw = _head_blob(path)
+        blob = _git("rev-parse", f"HEAD:{path}").decode("ascii").strip()
+        identity = roles.sha(raw)
+        require(
+            evolution.source_identity(raw)
+            == {"git_blob_sha1": blob, "source_sha256": identity},
+            f"Pass-1 supporting source identity differs from HEAD: {path}",
+        )
+        rows.append({"path": path, "git_blob_sha1": blob, "source_sha256": identity})
+    return rows
 
 
 def _current_relations(
@@ -487,6 +507,7 @@ def build_receipt() -> dict:
             "path": RELEASE_METADATA_FIXTURE,
             "sha256": sha256(metadata_raw),
         },
+        "pass1_supporting_source_inventory": _supporting_source_inventory(),
         "current_protected_bootstrap_role": bootstrap_role,
         "closed_blockers": [
             {
