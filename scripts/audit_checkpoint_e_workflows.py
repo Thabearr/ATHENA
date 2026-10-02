@@ -48,6 +48,7 @@ PASS1_SUPPORTING_SOURCE_PATHS = (
     "tests/test_fotmob_fresh_holdout_pr119_bootstrap_recovery.py",
     "tests/test_fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.py",
     "tests/test_fresh_holdout_release_visibility_race_hotfix.py",
+    "tests/test_p4_2_athena_run_workflow.py",
     "tests/test_p4_4a1_baseline_workflow_maintenance_revision_authority.py",
 )
 PASS1_V1_BASE_SOURCE_FIXTURES = {
@@ -121,6 +122,11 @@ PASS1_V1_BASE_SOURCE_FIXTURES = {
         "tests/fixtures/core_01d/pass1-v1-source/test-visibility-race-hotfix.py",
         "43ffef4866e6ea3ba57f5d6d52457be9b80703a0",
         "09fd0d346bf6c7a62a0369e9767de19743578c5cb03d908a2ffe337abbb148b4",
+    ),
+    "tests/test_p4_2_athena_run_workflow.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/test-p42-athena-run-workflow.py",
+        "84f520e3f35c11a0556fd02c4d5db37463bde1f7",
+        "f6003ed26ab05d475f0ad28b6a87a6d0323b25f808a4dc5d15e2a317a6b50b73",
     ),
     "tests/test_p4_4a1_baseline_workflow_maintenance_revision_authority.py": (
         "tests/fixtures/core_01d/pass1-v1-source/test-p44a1-maintenance-authority.py",

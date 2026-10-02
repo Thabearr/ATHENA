@@ -283,8 +283,5 @@ def test_protected_and_legacy_workflows_remain_exact_base_bytes():
     }
     for relative, expected in audit.PRESERVED_FILE_GIT_BLOB_SHA1.items():
         if relative.startswith(".github/workflows/") and relative != audit.RETIRED_WORKFLOW_PATH:
-            expected_current = evolution.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD.get(
-                relative,
-                (None, latest_maintenance.get(relative, {"git_blob_sha1": expected})),
-            )[1]
+            expected_current = latest_maintenance.get(relative, {"git_blob_sha1": expected})
             assert audit._git_blob_sha1(relative) == expected_current["git_blob_sha1"]
