@@ -813,6 +813,38 @@ CORE01D_WORKFLOW_TREE_SHA1 = "9060b6fb263febc45332a7cf9c9da8448284b471"
 CORE01D_LEDGER_SHA256 = "b582a5ba8a31ddfba94324f8869dd253460dcc01102ef356327a3337275b8335"
 CORE01D_PR119_WORKFLOW_TREE_SHA1 = "9b08653f1a12bb1b3d964fbd910396ff955740da"
 CORE01D_PR119_LEDGER_SHA256 = "73e1eb3fe6593558c821600dd0f103353d45c15a139ab470a996c7cbb35da531"
+CORE01D_PR119_CONTROL_WORKFLOW_FORWARD = {
+    ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml": (
+        {
+            "git_blob_sha1": "0ba12d02fc2cd5f7a7d9fb1458eeec5cbe3bbd23",
+            "source_sha256": "13d8888ea802b2ef996b3e296a668f087a20a50fd0ee51ee8c5cbbc26673a274",
+        },
+        {
+            "git_blob_sha1": "2bee954fdfb8ea4eaed8dee82f0c46657cae9033",
+            "source_sha256": "df803347f9153c050b24af4589cbc051a576fa0e20c09a55c5ecd38eb7a51a74",
+        },
+    ),
+    ".github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml": (
+        {
+            "git_blob_sha1": "74bfd162bd5fe67b79dd6c91550dbbb557b502e9",
+            "source_sha256": "6902f337ee1e33aaf9cd742cdd42796ef6f1a6e299097d4a204959b872b47ebd",
+        },
+        {
+            "git_blob_sha1": "9e07461c0cc6682fe004a77ec3aff6b1e144f246",
+            "source_sha256": "777b7a47dba0a6d6592dadba1e06017c38ccabfc8e339ea294ee332042b54557",
+        },
+    ),
+    ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml": (
+        {
+            "git_blob_sha1": "f613211018417435cb4ad7a22529b1ff0a38d690",
+            "source_sha256": "2c77dfc4070bdf76a26b2209622f3ffc5fd82758f1203504729e9c90d375da21",
+        },
+        {
+            "git_blob_sha1": "a7454258e2c434f96e416d405997135855579d71",
+            "source_sha256": "549616e8518502e7b4fde6ebde7fe9442c0058f6de0a48fcb1ebe5b20a200ec6",
+        },
+    ),
+}
 
 
 def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha):
@@ -834,6 +866,17 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
         raise WorkflowEvolutionError("workflow tree differs without exact PORT-02C replay successor")
     result = dict(derived)
     result[PORT02C_REPLAY_WORKFLOW_PATH] = dict(PORT02C_REPLAY_WORKFLOW_AFTER)
+    if (head_tree, ledger_sha) == (
+        CORE01D_PR119_WORKFLOW_TREE_SHA1,
+        CORE01D_PR119_LEDGER_SHA256,
+    ):
+        for path, (before, after) in CORE01D_PR119_CONTROL_WORKFLOW_FORWARD.items():
+            if derived.get(path) != before or observed.get(path) != after:
+                raise WorkflowEvolutionError(
+                    "PR119 control-workflow pin forward differs from exact source identities: "
+                    + path
+                )
+            result[path] = dict(after)
     return result
 
 

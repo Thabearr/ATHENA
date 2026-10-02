@@ -44,6 +44,10 @@ def test_port02c_exact_historical_and_new_contexts(tree, ledger):
     p = e.PORT02C_REPLAY_WORKFLOW_PATH
     derived = {p: dict(e.PORT02C_REPLAY_WORKFLOW_BEFORE), "other": {"untouched": True}}
     observed = {p: dict(e.PORT02C_REPLAY_WORKFLOW_AFTER)}
+    if (tree, ledger) == CONTEXTS[-1]:
+        for path, (before, after) in e.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD.items():
+            derived[path] = dict(before)
+            observed[path] = dict(after)
     result = e._port02c_current_source_forward(derived, observed, head_tree=tree, ledger_sha=ledger)
     assert result[p] == e.PORT02C_REPLAY_WORKFLOW_AFTER
     assert result["other"] == derived["other"] and derived[p] == e.PORT02C_REPLAY_WORKFLOW_BEFORE
@@ -56,6 +60,9 @@ def test_port02c_closed_context_tamper_rejects(mutation):
     derived = {p: dict(e.PORT02C_REPLAY_WORKFLOW_BEFORE)}
     observed = {p: dict(e.PORT02C_REPLAY_WORKFLOW_AFTER)}
     tree, ledger = CONTEXTS[-1]
+    for path, (before, after) in e.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD.items():
+        derived[path] = dict(before)
+        observed[path] = dict(after)
     if mutation == "tree": tree = "0" * 40
     elif mutation == "ledger": ledger = "0" * 64
     elif mutation == "before_blob": derived[p]["git_blob_sha1"] = "0" * 40
@@ -69,6 +76,40 @@ def test_port02c_closed_context_tamper_rejects(mutation):
     else: tree = "2" * 40; ledger = "2" * 64
     with pytest.raises(e.WorkflowEvolutionError, match="exact PORT-02C"):
         e._port02c_current_source_forward(derived, observed, head_tree=tree, ledger_sha=ledger)
+
+
+def test_pr119_control_workflow_pin_forward_is_exact_and_non_mutating():
+    derived = {
+        path: dict(before)
+        for path, (before, _) in e.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD.items()
+    }
+    observed = {
+        path: dict(after)
+        for path, (_, after) in e.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD.items()
+    }
+    original = copy.deepcopy(derived)
+    derived[e.PORT02C_REPLAY_WORKFLOW_PATH] = dict(e.PORT02C_REPLAY_WORKFLOW_BEFORE)
+    observed[e.PORT02C_REPLAY_WORKFLOW_PATH] = dict(e.PORT02C_REPLAY_WORKFLOW_AFTER)
+    result = e._port02c_current_source_forward(
+        derived,
+        observed,
+        head_tree=e.CORE01D_PR119_WORKFLOW_TREE_SHA1,
+        ledger_sha=e.CORE01D_PR119_LEDGER_SHA256,
+    )
+    for path, (_, after) in e.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD.items():
+        assert result[path] == after
+    assert {path: derived[path] for path in original} == original
+
+    changed = copy.deepcopy(observed)
+    first = next(iter(e.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD))
+    changed[first]["source_sha256"] = "0" * 64
+    with pytest.raises(e.WorkflowEvolutionError, match="PR119 control-workflow pin forward"):
+        e._port02c_current_source_forward(
+            derived,
+            changed,
+            head_tree=e.CORE01D_PR119_WORKFLOW_TREE_SHA1,
+            ledger_sha=e.CORE01D_PR119_LEDGER_SHA256,
+        )
 
 
 def test_port02c_five_closed_contexts_no_new_transition_source_unchanged():
