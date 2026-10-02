@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "repository": "Thabearr/ATHENA",
+  "issue_number": 145,
+  "read_only_capture": true,
+  "capture_method": "GitHub REST API GET",
+  "captured_on_utc_date": "2026-10-02",
+  "no_action_performed": true,
+  "workflow_dispatch_performed": false,
+  "provider_operation_performed": false,
+  "comments": [
+    {
+      "id": 5317747534,
+      "author_login": "Thabearr",
+      "created_at": "2026-08-17T16:34:38Z",
+      "html_url": "https://github.com/Thabearr/ATHENA/pull/145#issuecomment-5317747534",
+      "body": "/athena-run-fotmob-utc-native-expected-goals-validation\nmain-sha: 21bff3fe96e8c9b250c9776240ba7bede9f74c89\nconfirm: EXECUTE_REVIEWED_21129_UTC_NATIVE_EXPECTED_GOALS_MODEL_VALIDATION"
+    },
+    {
+      "id": 5317758294,
+      "author_login": "Thabearr",
+      "created_at": "2026-08-17T16:35:48Z",
+      "html_url": "https://github.com/Thabearr/ATHENA/pull/145#issuecomment-5317758294",
+      "body": "<!-- ATHENA_FOTMOB_UTC_NATIVE_EXPECTED_GOALS_MODEL_VALIDATION_FAILED_PRE_ATTEMPT_RECONCILIATION -->\nATHENA UTC-native expected-goals validation execution command reached the control workflow but failed before the durable attempt marker could be created.\nrun-id: 32046244761\nmain-sha: 21bff3fe96e8c9b250c9776240ba7bede9f74c89\ncommand-comment-id: 5317747534\nattempt-marker-created: false\ncheckout-executed: false\nsource-artifact-download-executed: false\nvalidator-executed: false\nresearch-training-executed: false\nfailure-step: Validate one-shot owner command and current main\nfailure: GitHub API POST /issues/145/comments returned 403 Resource not accessible by integration because the closed-PR receipt path requires pull_requests=write.\nfailure-artifact-id: 9292984849\nfailure-artifact-name: fotmob-utc-native-expected-goals-validation-32046244761\nfailure-artifact-size-bytes: 2448\nfailure-artifact-sha256: 91965dee1fdb496e776a914de9a9e789a830141ea6b17276a7b1bade541835c1\nstate: FAILED_BEFORE_DURABLE_ATTEMPT_MARKER_NO_MODEL_VALIDATION_EXECUTED\nAutomatic replay of run 32046244761 is forbidden. A reviewed control-plane correction and a new explicit execution command are required before another attempt."
+    },
+    {
+      "id": 5318114406,
+      "author_login": "Thabearr",
+      "created_at": "2026-08-17T17:18:05Z",
+      "html_url": "https://github.com/Thabearr/ATHENA/pull/145#issuecomment-5318114406",
+      "body": "/athena-run-fotmob-utc-native-expected-goals-validation\nmain-sha: b8ddc00f7529c5533c9da2daad613d997498cbf2\nconfirm: EXECUTE_REVIEWED_21129_UTC_NATIVE_EXPECTED_GOALS_MODEL_VALIDATION"
+    },
+    {
+      "id": 5318115383,
+      "author_login": "github-actions[bot]",
+      "created_at": "2026-08-17T17:18:14Z",
+      "html_url": "https://github.com/Thabearr/ATHENA/pull/145#issuecomment-5318115383",
+      "body": "<!-- ATHENA_FOTMOB_UTC_NATIVE_EXPECTED_GOALS_MODEL_VALIDATION_ATTEMPT -->\nATHENA reviewed FotMob UTC-native expected-goals model-validation attempt started.\nrun-id: 32049714066\nmain-sha: b8ddc00f7529c5533c9da2daad613d997498cbf2\ncommand-comment-id: 5318114406\nupstream-v2-result-comment-id: 5311318782\nstate: ATTEMPT_STARTED_NO_RESULT_YET\nAutomatic replay is forbidden if this run does not complete cleanly."
+    },
+    {
+      "id": 5318117332,
+      "author_login": "github-actions[bot]",
+      "created_at": "2026-08-17T17:18:31Z",
+      "html_url": "https://github.com/Thabearr/ATHENA/pull/145#issuecomment-5318117332",
+      "body": "<!-- ATHENA_FOTMOB_UTC_NATIVE_EXPECTED_GOALS_MODEL_VALIDATION_RESULT -->\nATHENA reviewed FotMob UTC-native expected-goals model-validation execution result.\nrun-id: 32049714066\nmain-sha: b8ddc00f7529c5533c9da2daad613d997498cbf2\nrunner-exit-code: 0\nartifact-download-outcome: success\npackage-outcome: success\nartifact-upload-outcome: success\nverification-outcome: success\nstate: EXECUTION_COMPLETED_REVIEWED_UTC_NATIVE_EXPECTED_GOALS_MODEL_VALIDATION_EVIDENCE_PRESERVED\nartifact-name: fotmob-utc-native-expected-goals-validation-32049714066\nResearch model-validation evidence only. Result review is required.\nNo ScoreMatrix, probability, pricing, selection, production, or BET authority is granted."
+    }
+  ],
+  "runs": [
+    {
+      "id": 32046244761,
+      "name": "Execute Reviewed FotMob UTC-Native Expected-Goals Model Validation",
+      "path": ".github/workflows/execute-fotmob-utc-native-expected-goals-model-validation.yml",
+      "head_sha": "21bff3fe96e8c9b250c9776240ba7bede9f74c89",
+      "head_branch": "main",
+      "event": "issue_comment",
+      "status": "completed",
+      "conclusion": "failure",
+      "run_attempt": 1,
+      "created_at": "2026-08-17T16:34:45Z",
+      "updated_at": "2026-08-17T16:34:54Z",
+      "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32046244761"
+    },
+    {
+      "id": 32049714066,
+      "name": "Execute Reviewed FotMob UTC-Native Expected-Goals Model Validation",
+      "path": ".github/workflows/execute-fotmob-utc-native-expected-goals-model-validation.yml",
+      "head_sha": "b8ddc00f7529c5533c9da2daad613d997498cbf2",
+      "head_branch": "main",
+      "event": "issue_comment",
+      "status": "completed",
+      "conclusion": "success",
+      "run_attempt": 1,
+      "created_at": "2026-08-17T17:18:08Z",
+      "updated_at": "2026-08-17T17:18:33Z",
+      "html_url": "https://github.com/Thabearr/ATHENA/actions/runs/32049714066"
+    }
+  ],
+  "successful_result_artifact_current_listing": {
+    "run_id": 32049714066,
+    "artifact_id": 9294215497,
+    "read_only_capture": true,
+    "state": "CURRENT_ACTIONS_ARTIFACT_LISTING_EMPTY",
+    "total_count": 0,
+    "artifacts": [],
+    "captured_on_utc_date": "2026-10-02",
+    "artifact_disappearance_time_known": false,
+    "artifact_disappearance_reason_known": false,
+    "external_durable_archive_checked": false,
+    "durable_byte_retention_reviewed": false,
+    "source_controlled_summary_claims_equal_original_zip_bytes": false
+  },
+  "capture_safety": {
+    "issue_comment_writes": 0,
+    "workflow_dispatches": 0,
+    "workflow_reruns": 0,
+    "provider_operations": 0,
+    "evidence_regeneration": 0,
+    "secrets_tokens_or_headers_included": false
+  }
+}
