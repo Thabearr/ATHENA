@@ -48,6 +48,7 @@ SUPPORTING_SOURCE_PATHS = (
     "tests/test_fotmob_fresh_holdout_pr119_bootstrap_recovery.py",
     "tests/test_fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.py",
     "tests/test_fresh_holdout_release_visibility_race_hotfix.py",
+    "tests/test_p4_4a1_baseline_workflow_maintenance_revision_authority.py",
 )
 PAYLOAD_FIXTURE_SHA256 = "d596baef519ef1ac3ad459b0f49f4acf58557d416c549c159f3bd30d13b15ad0"
 HISTORICAL_BLOCKER = "PROTECTED_FRESH_HOLDOUT_PR119_EXACT_FALLBACK_NOT_DURABLY_RECOVERED"
