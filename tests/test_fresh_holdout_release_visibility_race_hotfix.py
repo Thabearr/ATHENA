@@ -70,12 +70,19 @@ def test_exact_old_transport_and_workflow_bytes_are_preserved() -> None:
     for workflow, fixture in WORKFLOW_FIXTURES.items():
         raw = fixture.read_bytes()
         assert _git_blob(raw) == _git("rev-parse", f"HEAD:{fixture.as_posix()}")
-        assert _git_blob(raw) == receipt[
+        historical_before = receipt[
             "bridge_workflow_blob_before" if "bridge-" in workflow else "release_receipts_workflow_blob_before"
         ]
-        assert _git("rev-parse", f"HEAD:{workflow}") == receipt[
-            "bridge_workflow_blob_after" if "bridge-" in workflow else "release_receipts_workflow_blob_after"
-        ]
+        assert _git_blob(raw) == historical_before
+        if workflow in evolution.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD:
+            before, after = evolution.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD[workflow]
+            historical_after = receipt["bridge_workflow_blob_after"]
+            assert historical_after == before["git_blob_sha1"]
+            assert _git("rev-parse", f"HEAD:{workflow}") == after["git_blob_sha1"]
+        else:
+            assert _git("rev-parse", f"HEAD:{workflow}") == receipt[
+                "release_receipts_workflow_blob_after"
+            ]
 
 
 def test_two_reviewed_maintenance_transitions_are_exact_and_count_neutral() -> None:
@@ -132,8 +139,13 @@ def test_hotfix_phase_changes_only_two_workflow_pins_and_preserves_guarded_sourc
     )
     assert receipt["collection_workflow_blob_unchanged"] == pr119_transition["before"]["git_blob_sha1"]
     assert _git("rev-parse", "HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml") == pr119_transition["after"]["git_blob_sha1"]
-    assert _git("rev-parse", "HEAD:.github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml") == receipt["watchdog_workflow_blob_unchanged"]
-    assert _git("rev-parse", "HEAD:.github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml") == receipt["lineage_audit_workflow_blob_unchanged"]
+    for path, receipt_key in (
+        (".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml", "watchdog_workflow_blob_unchanged"),
+        (".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml", "lineage_audit_workflow_blob_unchanged"),
+    ):
+        before, after = evolution.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD[path]
+        assert receipt[receipt_key] == before["git_blob_sha1"]
+        assert _git("rev-parse", f"HEAD:{path}") == after["git_blob_sha1"]
     assert _git("rev-parse", "HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage.py") == receipt["lineage_auditor_blob_unchanged"]
     for key in (
         "workflow_added", "workflow_deleted", "provider_acquisition", "backfill",
