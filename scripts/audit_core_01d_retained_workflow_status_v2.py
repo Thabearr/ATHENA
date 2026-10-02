@@ -89,6 +89,18 @@ def _head_blob(path: str) -> bytes:
     return _git("show", f"HEAD:{path}")
 
 
+def _require_head_file_identity(path: str, raw: bytes) -> None:
+    filtered_blob = subprocess.run(
+        ["git", "hash-object", f"--path={path}", "--stdin"],
+        cwd=ROOT,
+        input=raw,
+        capture_output=True,
+        check=True,
+    ).stdout.decode("ascii").strip()
+    head_blob = _git("rev-parse", f"HEAD:{path}").decode("ascii").strip()
+    require(filtered_blob == head_blob, f"source-controlled fixture differs from HEAD: {path}")
+
+
 def _head_workflow_paths() -> list[str]:
     paths = [
         item.decode("utf-8")
@@ -305,6 +317,7 @@ def build_receipt() -> dict:
             "immutable V1 blocker order/identity drift")
 
     metadata_raw = (ROOT / RELEASE_METADATA_FIXTURE).read_bytes()
+    _require_head_file_identity(RELEASE_METADATA_FIXTURE, metadata_raw)
     metadata = roles.strict_json(metadata_raw)
     require(metadata_raw == canonical_bytes(metadata),
             "fixed release metadata fixture is not canonical")
@@ -312,6 +325,7 @@ def build_receipt() -> dict:
     bootstrap.validate_asset_metadata(assets)
 
     compressed = (ROOT / PAYLOAD_FIXTURE).read_bytes()
+    _require_head_file_identity(PAYLOAD_FIXTURE, compressed)
     require(sha256(compressed) == PAYLOAD_FIXTURE_SHA256,
             "fixed release payload fixture compressed-byte identity drift")
     payload = gzip.decompress(compressed)
@@ -549,7 +563,9 @@ def audit() -> dict:
     expected = build_receipt()
     raw = (ROOT / RECEIPT_PATH).read_bytes()
     committed = roles.strict_json(raw)
-    require(raw == canonical_bytes(committed), "retained-status V2 is not canonical JSON")
+    require(raw.replace(b"\r\n", b"\n") == canonical_bytes(committed),
+            "retained-status V2 is not canonical JSON")
+    _require_head_file_identity(RECEIPT_PATH, raw)
     validate_receipt(committed, expected)
     return {
         "result": "PASS",
