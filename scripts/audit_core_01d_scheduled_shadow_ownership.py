@@ -126,18 +126,39 @@ def validate_workflow_source():
 def validate_evolution():
     ledger = evolution.validate_current_state()
     before = json.loads(historical_bytes(evolution.LEDGER_PATH.as_posix()))
-    require(ledger["transitions"][:11] == before["transitions"] and len(ledger["transitions"]) == 13, "eleven-transition prefix/two-transition cutover drift")
-    require([t["transition_id"] for t in ledger["transitions"][11:]] == TRANSITION_IDS, "CORE-01D transition order drift")
-    require(ledger["canonical_sha256"] == evolution.CORE01D_LEDGER_SHA256 and
-            ledger["current_workflow_tree_sha1"] == evolution.CORE01D_WORKFLOW_TREE_SHA1, "exact fourth PORT-02C context drift")
+    require(ledger["transitions"][:11] == before["transitions"]
+            and len(ledger["transitions"]) in (13, 14),
+            "eleven-transition prefix/CORE-01D append drift")
+    require([t["transition_id"] for t in ledger["transitions"][11:13]] == TRANSITION_IDS,
+            "CORE-01D transition order drift")
+    expected_tree, expected_ledger = (
+        (evolution.CORE01D_PR119_WORKFLOW_TREE_SHA1, evolution.CORE01D_PR119_LEDGER_SHA256)
+        if len(ledger["transitions"]) == 14
+        else (evolution.CORE01D_WORKFLOW_TREE_SHA1, evolution.CORE01D_LEDGER_SHA256)
+    )
+    require(ledger["canonical_sha256"] == expected_ledger
+            and ledger["current_workflow_tree_sha1"] == expected_tree,
+            "exact current PORT-02C forward context drift")
     transitions = [t for t in ledger["transitions"] if t["workflow_path"] == evolution.PORT02C_REPLAY_WORKFLOW_PATH]
     require(len(transitions) == 1 and transitions[0]["transition_id"] == "PORT02C_NATIVE_RUNTIME_SLICE_ADD_V1", "false new PORT-02C transition")
     require(evolution.source_identity(raw(evolution.PORT02C_REPLAY_WORKFLOW_PATH)) == evolution.PORT02C_REPLAY_WORKFLOW_AFTER, "PORT-02C successor source drift")
     for t, path, contract in zip(ledger["transitions"][11:], (CANONICAL, LEGACY),
-                               (evolution.CORE01D_SCHEDULE_OWNER_CONTRACT, evolution.CORE01D_SCHEDULE_RETIRE_CONTRACT)):
+                                (evolution.CORE01D_SCHEDULE_OWNER_CONTRACT, evolution.CORE01D_SCHEDULE_RETIRE_CONTRACT)):
         require(t["workflow_path"] == path and t["operation"] == "MAINTENANCE_REVISE" and
                 t["phase_id"] == "CORE-01D" and t["canonical_family"] == "ATHENA_RUN" and
                 t["maintenance_contract"] == contract and t["before"] == evolution.source_identity(historical_bytes(path)), "CORE-01D maintenance identity drift")
+    if len(ledger["transitions"]) == 14:
+        transition = ledger["transitions"][13]
+        path = ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
+        require(transition["transition_id"] == "CORE01D_FRESH_HOLDOUT_PR119_RELEASE_ONLY_BOOTSTRAP_V1"
+                and transition["workflow_path"] == path
+                and transition["operation"] == "MAINTENANCE_REVISE"
+                and transition["phase_id"] == "CORE-01D"
+                and transition["canonical_family"] == "PROTECTED_RESEARCH"
+                and transition["maintenance_contract"] == evolution.CORE01D_PR119_RELEASE_ONLY_CONTRACT
+                and transition["before"] == evolution.source_identity(historical_bytes(path))
+                and transition["after"] == evolution.source_identity(raw(path)),
+                "PR119 release-only transition 14 identity drift")
     return ledger
 
 
@@ -257,6 +278,12 @@ def expected_receipt():
 
 
 def verified_receipt_path():
+    ledger = evolution.validate_current_state()
+    if len(ledger["transitions"]) == 14:
+        value = predecessor.strict(raw(RECEIPT_PATH))
+        require(value.get("canonical_sha256") == RECEIPT_SHA == predecessor.self_sha(value),
+                "immutable scheduled-ownership receipt identity drift")
+        return RECEIPT_PATH
     value = predecessor.strict(raw(RECEIPT_PATH))
     require(value.get("canonical_sha256") == RECEIPT_SHA == predecessor.self_sha(value), "unreviewed scheduled ownership receipt identity")
     require(value == expected_receipt(), "unreviewed scheduled ownership receipt/source drift")
@@ -313,6 +340,30 @@ def expected_forward_documents(schedule):
 
 
 def audit_forward_checkpoint():
+    ledger = evolution.validate_current_state()
+    if len(ledger["transitions"]) == 14:
+        schedule = predecessor.strict(raw(RECEIPT_PATH))
+        matrix = predecessor.strict(raw(FORWARD_MATRIX))
+        receipt = predecessor.strict(raw(FORWARD_RECEIPT))
+        require(schedule.get("canonical_sha256") == RECEIPT_SHA == predecessor.self_sha(schedule),
+                "immutable scheduled-ownership receipt identity drift")
+        require(matrix.get("canonical_sha256") == predecessor.PREDECESSOR_V2_MATRIX_SHA256
+                == predecessor.self_sha(matrix), "immutable Checkpoint-E V2 matrix identity drift")
+        require(receipt.get("canonical_sha256") == predecessor.PREDECESSOR_V2_RECEIPT_SHA256
+                == predecessor.self_sha(receipt), "immutable Checkpoint-E V2 receipt identity drift")
+        require(receipt.get("evolution_ledger_sha256") == evolution.CORE01D_LEDGER_SHA256
+                and receipt.get("current_workflow_tree_sha1") == evolution.CORE01D_WORKFLOW_TREE_SHA1
+                and receipt.get("checkpoint_e_status") == receipt.get("p4_4_status") == "INCOMPLETE",
+                "immutable Checkpoint-E V2 before-state binding drift")
+        from scripts.audit_core_01d_retained_workflow_status_v2 import audit as audit_status_v2
+        current = audit_status_v2()
+        require(current.get("result") == "PASS"
+                and current.get("evolution_transition_count") == 14
+                and current.get("checkpoint_e") == current.get("p4_4") == "INCOMPLETE",
+                "current retained-status V2 / Pass-1 evidence failed authentication")
+        return receipt
+    require(len(ledger["transitions"]) == 13,
+            "scheduled ownership forward supports only its immutable predecessor or exact Pass-1 successor")
     schedule = expected_receipt()
     require(predecessor.strict(raw(RECEIPT_PATH)) == schedule, "schedule receipt drift")
     matrix, receipt = expected_forward_documents(schedule)
@@ -323,8 +374,16 @@ def audit_forward_checkpoint():
 def additive_paths():
     audit_forward_checkpoint()
     ledger = json.loads(raw(evolution.LEDGER_PATH))
-    return (RECEIPT_PATH, FORWARD_MATRIX, FORWARD_RECEIPT,
-            *(p for t in ledger["transitions"][11:] for p in (t["evidence_receipt_path"], t["checkpoint_snapshot_path"])))
+    paths = (
+        RECEIPT_PATH,
+        FORWARD_MATRIX,
+        FORWARD_RECEIPT,
+        *(p for t in ledger["transitions"][11:]
+          for p in (t["evidence_receipt_path"], t["checkpoint_snapshot_path"])),
+    )
+    if len(ledger["transitions"]) == 14:
+        return (*paths, "artifacts/architecture/core_01d_retained_workflow_status_v2.json")
+    return paths
 
 
 def audit():

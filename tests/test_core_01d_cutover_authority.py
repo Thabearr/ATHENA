@@ -35,6 +35,7 @@ CONTEXTS = [
     (e.CORE01B_WORKFLOW_TREE_SHA1, e.CORE01B_LEDGER_SHA256),
     (e.CORE01C_WORKFLOW_TREE_SHA1, e.CORE01C_LEDGER_SHA256),
     (e.CORE01D_WORKFLOW_TREE_SHA1, e.CORE01D_LEDGER_SHA256),
+    (e.CORE01D_PR119_WORKFLOW_TREE_SHA1, e.CORE01D_PR119_LEDGER_SHA256),
 ]
 
 
@@ -70,13 +71,15 @@ def test_port02c_closed_context_tamper_rejects(mutation):
         e._port02c_current_source_forward(derived, observed, head_tree=tree, ledger_sha=ledger)
 
 
-def test_port02c_four_closed_contexts_no_new_transition_source_unchanged():
+def test_port02c_five_closed_contexts_no_new_transition_source_unchanged():
     source = ast.parse(inspect.getsource(e._port02c_current_source_forward))
     values = next(n.value for n in ast.walk(source) if isinstance(n, ast.Assign) and
                   any(isinstance(t, ast.Name) and t.id == "reviewed_contexts" for t in n.targets))
-    assert isinstance(values, ast.Set) and len(values.elts) == 4
+    assert isinstance(values, ast.Set) and len(values.elts) == 5
     ledger = a.validate_evolution()
-    assert len(ledger["transitions"]) == 13
+    assert len(ledger["transitions"]) == 14
+    assert ledger["canonical_sha256"] == e.CORE01D_PR119_LEDGER_SHA256
+    assert ledger["current_workflow_tree_sha1"] == e.CORE01D_PR119_WORKFLOW_TREE_SHA1
     assert e.source_identity(a.raw(e.PORT02C_REPLAY_WORKFLOW_PATH)) == e.PORT02C_REPLAY_WORKFLOW_AFTER
 
 
@@ -117,10 +120,23 @@ def evidence():
 def test_maintenance_contract_every_boolean_is_exact(evidence, index, field):
     contract = copy.deepcopy(evidence[0]["transitions"][index]["maintenance_contract"])
     contract[field] = not contract[field]
-    with pytest.raises(e.WorkflowEvolutionError): e._validate_maintenance_contract(contract)
+    with pytest.raises(e.WorkflowEvolutionError):
+        e._validate_maintenance_contract(contract)
 
 
-@pytest.mark.parametrize("index", [11, 12])
+@pytest.mark.parametrize(
+    "field",
+    [key for key, value in e.CORE01D_PR119_RELEASE_ONLY_CONTRACT.items() if type(value) is bool],
+)
+def test_pr119_release_only_maintenance_contract_every_boolean_is_exact(evidence, field):
+    contract = copy.deepcopy(evidence[0]["transitions"][13]["maintenance_contract"])
+    assert contract == e.CORE01D_PR119_RELEASE_ONLY_CONTRACT
+    contract[field] = not contract[field]
+    with pytest.raises(e.WorkflowEvolutionError):
+        e._validate_maintenance_contract(contract)
+
+
+@pytest.mark.parametrize("index", [11, 12, 13])
 @pytest.mark.parametrize("field,value", [("phase_id", "CORE-01C"), ("workflow_path", ".github/workflows/tests.yml"),
     ("canonical_family", "TESTS")])
 def test_core01d_contract_reserved_exact_phase_path_family(evidence, index, field, value):

@@ -77,13 +77,28 @@ CORE01D_SCHEDULE_RETIRE_CONTRACT = {
     "event_trigger_kinds_changed": True,
     "concurrency_changed": False,
 }
+CORE01D_PR119_RELEASE_ONLY_CONTRACT = {
+    **AUTHORITY_SURFACE_MAINTENANCE_CONTRACT_V2,
+    "policy_id": "ATHENA_P4_BASELINE_WORKFLOW_MAINTENANCE_REVISE_V3_CORE01D_PR119_RELEASE_ONLY_BOOTSTRAP",
+    "workflow_dispatch_input_surface_changed": False,
+}
 CORE01D_CONTRACT_PATHS = {
     CORE01D_SCHEDULE_OWNER_CONTRACT["policy_id"]: ".github/workflows/athena-run.yml",
     CORE01D_SCHEDULE_RETIRE_CONTRACT["policy_id"]: ".github/workflows/current-shadow-all-market.yml",
+    CORE01D_PR119_RELEASE_ONLY_CONTRACT["policy_id"]: ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml",
+}
+CORE01D_CONTRACT_FAMILIES = {
+    CORE01D_SCHEDULE_OWNER_CONTRACT["policy_id"]: "ATHENA_RUN",
+    CORE01D_SCHEDULE_RETIRE_CONTRACT["policy_id"]: "ATHENA_RUN",
+    CORE01D_PR119_RELEASE_ONLY_CONTRACT["policy_id"]: "PROTECTED_RESEARCH",
 }
 MAINTENANCE_CONTRACTS.update({
     contract["policy_id"]: contract
-    for contract in (CORE01D_SCHEDULE_OWNER_CONTRACT, CORE01D_SCHEDULE_RETIRE_CONTRACT)
+    for contract in (
+        CORE01D_SCHEDULE_OWNER_CONTRACT,
+        CORE01D_SCHEDULE_RETIRE_CONTRACT,
+        CORE01D_PR119_RELEASE_ONLY_CONTRACT,
+    )
 })
 REVISED_WORKFLOW_FIXTURE_ROOT = "tests/fixtures/architecture/revised_workflows/"
 PROTECTED = retirement.PROTECTED_LIVE | {".github/workflows/current-shadow-sportybet-source-diagnostic.yml"}
@@ -453,9 +468,12 @@ def apply_transitions(
             if transition["canonical_family"] != baseline_families[path]:
                 raise WorkflowEvolutionError(f"MAINTENANCE_REVISE canonical family differs from P4.3A: {path}")
             _validate_maintenance_contract(transition["maintenance_contract"])
-            core01d_path = CORE01D_CONTRACT_PATHS.get(transition["maintenance_contract"]["policy_id"])
+            core01d_policy = transition["maintenance_contract"]["policy_id"]
+            core01d_path = CORE01D_CONTRACT_PATHS.get(core01d_policy)
             if core01d_path is not None and (
-                phase != "CORE-01D" or path != core01d_path or transition["canonical_family"] != "ATHENA_RUN"
+                phase != "CORE-01D"
+                or path != core01d_path
+                or transition["canonical_family"] != CORE01D_CONTRACT_FAMILIES[core01d_policy]
             ):
                 raise WorkflowEvolutionError("CORE-01D maintenance contract is reserved for its exact phase/path/family")
             if transition["maintenance_contract"].get("policy_id") == AUTHORITY_SURFACE_MAINTENANCE_CONTRACT_V2["policy_id"] and (
@@ -793,6 +811,8 @@ CORE01C_WORKFLOW_TREE_SHA1 = "134cdd8bfa54488770f562c93571e46ac84a8187"
 CORE01C_LEDGER_SHA256 = "d01539f234955ef873bcd549faa83502d51eb96043eed627dbd2da450409f1e7"
 CORE01D_WORKFLOW_TREE_SHA1 = "9060b6fb263febc45332a7cf9c9da8448284b471"
 CORE01D_LEDGER_SHA256 = "b582a5ba8a31ddfba94324f8869dd253460dcc01102ef356327a3337275b8335"
+CORE01D_PR119_WORKFLOW_TREE_SHA1 = "551a8be9c685197e17cd72d58ac12f3b20adad88"
+CORE01D_PR119_LEDGER_SHA256 = "8f420750706abccbcc4a8172315d810c9d0da045f38eef7d2c7323d27450fe1d"
 
 
 def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha):
@@ -806,6 +826,7 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
         (CORE01B_WORKFLOW_TREE_SHA1, CORE01B_LEDGER_SHA256),
         (CORE01C_WORKFLOW_TREE_SHA1, CORE01C_LEDGER_SHA256),
         (CORE01D_WORKFLOW_TREE_SHA1, CORE01D_LEDGER_SHA256),
+        (CORE01D_PR119_WORKFLOW_TREE_SHA1, CORE01D_PR119_LEDGER_SHA256),
     }
     if ((head_tree, ledger_sha) not in reviewed_contexts
             or derived.get(PORT02C_REPLAY_WORKFLOW_PATH) != PORT02C_REPLAY_WORKFLOW_BEFORE

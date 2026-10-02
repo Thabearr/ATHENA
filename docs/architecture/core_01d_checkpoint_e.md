@@ -87,7 +87,7 @@ identities. Audit output derives the final Git HEAD, avoiding a self-referential
 commit SHA inside the receipt. The source review counter for the current retained-
 status PR is 2/5 while open, 3/5 only if the owner later merges. **DO NOT MERGE.**
 
-## Retained-workflow status supplement: explicit, not retired
+## Historical V1 retained-workflow status supplement: explicit, not retired
 
 PR #431 is merged at the pinned main. The scheduled-SHADOW ownership blocker is
 closed by the reviewed receipt `core_01d_scheduled_shadow_ownership_v1.json`
@@ -136,8 +136,38 @@ defects and are not asserted as current product-runtime failures. Exact bytes
 must come from an existing durable source; otherwise a separate owner-approved
 retention/deprecation decision is required before any consumer-contract change.
 
-The retained-status receipt deliberately excludes volatile Actions run status
+The V1 retained-status receipt deliberately excludes volatile Actions run status
 from static authority classification. Any run-state note is read-only and
-non-authoritative. This PR performs no provider/live action; the source review
-counter remains 2/5 while open and would become 3/5 only if owner-merged.
+non-authoritative. At this V1 source cut there was no provider/live action; its
+source review counter was 2/5 while open and would have become 3/5 if owner-merged.
 **Checkpoint E: INCOMPLETE. P4.4: INCOMPLETE. DO NOT MERGE.**
+
+## Current Pass-1 status: fixed-release bootstrap only
+
+The immutable V1 receipt above remains the exact before-state. The additive,
+source-derived V2 receipt is
+`artifacts/architecture/core_01d_retained_workflow_status_v2.json`; it binds
+transition 14 and the current workflow tree without rewriting V1 or its source
+inventory.
+
+The protected fresh-holdout runner now accepts only release
+`athena-fresh-holdout-bootstrap-v1` (ID `373205103`) and asset
+`pr119-materialized.ndjson` (ID `521090702`). It verifies release and asset
+identity, exact downloaded bytes, and exactly 21,326 valid rows before the
+collection step. Artifact `9249856559` remains `METADATA_ONLY_NO_BYTES`; the
+fixed projection is not a recovered copy or replacement for that historical
+ZIP. Its spent PR139 replay dependency remains retained.
+
+Current tracked source derives 39 workflows, 57 trigger surfaces, 12
+artifact/workflow edges, and 14 artifact-trigger relationships (4 live and 10
+historical/spent). Only blocker A,
+`PROTECTED_FRESH_HOLDOUT_PR119_EXACT_FALLBACK_NOT_DURABLY_RECOVERED`, is closed.
+Blockers B/C/D remain
+`OWNER_GATED_PR145_FEATURE_EVIDENCE_NOT_DURABLY_RECOVERED`,
+`CANONICAL_HISTORY_TRANSFER_SOURCE_NOT_FULLY_DURABLE`, and
+`HISTORICAL_REPLAY_ARCHIVES_UNAVAILABLE`.
+
+No trigger, schedule, workflow count, collection, provider, evidence, research
+authority, or backfill contract is expanded. Checkpoint E and P4.4 remain
+**INCOMPLETE**. The source review counter is 3/5 while open and would be 4/5
+only if owner-merged; mandatory reread is not due. **Do not merge.**
