@@ -40,7 +40,13 @@ PASS1_SUPPORTING_SOURCE_PATHS = (
     ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml",
     "docs/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.md",
     "docs/fotmob_utc_native_expected_goals_fresh_holdout_pr119_bootstrap_recovery.md",
+    "domain/current_fotmob_latest_durable_fresh_history.py",
+    "scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py",
+    "tests/test_fotmob_fresh_holdout_actions_lineage_audit_pr175_projection.py",
+    "tests/test_fotmob_fresh_holdout_continuity_workflow.py",
     "tests/test_fotmob_fresh_holdout_pr119_bootstrap_recovery.py",
+    "tests/test_fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.py",
+    "tests/test_fresh_holdout_release_visibility_race_hotfix.py",
 )
 PASS1_V1_BASE_SOURCE_FIXTURES = {
     ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml": (
@@ -69,6 +75,26 @@ PASS1_V1_BASE_SOURCE_FIXTURES = {
         "1c76953ae04773ee19d7a701c9aa4a6f3b2aed21",
         "32b324f8cf92206abf7b4d1eb6fcdcc05a49776fae8b146811afc6027d5e1aa9",
     ),
+    "domain/current_fotmob_latest_durable_fresh_history.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/current-latest-fresh-history.py",
+        "bc3a9a81211a1ecd08f0ab05427d765a09bf2eea",
+        "692ea083ad5a115b51a9d3e33da874b4bce7902f07d81034f9adc3fc7a979996",
+    ),
+    "scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/schedule-recovery-lineage-projection.py",
+        "4f9c0ffda3841434bacd5001164aeae29de8fcc4",
+        "5fef00a24611cb134bb35409e9f9c668f942cca68ed6eb94404dc5804378ea03",
+    ),
+    "tests/test_fotmob_fresh_holdout_actions_lineage_audit_pr175_projection.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/test-lineage-pr175-projection.py",
+        "abf4a91dd7060a5a5f4af70f4285fdc40c3b5d2a",
+        "2708445ce510256952d98c4b4ba2d1f1f34fc09abc1de5801e44d55489b0ea15",
+    ),
+    "tests/test_fotmob_fresh_holdout_continuity_workflow.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/test-continuity-workflow.py",
+        "2ffb1642e782ea0bc993302ca40a6e2645013fc3",
+        "5333e445bb2a5fabc52717a322df688cf30d983cc8e45f3e36de5ad65a264987",
+    ),
     "tests/test_fotmob_fresh_holdout_pr119_bootstrap_recovery.py": (
         "tests/fixtures/core_01d/pass1-v1-source/test-pr119-bootstrap-recovery.py",
         "a63368d629f00f24c4c2d900961d139abcda109f",
@@ -78,6 +104,16 @@ PASS1_V1_BASE_SOURCE_FIXTURES = {
         "tests/fixtures/core_01d/pass1-v1-source/scheduler-liveness.yml",
         "f613211018417435cb4ad7a22529b1ff0a38d690",
         "2c77dfc4070bdf76a26b2209622f3ffc5fd82758f1203504729e9c90d375da21",
+    ),
+    "tests/test_fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/test-activation-runner.py",
+        "7a2a3be430896fb05717bf2d293c8b88e6570a65",
+        "941427ed48f0c2f96c97f69a728ec47e69bcbea4d625e296c211c38bc0895c7d",
+    ),
+    "tests/test_fresh_holdout_release_visibility_race_hotfix.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/test-visibility-race-hotfix.py",
+        "43ffef4866e6ea3ba57f5d6d52457be9b80703a0",
+        "09fd0d346bf6c7a62a0369e9767de19743578c5cb03d908a2ffe337abbb148b4",
     ),
 }
 BASE_PATH = "tests/fixtures/core_01d/exact-main-source-inventory.json"
