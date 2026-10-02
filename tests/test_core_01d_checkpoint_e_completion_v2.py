@@ -63,6 +63,8 @@ def test_unapproved_runtime_change_cannot_hide_in_historical_projection(monkeypa
  with pytest.raises(AssertionError,match='outside bounded evidence scope'):current.historical_v1_receipt()
 
 def test_local_test_products_are_not_authority_evidence(monkeypatch):
+ assert current.LOCAL_TEST_PRODUCTS=={'.pytest-shard-files','p3-0-e1-live-readiness.json','artifacts/p3-0-comparison-evidence/p3-0-e1-live-readiness.json'}
+ assert 'Path(".pytest-shard-files").write_text(' in (review.ROOT/'.github/workflows/tests.yml').read_text()
  original=review.retention.v4.v3._git
  def products(*args):
   if args==('ls-files','--others','--exclude-standard'):
