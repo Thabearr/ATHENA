@@ -171,3 +171,49 @@ No trigger, schedule, workflow count, collection, provider, evidence, research
 authority, or backfill contract is expanded. Checkpoint E and P4.4 remain
 **INCOMPLETE**. The source review counter is 3/5 while open and would be 4/5
 only if owner-merged; mandatory reread is not due. **Do not merge.**
+
+## Current Pass-2 status: PR145 completed and spent
+
+Pass 2 corrects only the stale PR145 live-dependency classification. The
+additive V3 receipt, `artifacts/architecture/core_01d_retained_workflow_status_v3.json`,
+authenticates immutable V2 and closes blocker B as a current execution
+dependency; it does not recover, replace, or waive any historical bytes.
+
+PR145 did not stop at a pending first execution. The earlier command comment
+`5317747534`, run `32046244761`, and reconciliation comment `5317758294` remain
+failed-before-attempt history: no durable marker, checkout, source download,
+validator, or research training occurred. Failure artifact `9292984849` remains
+forensic pre-attempt history only.
+
+The later owner command `5318114406` completed successfully in run
+`32049714066`; durable marker `5318115383` and result comment `5318117332`
+record the completed one-shot. The source-controlled result review consumed
+the 6,948 A/B evaluation labels and did not approve a successor. The unchanged
+PR145 workflow still fails closed when it finds a prior marker, so this lane is
+`SPENT_HISTORICAL_ONE_SHOT_RETAIN`, not pending first execution and not replayable.
+The next boundary is
+`IMPLEMENT_REVIEWED_FRESH_HOLDOUT_FOTMOB_UTC_NATIVE_EXPECTED_GOALS_CALIBRATION_AND_COMPETITION_IDENTITY_FOLLOWUP`;
+the pre-registered follow-up remains unimplemented and unexecuted.
+
+Artifact `9275052993` (23,349,191 bytes; SHA-256
+`f69ffad8f47faadb3ec743c96efa35fb6f4b43776a7650cf0414fb40455d29eb`) remains
+`METADATA_ONLY_NO_BYTES`. Its exact bytes remain necessary for historical
+raw-source replay/audit, but are no longer a live PR145 execution prerequisite.
+Artifact `9292984849` remains `FORENSIC_PRE_ATTEMPT_HISTORY_RETAIN` and is not
+validator input. The read-only current Actions listing for successful result
+artifact `9294215497` was empty; its disappearance time/reason, any external
+archive, and durable byte-retention policy were not reviewed in this pass. This
+observation does not reopen PR145.
+
+V3 preserves the V2 SHA-256
+`70e9215922883a1a4c083230b2c5ac54926b6c5cb2c8b45d299dbd65cd825934`, the
+39-workflow/57-trigger census, 12 artifact/workflow edges, and 14
+artifact-trigger relationships. Two relations remain live; 12 are
+historical/spent. Blocker A remains closed; blocker B is closed only as a live
+execution dependency; blockers C and D remain, including the exact canonical
+history transfer and historical replay archives. No workflow, trigger,
+provider, model, evidence, or authority action occurred. Checkpoint E and P4.4
+remain **INCOMPLETE**. Source review is 4/5 while this PR is open and would be
+5/5 if owner-merged; the mandatory governing-source reread becomes due
+immediately after that merge and before any further remediation. **Do not
+merge.**
