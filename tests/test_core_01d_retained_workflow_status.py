@@ -42,7 +42,7 @@ def test_retained_status_v1_is_immutable_before_state():
     assert v1.self_sha(value) == audit.V1_RECEIPT_SHA256
     assert value["policy_id"] == "ATHENA_CORE_01D_RETAINED_WORKFLOW_STATUS_V1"
     assert value["evolution_transition_count"] == 13
-    assert value["artifact_trigger_relationship_count"] == 17
+    assert value["reviewed_artifact_trigger_relationship_count"] == 17
     assert value["checkpoint_e_status"] == value["p4_4_status"] == "INCOMPLETE"
 
 

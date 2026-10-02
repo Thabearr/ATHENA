@@ -34,6 +34,11 @@ MATRIX_POLICY_ID = "ATHENA_CORE_01D_TRIGGER_CAPABILITY_MATRIX_V1"
 RECEIPT_PATH = "artifacts/architecture/checkpoint_e_workflow_consolidation_v1.json"
 MATRIX_PATH = "artifacts/architecture/checkpoint_e_workflow_capability_matrix_v1.json"
 RETAINED_STATUS_PATH = "artifacts/architecture/core_01d_retained_workflow_status_v1.json"
+PASS1_SUPPORTING_SOURCE_PATHS = (
+    "docs/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.md",
+    "docs/fotmob_utc_native_expected_goals_fresh_holdout_pr119_bootstrap_recovery.md",
+    "tests/test_fotmob_fresh_holdout_pr119_bootstrap_recovery.py",
+)
 BASE_PATH = "tests/fixtures/core_01d/exact-main-source-inventory.json"
 HISTORY_PATH = "tests/fixtures/core_01d/workflow-history-20261001.json"
 ZIP_PATH = "tests/fixtures/core_01d/accepted-athena-run-36860297707.zip"
@@ -77,6 +82,13 @@ def seal(value):
 def read(path):
     # V1 describes the merged predecessor, not the unmerged source cutover.
     from scripts.core_01d_historical_source import historical_bytes
+    if path in {
+        ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml",
+        *PASS1_SUPPORTING_SOURCE_PATHS,
+    }:
+        # Keep the immutable V1 capability census on its exact checkpoint base.
+        # Pass 1's current source is independently authenticated by status V2.
+        return git("show", f"{BASE}:{path}")
     return historical_bytes(path)
 
 
@@ -144,6 +156,10 @@ def _authenticate_pr119_release_only_workflow_forward(current, before):
     from scripts import audit_p4_workflow_evolution_ledger as evolution
     from scripts import audit_core_01d_retained_workflow_status_v2 as retained_status_v2
 
+    require(
+        tuple(retained_status_v2.SUPPORTING_SOURCE_PATHS) == PASS1_SUPPORTING_SOURCE_PATHS,
+        "checkpoint and retained-status V2 supporting-source contracts differ",
+    )
     ledger = evolution.validate_current_state()
     require(
         len(ledger["transitions"]) == 14

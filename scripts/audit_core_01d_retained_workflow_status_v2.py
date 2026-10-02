@@ -149,6 +149,8 @@ def _current_workflows() -> tuple[list[str], dict[str, bytes], int]:
 def _supporting_source_inventory() -> list[dict[str, str]]:
     rows = []
     for path in SUPPORTING_SOURCE_PATHS:
+        working_tree_raw = (ROOT / path).read_bytes()
+        _require_head_file_identity(path, working_tree_raw)
         raw = _head_blob(path)
         blob = _git("rev-parse", f"HEAD:{path}").decode("ascii").strip()
         identity = roles.sha(raw)

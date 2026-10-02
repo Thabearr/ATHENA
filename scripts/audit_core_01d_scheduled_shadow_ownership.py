@@ -150,13 +150,15 @@ def validate_evolution():
     if len(ledger["transitions"]) == 14:
         transition = ledger["transitions"][13]
         path = ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
+        before_fixture = transition["historical_before_fixture"]["path"]
+        fixture_identity = evolution.source_identity((ROOT / before_fixture).read_bytes())
         require(transition["transition_id"] == "CORE01D_FRESH_HOLDOUT_PR119_RELEASE_ONLY_BOOTSTRAP_V1"
                 and transition["workflow_path"] == path
                 and transition["operation"] == "MAINTENANCE_REVISE"
                 and transition["phase_id"] == "CORE-01D"
                 and transition["canonical_family"] == "PROTECTED_RESEARCH"
                 and transition["maintenance_contract"] == evolution.CORE01D_PR119_RELEASE_ONLY_CONTRACT
-                and transition["before"] == evolution.source_identity(historical_bytes(path))
+                and transition["before"] == fixture_identity
                 and transition["after"] == evolution.source_identity(raw(path)),
                 "PR119 release-only transition 14 identity drift")
     return ledger
@@ -282,7 +284,7 @@ def verified_receipt_path():
     if len(ledger["transitions"]) == 14:
         value = predecessor.strict(raw(RECEIPT_PATH))
         require(value.get("canonical_sha256") == RECEIPT_SHA == predecessor.self_sha(value),
-                "immutable scheduled-ownership receipt identity drift")
+                "unreviewed immutable scheduled-ownership receipt identity drift")
         return RECEIPT_PATH
     value = predecessor.strict(raw(RECEIPT_PATH))
     require(value.get("canonical_sha256") == RECEIPT_SHA == predecessor.self_sha(value), "unreviewed scheduled ownership receipt identity")
@@ -345,12 +347,14 @@ def audit_forward_checkpoint():
         schedule = predecessor.strict(raw(RECEIPT_PATH))
         matrix = predecessor.strict(raw(FORWARD_MATRIX))
         receipt = predecessor.strict(raw(FORWARD_RECEIPT))
+        from scripts import audit_core_01d_retained_workflow_status as retained_status_v1
+
         require(schedule.get("canonical_sha256") == RECEIPT_SHA == predecessor.self_sha(schedule),
-                "immutable scheduled-ownership receipt identity drift")
-        require(matrix.get("canonical_sha256") == predecessor.PREDECESSOR_V2_MATRIX_SHA256
-                == predecessor.self_sha(matrix), "immutable Checkpoint-E V2 matrix identity drift")
-        require(receipt.get("canonical_sha256") == predecessor.PREDECESSOR_V2_RECEIPT_SHA256
-                == predecessor.self_sha(receipt), "immutable Checkpoint-E V2 receipt identity drift")
+                "unreviewed immutable scheduled-ownership receipt identity drift")
+        require(matrix.get("canonical_sha256") == retained_status_v1.PREDECESSOR_V2_MATRIX_SHA256
+                == predecessor.self_sha(matrix), "forward Checkpoint-E immutable V2 matrix identity drift")
+        require(receipt.get("canonical_sha256") == retained_status_v1.PREDECESSOR_V2_RECEIPT_SHA256
+                == predecessor.self_sha(receipt), "forward Checkpoint-E immutable V2 receipt identity drift")
         require(receipt.get("evolution_ledger_sha256") == evolution.CORE01D_LEDGER_SHA256
                 and receipt.get("current_workflow_tree_sha1") == evolution.CORE01D_WORKFLOW_TREE_SHA1
                 and receipt.get("checkpoint_e_status") == receipt.get("p4_4_status") == "INCOMPLETE",
