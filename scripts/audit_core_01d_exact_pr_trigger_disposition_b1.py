@@ -826,15 +826,22 @@ def _receipt_row(key: str, source_inventory: dict[str, object], observed_at: str
 
 def build_receipt(*, observed_at: str | None = None) -> dict[str, object]:
     boundary.authenticate_predecessors()
-    a2 = boundary.authenticate_inventory()
+    latest_a2 = boundary.authenticate_inventory()
     chain = boundary.load_inventory_generations()
-    boundary.require(len(chain) == 3,
-                     "A2 inventory V3 must be the unique contiguous latest generation")
-    boundary.require(a2.get("generation") == 3, "A2 latest inventory is not V3")
-    boundary.require(a2.get("predecessor_inventory") == {
+    boundary.require(len(chain) == 4,
+                     "B1 audit requires the append-only A2 V1-V4 generation chain")
+    boundary.require(latest_a2.get("generation") == 4, "A2 latest inventory is not V4")
+    boundary.require(latest_a2.get("predecessor_inventory") == {
+        "path": boundary.inventory_generation_path(3),
+        "canonical_sha256": "f7646fd5008d12cc7c5b0379455c384742b893a26cac00fa55df19f28c8a8017",
+        "generation": 3, "rewritten": False,
+    }, "A2 V4 does not extend the exact immutable V3 inventory")
+    a2_v3 = chain[2][1]
+    boundary.require(a2_v3.get("canonical_sha256") == "f7646fd5008d12cc7c5b0379455c384742b893a26cac00fa55df19f28c8a8017"
+                     and a2_v3.get("predecessor_inventory") == {
         "path": boundary.inventory_generation_path(2), "canonical_sha256": V2_INVENTORY_SHA,
         "generation": 2, "rewritten": False,
-    }, "A2 V3 predecessor contract differs from immutable V2")
+    }, "immutable A2 V3 predecessor contract differs from reviewed V2")
     completion = _strict_json(COMPLETION_V3_PATH)
     boundary.require(completion["canonical_sha256"] == COMPLETION_V3_SHA,
                      "Completion V3 immutable identity drift")
@@ -862,7 +869,7 @@ def build_receipt(*, observed_at: str | None = None) -> dict[str, object]:
             "a2_v1_inventory_sha256": V1_INVENTORY_SHA,
             "a2_v2_inventory_sha256": V2_INVENTORY_SHA,
             "a2_v3_inventory": {"path": boundary.inventory_generation_path(3),
-                                 "canonical_sha256": a2["canonical_sha256"], "generation": 3},
+                                 "canonical_sha256": a2_v3["canonical_sha256"], "generation": 3},
             "a2_receipt_sha256": A2_RECEIPT_SHA,
             "a2_evolution_bridge_sha256": BRIDGE_RECEIPT_SHA,
             "completion_v3_sha256": COMPLETION_V3_SHA,

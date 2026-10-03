@@ -292,6 +292,12 @@ def verified_additive_artifact_paths():
             "A2 additive offline-boundary receipt failed authentication")
     require(completion_v3.audit().get("result") == "PASS",
             "V3 additive completion overlay failed authentication")
+    from scripts import audit_core_01d_historical_warehouse_transfer_authority_b2 as b2
+    from scripts import audit_core_01d_checkpoint_e_completion_v5 as completion_v5
+    require(b2.audit().get("result") == "PASS",
+            "historical warehouse/transfer authority B2 evidence failed authentication")
+    require(completion_v5.audit().get("result") == "PASS",
+            "Completion V5 B2 authority overlay failed authentication")
     return (
         MATRIX_PATH,
         RECEIPT_PATH,
@@ -308,6 +314,9 @@ def verified_additive_artifact_paths():
         completion.RECEIPT_PATH,
         a2.RECEIPT_PATH,
         completion_v3.RECEIPT_PATH,
+        b2.SOURCE_INVENTORY_PATH,
+        b2.RECEIPT_PATH,
+        completion_v5.RECEIPT_PATH,
     )
 
 
@@ -761,7 +770,7 @@ def audit():
     evolution.validate_current_state()
     from scripts.audit_core_01d_scheduled_shadow_ownership import audit_forward_checkpoint
     forward = audit_forward_checkpoint()
-    from scripts import audit_core_01d_checkpoint_e_completion_v3 as completion
+    from scripts import audit_core_01d_checkpoint_e_completion_v5 as completion
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as historical_completion
     current = completion.audit()
     completion_value = strict((ROOT / completion.RECEIPT_PATH).read_bytes())
