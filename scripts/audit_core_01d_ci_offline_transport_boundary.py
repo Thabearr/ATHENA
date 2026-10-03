@@ -4,9 +4,15 @@ Two independent proof paths are authenticated on every run:
 
 1. HISTORICAL: the immutable A2 V1 inventory, the immutable A2 receipt and the
    guard/activation sources are rederived from exact Git bytes at the A2
-   reviewed head, never from current worktree bytes.
+   reviewed head, never from current worktree bytes. Hosted CI checks out with
+   fetch-depth 1, where no ancestor object exists and no fetch is permitted, so
+   the same evidence is also cross-checked through a byte-pinned identity chain
+   (pinned V1 inventory + pinned A2 receipt + pinned row counts/shapes); the
+   exact Git rederivation runs whenever the reviewed-head objects are present.
 2. CURRENT: the latest reviewed inventory generation must equal the current
    repository Python corpus, so unreviewed source still fails before collection.
+   This path needs no ancestor object, so any source drift still fails before
+   test collection on every runner.
 """
 from __future__ import annotations
 
@@ -39,6 +45,10 @@ INVENTORY_NAME = re.compile(re.escape(INVENTORY_PREFIX) + r"v([0-9]+)\.json\Z")
 INVENTORY_POLICY_PREFIX = "ATHENA_CORE_01D_CI_OFFLINE_TRANSPORT_SOURCE_INVENTORY"
 INVENTORY_PATH = INVENTORY_DIRECTORY + "/" + INVENTORY_PREFIX + "v1.json"
 INVENTORY_V1_SHA256 = "ca8c07c071538298ffb293027e7a0be1c5766e8a943b3d2b605627f9ffe922dd"
+# Pinned row counts of the immutable generation-1 inventory: the shape a
+# depth-1 checkout can still assert when no reviewed-head object exists.
+V1_SOURCE_IDENTITY_COUNT = 1150
+V1_OBLIGATION_COUNT = 1693
 INVENTORY_V2_PATH = INVENTORY_DIRECTORY + "/" + INVENTORY_PREFIX + "v2.json"
 # Frozen repository location: a successor's predecessor binding always names the
 # canonical committed path, whichever isolated directory the chain is checked in.
@@ -77,6 +87,14 @@ HISTORICAL_TEST_BLOBS = {
     "tests/test_market_router_trust_boundaries.py": "e4a6ab718d5905bbe10d9ae57c0a94b3f98ce287",
 }
 HISTORICAL_CONFTEST_BYTES = base64.b64decode("ZnJvbSBfX2Z1dHVyZV9fIGltcG9ydCBhbm5vdGF0aW9ucwoKaW1wb3J0IHB5dGVzdAoKCl9QUjEyNV9SVU5ORVJfVEVTVF9NT0RVTEUgPSAidGVzdF9wcjY5X3ByaW1hcnlfdGltZV9iYXNpc19ldmlkZW5jZV9hY3F1aXNpdGlvbl9ydW5uZXIiCl9QUjEyNV9SRUFMX1VQU1RSRUFNX1RFU1RTID0gewogICAgInRlc3RfdXBzdHJlYW1fcHJvdG9jb2xfbXV0YXRpb25fZmFpbHNfY2xvc2VkIiwKfQoKCkBweXRlc3QuZml4dHVyZShzY29wZT0ic2Vzc2lvbiIpCmRlZiBfcHIxMjVfdmVyaWZpZWRfdXBzdHJlYW1fcHJvdG9jb2woKToKICAgICIiIlBlcmZvcm0gdGhlIGV4cGVuc2l2ZSBQUjEyNeKGklBSMTI0IGFuY2VzdHJ5IHZhbGlkYXRpb24gb25jZSBwZXIgdGVzdCBzZXNzaW9uLiIiIgogICAgaW1wb3J0IGRvbWFpbi5wcjY5X3ByaW1hcnlfdGltZV9iYXNpc19ldmlkZW5jZV9hY3F1aXNpdGlvbl9ydW5uZXIgYXMgY29udHJhY3QKCiAgICByZXR1cm4gY29udHJhY3QuX3ZlcmlmeV91cHN0cmVhbSgpCgoKQHB5dGVzdC5maXh0dXJlKGF1dG91c2U9VHJ1ZSkKZGVmIF9yZXVzZV9wcjEyNV92ZXJpZmllZF91cHN0cmVhbV9wcm90b2NvbChyZXF1ZXN0LCBtb25rZXlwYXRjaCk6CiAgICAiIiJSZXVzZSB2ZXJpZmllZCBpbW11dGFibGUgYW5jZXN0cnkgZm9yIFBSMTI1IHN0YXRlLW1hY2hpbmUgdGVzdHMgb25seS4KCiAgICBQcm9kdWN0aW9uIGNvZGUgaXMgdW5jaGFuZ2VkLiBUaGUgZGVkaWNhdGVkIHVwc3RyZWFtLW11dGF0aW9uIHRlc3QgZGVsaWJlcmF0ZWx5CiAgICByZXRhaW5zIHRoZSBvcmlnaW5hbCB2ZXJpZmllciBzbyBmYWlsLWNsb3NlZCB0YW1wZXIgZGV0ZWN0aW9uIHJlbWFpbnMgZXhlcmNpc2VkLgogICAgIiIiCiAgICBpZiByZXF1ZXN0Lm1vZHVsZS5fX25hbWVfXy5zcGxpdCgiLiIpWy0xXSAhPSBfUFIxMjVfUlVOTkVSX1RFU1RfTU9EVUxFOgogICAgICAgIHJldHVybgogICAgaWYgcmVxdWVzdC5ub2RlLm5hbWUgaW4gX1BSMTI1X1JFQUxfVVBTVFJFQU1fVEVTVFM6CiAgICAgICAgcmV0dXJuCgogICAgaW1wb3J0IGRvbWFpbi5wcjY5X3ByaW1hcnlfdGltZV9iYXNpc19ldmlkZW5jZV9hY3F1aXNpdGlvbl9ydW5uZXIgYXMgY29udHJhY3QKCiAgICB2ZXJpZmllZCA9IHJlcXVlc3QuZ2V0Zml4dHVyZXZhbHVlKCJfcHIxMjVfdmVyaWZpZWRfdXBzdHJlYW1fcHJvdG9jb2wiKQogICAgbW9ua2V5cGF0Y2guc2V0YXR0cihjb250cmFjdCwgIl92ZXJpZnlfdXBzdHJlYW0iLCBsYW1iZGE6IHZlcmlmaWVkKQo=")
+# Exact A2 reviewed-head sitecustomize bytes (the only guard source this bridge
+# changes). Hosted CI checks out depth 1, so the reviewed-head object is absent
+# there and no fetch is permitted: these bytes are the fallback text for the
+# historical activation proof and are themselves pinned by the immutable V1
+# inventory identity for the same path, so a substituted blob fails closed.
+HISTORICAL_TEXT_BYTES = {
+    "sitecustomize.py": base64.b64decode("IiIiQWN0aXZhdGUgdGhlIHRlc3QgYm91bmRhcnkgYmVmb3JlIHB5dGVzdCBwbHVnaW4gZGlzY292ZXJ5OyBvdGhlciBDTEkgaXMgaW5lcnQuIiIiCmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aAppbXBvcnQgc3lzCgojIFBhdGNoIEJyaWRnZSBmb3JiaWRzIHRoaXMgcm9vdCBwYXRoLiBJdHMgYWxsb3dlZCB0ZXN0cy9zY3JpcHRzIHBhdGNoZXMgbXVzdAojIG5vdCByZXBsYWNlIHRoZSB0cnVzdGVkIGJvdW5kYXJ5IG9yIGF1ZGl0b3IgYmVmb3JlIHB5dGVzdCBzdGFydHMuIFRoZXNlIGFyZQojIExGIHNvdXJjZSBpZGVudGl0aWVzLCBub3Qgbm9ybWFsaXphdGlvbiBvZiBhbnkgcmF3IHJ1bnRpbWUgYXJ0aWZhY3QuClJPT1RfVEVTVF9TT1VSQ0VfUElOUyA9IHsKICAgICJzY3JpcHRzL2F1ZGl0X2NvcmVfMDFkX2NpX29mZmxpbmVfdHJhbnNwb3J0X2JvdW5kYXJ5LnB5IjogImM4MzBjODk3OTUxODA3N2ViYTBhNzc2ZjRkZjk2NTM5YjZkNTE1ZjNlNjIyZTE1MzVkZWMyYWY4YjUzNmRkYjAiLAogICAgInRlc3RzL19vZmZsaW5lX2Jvb3RzdHJhcC9zaXRlY3VzdG9taXplLnB5IjogIjFiMTk2ODIxNWI3MmY5MTNlMTdhODQwYjdiM2FjMjJhYTRlODUwOGU1ZmE1Mjk5OTA0ODdjNTliMmUwYzg3OGQiLAogICAgInRlc3RzL2NvbmZ0ZXN0LnB5IjogIjUwMGU0N2Q5OTM3ZGRmODlmNzI1ZDQxMTE3YTg0YWJmMjA3ZGUyZTc2OGE4NjFhZGM1YzRhNDljN2E4N2UwNTIiLAogICAgInRlc3RzL29mZmxpbmVfbGludXgucHkiOiAiNTY1ZTE2OThiZWJmYzMwZDU0NjNhM2MzYjZkZWQ0M2U2ZmY5Mzc4YWY5NTUxMjlhMDExYmYyOGUxYTViOTk5ZiIsCiAgICAidGVzdHMvb2ZmbGluZV90cmFuc3BvcnQucHkiOiAiYTM1ZGNjYTUyOTI5NTk4YTVmNmQ5N2E2OTI3NGU0NzVmMTBjMjIyOTg4OTU5OWE4MmQ1MzcxODg2YzQzN2FkMSIsCn0KCl9hcmdzID0gZ2V0YXR0cihzeXMsICJvcmlnX2FyZ3YiLCAoKSkKX3B5dGVzdF9tb2R1bGUgPSBhbnkoCiAgICBfYXJnc1tpOmkgKyAyXSA9PSBbIi1tIiwgInB5dGVzdCJdCiAgICBhbmQgYWxsKGZsYWcgaW4geyItdSIsICItQiIsICItcyIsICItcSIsICItdiIsICItdnYiLCAiLWIiLCAiLWJiIiwgIi1PIiwgIi1PTyJ9IGZvciBmbGFnIGluIF9hcmdzWzE6aV0pCiAgICBmb3IgaSBpbiByYW5nZSgxLCBsZW4oX2FyZ3MpIC0gMSkKKQpfcHl0ZXN0X3NjcmlwdCA9IGFueShQYXRoKGFyZykubmFtZS5sb3dlcigpIGluIHsicHl0ZXN0IiwgInB5dGVzdC5leGUiLCAicHkudGVzdCJ9IGZvciBhcmcgaW4gX2FyZ3NbMToyXSkKaWYgX3B5dGVzdF9tb2R1bGUgb3IgX3B5dGVzdF9zY3JpcHQ6CiAgICB0cnk6CiAgICAgICAgaW1wb3J0IGhhc2hsaWIKCiAgICAgICAgX3Jvb3QgPSBQYXRoKF9fZmlsZV9fKS5yZXNvbHZlKCkucGFyZW50CiAgICAgICAgZm9yIF9wYXRoLCBfZXhwZWN0ZWQgaW4gUk9PVF9URVNUX1NPVVJDRV9QSU5TLml0ZW1zKCk6CiAgICAgICAgICAgIF9yYXcgPSAoX3Jvb3QgLyBfcGF0aCkucmVhZF9ieXRlcygpLnJlcGxhY2UoYiJcclxuIiwgYiJcbiIpCiAgICAgICAgICAgIGlmIGhhc2hsaWIuc2hhMjU2KF9yYXcpLmhleGRpZ2VzdCgpICE9IF9leHBlY3RlZDoKICAgICAgICAgICAgICAgIHJhaXNlIFJ1bnRpbWVFcnJvcigidGVzdCBib3VuZGFyeSBzb3VyY2UgaWRlbnRpdHkgZHJpZnQ6ICIgKyBfcGF0aCkKICAgICAgICBzeXMucGF0aC5pbnNlcnQoMCwgc3RyKFBhdGgoX19maWxlX18pLnJlc29sdmUoKS5wYXJlbnQgLyAidGVzdHMiKSkKICAgICAgICBmcm9tIG9mZmxpbmVfdHJhbnNwb3J0IGltcG9ydCBpbnN0YWxsCgogICAgICAgIGluc3RhbGwoKQogICAgZXhjZXB0IEV4Y2VwdGlvbiBhcyBlcnJvcjoKICAgICAgICAjIFB5dGhvbiBvdGhlcndpc2UgcHJpbnRzIGFuZCBpZ25vcmVzIGFuIGV4Y2VwdGlvbiBpbiBzaXRlY3VzdG9taXplLgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoInB5dGVzdCBvZmZsaW5lIGJvdW5kYXJ5IGZhaWxlZCB0byBhY3RpdmF0ZSIpIGZyb20gZXJyb3IK"),
+}
 PREDECESSORS = {
  "artifacts/architecture/core_01d_authority_reachability_review_a_v1.json": "9db3362af83eda04b6f005328b5d44f253fcd15ef5f39a62983cc6c3ff402521",
  "tests/fixtures/core_01d/authority-reachability-pass-a-source-inventory-v1.json": "f3cdbec57c380f7a77ce97e4bfab627241cc8b73d0817ec2abfa2f27cf2e209f",
@@ -255,10 +273,71 @@ def current_corpus_fields():
 
 
 @lru_cache(maxsize=8)
+def historical_objects_available(commit=A2_REVIEWED_HEAD):
+    """True when the exact reviewed-head objects exist in this object database.
+
+    Hosted CI checks out with fetch-depth 1, so no ancestor commit exists there
+    and this probe returns False. Historical reads then use the byte-pinned
+    identity chain instead of Git history; nothing is fetched and no
+    environment variable selects a proof.
+    """
+    try:
+        git("cat-file", "-e", f"{commit}^{{commit}}")
+    except subprocess.CalledProcessError:
+        return False
+    return True
+
+
+def pinned_historical_identity(path, commit=A2_REVIEWED_HEAD):
+    """Reviewed A2 source identity for `path` from the immutable V1 inventory.
+
+    The generation-1 inventory is byte-pinned by INVENTORY_V1_SHA256 and is
+    cross-checked against the byte-pinned A2 receipt (which names both that
+    inventory and the same guard identities), so its rows are an equivalent,
+    fail-closed source of the exact A2 identities in a depth-1 checkout.
+    """
+    require(commit == A2_REVIEWED_HEAD, "no pinned historical identity for commit: " + commit)
+    identities = {row["path"]: row["lf_source_sha256"]
+                  for row in read(INVENTORY_PATH)["source_identities"]}
+    require(path in identities, "no pinned historical identity for path: " + path)
+    return identities[path]
+
+
+def pinned_historical_text(path, commit=A2_REVIEWED_HEAD):
+    """Reviewed A2 text for `path` without reading any ancestor Git object.
+
+    A file whose current bytes still equal its pinned A2 identity is proven
+    unchanged before those bytes are used. A file this bridge changed
+    (sitecustomize.py) is served from its exact pinned A2 blob instead, so the
+    historical activation proof never silently reads current source.
+    """
+    require(commit == A2_REVIEWED_HEAD, "no pinned historical text for commit: " + commit)
+    if path in HISTORICAL_TEXT_BYTES:
+        raw = lf(HISTORICAL_TEXT_BYTES[path])
+        require(hashlib.sha256(raw).hexdigest() == pinned_historical_identity(path),
+                "pinned historical text identity mismatch: " + path)
+        return raw.decode("utf-8")
+    # The pin is resolved before any worktree byte is read, so an unknown path
+    # fails closed as a review rejection rather than as a read error.
+    identity = pinned_historical_identity(path)
+    target = ROOT / path
+    require(target.is_file(), "pinned historical text source is missing: " + path)
+    raw = lf(target.read_bytes())
+    require(hashlib.sha256(raw).hexdigest() == identity,
+            "pinned historical text is not the reviewed A2 source: " + path)
+    return raw.decode("utf-8")
+
+
+@lru_cache(maxsize=8)
 def historical_tree(commit):
     """Exact tracked path/mode/blob-id record at `commit` (never a checkout)."""
     entries = {}
-    for record in git("ls-tree", "-r", "-z", commit).split(b"\0"):
+    try:
+        raw = git("ls-tree", "-r", "-z", commit)
+    except subprocess.CalledProcessError as error:
+        raise AssertionError("exact historical Git objects are unavailable for " + commit
+                             + " (depth-1 checkout)") from error
+    for record in raw.split(b"\0"):
         if not record:
             continue
         metadata, path = record.split(b"\t", 1)
@@ -305,12 +384,16 @@ def historical_blobs(commit=A2_REVIEWED_HEAD):
 
 
 def historical_source(path, commit=A2_REVIEWED_HEAD):
+    if not historical_objects_available(commit):
+        return {"path": path, "lf_source_sha256": pinned_historical_identity(path, commit)}
     raw = lf(historical_blobs(commit)[path])
     return {"path": path, "lf_source_sha256": hashlib.sha256(raw).hexdigest()}
 
 
 def historical_text(path, commit=A2_REVIEWED_HEAD):
-    return historical_blobs(commit)[path].decode("utf-8")
+    if historical_objects_available(commit):
+        return historical_blobs(commit)[path].decode("utf-8")
+    return pinned_historical_text(path, commit)
 
 
 def build_inventory_historical(commit=A2_REVIEWED_HEAD):
@@ -330,9 +413,50 @@ def authenticate_historical_v1():
             "immutable A2 V1 policy/schema drift")
     require("generation" not in value and "predecessor_inventory" not in value,
             "immutable A2 V1 must not claim a successor generation")
-    require(value == build_inventory_historical(),
-            "immutable A2 V1 inventory differs from exact A2 reviewed-head Git source")
+    authenticate_pinned_v1_identity_chain(value)
+    if historical_objects_available():
+        require(value == build_inventory_historical(),
+                "immutable A2 V1 inventory differs from exact A2 reviewed-head Git source")
     return value
+
+
+def authenticate_pinned_v1_identity_chain(value):
+    """Cross-artifact proof of the immutable A2 evidence needing no Git history.
+
+    Hosted CI checks out depth 1: no reviewed-head object exists there and no
+    fetch is permitted. The byte-pinned generation-1 inventory, the byte-pinned
+    A2 receipt that names it, and the pinned row counts/shapes must therefore
+    agree with each other, so neither immutable artifact can drift alone. The
+    exact reviewed-head rederivation runs on top of this whenever the objects
+    are present.
+    """
+    require(value.get("base_main_sha") == BASE_MAIN and value.get("base_tree_sha") == BASE_TREE,
+            "immutable A2 V1 base binding drift")
+    identities = value.get("source_identities")
+    require(isinstance(identities, list) and len(identities) == V1_SOURCE_IDENTITY_COUNT,
+            "immutable A2 V1 source identity count drift")
+    require(all(isinstance(row, dict) and isinstance(row.get("path"), str) and row["path"]
+                and re.fullmatch(r"[0-9a-f]{64}", row.get("lf_source_sha256") or "")
+                for row in identities), "immutable A2 V1 source identity shape drift")
+    require(len({row["path"] for row in identities}) == len(identities),
+            "immutable A2 V1 duplicate source identity")
+    require(identities == sorted(identities, key=lambda row: row["path"]),
+            "immutable A2 V1 source identity order drift")
+    rows = value.get("transport_and_process_discovery_obligations")
+    require(isinstance(rows, list) and len(rows) == V1_OBLIGATION_COUNT,
+            "immutable A2 V1 obligation count drift")
+    require(all(isinstance(row, dict) and isinstance(row.get("path"), str) and row["path"]
+                and isinstance(row.get("line"), int) and isinstance(row.get("classification"), str)
+                and row["classification"] for row in rows),
+            "immutable A2 V1 obligation shape drift")
+    receipt = read(RECEIPT_PATH)
+    require(receipt.get("canonical_sha256") == RECEIPT_SHA256, "immutable A2 receipt identity drift")
+    require(receipt.get("inventory") == {"path": INVENTORY_PATH,
+                                         "canonical_sha256": INVENTORY_V1_SHA256},
+            "immutable A2 receipt does not bind the immutable A2 V1 inventory")
+    require(receipt.get("guard_sources") == [historical_source(path) for path in GUARD_PATHS],
+            "immutable A2 receipt guard sources disagree with the immutable A2 V1 inventory")
+    return True
 
 
 def inventory_generation_path(generation):
@@ -610,6 +734,8 @@ def audit():
     authenticate_activation_and_no_bypass()
     authenticate_inventory()
     return {"result": "PASS", "receipt_sha256": value["canonical_sha256"], "resolved_target_count": value["resolved_target_count"],
+            "historical_proof_mode": ("EXACT_A2_GIT_OBJECTS" if historical_objects_available()
+                                      else "PINNED_IDENTITY_CHAIN_DEPTH1"),
             "current_platform_kernel_executed": bool(__import__("offline_linux")._active), "authority_granted": False}
 
 

@@ -18,6 +18,7 @@ import pytest
 from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
 
 V1_CANONICAL_SHA256 = "ca8c07c071538298ffb293027e7a0be1c5766e8a943b3d2b605627f9ffe922dd"
+V1_SITECUSTOMIZE_SHA256 = "364bd75e8137dcb79dab70cc15c7c72808f069cbbaf28d0cd54e3f4a22579b32"
 A2_RECEIPT_SHA256 = "5d0385f77463d3e7a9f804b431df7e2c2c9c4908c266326bf35b05a50086f8e2"
 COMPLETION_V3_SHA256 = "27516b35fb5e836ac2d851fa60e4300ebf347e00b00f3858b46671cd77af9d79"
 EVOLUTION_TERMINAL = "CORE_01D_A2_INVENTORY_EVOLUTION_BRIDGE_REVIEW_READY_DO_NOT_MERGE"
@@ -35,6 +36,19 @@ def _name(relative_path: str) -> str:
 def _committed_bytes(relative_path: str, commit: str) -> bytes:
     raw = subprocess.check_output(["git", "show", f"{commit}:{relative_path}"], cwd=boundary.ROOT)
     return _lf(raw)
+
+
+def _bridge_base_ref() -> str:
+    """Bridge base commit when the object database has it, else the checkout tip.
+
+    Hosted CI checks out depth 1, so the bridge-base ancestors are absent there
+    and no fetch is permitted; the exact base comparison still runs in any full
+    clone (local review), while the sealed canonical assertions below hold on
+    every runner.
+    """
+    if boundary.historical_objects_available(boundary.BRIDGE_BASE_MAIN):
+        return boundary.BRIDGE_BASE_MAIN
+    return "HEAD"
 
 
 def _worktree_bytes(relative_path: str) -> bytes:
@@ -70,8 +84,14 @@ def test_v1_inventory_is_immutable_and_rederived_from_historical_git_bytes():
     value = boundary.read(boundary.INVENTORY_PATH)
     assert value["canonical_sha256"] == boundary.INVENTORY_V1_SHA256 == V1_CANONICAL_SHA256
     assert boundary.authenticate_historical_v1() == value
-    assert boundary.build_inventory_historical() == value
-    # Independent re-derivation straight from the A2 reviewed-head Git object.
+    pinned = {row["path"]: row["lf_source_sha256"] for row in value["source_identities"]}
+    exact = boundary.historical_objects_available(boundary.A2_REVIEWED_HEAD)
+    if exact:
+        # Exact reviewed-head rederivation whenever the Git objects exist.
+        assert boundary.build_inventory_historical() == value
+    # Independent re-derivation straight from the A2 reviewed-head Git object;
+    # in a depth-1 checkout (no ancestor object, no fetch) the byte-pinned
+    # identity chain in the immutable inventory is the equivalent proof.
     for relative_path in (
         "sitecustomize.py",
         "scripts/audit_core_01d_ci_offline_transport_boundary.py",
@@ -79,8 +99,11 @@ def test_v1_inventory_is_immutable_and_rederived_from_historical_git_bytes():
         "tests/offline_transport.py",
         "tests/offline_linux.py",
     ):
-        observed = hashlib.sha256(_committed_bytes(relative_path, boundary.A2_REVIEWED_HEAD)).hexdigest()
-        assert boundary.historical_source(relative_path)["lf_source_sha256"] == observed
+        observed = boundary.historical_source(relative_path)["lf_source_sha256"]
+        assert observed == pinned[relative_path]
+        if exact:
+            assert observed == hashlib.sha256(
+                _committed_bytes(relative_path, boundary.A2_REVIEWED_HEAD)).hexdigest()
 
 
 def test_any_v1_byte_change_is_rejected(tmp_path):
@@ -124,7 +147,12 @@ def test_completion_v3_and_a2_evidence_are_byte_identical_to_the_bridge_base():
         boundary.COMPLETION_PATH,
         "scripts/audit_core_01d_checkpoint_e_completion_v3.py",
     ):
-        assert _worktree_bytes(relative_path) == _committed_bytes(relative_path, boundary.BRIDGE_BASE_MAIN), relative_path
+        assert _worktree_bytes(relative_path) == _committed_bytes(relative_path, _bridge_base_ref()), relative_path
+    # On runners without the bridge-base objects, each immutable JSON artifact
+    # must still be exactly the canonical serialization of its own sealed
+    # document, and the pins below bind those seals to the reviewed identities.
+    for relative_path in (boundary.INVENTORY_PATH, boundary.RECEIPT_PATH, boundary.COMPLETION_PATH):
+        assert _worktree_bytes(relative_path) == boundary.canonical(boundary.read(relative_path)), relative_path
     value = boundary.read(boundary.COMPLETION_PATH)
     assert value["canonical_sha256"] == boundary.COMPLETION_V3_SHA256 == COMPLETION_V3_SHA256
     from scripts import audit_core_01d_checkpoint_e_completion_v3 as v3
@@ -353,6 +381,31 @@ def test_historical_receipt_reconstruction_is_independent_of_the_current_generat
     assert len(boundary.load_inventory_generations()) == 3
     assert boundary.authenticate_inventory()["generation"] == 3
     assert boundary.read(boundary.RECEIPT_PATH) == boundary.build_receipt()
+
+
+# --- depth-1 (hosted CI) checkout ------------------------------------------
+def test_depth1_checkout_proves_historical_evidence_from_pinned_identities(monkeypatch):
+    """Hosted CI checks out fetch-depth 1: no ancestor object, no fetch allowed."""
+    monkeypatch.setattr(boundary, "historical_objects_available", lambda *args, **kwargs: False)
+    assert boundary.audit()["historical_proof_mode"] == "PINNED_IDENTITY_CHAIN_DEPTH1"
+    assert boundary.authenticate_historical_v1()["canonical_sha256"] == V1_CANONICAL_SHA256
+    assert boundary.authenticate_historical_activation_and_no_bypass() is True
+    assert boundary.read(boundary.RECEIPT_PATH) == boundary.build_receipt()
+    assert boundary.authenticate_inventory()["generation"] == 2
+    # The fallback reads pinned A2 identities rather than current worktree
+    # bytes: this bridge changed sitecustomize.py, so those differ from A2.
+    pinned = boundary.historical_source("sitecustomize.py")["lf_source_sha256"]
+    assert pinned == V1_SITECUSTOMIZE_SHA256
+    assert pinned != boundary.source("sitecustomize.py")["lf_source_sha256"]
+
+    original = Path.read_bytes
+    def altered(path):
+        if Path(path) == boundary.ROOT / "tests/conftest.py":
+            return b"# rewritten after A2\n"
+        return original(path)
+    monkeypatch.setattr(Path, "read_bytes", altered)
+    with pytest.raises(AssertionError, match="pinned historical text is not the reviewed A2 source"):
+        boundary.historical_text("tests/conftest.py")
 
 
 # --- bridge receipt invariants ---------------------------------------------
