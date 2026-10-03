@@ -57,7 +57,13 @@ RECEIPT_PATH = "artifacts/architecture/core_01d_ci_offline_transport_boundary_v1
 RECEIPT_SHA256 = "5d0385f77463d3e7a9f804b431df7e2c2c9c4908c266326bf35b05a50086f8e2"
 COMPLETION_PATH = "artifacts/architecture/core_01d_checkpoint_e_completion_v3.json"
 COMPLETION_V3_SHA256 = "27516b35fb5e836ac2d851fa60e4300ebf347e00b00f3858b46671cd77af9d79"
-BRIDGE_RECEIPT_PATH = "artifacts/architecture/core_01d_a2_inventory_evolution_bridge_v1.json"
+# The immutable lg_a remediation receipt pins the hash of every tracked row
+# under artifacts/ at HEAD, and the allowance list that could exempt a new
+# artifact row is itself inside the pinned bounded evidence scope, so a new
+# artifacts/ row could only be admitted by rewriting immutable evidence. This
+# generation-chain receipt therefore lives with the inventory generations it
+# binds rather than under artifacts/.
+BRIDGE_RECEIPT_PATH = "tests/fixtures/core_01d/ci-offline-transport-boundary-evolution-bridge-receipt-v1.json"
 EVOLUTION_TEST_PATH = "tests/test_core_01d_ci_offline_transport_inventory_evolution.py"
 TARGETS = ((".github/workflows/athena-patch-bridge.yml", "issue_comment"),
            (".github/workflows/tests.yml", "pull_request"), (".github/workflows/tests.yml", "push"))
