@@ -735,7 +735,8 @@ def audit():
     evolution.validate_current_state()
     from scripts.audit_core_01d_scheduled_shadow_ownership import audit_forward_checkpoint
     forward = audit_forward_checkpoint()
-    from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion
+    from scripts import audit_core_01d_checkpoint_e_completion_v3 as completion
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as historical_completion
     current = completion.audit()
     completion_value = strict((ROOT / completion.RECEIPT_PATH).read_bytes())
     return {"result": "PASS", "checkpoint_e": current["checkpoint_e"], "p4_4": current["p4_4"],
@@ -747,7 +748,9 @@ def audit():
             "blockers": current["remaining_blockers"], "live_side_effect_counts": receipt["live_side_effect_counts"],
             "current_retained_status_sha256": completion_value["retained_v5"]["canonical_sha256"],
             "current_completion_receipt_sha256": current["receipt_sha256"],
-            "historical_completion_v1_receipt_sha256": completion.review.COMPLETION_V1_SHA,
+            "historical_completion_v1_receipt_sha256": historical_completion.review.COMPLETION_V1_SHA,
+            "historical_completion_v2_receipt_sha256": completion_value["predecessor_completion_v2"]["canonical_sha256"],
+            "current_a2_authority_review_sha256": completion_value["a2_review"]["canonical_sha256"],
             "current_authority_review_sha256": completion_value["pass_a_review"]["canonical_sha256"],
             "remaining_unreviewed_surface_count": current["remaining_unreviewed_surface_count"],
             "current_live_missing_artifact_relation_count": completion_value["live_missing_artifact_relation_count"],

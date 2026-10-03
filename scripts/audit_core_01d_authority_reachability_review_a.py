@@ -9,6 +9,8 @@ from pathlib import Path
 import re
 import subprocess
 import yaml
+from functools import lru_cache
+from runtime.source_identity import validate_repository_relative_path
 from services import athena_artifact_role_resolver as roles
 from scripts import audit_core_01d_historical_retention_acceptance as retention
 
@@ -73,8 +75,50 @@ sha256 = lambda raw: hashlib.sha256(raw).hexdigest()
 seal, canonical_bytes = retention.seal, retention.canonical_bytes
 require = retention.require
 
+def source_bytes(path):
+ if path=='tests/conftest.py':
+  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+  a2.authenticate_inventory()
+  raw=a2.HISTORICAL_CONFTEST_BYTES
+  require(hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==a2.HISTORICAL_TEST_BLOBS[path], 'historical conftest identity drift')
+  return raw
+ paths=sorted(({row['path'] for row in read_json(INVENTORY_PATH)['sources']} |
+               {p.relative_to(ROOT).as_posix() for p in (ROOT/'.github/workflows').glob('*.yml')})-{'tests/conftest.py'})
+ signature=tuple((p,(ROOT/p).read_bytes()) for p in paths)
+ require(path in paths,'unclassified historical source path')
+ return _tracked_payloads(signature)[path]
+
+@lru_cache(maxsize=2)
+def _tracked_payloads(signature):
+ # Batch the same DevelopmentCheckout invariant: explicit root, logical paths,
+ # filtered checkout == HEAD blob, then exact repository payload. No semantic
+ # mutation or arbitrary newline normalization is hidden by this cache.
+ paths=[validate_repository_relative_path(path) for path,_ in signature]
+ def git(*args, data=None):
+  return subprocess.check_output(['git',*args],cwd=ROOT,input=data)
+ tree=git('ls-tree','-r','HEAD','--',*paths)
+ identities={}
+ for line in tree.splitlines():
+  metadata,path=line.split(b'\t',1);mode,kind,blob=metadata.split()
+  require(mode in {b'100644',b'100755'} and kind==b'blob','historical source must be a regular tracked blob')
+  identities[path.decode()]=blob.decode()
+ require(set(identities)==set(paths),'historical source not tracked at HEAD')
+ filtered=git('hash-object','--filters','--stdin-paths',data=('\n'.join(paths)+'\n').encode()).decode().splitlines()
+ require(filtered==[identities[path] for path in paths],'filtered worktree mutation in historical source')
+ payload=git('cat-file','--batch',data=('\n'.join(identities[path] for path in paths)+'\n').encode())
+ result={};offset=0
+ for path in paths:
+  end=payload.index(b'\n',offset);header=payload[offset:end].split();offset=end+1
+  require(len(header)==3 and header[0].decode()==identities[path] and header[1]==b'blob','historical blob batch identity mismatch')
+  size=int(header[2]);raw=payload[offset:offset+size];offset+=size
+  require(payload[offset:offset+1]==b'\n','historical blob batch framing mismatch');offset+=1
+  require(hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==identities[path],'historical blob payload mismatch')
+  result[path]=raw
+ require(offset==len(payload),'extra historical blob batch data')
+ return result
+
 def identity(path):
- raw = (ROOT / path).read_bytes()
+ raw = source_bytes(path)
  return {'path': path, 'git_blob_sha1': hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest(), 'normalized_source_sha256': sha256(raw.replace(b'\r\n', b'\n'))}
 
 def read_json(path): return roles.strict_json((ROOT / path).read_bytes())
@@ -84,7 +128,7 @@ def authenticate_json(path, expected):
  return value
 
 def discover(path):
- text = (ROOT/path).read_text(); edges=[]; step='source'; function='module'
+ text = source_bytes(path).decode('utf-8'); edges=[]; step='source'; function='module'
  ranges=[]
  if path.endswith('.py'):
   ranges=[(n.lineno,n.end_lineno,n.name) for n in ast.walk(ast.parse(text)) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef))]

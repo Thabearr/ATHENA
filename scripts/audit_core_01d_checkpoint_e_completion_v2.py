@@ -24,11 +24,26 @@ LOCAL_TEST_PRODUCTS={'.pytest-shard-files','p3-0-e1-live-readiness.json','artifa
 def unchanged_inventory(raw):
  return b''.join(line for line in raw.splitlines(keepends=True) if line.split(b'\t',1)[1].strip().decode() not in ALLOWED_PASS_A_PATHS)
 
+def a2_historical_projection(raw):
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ # Authenticate all current caller/guard source before using a historical view.
+ a2.authenticate_inventory()
+ new_paths=a2.A2_PATHS-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS)
+ rows=[]
+ for line in raw.splitlines(keepends=True):
+  path=line.split(b'\t',1)[1].strip().decode()
+  if path in new_paths:continue
+  if path in a2.HISTORICAL_TEST_BLOBS:
+   line=('100644 blob '+a2.HISTORICAL_TEST_BLOBS[path]+'\t'+path+'\n').encode()
+  rows.append(line)
+ return b''.join(rows)
+
 def authenticate_current_scope():
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  git=review.retention.v4.v3._git
- review.require(review.sha256(unchanged_inventory(git('ls-tree','-r','HEAD')))==UNCHANGED_SCOPE_SHA,'Pass-A runtime/workflow/ledger/historical source change outside bounded evidence scope')
- review.require(set(git('diff','--name-only','HEAD').decode().splitlines())<=ALLOWED_PASS_A_PATHS,'unapproved dirty source in Pass A')
- review.require(set(git('ls-files','--others','--exclude-standard').decode().splitlines())<=ALLOWED_PASS_A_PATHS|LOCAL_TEST_PRODUCTS,'unapproved untracked source in Pass A')
+ review.require(review.sha256(unchanged_inventory(a2_historical_projection(git('ls-tree','-r','HEAD'))))==UNCHANGED_SCOPE_SHA,'Pass-A runtime/workflow/ledger/historical source change outside bounded evidence scope')
+ review.require(set(git('diff','--name-only','HEAD').decode().splitlines())<=ALLOWED_PASS_A_PATHS|a2.A2_PATHS,'unapproved dirty source in Pass A')
+ review.require(set(git('ls-files','--others','--exclude-standard').decode().splitlines())<=ALLOWED_PASS_A_PATHS|a2.A2_PATHS|LOCAL_TEST_PRODUCTS,'unapproved untracked source in Pass A')
  return True
 
 
@@ -47,9 +62,11 @@ def historical_v1_git_view():
  def projected(*args):
   raw=original(*args)
   if args==('ls-tree','-r','HEAD'):
+   raw=a2_historical_projection(raw)
    return b''.join(line for line in raw.splitlines(keepends=True) if line.split(b'\t',1)[1].strip().decode() not in NEW_PASS_A_PATHS)
   if args==('diff','--name-only','HEAD'):
-   return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS)
+   from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+   return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS|a2.A2_PATHS)
   return raw
  module._git=projected
  try: yield
