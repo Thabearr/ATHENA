@@ -16,6 +16,15 @@ ALLOWED_PASS_A_PATHS={review.RECEIPT_PATH,RECEIPT_PATH,review.INVENTORY_PATH,
  'scripts/audit_checkpoint_e_workflows.py','docs/architecture/core_01d_checkpoint_e.md','tests/test_core_01d_checkpoint_e_completion.py','tests/test_core_01d_canonical_drive_transfer_completed_history.py'}
 NEW_PASS_A_PATHS=ALLOWED_PASS_A_PATHS-{'scripts/audit_checkpoint_e_workflows.py','docs/architecture/core_01d_checkpoint_e.md','tests/test_core_01d_checkpoint_e_completion.py','tests/test_core_01d_canonical_drive_transfer_completed_history.py'}
 UNCHANGED_SCOPE_SHA='5465e4dc03a46d4e64e81586720cebf9cb40d9dd53ce1fbe534fb825b5d9f32d'
+# Current additive Pass-B1 documents are authenticated by their own B1, V4,
+# and A2 generation auditors. Keep them out of the immutable Pass-A historical
+# tree projection without changing that historical receipt or its semantics.
+B1_ADDITIVE_EVIDENCE_PATHS={
+ 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v3.json',
+ 'tests/fixtures/core_01d/exact-pr-trigger-disposition-b1-source-inventory-v1.json',
+ 'tests/fixtures/core_01d/core-01d-exact-pr-trigger-disposition-b1-v1.json',
+ 'tests/fixtures/core_01d/core-01d-checkpoint-e-completion-v4.json',
+}
 # Existing offline P3 tests and the source-bound Tests shard selector publish
 # these local products. This audit never consumes them as authority proof.
 LOCAL_TEST_PRODUCTS={'.pytest-shard-files','p3-0-e1-live-readiness.json','artifacts/p3-0-comparison-evidence/p3-0-e1-live-readiness.json'}
@@ -27,8 +36,16 @@ def unchanged_inventory(raw):
 def a2_historical_projection(raw):
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  # Authenticate all current caller/guard source before using a historical view.
- a2.authenticate_inventory()
- new_paths=a2.A2_PATHS-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS)
+ latest=a2.authenticate_inventory()
+ # The immutable Pass-A projection predates the generic A2 inventory
+ # generation chain. Exclude only Python sources first admitted after V2;
+ # the latest generation authenticates their exact current bytes, while V2
+ # remains the fixed comparison boundary for this historical projection.
+ predecessor=a2.read_generation(a2.inventory_generation_path(2))
+ predecessor_paths={row['path'] for row in predecessor['source_identities']}
+ latest_paths={row['path'] for row in latest['source_identities']}
+ generation_additions=latest_paths-predecessor_paths
+ new_paths=(a2.A2_PATHS-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|B1_ADDITIVE_EVIDENCE_PATHS
  rows=[]
  for line in raw.splitlines(keepends=True):
   path=line.split(b'\t',1)[1].strip().decode()
