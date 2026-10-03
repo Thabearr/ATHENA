@@ -29,7 +29,9 @@ LOCAL_GIT_COMMANDS = frozenset({
     "rev-parse", "ls-tree", "ls-files", "show", "cat-file", "hash-object",
     "status", "diff", "diff-tree", "merge-base", "rev-list", "log", "config",
     "init", "add", "commit", "check-attr", "check-ignore", "write-tree",
+    "version", "grep", "branch", "checkout",
 })
+_BRANCH_NAME = __import__("re").compile(r"^[A-Za-z0-9][A-Za-z0-9._\-/]*$")
 _installed = False
 _original_popen = subprocess.Popen
 _original_connect = socket.socket.connect
@@ -72,6 +74,72 @@ def python_executable(value: object) -> bool:
     return False
 
 
+def _allow_git_version(remaining: list[str]) -> None:
+    if remaining not in (["--version"], ["version"]):
+        deny("Git version requires an exact noninteractive query")
+
+
+def _allow_git_grep(remaining: list[str]) -> None:
+    if "-F" not in remaining[1:]:
+        deny("Git grep requires fixed-string matching")
+    if "--" not in remaining[1:]:
+        deny("Git grep requires an explicit path separator")
+    separator = remaining.index("--", 1)
+    left = remaining[1:separator]
+    right = remaining[separator + 1:]
+    if not right:
+        deny("Git grep requires at least one scoped path")
+    for path in right:
+        if not path or path.startswith("-") or path.startswith("/") or ".." in path.split("/"):
+            deny("Git grep path is outside the scoped source tree")
+    expect_pattern = False
+    treeish: str | None = None
+    index = 0
+    while index < len(left):
+        arg = left[index]
+        if expect_pattern:
+            if not arg:
+                deny("Git grep pattern is empty")
+            expect_pattern = False
+            index += 1
+            continue
+        if arg in {"-l", "-n", "-F"}:
+            index += 1
+            continue
+        if arg == "-e":
+            expect_pattern = True
+            index += 1
+            continue
+        if arg.startswith("-"):
+            deny("Git grep flag is outside the reviewed source-local subset")
+        treeish = arg
+        index += 1
+    if expect_pattern:
+        deny("Git grep pattern is missing after -e")
+    if treeish is None:
+        deny("Git grep requires a treeish revision")
+    if treeish != "HEAD" and not __import__("re").fullmatch(r"[0-9a-f]{40}", treeish):
+        deny("Git grep treeish is not a pinned source revision")
+
+
+def _allow_git_branch(remaining: list[str]) -> None:
+    if remaining[1:] != ["--show-current"]:
+        deny("Git branch is limited to the exact local current-branch query")
+
+
+def _allow_git_checkout(remaining: list[str]) -> None:
+    rest = remaining[1:]
+    if rest[:1] == ["-b"]:
+        rest = rest[1:]
+        if len(rest) != 1:
+            deny("Git checkout requires exactly one new branch name after -b")
+    elif len(rest) != 1:
+        deny("Git checkout is limited to an exact local branch switch")
+    name = rest[0]
+    if not _BRANCH_NAME.fullmatch(name) or ".." in name or "@{" in name:
+        deny("Git checkout branch name is outside the reviewed local subset")
+
+
 def local_git_arguments(args: list[str]) -> list[str]:
     remaining = args[1:]
     while len(remaining) >= 2 and remaining[0] == "-c":
@@ -82,6 +150,8 @@ def local_git_arguments(args: list[str]) -> list[str]:
         if len(remaining) < 3:
             deny("malformed local Git invocation")
         remaining = remaining[2:]
+    if remaining in (["--version"], ["version"]):
+        return remaining
     if not remaining or remaining[0] not in LOCAL_GIT_COMMANDS:
         deny("Git command is not in the source-local allowlist")
     if any(arg in {"--textconv", "--ext-diff", "--template", "--exec-path", "--upload-pack", "--receive-pack", "--show-signature", "--gpg-sign", "-S"}
@@ -98,6 +168,14 @@ def local_git_arguments(args: list[str]) -> list[str]:
         unsafe = ("filter.", "alias.", "include.", "includeif.", "core.hook", "core.fsmonitor", "core.ssh", "core.editor", "sequence.editor", "init.template", "diff.", "gpg.", "credential.")
         if any(arg.lower().startswith(unsafe) for arg in remaining[1:]):
             deny("Git configuration could enable native child execution")
+    if remaining[0] in ("version", "--version"):
+        _allow_git_version(remaining)
+    if remaining[0] == "grep":
+        _allow_git_grep(remaining)
+    if remaining[0] == "branch":
+        _allow_git_branch(remaining)
+    if remaining[0] == "checkout":
+        _allow_git_checkout(remaining)
     return remaining
 
 

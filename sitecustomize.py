@@ -6,11 +6,11 @@ import sys
 # not replace the trusted boundary or auditor before pytest starts. These are
 # LF source identities, not normalization of any raw runtime artifact.
 ROOT_TEST_SOURCE_PINS = {
-    "scripts/audit_core_01d_ci_offline_transport_boundary.py": "874a798297d9c06a608b7f3551396c0c0256351bcbaf3f107f37e748116e5b90",
+    "scripts/audit_core_01d_ci_offline_transport_boundary.py": "77de9bf5e30613e9aa02930b27cf2ecae69d488f8afe8a736e52cd6e4c6c2d7f",
     "tests/_offline_bootstrap/sitecustomize.py": "1b1968215b72f913e17a840b7b3ac22aa4e8508e5fa529990487c59b2e0c878d",
     "tests/conftest.py": "500e47d9937ddf89f725d41117a84abf207de2e768a861adc5c4a49c7a87e052",
     "tests/offline_linux.py": "565e1698bebfc30d5463a3c3b6ded43e6ff9378af955129a011bf28e1a5b999f",
-    "tests/offline_transport.py": "e06eb837888cd70833038c092ad10ee1df56cac19b0994fee8cfd852a758e356",
+    "tests/offline_transport.py": "a35dcca52929598a5f6d97a69274e475f10c2229889599a82d5371886c437ad1",
 }
 
 _args = getattr(sys, "orig_argv", ())

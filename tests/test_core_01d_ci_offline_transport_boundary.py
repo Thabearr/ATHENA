@@ -105,6 +105,35 @@ def test_local_git_is_still_available():
     assert result.stdout.strip() == b"true"
 
 
+def test_local_git_version_grep_branch_checkout_are_available():
+    assert boundary.local_git_arguments(["git", "--version"]) == ["--version"]
+    assert boundary.local_git_arguments(["git", "version"]) == ["version"]
+    assert boundary.local_git_arguments(
+        ["git", "grep", "-l", "-F", "scripts/issue_current_fotmob_reviewed_source.py", "HEAD", "--", ".github/workflows/a.yml"]
+    )[0] == "grep"
+    assert boundary.local_git_arguments(["git", "branch", "--show-current"])[0] == "branch"
+    assert boundary.local_git_arguments(["git", "checkout", "-b", "evidence-side"])[0] == "checkout"
+    assert boundary.local_git_arguments(["git", "checkout", "main"])[0] == "checkout"
+
+
+def test_git_grep_checkout_branch_version_native_helpers_fail():
+    for arguments in (
+        ["git", "grep", "--textconv", "-F", "x", "HEAD", "--", "a.py"],
+        ["git", "grep", "-l", "-F", "x", "HEAD", "--", "a.py", "--open-files-in-pager"],
+        ["git", "grep", "-l", "x", "HEAD", "--", "a.py"],
+        ["git", "grep", "-l", "-F", "x", "origin/HEAD", "--", "a.py"],
+        ["git", "checkout", "--track", "origin/main"],
+        ["git", "checkout", "--", "a.py"],
+        ["git", "branch", "-D", "x"],
+        ["git", "version", "--help"],
+    ):
+        try:
+            boundary.local_git_arguments(arguments)
+        except boundary.OfflineTransportDenied:
+            continue
+        raise AssertionError(f"unreviewed git invocation was not denied: {arguments}")
+
+
 @pytest.mark.parametrize("arguments", [["git", "commit"], ["git", "log", "--format=%G?"], ["git", "config", "core.editor", "curl"]])
 def test_git_native_helper_arguments_fail_before_execution(arguments):
     with pytest.raises(boundary.OfflineTransportDenied):
