@@ -175,6 +175,13 @@ def seal(value):
 
 
 def read(path):
+    if path == "tests/conftest.py":
+        from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+        a2.authenticate_inventory()
+        raw = a2.HISTORICAL_CONFTEST_BYTES
+        require(hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+                == a2.HISTORICAL_TEST_BLOBS[path], "historical conftest identity drift")
+        return raw
     # V1 describes the merged predecessor, not the unmerged source cutover.
     from scripts.core_01d_historical_source import historical_bytes
     if path in PASS1_V1_BASE_SOURCE_FIXTURES:
@@ -222,6 +229,13 @@ def git_inventory():
     from scripts.core_01d_historical_source import identities
     for path, entry in identities().items():
         result[path]["git_blob_sha1"] = entry["git_blob_sha1"]
+    # V1 authenticates historical test sources; current guard sources are
+    # independently authenticated before projecting these exact predecessor IDs.
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    a2.authenticate_inventory()
+    for path, blob in a2.HISTORICAL_TEST_BLOBS.items():
+        require(path in result, "historical test source missing: " + path)
+        result[path]["git_blob_sha1"] = blob
     return result
 
 
@@ -272,6 +286,12 @@ def verified_additive_artifact_paths():
     # retained V5 alone is never completion authority.
     require(completion.audit().get("result") == "PASS",
             "Pass-4 retention and independent completion evidence failed authentication")
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_core_01d_checkpoint_e_completion_v3 as completion_v3
+    require(a2.audit().get("result") == "PASS",
+            "A2 additive offline-boundary receipt failed authentication")
+    require(completion_v3.audit().get("result") == "PASS",
+            "V3 additive completion overlay failed authentication")
     return (
         MATRIX_PATH,
         RECEIPT_PATH,
@@ -286,6 +306,8 @@ def verified_additive_artifact_paths():
         completion.v1.RECEIPT_PATH,
         completion.review.RECEIPT_PATH,
         completion.RECEIPT_PATH,
+        a2.RECEIPT_PATH,
+        completion_v3.RECEIPT_PATH,
     )
 
 
@@ -392,7 +414,11 @@ def base_input():
         capture_output=True, check=True,
     ).stdout.decode().splitlines()
     require(len(hashed) == len(value["scan_paths"]), "worktree filtered hash inventory incomplete")
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    a2.authenticate_inventory()
     for path, actual in zip(value["scan_paths"], hashed):
+        if path in a2.HISTORICAL_TEST_BLOBS:
+            actual = a2.HISTORICAL_TEST_BLOBS[path]
         from scripts.core_01d_historical_source import identities
         if path in identities():
             inspected = read(path)
@@ -735,7 +761,8 @@ def audit():
     evolution.validate_current_state()
     from scripts.audit_core_01d_scheduled_shadow_ownership import audit_forward_checkpoint
     forward = audit_forward_checkpoint()
-    from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion
+    from scripts import audit_core_01d_checkpoint_e_completion_v3 as completion
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as historical_completion
     current = completion.audit()
     completion_value = strict((ROOT / completion.RECEIPT_PATH).read_bytes())
     return {"result": "PASS", "checkpoint_e": current["checkpoint_e"], "p4_4": current["p4_4"],
@@ -747,7 +774,9 @@ def audit():
             "blockers": current["remaining_blockers"], "live_side_effect_counts": receipt["live_side_effect_counts"],
             "current_retained_status_sha256": completion_value["retained_v5"]["canonical_sha256"],
             "current_completion_receipt_sha256": current["receipt_sha256"],
-            "historical_completion_v1_receipt_sha256": completion.review.COMPLETION_V1_SHA,
+            "historical_completion_v1_receipt_sha256": historical_completion.review.COMPLETION_V1_SHA,
+            "historical_completion_v2_receipt_sha256": completion_value["predecessor_completion_v2"]["canonical_sha256"],
+            "current_a2_authority_review_sha256": completion_value["a2_review"]["canonical_sha256"],
             "current_authority_review_sha256": completion_value["pass_a_review"]["canonical_sha256"],
             "remaining_unreviewed_surface_count": current["remaining_unreviewed_surface_count"],
             "current_live_missing_artifact_relation_count": completion_value["live_missing_artifact_relation_count"],

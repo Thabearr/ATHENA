@@ -233,7 +233,9 @@ def test_offline_runner_blocks_network_before_factory_import(monkeypatch):
 
     def guarded_loader(_specification):
         import socket
-        sock = socket.socket()
+        # Exercise the runner sentinel on local IPC without requiring an INET
+        # socket that the global CI transport boundary already forbids.
+        sock = socket.socket(getattr(socket, "AF_UNIX", socket.AF_INET))
         try:
             with pytest.raises(
                 runner.OfflineAccumulatorOptimizerError,

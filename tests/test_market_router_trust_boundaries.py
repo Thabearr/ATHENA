@@ -195,7 +195,9 @@ def test_offline_runner_blocks_network_before_factory_import(monkeypatch):
 
     def guarded_loader(_specification):
         import socket
-        sock = socket.socket()
+        # Anonymous local IPC lets this test exercise the runner's own denial
+        # before connect even when CI already denies INET socket creation.
+        sock = socket.socket(getattr(socket, "AF_UNIX", socket.AF_INET))
         try:
             with pytest.raises(runner.OfflineRouterRunnerError, match="network access is disabled"):
                 sock.connect(("127.0.0.1", 9))

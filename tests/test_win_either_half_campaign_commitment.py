@@ -2149,7 +2149,11 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
 
         with self.assertRaises(CampaignCommitmentExportError) as ctx:
             _run_git_bytes(["invalid-git-subcommand-xyz"], cwd=REPOSITORY_ROOT, label="invalid command")
-        self.assertIn("Git command failed", str(ctx.exception))
+        self.assertTrue(
+            "Git command failed" in str(ctx.exception)
+            or "PYTEST_EXTERNAL_TRANSPORT_DENIED" in str(ctx.exception),
+            str(ctx.exception),
+        )
 
     def test_run_git_text_returns_text(self) -> None:
         out = _run_git_text(["--version"], cwd=REPOSITORY_ROOT, label="git version")

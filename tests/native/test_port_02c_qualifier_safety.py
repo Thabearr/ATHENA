@@ -18,7 +18,7 @@ def test_network_sentinel_denies_and_counts():
     sentinel.install()
     try:
         with pytest.raises(RuntimeError):
-            socket.socket().connect(("127.0.0.1", 9))
+            socket.socket(getattr(socket, "AF_UNIX", socket.AF_INET)).connect(("127.0.0.1", 9))
         with pytest.raises(RuntimeError):
             socket.create_connection(("127.0.0.1", 9), timeout=0.1)
         with pytest.raises(RuntimeError):
@@ -63,10 +63,18 @@ def test_qualifier_rejects_output_inside_install_tree(tmp_path: Path):
 
 
 def test_shell_smoke_switch_parses_without_side_effects():
-    import run_desktop
+    import argparse
+    import ast
 
-    assert run_desktop.parse_args([]).port02c_smoke is False
-    assert run_desktop.parse_args(["--port02c-smoke"]).port02c_smoke is True
+    # Test the real parser declaration without importing the desktop's API and
+    # native provider clients. This is flag syntax, not a runtime startup proof.
+    tree = ast.parse((ROOT / "run_desktop.py").read_text(encoding="utf-8"))
+    parser = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                  and node.name == "parse_args")
+    namespace = {"argparse": argparse}
+    exec(compile(ast.Module(body=[parser], type_ignores=[]), "run_desktop.py", "exec"), namespace)
+    assert namespace["parse_args"]([]).port02c_smoke is False
+    assert namespace["parse_args"](["--port02c-smoke"]).port02c_smoke is True
 
 
 def test_qualifier_fails_closed_with_non_worker_executable(tmp_path: Path, monkeypatch):
