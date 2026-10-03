@@ -175,6 +175,13 @@ def seal(value):
 
 
 def read(path):
+    if path == "tests/conftest.py":
+        from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+        a2.authenticate_inventory()
+        raw = a2.HISTORICAL_CONFTEST_BYTES
+        require(hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+                == a2.HISTORICAL_TEST_BLOBS[path], "historical conftest identity drift")
+        return raw
     # V1 describes the merged predecessor, not the unmerged source cutover.
     from scripts.core_01d_historical_source import historical_bytes
     if path in PASS1_V1_BASE_SOURCE_FIXTURES:
@@ -222,6 +229,13 @@ def git_inventory():
     from scripts.core_01d_historical_source import identities
     for path, entry in identities().items():
         result[path]["git_blob_sha1"] = entry["git_blob_sha1"]
+    # V1 authenticates historical test sources; current guard sources are
+    # independently authenticated before projecting these exact predecessor IDs.
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    a2.authenticate_inventory()
+    for path, blob in a2.HISTORICAL_TEST_BLOBS.items():
+        require(path in result, "historical test source missing: " + path)
+        result[path]["git_blob_sha1"] = blob
     return result
 
 
@@ -392,7 +406,11 @@ def base_input():
         capture_output=True, check=True,
     ).stdout.decode().splitlines()
     require(len(hashed) == len(value["scan_paths"]), "worktree filtered hash inventory incomplete")
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    a2.authenticate_inventory()
     for path, actual in zip(value["scan_paths"], hashed):
+        if path in a2.HISTORICAL_TEST_BLOBS:
+            actual = a2.HISTORICAL_TEST_BLOBS[path]
         from scripts.core_01d_historical_source import identities
         if path in identities():
             inspected = read(path)

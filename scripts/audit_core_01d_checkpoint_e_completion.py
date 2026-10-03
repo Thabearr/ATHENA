@@ -54,18 +54,9 @@ ALLOWED_PASS4_PATHS = {
 UNCHANGED_REPOSITORY_INVENTORY_SHA = "37ac1567af5b8dae2e1d811e22291595bf29b36203cbb50c954117c22214460d"
 
 
-def _a2_additive_paths():
-    try:
-        from scripts.audit_core_01d_ci_offline_transport_boundary import A2_PATHS as _A2
-        return set(_A2)
-    except Exception:
-        return set()
-
-
 def validate_bounded_inventory(raw: bytes) -> None:
-    allowed = ALLOWED_PASS4_PATHS | _a2_additive_paths()
     unchanged = b"".join(line for line in raw.splitlines(keepends=True)
-        if line.split(b"\t", 1)[1].strip().decode() not in allowed)
+        if line.split(b"\t", 1)[1].strip().decode() not in ALLOWED_PASS4_PATHS)
     policy.require(policy.sha256(unchanged) == UNCHANGED_REPOSITORY_INVENTORY_SHA,
                    "unapproved repository change: runtime/workflows/ledgers/history must remain exact")
 
@@ -73,7 +64,7 @@ def validate_bounded_inventory(raw: bytes) -> None:
 def authenticate_bounded_scope() -> bool:
     validate_bounded_inventory(policy.v4.v3._git("ls-tree", "-r", "HEAD"))
     dirty = policy.v4.v3._git("diff", "--name-only", "HEAD").decode().splitlines()
-    policy.require(set(dirty) <= ALLOWED_PASS4_PATHS | _a2_additive_paths(),
+    policy.require(set(dirty) <= ALLOWED_PASS4_PATHS,
                    "working tree has an unapproved operational or historical source change")
     return True
 

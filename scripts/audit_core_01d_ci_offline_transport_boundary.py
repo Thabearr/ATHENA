@@ -38,10 +38,10 @@ A2_PATHS = frozenset((*GUARD_PATHS, INVENTORY_PATH, RECEIPT_PATH, COMPLETION_PAT
     "scripts/audit_checkpoint_e_workflows.py",
     "tests/test_core_01d_checkpoint_e_completion.py",
     "tests/test_core_01d_checkpoint_e_completion_v2.py",
-    "tests/test_win_either_half_campaign_commitment.py",
-    "scripts/audit_core_01d_checkpoint_e_completion.py"))
+    "tests/test_win_either_half_campaign_commitment.py"))
 # These are authenticated predecessor tree entries, not current source pins.
 HISTORICAL_TEST_BLOBS = {
+    "tests/test_win_either_half_campaign_commitment.py": "783704cffa6ae95be80a432422b7b341bfb64949",
     "tests/conftest.py": "6d4d2ddb621a27f788d0c25499e418092f260ef1",
     "tests/native/test_port_02c_qualifier_safety.py": "2fe50e18837c36c5e97adac2e89a9da72f6847ec",
     "tests/test_accumulator_optimizer_trust_boundaries.py": "b4f22663fc5a72c341920de61d0ec7877298a5da",

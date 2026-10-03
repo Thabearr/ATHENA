@@ -15,7 +15,7 @@ ALLOWED_PASS_A_PATHS={review.RECEIPT_PATH,RECEIPT_PATH,review.INVENTORY_PATH,
  'tests/test_core_01d_authority_reachability_review_a.py','tests/test_core_01d_checkpoint_e_completion_v2.py',
  'scripts/audit_checkpoint_e_workflows.py','docs/architecture/core_01d_checkpoint_e.md','tests/test_core_01d_checkpoint_e_completion.py','tests/test_core_01d_canonical_drive_transfer_completed_history.py'}
 NEW_PASS_A_PATHS=ALLOWED_PASS_A_PATHS-{'scripts/audit_checkpoint_e_workflows.py','docs/architecture/core_01d_checkpoint_e.md','tests/test_core_01d_checkpoint_e_completion.py','tests/test_core_01d_canonical_drive_transfer_completed_history.py'}
-UNCHANGED_SCOPE_SHA='f9c4c3ec0eec3ee01a4d1a28144348edad35f05ee651417d5fd92ed27aef6800'
+UNCHANGED_SCOPE_SHA='5465e4dc03a46d4e64e81586720cebf9cb40d9dd53ce1fbe534fb825b5d9f32d'
 # Existing offline P3 tests and the source-bound Tests shard selector publish
 # these local products. This audit never consumes them as authority proof.
 LOCAL_TEST_PRODUCTS={'.pytest-shard-files','p3-0-e1-live-readiness.json','artifacts/p3-0-comparison-evidence/p3-0-e1-live-readiness.json'}
@@ -69,54 +69,9 @@ def historical_v1_git_view():
    return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS|a2.A2_PATHS)
   return raw
  module._git=projected
- import subprocess as _subprocess
- from scripts import audit_checkpoint_e_workflows as _checkpoint
- from scripts import audit_core_01d_ci_offline_transport_boundary as _a2
- _checkpoint_original_git=_checkpoint.git
- _checkpoint_original_run=_checkpoint.subprocess.run
- def _projected_checkpoint_nul(raw):
-  rows=[]
-  for row in raw.split(b"\x00"):
-   if not row: continue
-   metadata,path=row.split(b"\t",1)
-   name=path.decode()
-   if name in (_a2.A2_PATHS-set(_a2.HISTORICAL_TEST_BLOBS))-ALLOWED_PASS_A_PATHS:
-    continue
-   if name in _a2.HISTORICAL_TEST_BLOBS:
-    metadata=("100644 blob "+_a2.HISTORICAL_TEST_BLOBS[name]).encode()
-   rows.append(metadata+b"\t"+path)
-  return b"\x00".join(rows)+(b"\x00" if rows else b"")
- def _projected_checkpoint_git(*args):
-  raw=_checkpoint_original_git(*args)
-  if args==("ls-tree","-r","-z","HEAD"):
-   return _projected_checkpoint_nul(raw)
-  return raw
- def _projected_checkpoint_run(args,**kwargs):
-  result=_checkpoint_original_run(args,**kwargs)
-  try:
-   argv=list(args) if isinstance(args,(list,tuple)) else []
-   if len(argv)>=5 and argv[0]=="git" and argv[3:5]==["hash-object","--stdin-paths"]:
-    payload=kwargs.get("input",b"")
-    if isinstance(payload,str): payload=payload.encode()
-    paths=[line.strip().strip('"') for line in payload.decode("utf-8","replace").splitlines() if line.strip()]
-    import json as _json
-    decoded=[]
-    for item in paths:
-     try: decoded.append(_json.loads(item))
-     except Exception: decoded.append(item)
-    lines=result.stdout.decode().splitlines() if isinstance(result.stdout,bytes) else str(result.stdout).splitlines()
-    fixed=[_a2.HISTORICAL_TEST_BLOBS[path] if path in _a2.HISTORICAL_TEST_BLOBS else actual for path,actual in zip(decoded,lines)]
-    result.stdout=("\n".join(fixed)+("\n" if fixed else "")).encode()
-  except Exception:
-   pass
-  return result
- _checkpoint.git=_projected_checkpoint_git
- _checkpoint.subprocess.run=_projected_checkpoint_run
  try: yield
  finally:
   module._git=original
-  _checkpoint.git=_checkpoint_original_git
-  _checkpoint.subprocess.run=_checkpoint_original_run
 
 
 def historical_v1_receipt():

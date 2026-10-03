@@ -14,6 +14,39 @@ import pytest
 import offline_transport as boundary
 
 
+def test_historical_projection_preserves_modified_existing_campaign_test():
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion
+    path = "tests/test_win_either_half_campaign_commitment.py"
+    raw = ("100644 blob " + "0" * 40 + "\t" + path + "\n").encode()
+    assert completion.a2_historical_projection(raw) == (
+        "100644 blob " + a2.HISTORICAL_TEST_BLOBS[path] + "\t" + path + "\n"
+    ).encode()
+
+
+def test_historical_checkpoint_inventory_works_without_global_process_patch():
+    from scripts import audit_checkpoint_e_workflows as checkpoint
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    original_run = subprocess.run
+    inventory = checkpoint.git_inventory()
+    for path, blob in a2.HISTORICAL_TEST_BLOBS.items():
+        assert inventory[path]["git_blob_sha1"] == blob
+    assert checkpoint.read("tests/conftest.py") == a2.HISTORICAL_CONFTEST_BYTES
+    assert subprocess.run is original_run
+
+
+def test_historical_checkpoint_projection_rejects_current_inventory_drift(monkeypatch):
+    from scripts import audit_checkpoint_e_workflows as checkpoint
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    def reject():
+        raise AssertionError("current source drift")
+    monkeypatch.setattr(a2, "authenticate_inventory", reject)
+    with pytest.raises(AssertionError, match="current source drift"):
+        checkpoint.git_inventory()
+    with pytest.raises(AssertionError, match="current source drift"):
+        checkpoint.read("tests/conftest.py")
+
+
 @pytest.mark.parametrize("operation", ["connect", "connect_ex", "sendto"])
 def test_denial_precedes_original_socket_tripwire(monkeypatch, operation):
     def tripwire(*args):
