@@ -286,6 +286,12 @@ def verified_additive_artifact_paths():
     # retained V5 alone is never completion authority.
     require(completion.audit().get("result") == "PASS",
             "Pass-4 retention and independent completion evidence failed authentication")
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_core_01d_checkpoint_e_completion_v3 as completion_v3
+    require(a2.audit().get("result") == "PASS",
+            "A2 additive offline-boundary receipt failed authentication")
+    require(completion_v3.audit().get("result") == "PASS",
+            "V3 additive completion overlay failed authentication")
     return (
         MATRIX_PATH,
         RECEIPT_PATH,
@@ -300,6 +306,8 @@ def verified_additive_artifact_paths():
         completion.v1.RECEIPT_PATH,
         completion.review.RECEIPT_PATH,
         completion.RECEIPT_PATH,
+        a2.RECEIPT_PATH,
+        completion_v3.RECEIPT_PATH,
     )
 
 
