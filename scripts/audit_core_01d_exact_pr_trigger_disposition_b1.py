@@ -828,10 +828,13 @@ def build_receipt(*, observed_at: str | None = None) -> dict[str, object]:
     boundary.authenticate_predecessors()
     latest_a2 = boundary.authenticate_inventory()
     chain = boundary.load_inventory_generations()
-    boundary.require(len(chain) == 4,
-                     "B1 audit requires the append-only A2 V1-V4 generation chain")
-    boundary.require(latest_a2.get("generation") == 4, "A2 latest inventory is not V4")
-    boundary.require(latest_a2.get("predecessor_inventory") == {
+    boundary.require(len(chain) >= 4,
+                     "B1 audit requires the immutable append-only A2 V1-V4 prefix")
+    a2_v4 = chain[3][1]
+    boundary.require(a2_v4.get("canonical_sha256") == "82c440deb06d760d13bf73d914c5ec9181e568ba388f844a3fc6fa49976ab50f"
+                     and a2_v4.get("generation") == 4,
+                     "immutable A2 V4 identity drift")
+    boundary.require(a2_v4.get("predecessor_inventory") == {
         "path": boundary.inventory_generation_path(3),
         "canonical_sha256": "f7646fd5008d12cc7c5b0379455c384742b893a26cac00fa55df19f28c8a8017",
         "generation": 3, "rewritten": False,

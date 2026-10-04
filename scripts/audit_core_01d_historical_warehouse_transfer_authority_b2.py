@@ -83,6 +83,7 @@ V1_INVENTORY_PATH = "tests/fixtures/core_01d/ci-offline-transport-boundary-sourc
 V2_INVENTORY_PATH = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v2.json"
 V3_INVENTORY_PATH = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v3.json"
 V4_INVENTORY_PATH = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v4.json"
+A2_V4_SHA = "82c440deb06d760d13bf73d914c5ec9181e568ba388f844a3fc6fa49976ab50f"
 
 OBSERVED_AT = "2026-10-03T19:46:48Z"
 POST_440_TESTS = {
@@ -279,17 +280,24 @@ def build_source_inventory() -> dict[str, object]:
     boundary.authenticate_predecessors()
     chain = boundary.load_inventory_generations()
     generations = list(range(1, len(chain) + 1))
-    require(generations in ([1, 2, 3], [1, 2, 3, 4]),
-            "A2 inventory chain is not contiguous through the reviewed V3/V4 generations")
+    require(generations in ([1, 2, 3], [1, 2, 3, 4], [1, 2, 3, 4, 5]),
+            "A2 inventory chain is not contiguous through the reviewed V3/V4/V5 generations")
     v3 = chain[2][1]
     require(v3["canonical_sha256"] == A2_V3_SHA,
             "A2 V3 predecessor identity drift")
-    if len(chain) == 4:
-        v4 = chain[-1][1]
+    if len(chain) >= 4:
+        v4 = chain[3][1]
+        require(v4["canonical_sha256"] == A2_V4_SHA and v4["generation"] == 4,
+                "immutable A2 V4 identity drift")
         require(v4["predecessor_inventory"] == {"path": V3_INVENTORY_PATH,
                                                   "canonical_sha256": A2_V3_SHA,
                                                   "generation": 3, "rewritten": False},
                 "A2 V4 does not bind the exact immutable V3 predecessor")
+        if len(chain) == 5:
+            require(chain[4][1]["predecessor_inventory"] == {"path": V4_INVENTORY_PATH,
+                                                              "canonical_sha256": A2_V4_SHA,
+                                                              "generation": 4, "rewritten": False},
+                    "A2 V5 does not bind the exact immutable V4 predecessor")
     parent = read_json(COMPLETION_V4_PATH)
     require(parent["canonical_sha256"] == COMPLETION_V4_SHA, "immutable Completion V4 identity drift")
     b1 = read_json(B1_RECEIPT_PATH)
@@ -500,12 +508,20 @@ def _review_row(key: tuple[str, str], inventory: dict[str, object]) -> dict[str,
 
 
 def build_receipt() -> dict[str, object]:
-    a2_v4 = boundary.authenticate_inventory()
+    # B2 is immutable historical evidence. Later A2 generations supersede V4
+    # as the current corpus head, so authenticate B2 against its exact V4
+    # predecessor snapshot while the current A2 chain remains separately
+    # authenticated by the active pass auditor.
+    a2_v4 = boundary.read(V4_INVENTORY_PATH)
     require(a2_v4["generation"] == 4
+            and a2_v4["canonical_sha256"] == A2_V4_SHA
             and a2_v4["predecessor_inventory"] == {"path": V3_INVENTORY_PATH,
                                                      "canonical_sha256": A2_V3_SHA,
                                                      "generation": 3, "rewritten": False},
-            "current A2 source inventory is not the exact append-only V4 successor")
+            "immutable B2 A2 V4 source inventory predecessor drift")
+    chain = boundary.load_inventory_generations()
+    require(len(chain) >= 4 and chain[3][1] == a2_v4,
+            "A2 generation chain no longer contains the exact B2 V4 inventory")
     required_python = {
         "scripts/audit_core_01d_historical_warehouse_transfer_authority_b2.py",
         "scripts/audit_core_01d_checkpoint_e_completion_v5.py",

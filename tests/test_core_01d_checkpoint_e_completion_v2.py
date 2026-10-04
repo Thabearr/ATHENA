@@ -44,14 +44,14 @@ def test_resealed_completion_or_scope_falsehoods_fail(receipt,mutation):
  review.seal(value)
  with pytest.raises(AssertionError):current.validate_receipt(value,receipt)
 
-def test_current_master_authenticates_v5_and_preserves_historical_v2(receipt):
+def test_current_master_authenticates_v6_and_preserves_historical_v2(receipt):
  from scripts import audit_checkpoint_e_workflows as master
- from scripts import audit_core_01d_checkpoint_e_completion_v5 as a2
+ from scripts import audit_core_01d_checkpoint_e_completion_v6 as a2
  value=master.audit()
  assert value['current_completion_receipt_sha256']==a2.audit()['receipt_sha256']
  assert value['historical_completion_v2_receipt_sha256']==receipt['canonical_sha256']
  assert value['historical_completion_v1_receipt_sha256']==review.COMPLETION_V1_SHA
- assert value['remaining_unreviewed_surface_count']==20
+ assert value['remaining_unreviewed_surface_count']==16
  assert value['checkpoint_e']==value['p4_4']=='INCOMPLETE'
  assert receipt['remaining_blocker_ids']==value['blockers']
 
