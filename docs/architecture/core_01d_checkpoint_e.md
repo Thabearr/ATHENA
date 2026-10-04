@@ -481,3 +481,59 @@ those scopes is included here. The three CI transport proof gaps require explici
 follow-up evidence and are not silently resolved by this pass.
 SOURCE_REVIEW_COUNTER is **2/5 while open**, **3/5 if later owner-merged**;
 mandatory governing-source reread is not due. **DO NOT MERGE.**
+
+## Current Authority/Reachability Pass B4
+
+Pass B4 reviews exactly nine unresolved trigger surfaces across five current
+SportyBet research workflows, using the exact main base
+`dc9a09b8d0fa96a25f3b31e9fa588db40fde2ba9` and tree
+`167522cbb925a1bcab6982ed971de7ffb9a3cd8f`. The post-#442 Tests run
+`37166039080` was reverified as syntax, shards 1–8, aggregate, and overall
+SUCCESS on that exact main. Pass B4 preserves the Pass-3/4 historical retention
+limitations and does not reclassify any sibling or future-pass surface.
+
+All nine rows resolve from exact workflow and callee identities plus read-only
+GitHub run metadata. Global unresolved authority surfaces fall from **16 to 7**.
+The seven inherited rows remain unchanged in Completion V7. The pull-request
+surfaces for the frozen Saturday direct-20 creator, direct-20 market probe, and
+one-leg direct share proof remain conditionally reachable on future matching
+main/path-filtered PRs. Their four manual surfaces, plus the PR258 and PR-B
+manual surfaces, remain manually reachable. PR-B's pull-request surface remains
+conditionally reachable under the exact `feat/prb-sportybet-semantic-registry`
+head-ref guard; a branch name is not treated as an exact PR identity. B4 reviews
+only PR258 `#workflow_dispatch`; its `#pull_request` disposition remains the
+immutable B1 result.
+
+Authority is recorded separately from product support. These are retained
+research capabilities with **no supported current product-operation dependency**,
+while their current physical trigger authority remains live or conditional.
+The direct share bridge can anonymously POST a share code and GET its reload;
+that is a SportyBet server-side share-code mutation, not a wager. The frozen
+market probe performs only anonymous event-market GETs. PR258 performs bounded
+upcoming/event-detail reads and the share-code roundtrip. PR-B performs bounded
+anonymous discovery and event-detail reads, with no share-code path; its
+`git ls-remote` fallback is read-only GitHub ref metadata. All five workflows
+upload run-scoped GitHub Actions artifacts. Their source grants no login, cookie,
+account, wallet, stake, wager, production-selection, release, external-storage,
+or repository-branch-write authority. Package/action traffic is recorded as
+toolchain/GitHub Actions network, separate from SportyBet authority.
+
+Read-only run metadata is historical corroboration only. No current repository
+caller was found by the bounded source scan; that does not remove GitHub's
+manual-dispatch control plane. Historical rerun residuals remain explicitly
+`HISTORICAL_ACTIONS_RERUN_RESIDUAL_NOT_PROVEN_ABSENT`. The PR258 `#pull_request`
+sibling and the other out-of-scope triggers remain unchanged.
+
+No target workflow ran, no dispatch/rerun/cancel occurred, no SportyBet request
+or share-code operation occurred, and no artifact payload was downloaded.
+Workflow YAML, triggers, the evolution ledger (14 transitions), and the
+retirement ledger (3 retired workflows) are unchanged. B4 authorizes no
+retirement, deletion, caller migration, or trigger edit.
+
+Completion V7 authenticates the immutable Completion V6 predecessor and overlays
+only these nine resolved keys. **Architecture Checkpoint E: INCOMPLETE. P4.4:
+INCOMPLETE.** Criteria 11 and 14 remain FALSE with seven unresolved surfaces.
+Pass B5/C remain future bounded review scopes.
+
+SOURCE_REVIEW_COUNTER is **3/5 while open**, **4/5 if later owner-merged**;
+mandatory governing-source reread is not due. **DO NOT MERGE.**

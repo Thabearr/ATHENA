@@ -226,6 +226,10 @@ def test_completion_v2_additive_projection_allowlist_is_exact_and_narrow():
         "tests/fixtures/core_01d/owner-one-shot-issue-comment-authority-b3-source-inventory-v1.json",
         "tests/fixtures/core_01d/core-01d-owner-one-shot-issue-comment-authority-b3-v1.json",
         "tests/fixtures/core_01d/core-01d-checkpoint-e-completion-v6.json",
+        "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v6.json",
+        "tests/fixtures/core_01d/sportybet-current-trigger-authority-b4-source-inventory-v1.json",
+        "tests/fixtures/core_01d/core-01d-sportybet-current-trigger-authority-b4-v1.json",
+        "tests/fixtures/core_01d/core-01d-checkpoint-e-completion-v7.json",
     }
     assert completion_v2.B1_ADDITIVE_EVIDENCE_PATHS == expected
     assert not any("*" in path for path in completion_v2.B1_ADDITIVE_EVIDENCE_PATHS)

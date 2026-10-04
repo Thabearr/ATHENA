@@ -84,6 +84,9 @@ V2_INVENTORY_PATH = "tests/fixtures/core_01d/ci-offline-transport-boundary-sourc
 V3_INVENTORY_PATH = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v3.json"
 V4_INVENTORY_PATH = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v4.json"
 A2_V4_SHA = "82c440deb06d760d13bf73d914c5ec9181e568ba388f844a3fc6fa49976ab50f"
+V5_INVENTORY_PATH = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v5.json"
+A2_V5_SHA = "8fbca3af87ecc7ac99da96252c3570e4ddef0d2e4071b180b2bc0299a10eeecd"
+V6_INVENTORY_PATH = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v6.json"
 
 OBSERVED_AT = "2026-10-03T19:46:48Z"
 POST_440_TESTS = {
@@ -280,8 +283,8 @@ def build_source_inventory() -> dict[str, object]:
     boundary.authenticate_predecessors()
     chain = boundary.load_inventory_generations()
     generations = list(range(1, len(chain) + 1))
-    require(generations in ([1, 2, 3], [1, 2, 3, 4], [1, 2, 3, 4, 5]),
-            "A2 inventory chain is not contiguous through the reviewed V3/V4/V5 generations")
+    require(generations in ([1, 2, 3], [1, 2, 3, 4], [1, 2, 3, 4, 5], [1, 2, 3, 4, 5, 6]),
+            "A2 inventory chain is not contiguous through the reviewed V3/V4/V5/V6 generations")
     v3 = chain[2][1]
     require(v3["canonical_sha256"] == A2_V3_SHA,
             "A2 V3 predecessor identity drift")
@@ -293,11 +296,17 @@ def build_source_inventory() -> dict[str, object]:
                                                   "canonical_sha256": A2_V3_SHA,
                                                   "generation": 3, "rewritten": False},
                 "A2 V4 does not bind the exact immutable V3 predecessor")
-        if len(chain) == 5:
-            require(chain[4][1]["predecessor_inventory"] == {"path": V4_INVENTORY_PATH,
-                                                              "canonical_sha256": A2_V4_SHA,
-                                                              "generation": 4, "rewritten": False},
-                    "A2 V5 does not bind the exact immutable V4 predecessor")
+        if len(chain) >= 5:
+            v5 = chain[4][1]
+            require(v5["generation"] == 5 and v5["canonical_sha256"] == A2_V5_SHA
+                    and v5["predecessor_inventory"] == {"path": V4_INVENTORY_PATH,
+                                                          "canonical_sha256": A2_V4_SHA,
+                                                          "generation": 4, "rewritten": False},
+                    "immutable A2 V5 identity/predecessor drift")
+        if len(chain) == 6:
+            require(chain[5][1]["generation"] == 6 and chain[5][1]["predecessor_inventory"] == {
+                "path": V5_INVENTORY_PATH, "canonical_sha256": A2_V5_SHA,
+                "generation": 5, "rewritten": False}, "A2 V6 does not bind the exact immutable V5 predecessor")
     parent = read_json(COMPLETION_V4_PATH)
     require(parent["canonical_sha256"] == COMPLETION_V4_SHA, "immutable Completion V4 identity drift")
     b1 = read_json(B1_RECEIPT_PATH)

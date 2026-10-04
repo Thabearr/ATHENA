@@ -32,6 +32,10 @@ B1_ADDITIVE_EVIDENCE_PATHS={
  'tests/fixtures/core_01d/owner-one-shot-issue-comment-authority-b3-source-inventory-v1.json',
  'tests/fixtures/core_01d/core-01d-owner-one-shot-issue-comment-authority-b3-v1.json',
  'tests/fixtures/core_01d/core-01d-checkpoint-e-completion-v6.json',
+ 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v6.json',
+ 'tests/fixtures/core_01d/sportybet-current-trigger-authority-b4-source-inventory-v1.json',
+ 'tests/fixtures/core_01d/core-01d-sportybet-current-trigger-authority-b4-v1.json',
+ 'tests/fixtures/core_01d/core-01d-checkpoint-e-completion-v7.json',
 }
 # Existing offline P3 tests and the source-bound Tests shard selector publish
 # these local products. This audit never consumes them as authority proof.

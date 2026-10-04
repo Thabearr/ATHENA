@@ -296,6 +296,8 @@ def verified_additive_artifact_paths():
     from scripts import audit_core_01d_checkpoint_e_completion_v5 as completion_v5
     from scripts import audit_core_01d_owner_one_shot_issue_comment_authority_b3 as b3
     from scripts import audit_core_01d_checkpoint_e_completion_v6 as completion_v6
+    from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+    from scripts import audit_core_01d_checkpoint_e_completion_v7 as completion_v7
     require(b2.audit().get("result") == "PASS",
             "historical warehouse/transfer authority B2 evidence failed authentication")
     require(completion_v5.audit().get("result") == "PASS",
@@ -306,6 +308,10 @@ def verified_additive_artifact_paths():
             "owner one-shot issue-comment B3 authority evidence failed authentication")
     require(completion_v6.audit().get("result") == "PASS",
             "Completion V6 B3 authority overlay failed authentication")
+    require(b4.audit().get("result") == "PASS",
+            "current SportyBet trigger authority B4 evidence failed authentication")
+    require(completion_v7.audit().get("result") == "PASS",
+            "Completion V7 B4 authority overlay failed authentication")
     return (
         MATRIX_PATH,
         RECEIPT_PATH,
@@ -329,6 +335,10 @@ def verified_additive_artifact_paths():
         b3.RECEIPT_PATH,
         completion_v6.RECEIPT_PATH,
         a2.inventory_generation_path(5),
+        b4.SOURCE_INVENTORY_PATH,
+        b4.RECEIPT_PATH,
+        completion_v7.RECEIPT_PATH,
+        a2.inventory_generation_path(6),
     )
 
 
@@ -782,7 +792,7 @@ def audit():
     evolution.validate_current_state()
     from scripts.audit_core_01d_scheduled_shadow_ownership import audit_forward_checkpoint
     forward = audit_forward_checkpoint()
-    from scripts import audit_core_01d_checkpoint_e_completion_v6 as completion
+    from scripts import audit_core_01d_checkpoint_e_completion_v7 as completion
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as historical_completion
     current = completion.audit()
     completion_value = strict((ROOT / completion.RECEIPT_PATH).read_bytes())
