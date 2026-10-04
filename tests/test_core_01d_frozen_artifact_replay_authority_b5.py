@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+from copy import deepcopy
+
+import pytest
+
+from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+from scripts import audit_core_01d_frozen_artifact_replay_authority_b5 as b5
+
+
+def test_exact_four_b5_surfaces_and_immutable_completion_v7_binding():
+    assert len(b5.TARGETS) == 4
+    assert len(set(b5.TARGETS)) == 4
+    parent = boundary.read(b5.COMPLETION_V7_PATH)
+    inherited = {(row["workflow_path"], row["trigger_kind"])
+                 for row in parent["unreviewed_authority_surfaces"]}
+    assert set(b5.TARGETS) <= inherited
+    assert parent["canonical_sha256"] == b5.COMPLETION_V7_SHA
+    assert (".github/workflows/verify-saturday-2026-08-22-reviewed-fixture-catalog.yml",
+            "pull_request") not in set(b5.TARGETS)
+
+
+def test_b5_receipt_resolves_only_targets_and_preserves_replay_limits():
+    receipt = b5.validate_receipt()
+    assert receipt["scope"] == {
+        "inherited_unresolved_surface_count": 7,
+        "target_surface_count": 4,
+        "resolved_target_count": 4,
+        "partial_target_count": 0,
+        "global_unresolved_before": 7,
+        "global_unresolved_after": 3,
+        "target_keys": [[path, trigger] for path, trigger in b5.TARGETS],
+    }
+    by_pr = {row["event_contract"].get("control_pr"): row for row in receipt["review_rows"]}
+    assert by_pr[193]["historical_guarded_capability"]["semantic_admission"] == "EXACT_OBSERVATION_ARRAY_ONLY"
+    assert by_pr[193]["historical_guarded_capability"]["team_strength_feature_authority"] == "FALSE"
+    assert by_pr[194]["historical_guarded_capability"]["team_strength_candidate_authority"] == \
+        "CANDIDATE_MAPPING_ONLY_FEATURE_AUTHORITY_FALSE"
+    assert by_pr[194]["historical_guarded_capability"]["team_strength_feature_authority"] == "FALSE"
+    assert by_pr[197]["historical_guarded_capability"]["team_strength_feature_authority"] == \
+        "YES_ONLY_IN_EXISTING_PR191_WRAPPER_AT_EXACT_FRESHNESS_INSTANT"
+    for row in receipt["review_rows"][:3]:
+        assert row["current_observed_control_state_authority"]["declared_event_surface"].startswith(
+            "PHYSICALLY_REACHABLE_PULL_REQUEST")
+        assert row["residuals"]["historical_source_artifact_absence"] == \
+            "HISTORICAL_SOURCE_ARTIFACT_CURRENTLY_ABSENT_NOT_PROVEN_PERMANENT"
+        assert row["residuals"]["historical_actions_rerun_residual"] == \
+            "HISTORICAL_ACTIONS_RERUN_RESIDUAL_NOT_PROVEN_ABSENT"
+        assert row["historical_guarded_capability"]["provider_acquisition"] == "NONE"
+
+
+def test_catalog_current_and_historical_runs_are_distinguished():
+    receipt = b5.validate_receipt()
+    row = receipt["review_rows"][3]
+    current = row["current_control_state"]["ordinary_main_push_run"]
+    historical = row["current_control_state"]["exact_merge_historical_run"]
+    assert current["run_id"] == 37176160133
+    assert current["steps"]["Stop unrelated main pushes cleanly"] == "success"
+    assert current["steps"]["Download exact PR199 source artifact for merged replay"] == "skipped"
+    assert historical["run_id"] == 32467715248
+    assert historical["steps"]["Require separate exact-byte admission review"] == "failure"
+    assert historical["steps"]["Store source-replayed exact catalog admission"] == "skipped"
+    approval = row["current_control_state"]["post_failure_approval_comment"]
+    assert approval["id"] == 5368504537
+    assert row["current_control_state"]["later_exact_merge_store_execution"].startswith("NOT_OBSERVED")
+    assert row["residuals"]["exact_merge_sha_repush"] == \
+        "EXACT_HISTORICAL_MERGE_SHA_REPUSH_RESIDUAL_NOT_PROVEN_IMPOSSIBLE"
+    assert row["residuals"]["historical_actions_rerun"] == \
+        "HISTORICAL_ACTIONS_RERUN_RESIDUAL_NOT_PROVEN_ABSENT"
+    assert row["dynamic_reachability"]["local_runner_writes"]
+    assert row["dynamic_reachability"]["github_branch_write"] == "NONE"
+
+
+def test_live_action_sentinels_remain_zero_and_completion_stays_incomplete():
+    receipt = b5.validate_receipt()
+    assert all(value == 0 for value in receipt["actions"].values())
+    assert receipt["criterion_11"] is False
+    assert receipt["criterion_14"] is False
+    assert receipt["checkpoint_e_status"] == "INCOMPLETE"
+    assert receipt["p4_4_status"] == "INCOMPLETE"
+    assert receipt["source_review_counter_while_open"] == "4/5"
+    assert receipt["source_review_counter_if_owner_merges"] == "5/5"
+    assert receipt["mandatory_governing_source_reread_after_b5_merge"] is True
+    assert receipt["do_not_start_b6_before_reread"] is True
+
+
+@pytest.mark.parametrize("changed", [
+    lambda value: value["review_rows"][0]["historical_guarded_capability"].update(provider_acquisition="FOTMOB_ACQUISITION"),
+    lambda value: value["review_rows"][2]["historical_guarded_capability"].update(team_strength_feature_authority="FALSE"),
+    lambda value: value["review_rows"][3]["current_control_state"].update(later_exact_merge_store_execution="PROVEN"),
+    lambda value: value["review_rows"][3]["dynamic_reachability"].update(github_branch_write="YES"),
+    lambda value: value["review_rows"].pop(),
+])
+def test_receipt_mutations_fail_closed(changed):
+    value = deepcopy(boundary.read(b5.RECEIPT_PATH))
+    changed(value)
+    with pytest.raises(AssertionError):
+        b5.validate_receipt(value)
+
+
+def test_current_a2_inventory_is_generation_seven_and_complete():
+    chain = boundary.discover_inventory_generations()
+    assert [generation for generation, _ in chain] == [1, 2, 3, 4, 5, 6, 7]
+    latest = boundary.authenticate_inventory()
+    assert latest["generation"] == 7
+    assert latest["predecessor_inventory"] == {
+        "path": b5.A2_V6_PATH,
+        "canonical_sha256": b5.A2_V6_SHA,
+        "generation": 6,
+        "rewritten": False,
+    }
