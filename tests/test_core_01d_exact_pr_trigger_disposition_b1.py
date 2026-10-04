@@ -192,9 +192,11 @@ def test_evidence_is_canonical_and_source_bound(receipt):
 def test_historical_completion_projection_accepts_only_post_v2_inventory_sources():
     latest = boundary.authenticate_inventory()
     v2 = boundary.read_generation(boundary.inventory_generation_path(2))
-    added = {row["path"] for row in latest["source_identities"]} - {
+    v2_paths = {
         row["path"] for row in v2["source_identities"]
     }
+    latest_paths = {row["path"] for row in latest["source_identities"]}
+    added = latest_paths - v2_paths
     assert added == {
         "scripts/audit_core_01d_checkpoint_e_completion_v4.py",
         "scripts/audit_core_01d_exact_pr_trigger_disposition_b1.py",
@@ -204,6 +206,10 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
         "scripts/audit_core_01d_checkpoint_e_completion_v5.py",
         "tests/test_core_01d_historical_warehouse_transfer_authority_b2.py",
         "tests/test_core_01d_checkpoint_e_completion_v5.py",
+        "scripts/audit_core_01d_owner_one_shot_issue_comment_authority_b3.py",
+        "scripts/audit_core_01d_checkpoint_e_completion_v6.py",
+        "tests/test_core_01d_owner_one_shot_issue_comment_authority_b3.py",
+        "tests/test_core_01d_checkpoint_e_completion_v6.py",
     }
     original_tree = boundary.git("ls-tree", "-r", "HEAD")
     projected = completion_v2.a2_historical_projection(original_tree)
