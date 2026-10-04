@@ -113,10 +113,11 @@ def test_master_current_status_is_independently_authenticated(receipt):
     from scripts import audit_checkpoint_e_workflows as master
     result = master.audit()
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as current
-    from scripts import audit_core_01d_checkpoint_e_completion_v6 as current_v6
+    from scripts import audit_core_01d_checkpoint_e_completion_v7 as current_v7
     assert result["historical_completion_v1_receipt_sha256"] == receipt["canonical_sha256"]
-    assert result["current_completion_receipt_sha256"] == current_v6.audit()["receipt_sha256"]
+    assert result["current_completion_receipt_sha256"] == current_v7.audit()["receipt_sha256"]
     assert result["blockers"] == receipt["remaining_blocker_ids"]
     assert result["checkpoint_e"] == result["p4_4"] == "INCOMPLETE"
+    assert result["remaining_unreviewed_surface_count"] == 7
     with current.historical_v1_git_view():
         assert completion.audit()["result"] == "PASS"
