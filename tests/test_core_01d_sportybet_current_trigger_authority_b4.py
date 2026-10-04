@@ -147,6 +147,17 @@ def test_source_inventory_mutations_and_workflow_source_drift_fail_closed():
     assert b4.validate_source_inventory(inventory)["source_count"] == len(b4.SOURCE_PINS)
 
 
+def test_audit_does_not_require_the_base_commit_object(monkeypatch):
+    original = b4._git
+
+    def reject_historical_base_lookup(*args):
+        assert b4.BASE_MAIN not in args
+        return original(*args)
+
+    monkeypatch.setattr(b4, "_git", reject_historical_base_lookup)
+    assert b4.audit()["result"] == "PASS"
+
+
 def test_b4_never_changes_workflow_or_authorizes_live_operations(receipt):
     assert receipt["workflow_tree_sha1"] == b4.WORKFLOW_TREE
     assert receipt["workflow_edit_count"] == receipt["trigger_edit_count"] == 0

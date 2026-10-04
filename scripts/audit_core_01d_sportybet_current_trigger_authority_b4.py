@@ -238,9 +238,12 @@ def _parse_workflow(path: str) -> dict[str, Any]:
 
 
 def _current_repository_callers() -> dict[str, Any]:
-    # Search executable workflow/script/domain sources at the immutable base;
-    # audit/docs/tests and the workflow's own declaration are not callers.
-    paths = _git("ls-tree", "-r", "--name-only", BASE_MAIN).decode().splitlines()
+    # Search the checked-out executable source tree.  The source identities and
+    # exact base SHA/tree are separately pinned in this evidence; relying on
+    # BASE_MAIN's commit object here breaks the offline audit in shallow CI
+    # checkouts after historical-proof tests intentionally drop ancestor data.
+    # Audit/docs/tests and the workflow's own declaration are not callers.
+    paths = [path for path in _git("ls-files", "-z").decode().split("\0") if path]
     candidates = [p for p in paths if (p.startswith(".github/workflows/") or p.startswith("scripts/") or p.startswith("domain/"))
                   and not p.startswith("scripts/audit_") and p != "scripts/capture_p4_3_workflow_capability_matrix.py"
                   and p not in {path for path, _ in TARGETS}]
@@ -249,12 +252,12 @@ def _current_repository_callers() -> dict[str, Any]:
     hits: list[dict[str, str]] = []
     for path in candidates:
         try:
-            raw = _git("show", f"{BASE_MAIN}:{path}").decode("utf-8")
-        except (subprocess.CalledProcessError, UnicodeDecodeError):
+            raw = (ROOT / path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
             continue
         if any(needle in raw for needle in needles) and any(name in raw for name in exact_names):
             hits.append({"path": path, "classification": "POTENTIAL_STATIC_DISPATCH_CALL_REQUIRES_REVIEW"})
-    return {"method": "BASE_SOURCE_SCAN_WORKFLOWS_SCRIPTS_DOMAIN_EXCLUDING_AUDIT_EVIDENCE_AND_TARGETS",
+    return {"method": "CURRENT_CHECKED_OUT_SOURCE_SCAN_WORKFLOWS_SCRIPTS_DOMAIN_EXCLUDING_AUDIT_EVIDENCE_AND_TARGETS",
             "exact_target_name_or_dynamic_dispatch_hits": hits,
             "result": "NO_CURRENT_REPOSITORY_CALLER_FOUND_SOURCE_SCAN" if not hits else "CALLER_CANDIDATE_FOUND",
             "external_manual_dispatch_authority": "PRESERVED_NOT_ERASED_BY_NO_REPOSITORY_CALLER"}
@@ -267,18 +270,20 @@ def _validate_source_semantics() -> None:
     inherited = {(r["workflow_path"], r["trigger_kind"]) for r in completion["unreviewed_authority_surfaces"]}
     require(len(inherited) == 16 and set(TARGETS) <= inherited, "B4 target scope differs from Completion V6 unresolved set")
     require(set(SOURCE_PINS) == set(ROLES), "B4 source inventory role/pin key mismatch")
-    require(_git("rev-parse", f"{BASE_MAIN}^{{tree}}").decode().strip() == BASE_TREE,
-            "B4 base main tree identity drift")
-    require(_git("rev-parse", f"{BASE_MAIN}:.github/workflows").decode().strip() == WORKFLOW_TREE,
-            "B4 immutable workflow tree identity drift")
+    # Authenticate the pinned handoff identities from the sealed B4 evidence,
+    # and verify the current checked-out workflow subtree.  Do not require the
+    # historical main commit object: hosted pytest intentionally uses shallow
+    # checkouts for some isolation tests.
+    require(_git("rev-parse", "HEAD:.github/workflows").decode().strip() == WORKFLOW_TREE,
+            "B4 current workflow tree differs from the immutable handoff tree")
     evolution = boundary.read("artifacts/architecture/p4_workflow_evolution_ledger_v1.json")
     retirement = boundary.read("artifacts/architecture/p4_3_workflow_retirement_ledger_v1.json")
     require(evolution.get("canonical_sha256") == EVOLUTION_SHA and len(evolution.get("transitions", [])) == 14,
             "B4 workflow evolution ledger identity/transition count drift")
     require(retirement.get("canonical_sha256") == RETIREMENT_SHA and len(retirement.get("retirements", [])) == 3,
             "B4 workflow retirement ledger identity/retirement count drift")
-    require(not _git("diff", "--name-only", BASE_MAIN, "--", ".github/workflows").decode().strip(),
-            "B4 workflow tree changed in implementation diff")
+    require(not _git("diff", "--name-only", "HEAD", "--", ".github/workflows").decode().strip(),
+            "B4 worktree contains an uncommitted workflow change")
     for path in SOURCE_PINS:
         _identity(path)
     workflow_by_path = {path: _parse_workflow(path) for path, _ in TARGETS}
