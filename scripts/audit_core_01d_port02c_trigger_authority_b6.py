@@ -46,6 +46,7 @@ PORT_WORKFLOW = ".github/workflows/port-02c-native-runtime.yml"
 PORT_WORKFLOW_SHA = "5b2f4f8ade4f7b45b0db43023085ee0762b2e178564c6ecebd2a632932e8e07b"
 PORT_WORKFLOW_BLOB = "29085814892b94b67435e5869ac60f316fb56e36"
 SOURCE_INVENTORY_PATH = "tests/fixtures/core_01d/port02c-trigger-authority-b6-source-inventory-v1.json"
+SOURCE_INVENTORY_SHA = "f0e3bbd523c0a75d47215d2b4f6cd732409c559f080d9391a6ae7520387368c6"
 RECEIPT_PATH = "tests/fixtures/core_01d/core-01d-port02c-trigger-authority-b6-v1.json"
 OBSERVED_AT = "2026-10-04T22:55:33Z"
 SOURCE_REVIEW_RESET_COMMENT = 5981669839
@@ -254,7 +255,7 @@ def require(condition: bool, reason: str) -> None:
 
 
 def _git(*args: str) -> bytes:
-    return subprocess.check_output(["git", *args], cwd=ROOT)
+    return subprocess.check_output(["git", *args], cwd=ROOT, stderr=subprocess.PIPE)
 
 
 def _sha(raw: bytes) -> str:
@@ -274,8 +275,7 @@ def _read_json(path: str) -> dict[str, Any]:
 
 
 @lru_cache(maxsize=1)
-def _base_tree_entries() -> dict[str, tuple[str, str, str]]:
-    raw = _git("ls-tree", "-r", "-z", BASE_MAIN)
+def _parse_tree_entries(raw: bytes) -> dict[str, tuple[str, str, str]]:
     entries: dict[str, tuple[str, str, str]] = {}
     for record in raw.split(b"\0"):
         if not record:
@@ -284,6 +284,61 @@ def _base_tree_entries() -> dict[str, tuple[str, str, str]]:
         mode, kind, blob = metadata.decode("ascii").split()
         entries[path.decode("utf-8")] = (mode, kind, blob)
     return entries
+
+
+@lru_cache(maxsize=1)
+def _checkout_tree_entries() -> dict[str, tuple[str, str, str]]:
+    """Read the checked-out snapshot, which exists even in depth-one PR CI."""
+    return _parse_tree_entries(_git("ls-tree", "-r", "-z", "HEAD"))
+
+
+@lru_cache(maxsize=1)
+def _base_tree_entries() -> dict[str, tuple[str, str, str]]:
+    try:
+        return _parse_tree_entries(_git("ls-tree", "-r", "-z", BASE_MAIN))
+    except subprocess.CalledProcessError:
+        # GitHub's natural pull_request checkout is a depth-one synthetic merge
+        # commit. It contains the reviewed snapshot but omits the pinned base
+        # commit object. The source inventory was sealed before the PR and its
+        # identity is itself pinned here; verify every inventoried source against
+        # both that baseline identity and the available checkout tree.
+        raw = (ROOT / SOURCE_INVENTORY_PATH).read_bytes()
+        value = json.loads(raw.decode("utf-8"))
+        require(raw == _canonical(value), "pinned B6 source inventory is not canonical")
+        require(value.get("canonical_sha256") == SOURCE_INVENTORY_SHA,
+                "pinned B6 source inventory identity drift")
+        require(value.get("base_main_sha") == BASE_MAIN and value.get("base_tree_sha") == BASE_TREE,
+                "pinned B6 source inventory base identity drift")
+        rows = value.get("source_identities")
+        require(type(rows) is list and value.get("source_count") == len(rows),
+                "pinned B6 source inventory rows are malformed")
+        require(all(type(row) is dict for row in rows),
+                "pinned B6 source inventory row is malformed")
+        expected_paths = set(required_source_paths())
+        require({row.get("path") for row in rows} == expected_paths,
+                "pinned B6 source inventory scope drift")
+        checkout = _checkout_tree_entries()
+        entries: dict[str, tuple[str, str, str]] = {}
+        for row in rows:
+            path = row["path"]
+            mode_kind_blob = checkout.get(path)
+            require(mode_kind_blob is not None and mode_kind_blob[1] == "blob"
+                    and mode_kind_blob[0] in {"100644", "100755"},
+                    "required B6 source is not a checked-out regular Git blob: " + path)
+            mode, _kind, blob = mode_kind_blob
+            require(blob == row.get("git_blob_sha1"),
+                    "checked-out B6 source differs from authenticated base blob: " + path)
+            source = (ROOT / path).read_bytes()
+            require(hashlib.sha1(b"blob " + str(len(source)).encode("ascii") + b"\0" + source).hexdigest()
+                    == blob,
+                    "checked-out B6 source bytes differ from Git blob: " + path)
+            require(_sha(_normalized(source)) == row.get("normalized_source_sha256")
+                    and len(source) == row.get("byte_size")
+                    and row.get("role") == _source_role(path)
+                    and row.get("discovery_edges") == _source_edges(path),
+                    "checked-out B6 source identity or classification drift: " + path)
+            entries[path] = (mode, "blob", blob)
+        return entries
 
 
 def _fixture_manifest() -> dict[str, Any]:
@@ -527,7 +582,7 @@ def _repository_caller_scan() -> dict[str, Any]:
     )
     target_names = {Path(PORT_WORKFLOW).name.lower(), "port-02c native runtime"}
     hits = []
-    for path in sorted(_base_tree_entries()):
+    for path in sorted(_checkout_tree_entries()):
         if not path.startswith((".github/workflows/", "scripts/", "domain/", "runtime/", "services/")):
             continue
         if path == PORT_WORKFLOW or (path.startswith("scripts/") and Path(path).name.startswith("audit_")):

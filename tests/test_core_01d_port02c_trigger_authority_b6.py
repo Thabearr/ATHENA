@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from copy import deepcopy
 
 import pytest
@@ -23,6 +24,27 @@ def test_b6_scope_is_exactly_two_port_triggers_and_excludes_win_either_half():
     inventory_paths = {row["path"] for row in
                        boundary.read(b6.SOURCE_INVENTORY_PATH)["source_identities"]}
     assert b6.WIN_EITHER_HALF[0] not in inventory_paths
+
+
+def test_depth_one_pr_checkout_uses_pinned_base_inventory_without_fetch(monkeypatch):
+    original_git = b6._git
+
+    def shallow_checkout_git(*args):
+        if b6.BASE_MAIN in args:
+            raise subprocess.CalledProcessError(128, ["git", *args])
+        return original_git(*args)
+
+    b6._base_tree_entries.cache_clear()
+    b6._checkout_tree_entries.cache_clear()
+    monkeypatch.setattr(b6, "_git", shallow_checkout_git)
+    try:
+        inventory = b6.build_source_inventory()
+    finally:
+        b6._base_tree_entries.cache_clear()
+        b6._checkout_tree_entries.cache_clear()
+
+    assert inventory["canonical_sha256"] == b6.SOURCE_INVENTORY_SHA
+    assert inventory == boundary.read(b6.SOURCE_INVENTORY_PATH)
 
 
 def test_trigger_surfaces_remain_separate_with_exact_current_reachability():
