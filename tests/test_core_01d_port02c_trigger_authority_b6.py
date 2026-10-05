@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from copy import deepcopy
 
@@ -7,6 +8,17 @@ import pytest
 
 from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
 from scripts import audit_core_01d_port02c_trigger_authority_b6 as b6
+
+
+_A2_PREDECESSOR_FILE_SHA256 = {
+    1: "eb8e3f78a87836f328620cc1bf34f34c3e68da0c7700fea85eb476ff45793a97",
+    2: "611dd630d2ea0223134f742192641988571d83350e30f016f804d6e43d437046",
+    3: "bf9bac65b1f7c9d6ab7a60376f26076de634ae6a68d85a28e8aab4c27237e8da",
+    4: "7e196ef2717e13adb253308bb3a0fbc2e0dd0545918bcc8ace89e34bed4be3e9",
+    5: "750aeaf81d4ee3afc8b7ab13ebe41bb018bb22f5d6058a0532cf33e6eb20a54d",
+    6: "4621db16b2f69502f28b5f04435c235c24d053bd36a53abd0c4f42a545f56872",
+    7: "dbad92550fc0de2b99e7b4caa54aeecf2ba8855b944c552db854be3e236d0eca",
+}
 
 
 def test_b6_scope_is_exactly_two_port_triggers_and_excludes_win_either_half():
@@ -249,8 +261,8 @@ def test_a2_generation_v8_is_append_only_and_b6_python_is_in_the_latest_inventor
     for generation in range(1, 8):
         path = boundary.inventory_generation_path(generation)
         current_bytes = (b6.ROOT / path).read_bytes()
-        base_bytes = b6._git("show", f"{b6.BASE_MAIN}:{path}")
-        assert current_bytes == base_bytes
+        assert hashlib.sha256(current_bytes).hexdigest() == \
+            _A2_PREDECESSOR_FILE_SHA256[generation]
     for path, digest in boundary.PREDECESSORS.items():
         assert boundary.read(path)["canonical_sha256"] == digest
     latest = boundary.authenticate_inventory()
