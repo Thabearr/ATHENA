@@ -3,46 +3,21 @@ import sys
 import time
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from services.legacy_acca_builder_compat import AccaBuilder
-from workers.fotmob_advanced_scraper import FotMobAdvancedScraper
-from api.athenizer import router as athenizer_router
-from api.export import router as export_router
+# Retained development API only. The trusted shell uses api.app_factory.
+# Provider implementations and legacy routers are imported only on explicit use.
+router = APIRouter()
 
-app = FastAPI(title="ATHENA Desktop API")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+def AccaBuilder():
+    from services.legacy_acca_builder_compat import AccaBuilder
+    return AccaBuilder()
 
-app.include_router(athenizer_router)
-app.include_router(export_router)
 
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-
-ui_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'ui'))
-if os.path.exists(ui_dir):
-    app.mount("/ui", StaticFiles(directory=ui_dir, html=True), name="ui")
-
-    @app.get("/styles.css")
-    def get_css():
-        return FileResponse(os.path.join(ui_dir, "styles.css"))
-
-    @app.get("/app.js")
-    def get_js():
-        return FileResponse(os.path.join(ui_dir, "app.js"))
-
-    @app.get("/")
-    def read_root():
-        return FileResponse(os.path.join(ui_dir, "index.html"))
-
+def FotMobAdvancedScraper():
+    from workers.fotmob_advanced_scraper import FotMobAdvancedScraper
+    return FotMobAdvancedScraper()
 
 
 from typing import Optional
@@ -69,18 +44,13 @@ class GenerateRequest(BaseModel):
     league: Optional[str] = None
     strict: bool = True
 
-@app.get("/api/status")
+@router.get("/api/status")
 def get_status():
-    """Return basic health and stats of the ATHENA engine."""
-    weights_path = "config/model_weights.json"
-    weights_exist = os.path.exists(weights_path)
-    return {
-        "status": "online",
-        "engine": "ATHENA v3.0",
-        "weights_loaded": weights_exist
-    }
+    """Compatibility liveness has no model/provider readiness authority."""
+    return {"status": "deprecated_compatibility", "health_endpoint": "/api/v1/health",
+            "model_readiness": "unproven", "provider_authority": False}
 
-@app.get("/api/leagues")
+@router.get("/api/leagues")
 def get_available_leagues(days: int = Query(1, ge=1, le=14)):
     """Fetch unique leagues available in the upcoming days."""
     try:
@@ -92,7 +62,7 @@ def get_available_leagues(days: int = Query(1, ge=1, le=14)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/fixtures")
+@router.get("/api/fixtures")
 def get_upcoming_fixtures(days: int = Query(1, ge=1, le=14)):
     """Fetch raw upcoming fixtures for the next N days."""
     try:
@@ -101,7 +71,7 @@ def get_upcoming_fixtures(days: int = Query(1, ge=1, le=14)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/generate")
+@router.post("/api/generate")
 def generate_acca(req: GenerateRequest):
     """Generate an accumulator using the ATHENA pipeline."""
     try:
@@ -120,6 +90,43 @@ def generate_acca(req: GenerateRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+_compatibility_app = None
+
+
+def create_compatibility_app(*, development_compatibility=False):
+    if development_compatibility is not True:
+        raise ValueError("explicit development compatibility is required")
+    from api.athenizer import router as athenizer_router
+    from api.export import router as export_router
+    legacy = FastAPI(title="ATHENA retained development compatibility API")
+    legacy.include_router(router)
+    legacy.include_router(athenizer_router)
+    legacy.include_router(export_router)
+    # Original screens remain available only on this explicit development app.
+    # The installed/supported factory never mounts these compatibility assets.
+    from pathlib import Path
+    from fastapi.responses import FileResponse
+    ui = Path(__file__).resolve().parents[1] / "ui"
+    for route, filename in (("/", "legacy-index.html"), ("/app.js", "legacy-app.js"), ("/styles.css", "styles.css")):
+        def make_asset(name):
+            def serve():
+                return FileResponse(ui / name)
+            return serve
+        legacy.add_api_route(route, make_asset(filename), methods=["GET"])
+    return legacy
+
+
+def __getattr__(name):
+    # Existing development imports explicitly request this compatibility object.
+    # Merely importing api.server performs no provider or API construction.
+    if name == "app":
+        global _compatibility_app
+        if _compatibility_app is None:
+            _compatibility_app = create_compatibility_app(development_compatibility=True)
+        return _compatibility_app
+    raise AttributeError(name)
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8500)
+    uvicorn.run(create_compatibility_app(development_compatibility=True), host="127.0.0.1", port=0)
