@@ -276,13 +276,14 @@ def verify_workflow_ledgers() -> None:
 
 def source_identity(path: str) -> dict[str, str]:
     raw = (ROOT / path).read_bytes()
-    normalized = raw.replace(b"\r\n", b"\n")
-    blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+    normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     expected_blob, expected_sha = SOURCE_PINS[path]
-    require(blob == expected_blob, "B3 pinned Git blob identity drift: " + path)
+    git_blob = subprocess.check_output(
+        ["git", "rev-parse", "HEAD:" + path], cwd=ROOT).decode().strip()
+    require(git_blob == expected_blob, "B3 pinned Git blob identity drift: " + path)
     digest = hashlib.sha256(normalized).hexdigest()
     require(digest == expected_sha, "B3 pinned normalized source identity drift: " + path)
-    return {"path": path, "git_blob_sha1": blob, "normalized_source_sha256": digest}
+    return {"path": path, "git_blob_sha1": git_blob, "normalized_source_sha256": digest}
 
 
 def authenticate_predecessor_chain() -> dict[str, object]:

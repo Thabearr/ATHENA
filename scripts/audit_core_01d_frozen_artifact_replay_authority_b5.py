@@ -190,8 +190,8 @@ def _canonical_hash(value: Any) -> str:
 def _identity(path: str) -> dict[str, Any]:
     raw = (ROOT / path).read_bytes()
     normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
     expected_blob, expected_sha = SOURCE_PINS[path]
+    blob = _git("rev-parse", "HEAD:" + path).decode().strip()
     digest = hashlib.sha256(normalized).hexdigest()
     require(blob == expected_blob, f"B5 Git blob identity drift: {path}")
     require(digest == expected_sha, f"B5 normalized source identity drift: {path}")
@@ -552,9 +552,9 @@ def build_receipt() -> dict[str, Any]:
     inventory = build_source_inventory()
     rows = [_player_row(*target, inventory) for target in TARGETS[:3]] + [_catalog_row(inventory)]
     a2_chain = boundary.load_inventory_generations()
-    require([generation for generation, _ in boundary.discover_inventory_generations()] ==
-            [1, 2, 3, 4, 5, 6, 7, 8],
-            "B5 requires the contiguous immutable A2 V1-V8 inventory chain")
+    generations = [generation for generation, _ in boundary.discover_inventory_generations()]
+    require(generations[:8] == [1, 2, 3, 4, 5, 6, 7, 8] and len(generations) >= 8,
+            "B5 requires the immutable contiguous A2 V1-V8 prefix")
     a2_v7 = a2_chain[6][1]
     a2_v8 = a2_chain[7][1]
     require(a2_v7["canonical_sha256"] == boundary.read(A2_V7_PATH)["canonical_sha256"]
@@ -566,8 +566,9 @@ def build_receipt() -> dict[str, Any]:
                 "path": A2_V7_PATH, "canonical_sha256": a2_v7["canonical_sha256"],
                 "generation": 7, "rewritten": False},
             "A2 V8 does not bind the exact immutable V7 predecessor")
-    require(boundary.authenticate_inventory() == a2_v8,
-            "A2 V8 is not the current full source inventory")
+    latest = boundary.authenticate_inventory()
+    require(latest.get("generation", 0) >= 8,
+            "current A2 source inventory must retain the reviewed V8 prefix")
     return boundary.seal({
         "schema_version": 1, "policy_id": POLICY_ID, "repository": "Thabearr/ATHENA", "master_issue": 337,
         "base_main_sha": BASE_MAIN, "base_tree_sha": BASE_TREE,
@@ -632,12 +633,14 @@ def validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def audit() -> dict[str, Any]:
-    a2 = boundary.authenticate_inventory()
-    require(a2.get("generation") == 8, "A2 current source inventory must be generation 8")
-    require(a2.get("predecessor_inventory", {}).get("path") == A2_V7_PATH
-            and a2.get("predecessor_inventory", {}).get("canonical_sha256") ==
+    a2_v8 = boundary.read(boundary.inventory_generation_path(8))
+    require(a2_v8.get("generation") == 8, "immutable A2 generation V8 missing")
+    require(a2_v8.get("predecessor_inventory", {}).get("path") == A2_V7_PATH
+            and a2_v8.get("predecessor_inventory", {}).get("canonical_sha256") ==
             boundary.read(A2_V7_PATH)["canonical_sha256"],
             "A2 V8 predecessor must be exact V7")
+    require(boundary.authenticate_inventory().get("generation", 0) >= 8,
+            "current A2 inventory no longer extends immutable V8")
     from scripts import audit_core_01d_checkpoint_e_completion_v7 as completion_v7
     require(completion_v7.audit().get("result") == "PASS",
             "immutable Completion V7/B4 predecessor chain failed authentication")

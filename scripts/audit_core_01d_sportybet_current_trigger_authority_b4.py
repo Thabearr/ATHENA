@@ -223,8 +223,8 @@ def _canonical_hash(value: Any) -> str:
 def _identity(path: str) -> dict[str, str]:
     raw = (ROOT / path).read_bytes()
     normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    git_blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
     blob, digest = SOURCE_PINS[path]
+    git_blob = _git("rev-parse", "HEAD:" + path).decode().strip()
     require(git_blob == blob, f"B4 source Git blob drift: {path}")
     require(hashlib.sha256(normalized).hexdigest() == digest, f"B4 normalized source SHA drift: {path}")
     return {"path": path, "git_blob_sha1": git_blob, "normalized_source_sha256": digest,

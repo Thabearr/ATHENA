@@ -52,8 +52,12 @@ def build_receipt() -> dict[str, Any]:
             "B6 cannot complete criterion 11 while the final surface remains")
     require(criteria["no_unknown_current_artifact_or_notification_authority"] is False,
             "B6 cannot complete criterion 14 while the final surface remains")
-    a2_v8 = boundary.authenticate_inventory()
-    require(a2_v8.get("generation") == 8, "Completion V9 requires A2 generation V8")
+    a2_v8 = boundary.read(boundary.inventory_generation_path(8))
+    require(a2_v8.get("generation") == 8
+            and a2_v8.get("canonical_sha256") == "856129ba6eafb0281f10a16639f26fd477b2ba6a2fb00957ee79fa539539412d",
+            "Completion V9 immutable A2 generation V8 identity drift")
+    require(boundary.authenticate_inventory().get("generation", 0) >= 8,
+            "current A2 inventory no longer extends immutable V8")
     require(a2_v8["predecessor_inventory"] == {
         "path": b6.A2_V7_PATH,
         "canonical_sha256": b6.A2_V7_SHA,

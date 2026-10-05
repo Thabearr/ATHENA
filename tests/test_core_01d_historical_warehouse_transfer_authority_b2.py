@@ -1,5 +1,6 @@
 """Offline assertions for B2 source, GitHub metadata, and trigger authority."""
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +17,26 @@ def receipt():
 
 def _rows(receipt):
     return {(row["workflow_path"], row["trigger_kind"]): row for row in receipt["review_rows"]}
+
+
+def test_b2_source_identity_tolerates_checkout_eol_conversion(monkeypatch):
+    target = next(iter(b2.SOURCE_PINS))
+    original = Path.read_bytes
+
+    def crlf_view(path):
+        raw = original(path)
+        if Path(path) == b2.ROOT / target:
+            return raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        return raw
+
+    monkeypatch.setattr(Path, "read_bytes", crlf_view)
+    observed = b2.source_identity(target)
+    expected_blob, expected_sha = b2.SOURCE_PINS[target]
+    assert observed == {
+        "path": target,
+        "git_blob_sha1": expected_blob,
+        "normalized_source_sha256": expected_sha,
+    }
 
 
 def test_exact_five_trigger_surfaces_and_current_unknown_set(receipt):
@@ -238,6 +259,11 @@ def test_completion_v2_additive_projection_allowlist_is_exact_and_narrow():
         "tests/fixtures/core_01d/port02c-trigger-authority-b6-source-inventory-v1.json",
         "tests/fixtures/core_01d/core-01d-port02c-trigger-authority-b6-v1.json",
         "tests/fixtures/core_01d/core-01d-checkpoint-e-completion-v9.json",
+        "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v9.json",
+        "tests/fixtures/core_01d/win-either-half-trigger-authority-b7-source-inventory-v1.json",
+        "tests/fixtures/core_01d/core-01d-win-either-half-trigger-authority-b7-v1.json",
+        "tests/fixtures/core_01d/core-01d-checkpoint-e-completion-v10.json",
     }
+    assert completion_v2.PASS_A_HISTORICAL_BLOBS == {"tests/test_core_01d_workflow_consolidation.py": "65fd881b593f3e0537a7965ac97441d1dc1bc16b"}
     assert completion_v2.B1_ADDITIVE_EVIDENCE_PATHS == expected
     assert not any("*" in path for path in completion_v2.B1_ADDITIVE_EVIDENCE_PATHS)

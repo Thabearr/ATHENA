@@ -85,18 +85,17 @@ def test_completion_v9_rejects_scope_completion_or_counter_falsehoods(mutate):
         v9.validate_receipt(value)
 
 
-def test_current_master_and_historical_v2_still_authenticate():
+def test_current_master_closes_with_v10_and_historical_v2_still_authenticates():
     from scripts import audit_checkpoint_e_workflows as master
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as historical_v2
+    from scripts import audit_core_01d_checkpoint_e_completion_v10 as v10
 
     result = master.audit()
-    assert result["current_completion_receipt_sha256"] == v9.audit()["receipt_sha256"]
+    assert result["current_completion_receipt_sha256"] == v10.audit()["receipt_sha256"]
     assert result["historical_completion_v2_receipt_sha256"] == \
         historical_v2.audit()["receipt_sha256"]
-    assert result["remaining_unreviewed_surface_count"] == 1
-    assert result["blockers"] == [
-        "all_retained_workflow_authority_and_dynamic_reachability_review_complete",
-        "no_unknown_current_artifact_or_notification_authority",
-    ]
-    assert result["checkpoint_e"] == result["p4_4"] == "INCOMPLETE"
+    assert result["remaining_unreviewed_surface_count"] == 0
+    assert result["blockers"] == []
+    assert result["checkpoint_e"] == result["p4_4"] == "COMPLETE"
     assert historical_v2.audit()["result"] == "PASS"
+    assert v9.audit()["checkpoint_e"] == v9.audit()["p4_4"] == "INCOMPLETE"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 import subprocess
 
 import pytest
@@ -19,6 +20,26 @@ EXPECTED_KEYS = {
 
 def row_by_pr(receipt, pr):
     return next(row for row in receipt["review_rows"] if row["current_control_state"]["control_pr_number"] == pr)
+
+
+def test_source_identity_tolerates_checkout_eol_conversion_without_weakening_git_blob_pin(monkeypatch):
+    target = next(iter(b3.SOURCE_PINS))
+    original = Path.read_bytes
+
+    def crlf_view(path):
+        raw = original(path)
+        if Path(path) == b3.ROOT / target:
+            return raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        return raw
+
+    monkeypatch.setattr(Path, "read_bytes", crlf_view)
+    observed = b3.source_identity(target)
+    expected_blob, expected_sha = b3.SOURCE_PINS[target]
+    assert observed == {
+        "path": target,
+        "git_blob_sha1": expected_blob,
+        "normalized_source_sha256": expected_sha,
+    }
 
 
 def test_b3_scope_is_exactly_four_issue_comment_surfaces():
@@ -153,12 +174,12 @@ def test_mutations_to_scope_current_reachability_or_pr130_guard_order_are_reject
 
 def test_workflow_tree_is_unchanged_and_the_a2_generation_chain_is_contiguous():
     chain = boundary.load_inventory_generations()
-    assert [i for i, _ in enumerate(chain, 1)] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert [i for i, _ in enumerate(chain, 1)] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
     latest = chain[-1][1]
-    assert latest["generation"] == 8
-    assert latest["predecessor_inventory"]["generation"] == 7
-    assert latest["predecessor_inventory"]["path"] == boundary.inventory_generation_path(7)
-    assert latest["predecessor_inventory"]["canonical_sha256"] == "fdb9534212e814f6ac5a8a5c6f52af73354eef0029e3dbb5466dc32d6f252794"
+    assert latest["generation"] == 9
+    assert latest["predecessor_inventory"]["generation"] == 8
+    assert latest["predecessor_inventory"]["path"] == boundary.inventory_generation_path(8)
+    assert latest["predecessor_inventory"]["canonical_sha256"] == "856129ba6eafb0281f10a16639f26fd477b2ba6a2fb00957ee79fa539539412d"
     assert latest["predecessor_inventory"]["rewritten"] is False
     assert boundary.authenticate_inventory() == latest
     assert subprocess.check_output(["git", "rev-parse", "HEAD:.github/workflows"], cwd=b3.ROOT).decode().strip() == b3.WORKFLOW_TREE

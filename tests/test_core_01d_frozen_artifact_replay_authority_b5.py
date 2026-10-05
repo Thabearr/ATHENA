@@ -1,11 +1,29 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
 from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
 from scripts import audit_core_01d_frozen_artifact_replay_authority_b5 as b5
+
+
+def test_b5_source_identity_tolerates_checkout_eol_conversion(monkeypatch):
+    target = b5.TARGETS[0][0]
+    original = Path.read_bytes
+
+    def crlf_view(path):
+        raw = original(path)
+        if Path(path) == b5.ROOT / target:
+            return raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        return raw
+
+    monkeypatch.setattr(Path, "read_bytes", crlf_view)
+    observed = b5._identity(target)
+    expected_blob, expected_sha = b5.SOURCE_PINS[target]
+    assert observed["git_blob_sha1"] == expected_blob
+    assert observed["normalized_source_sha256"] == expected_sha
 
 
 def test_exact_four_b5_surfaces_and_immutable_completion_v7_binding():
@@ -98,14 +116,23 @@ def test_receipt_mutations_fail_closed(changed):
         b5.validate_receipt(value)
 
 
-def test_current_a2_inventory_is_generation_eight_and_keeps_v7_immutable():
+def test_current_a2_inventory_extends_immutable_generation_eight_with_v9():
     chain = boundary.discover_inventory_generations()
-    assert [generation for generation, _ in chain] == [1, 2, 3, 4, 5, 6, 7, 8]
-    latest = boundary.authenticate_inventory()
-    assert latest["generation"] == 8
-    assert latest["predecessor_inventory"] == {
+    assert [generation for generation, _ in chain] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    v8 = boundary.read(boundary.inventory_generation_path(8))
+    assert v8["generation"] == 8
+    assert v8["canonical_sha256"] == "856129ba6eafb0281f10a16639f26fd477b2ba6a2fb00957ee79fa539539412d"
+    assert v8["predecessor_inventory"] == {
         "path": b5.A2_V7_PATH,
         "canonical_sha256": "fdb9534212e814f6ac5a8a5c6f52af73354eef0029e3dbb5466dc32d6f252794",
         "generation": 7,
+        "rewritten": False,
+    }
+    latest = boundary.authenticate_inventory()
+    assert latest["generation"] == 9
+    assert latest["predecessor_inventory"] == {
+        "path": boundary.inventory_generation_path(8),
+        "canonical_sha256": "856129ba6eafb0281f10a16639f26fd477b2ba6a2fb00957ee79fa539539412d",
+        "generation": 8,
         "rewritten": False,
     }

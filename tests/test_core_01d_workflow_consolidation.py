@@ -25,7 +25,7 @@ def documents():
 def test_full_source_archive_and_evolution_audit_offline():
     result = audit.audit()
     assert result["result"] == "PASS"
-    assert result["checkpoint_e"] == "INCOMPLETE"
+    assert result["checkpoint_e"] == "COMPLETE"
     assert result["workflow_count"] == 39
     assert set(result["live_side_effect_counts"].values()) == {0}
 

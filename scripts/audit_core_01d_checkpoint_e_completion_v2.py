@@ -19,6 +19,9 @@ UNCHANGED_SCOPE_SHA='5465e4dc03a46d4e64e81586720cebf9cb40d9dd53ce1fbe534fb825b5d
 # Current additive authority-review documents are authenticated by their own
 # pass auditors, completion overlays, and A2 generation chain. Keep only these
 # exact additive paths out of the immutable Pass-A historical tree projection.
+PASS_A_HISTORICAL_BLOBS={
+ 'tests/test_core_01d_workflow_consolidation.py':'65fd881b593f3e0537a7965ac97441d1dc1bc16b',
+}
 B1_ADDITIVE_EVIDENCE_PATHS={
  'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v3.json',
  'tests/fixtures/core_01d/exact-pr-trigger-disposition-b1-source-inventory-v1.json',
@@ -44,6 +47,10 @@ B1_ADDITIVE_EVIDENCE_PATHS={
  'tests/fixtures/core_01d/port02c-trigger-authority-b6-source-inventory-v1.json',
  'tests/fixtures/core_01d/core-01d-port02c-trigger-authority-b6-v1.json',
  'tests/fixtures/core_01d/core-01d-checkpoint-e-completion-v9.json',
+ 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v9.json',
+ 'tests/fixtures/core_01d/win-either-half-trigger-authority-b7-source-inventory-v1.json',
+ 'tests/fixtures/core_01d/core-01d-win-either-half-trigger-authority-b7-v1.json',
+ 'tests/fixtures/core_01d/core-01d-checkpoint-e-completion-v10.json',
 }
 # Existing offline P3 tests and the source-bound Tests shard selector publish
 # these local products. This audit never consumes them as authority proof.
@@ -77,7 +84,9 @@ def a2_historical_projection(raw):
  for line in raw.splitlines(keepends=True):
   path=line.split(b'\t',1)[1].strip().decode()
   if path in new_paths:continue
-  if path in a2.HISTORICAL_TEST_BLOBS:
+  if path in PASS_A_HISTORICAL_BLOBS:
+   line=('100644 blob '+PASS_A_HISTORICAL_BLOBS[path]+'\t'+path+'\n').encode()
+  elif path in a2.HISTORICAL_TEST_BLOBS:
    line=('100644 blob '+a2.HISTORICAL_TEST_BLOBS[path]+'\t'+path+'\n').encode()
   rows.append(line)
  return b''.join(rows)

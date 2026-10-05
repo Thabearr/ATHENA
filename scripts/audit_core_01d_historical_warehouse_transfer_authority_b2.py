@@ -198,9 +198,10 @@ def lf(raw: bytes) -> bytes:
 
 def source_identity(path: str) -> dict[str, str]:
     raw = (ROOT / path).read_bytes()
-    normalized = lf(raw)
-    blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+    normalized = lf(raw).replace(b"\r", b"\n")
     expected_blob, expected_sha = SOURCE_PINS[path]
+    blob = subprocess.check_output(
+        ["git", "rev-parse", "HEAD:" + path], cwd=ROOT).decode().strip()
     require(blob == expected_blob, "B2 base Git blob identity drift: " + path)
     digest = hashlib.sha256(normalized).hexdigest()
     require(digest == expected_sha, "B2 normalized source identity drift: " + path)
