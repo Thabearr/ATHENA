@@ -215,6 +215,21 @@ def test_owned_ephemeral_listener_offline(resources, monkeypatch, tmp_path):
         return original(self, address)
     monkeypatch.setattr(socket.socket, "connect", permitted)
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("installed runtime called subprocess/Git"))
+    if sys.platform.startswith("linux"):
+        # A2's pytest seccomp policy denies every INET socket, including
+        # loopback. Keep that guard intact and prove launch fails closed.
+        # Real installed loopback ownership/handshake runs in the separate
+        # automatic PORT-02C native smoke lane; API tests here use ASGI.
+        import errno
+        with pytest.raises(PermissionError) as rejected:
+            LocalBackend(resources)
+        assert rejected.value.errno == errno.EPERM
+        assert run_desktop.main([
+            "--port02c-smoke", "--release-root", str(resources.identity.release_root),
+            "--trusted-manifest-sha256", resources.identity.manifest_sha256,
+        ]) == 1
+        assert calls == []
+        return
     backend = LocalBackend(resources)
     try:
         assert backend.listener.getsockname()[0] == "127.0.0.1"
