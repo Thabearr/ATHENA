@@ -98,14 +98,14 @@ def test_receipt_mutations_fail_closed(changed):
         b5.validate_receipt(value)
 
 
-def test_current_a2_inventory_is_generation_seven_and_complete():
+def test_current_a2_inventory_is_generation_eight_and_keeps_v7_immutable():
     chain = boundary.discover_inventory_generations()
-    assert [generation for generation, _ in chain] == [1, 2, 3, 4, 5, 6, 7]
+    assert [generation for generation, _ in chain] == [1, 2, 3, 4, 5, 6, 7, 8]
     latest = boundary.authenticate_inventory()
-    assert latest["generation"] == 7
+    assert latest["generation"] == 8
     assert latest["predecessor_inventory"] == {
-        "path": b5.A2_V6_PATH,
-        "canonical_sha256": b5.A2_V6_SHA,
-        "generation": 6,
+        "path": b5.A2_V7_PATH,
+        "canonical_sha256": "fdb9534212e814f6ac5a8a5c6f52af73354eef0029e3dbb5466dc32d6f252794",
+        "generation": 7,
         "rewritten": False,
     }

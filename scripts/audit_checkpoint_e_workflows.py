@@ -300,6 +300,8 @@ def verified_additive_artifact_paths():
     from scripts import audit_core_01d_checkpoint_e_completion_v7 as completion_v7
     from scripts import audit_core_01d_frozen_artifact_replay_authority_b5 as b5
     from scripts import audit_core_01d_checkpoint_e_completion_v8 as completion_v8
+    from scripts import audit_core_01d_port02c_trigger_authority_b6 as b6
+    from scripts import audit_core_01d_checkpoint_e_completion_v9 as completion_v9
     require(b2.audit().get("result") == "PASS",
             "historical warehouse/transfer authority B2 evidence failed authentication")
     require(completion_v5.audit().get("result") == "PASS",
@@ -318,6 +320,10 @@ def verified_additive_artifact_paths():
             "frozen artifact replay authority B5 evidence failed authentication")
     require(completion_v8.audit().get("result") == "PASS",
             "Completion V8 B5 authority overlay failed authentication")
+    require(b6.audit().get("result") == "PASS",
+            "PORT-02C trigger authority B6 evidence failed authentication")
+    require(completion_v9.audit().get("result") == "PASS",
+            "Completion V9 B6 authority overlay failed authentication")
     return (
         MATRIX_PATH,
         RECEIPT_PATH,
@@ -349,6 +355,10 @@ def verified_additive_artifact_paths():
         b5.RECEIPT_PATH,
         completion_v8.RECEIPT_PATH,
         a2.inventory_generation_path(7),
+        b6.SOURCE_INVENTORY_PATH,
+        b6.RECEIPT_PATH,
+        completion_v9.RECEIPT_PATH,
+        a2.inventory_generation_path(8),
     )
 
 
@@ -802,7 +812,7 @@ def audit():
     evolution.validate_current_state()
     from scripts.audit_core_01d_scheduled_shadow_ownership import audit_forward_checkpoint
     forward = audit_forward_checkpoint()
-    from scripts import audit_core_01d_checkpoint_e_completion_v8 as completion
+    from scripts import audit_core_01d_checkpoint_e_completion_v9 as completion
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as historical_completion
     current = completion.audit()
     completion_value = strict((ROOT / completion.RECEIPT_PATH).read_bytes())

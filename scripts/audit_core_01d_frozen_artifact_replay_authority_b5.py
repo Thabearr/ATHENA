@@ -552,14 +552,22 @@ def build_receipt() -> dict[str, Any]:
     inventory = build_source_inventory()
     rows = [_player_row(*target, inventory) for target in TARGETS[:3]] + [_catalog_row(inventory)]
     a2_chain = boundary.load_inventory_generations()
-    require([generation for generation, _ in boundary.discover_inventory_generations()] == [1, 2, 3, 4, 5, 6, 7],
-            "B5 requires the contiguous immutable A2 V1-V7 inventory chain")
-    a2_v7 = a2_chain[-1][1]
+    require([generation for generation, _ in boundary.discover_inventory_generations()] ==
+            [1, 2, 3, 4, 5, 6, 7, 8],
+            "B5 requires the contiguous immutable A2 V1-V8 inventory chain")
+    a2_v7 = a2_chain[6][1]
+    a2_v8 = a2_chain[7][1]
     require(a2_v7["canonical_sha256"] == boundary.read(A2_V7_PATH)["canonical_sha256"]
             and a2_v7["predecessor_inventory"] == {
                 "path": A2_V6_PATH, "canonical_sha256": A2_V6_SHA,
                 "generation": 6, "rewritten": False},
             "A2 V7 does not bind the exact immutable V6 predecessor")
+    require(a2_v8["predecessor_inventory"] == {
+                "path": A2_V7_PATH, "canonical_sha256": a2_v7["canonical_sha256"],
+                "generation": 7, "rewritten": False},
+            "A2 V8 does not bind the exact immutable V7 predecessor")
+    require(boundary.authenticate_inventory() == a2_v8,
+            "A2 V8 is not the current full source inventory")
     return boundary.seal({
         "schema_version": 1, "policy_id": POLICY_ID, "repository": "Thabearr/ATHENA", "master_issue": 337,
         "base_main_sha": BASE_MAIN, "base_tree_sha": BASE_TREE,
@@ -625,9 +633,11 @@ def validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
 
 def audit() -> dict[str, Any]:
     a2 = boundary.authenticate_inventory()
-    require(a2.get("generation") == 7, "A2 current source inventory must be generation 7")
-    require(a2.get("predecessor_inventory", {}).get("canonical_sha256") == A2_V6_SHA,
-            "A2 V7 predecessor must be exact V6")
+    require(a2.get("generation") == 8, "A2 current source inventory must be generation 8")
+    require(a2.get("predecessor_inventory", {}).get("path") == A2_V7_PATH
+            and a2.get("predecessor_inventory", {}).get("canonical_sha256") ==
+            boundary.read(A2_V7_PATH)["canonical_sha256"],
+            "A2 V8 predecessor must be exact V7")
     from scripts import audit_core_01d_checkpoint_e_completion_v7 as completion_v7
     require(completion_v7.audit().get("result") == "PASS",
             "immutable Completion V7/B4 predecessor chain failed authentication")
