@@ -320,3 +320,28 @@ def test_app_receipt_matches_exact_source():
     for name, original in (("ui/legacy-index.html", "ui/index.html"), ("ui/legacy-app.js", "ui/app.js")):
         digest = hashlib.sha256((ROOT / name).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
         assert digest == receipt["base_identities"][original]["sha256"]
+
+
+def test_historical_app_projection_rejects_broken_current(monkeypatch):
+    from scripts import audit_app_01a_local_shell as audit
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    def rejected():
+        raise AssertionError("broken current generation")
+    monkeypatch.setattr(boundary, "authenticate_inventory", rejected)
+    with pytest.raises(AssertionError, match="broken current"):
+        audit.historical_runtime_payload("run_desktop.py")
+    with pytest.raises(AssertionError, match="broken current"):
+        audit.historical_tree_projection(b"")
+
+
+def test_historical_runtime_payload_is_exact_pinned_blob(monkeypatch):
+    import base64
+    from copy import deepcopy
+    from scripts import audit_app_01a_local_shell as audit
+    document = deepcopy(audit.validate())
+    document["historical_runtime_payloads"]["run_desktop.py"] = base64.b64encode(b"tamper").decode()
+    monkeypatch.setattr(audit, "authenticated_historical_paths", lambda: (set(), document))
+    with pytest.raises(ValueError, match="payload identity"):
+        audit.historical_runtime_payload("run_desktop.py")
+    with pytest.raises(ValueError, match="outside"):
+        audit.historical_runtime_payload("runtime/worker_launcher.py")

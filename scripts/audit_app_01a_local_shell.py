@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 from pathlib import Path
 import subprocess
@@ -20,7 +21,12 @@ PATHS = ("api/app_factory.py", "api/server.py", "run_desktop.py", "runtime/local
          "tests/test_core_01d_owner_one_shot_issue_comment_authority_b3.py",
          "tests/test_core_01d_frozen_artifact_replay_authority_b5.py",
          "tests/portability/test_port_02_release_identity.py")
+PATHS += ("scripts/audit_core_01d_checkpoint_e_completion_v2.py",
+          "scripts/audit_core_01d_port02c_trigger_authority_b6.py",
+          "scripts/audit_checkpoint_e_workflows.py", "docs/product/app_01a_local_shell.md")
 RECEIPT = "artifacts/product/app_01a_local_shell_v1.json"
+INVENTORY = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v10.json"
+HISTORICAL_RUNTIME_PATHS = {"api/server.py", "run_desktop.py", "ui/index.html", "ui/app.js"}
 
 
 def canonical(value):
@@ -38,6 +44,8 @@ def build():
                    "runtime/release_identity.py", "runtime/resources.py", "runtime/source_identity.py",
                    "runtime/worker_launcher.py", "artifacts/product/product_baseline_v1.json",
                    "artifacts/architecture/port_02_native_runtime_v1.json")
+    base_paths = set(git("ls-tree", "-r", "--name-only", BASE).decode().splitlines())
+    prior_paths = sorted(set(prior_paths) | (set(PATHS) & base_paths))
     base_ids = {path: {"git_blob_sha1": git("rev-parse", BASE + ":" + path).decode().strip(),
                        "sha256": hashlib.sha256(git("show", BASE + ":" + path)).hexdigest()}
                 for path in prior_paths}
@@ -46,6 +54,8 @@ def build():
                 "workflow_tree": git("rev-parse", BASE + ":.github/workflows").decode().strip(),
                 "source_review_counter_open": "2/5", "expected_counter_if_merged": "3/5",
                 "base_identities": base_ids, "source_identities": identities,
+                "historical_runtime_payloads": {path: base64.b64encode(git("show", BASE + ":" + path)).decode("ascii")
+                                                for path in sorted(HISTORICAL_RUNTIME_PATHS)},
                 "source_inventory_sha256": hashlib.sha256(canonical(identities)).hexdigest(),
                 "a2_inventory": {"path": "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v10.json",
                                  "canonical_sha256": json.loads((ROOT / "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v10.json").read_bytes())["canonical_sha256"]},
@@ -89,6 +99,46 @@ def validate():
     if any(type(value) is not int or value != 0 for value in document["safety"].values()):
         raise ValueError("APP-01A safety counts mismatch")
     return document
+
+
+def authenticated_historical_paths():
+    """Current evidence must pass before a bounded historical projection."""
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    boundary.authenticate_inventory()
+    document = validate()
+    return set(PATHS) | {RECEIPT, INVENTORY}, document
+
+
+def historical_runtime_payload(path):
+    _, document = authenticated_historical_paths()
+    return _decode_historical_runtime_payload(document, path)
+
+
+def _decode_historical_runtime_payload(document, path):
+    """Decode an already authenticated snapshot, retaining exact blob checks."""
+    if path not in HISTORICAL_RUNTIME_PATHS:
+        raise ValueError("path is outside historical APP runtime projection")
+    raw = base64.b64decode(document["historical_runtime_payloads"][path], validate=True)
+    identity = document["base_identities"][path]
+    blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+    if hashlib.sha256(raw).hexdigest() != identity["sha256"] or blob != identity["git_blob_sha1"]:
+        raise ValueError("historical APP runtime payload identity mismatch")
+    return raw
+
+
+def historical_tree_projection(raw):
+    paths, document = authenticated_historical_paths()
+    rows = []
+    for line in raw.splitlines(keepends=True):
+        metadata, name = line.split(b"\t", 1)
+        path = name.strip().decode()
+        if path in paths:
+            identity = document["base_identities"].get(path)
+            if identity is None:
+                continue
+            line = metadata.rsplit(b" ", 1)[0] + b" " + identity["git_blob_sha1"].encode() + b"\t" + name
+        rows.append(line)
+    return b"".join(rows)
 
 
 if __name__ == "__main__":

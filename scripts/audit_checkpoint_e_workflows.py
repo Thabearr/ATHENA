@@ -175,6 +175,9 @@ def seal(value):
 
 
 def read(path):
+    from scripts import audit_app_01a_local_shell as app01a
+    if path in app01a.HISTORICAL_RUNTIME_PATHS:
+        return app01a.historical_runtime_payload(path)
     if path == "tests/conftest.py":
         from scripts import audit_core_01d_ci_offline_transport_boundary as a2
         a2.authenticate_inventory()
@@ -226,6 +229,14 @@ def git_inventory():
             mode, kind, identity = metadata.decode().split()
             require(kind == "blob", "unexpected non-blob tracked entry")
             result[path.decode()] = {"mode": mode, "git_blob_sha1": identity}
+    from scripts import audit_app_01a_local_shell as app01a
+    paths, successor = app01a.authenticated_historical_paths()
+    for path in paths:
+        if path in successor["base_identities"]:
+            require(path in result, "APP predecessor path missing: " + path)
+            result[path]["git_blob_sha1"] = successor["base_identities"][path]["git_blob_sha1"]
+        else:
+            result.pop(path, None)
     from scripts.core_01d_historical_source import identities
     for path, entry in identities().items():
         result[path]["git_blob_sha1"] = entry["git_blob_sha1"]
@@ -330,6 +341,8 @@ def verified_additive_artifact_paths():
             "Win-Either-Half trigger authority B7 evidence failed authentication")
     require(completion_v10.audit().get("result") == "PASS",
             "Completion V10 final authority closure failed authentication")
+    from scripts import audit_app_01a_local_shell as app01a
+    app01a.authenticated_historical_paths()
     return (
         MATRIX_PATH,
         RECEIPT_PATH,
@@ -369,6 +382,7 @@ def verified_additive_artifact_paths():
         b7.RECEIPT_PATH,
         completion_v10.RECEIPT_PATH,
         a2.inventory_generation_path(9),
+        app01a.RECEIPT,
     )
 
 
@@ -477,7 +491,11 @@ def base_input():
     require(len(hashed) == len(value["scan_paths"]), "worktree filtered hash inventory incomplete")
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     a2.authenticate_inventory()
+    from scripts import audit_app_01a_local_shell as app01a
+    _, successor = app01a.authenticated_historical_paths()
     for path, actual in zip(value["scan_paths"], hashed):
+        if path in app01a.PATHS and path in successor["base_identities"]:
+            actual = successor["base_identities"][path]["git_blob_sha1"]
         if path in a2.HISTORICAL_TEST_BLOBS:
             actual = a2.HISTORICAL_TEST_BLOBS[path]
         from scripts.core_01d_historical_source import identities

@@ -270,6 +270,25 @@ def _canonical(value: Any) -> bytes:
     return boundary.canonical(value)
 
 
+def _reviewed_source(path: str, historical: dict[str, Any]) -> bytes:
+    # The B6 receipt stays bound to its pre-APP launcher/UI. Authenticate the
+    # complete current successor before reading the bounded historical bytes.
+    from scripts import audit_app_01a_local_shell as app01a
+    if path in app01a.HISTORICAL_RUNTIME_PATHS:
+        return app01a._decode_historical_runtime_payload(historical, path)
+    return (ROOT / path).read_bytes()
+
+
+def _reviewed_git_source(path: str, blob: str, historical: dict[str, Any]) -> bytes:
+    from scripts import audit_app_01a_local_shell as app01a
+    if path in app01a.HISTORICAL_RUNTIME_PATHS:
+        raw = app01a._decode_historical_runtime_payload(historical, path)
+        require(hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() == blob,
+                "APP historical runtime differs from immutable B6 blob: " + path)
+        return raw
+    return _git("cat-file", "blob", blob)
+
+
 def _read_json(path: str) -> dict[str, Any]:
     return boundary.read(path)
 
@@ -318,6 +337,8 @@ def _base_tree_entries() -> dict[str, tuple[str, str, str]]:
         require({row.get("path") for row in rows} == expected_paths,
                 "pinned B6 source inventory scope drift")
         checkout = _checkout_tree_entries()
+        from scripts import audit_app_01a_local_shell as app01a
+        _, historical = app01a.authenticated_historical_paths()
         entries: dict[str, tuple[str, str, str]] = {}
         for row in rows:
             path = row["path"]
@@ -326,10 +347,12 @@ def _base_tree_entries() -> dict[str, tuple[str, str, str]]:
                     and mode_kind_blob[0] in {"100644", "100755"},
                     "required B6 source is not a checked-out regular Git blob: " + path)
             mode, _kind, blob = mode_kind_blob
+            if path in app01a.HISTORICAL_RUNTIME_PATHS:
+                blob = row.get("git_blob_sha1")
             require(blob == row.get("git_blob_sha1"),
                     "checked-out B6 source differs from authenticated base blob: " + path)
-            source = (ROOT / path).read_bytes()
-            git_source = _git("cat-file", "blob", blob)
+            source = _reviewed_source(path, historical)
+            git_source = _reviewed_git_source(path, blob, historical)
             require(hashlib.sha1(b"blob " + str(len(git_source)).encode("ascii") + b"\0" + git_source).hexdigest()
                     == blob,
                     "checked-out B6 Git object bytes differ from blob identity: " + path)
@@ -415,14 +438,16 @@ def _source_edges(path: str) -> list[str]:
 
 
 def build_source_inventory() -> dict[str, Any]:
+    from scripts import audit_app_01a_local_shell as app01a
+    _, historical = app01a.authenticated_historical_paths()
     entries = _base_tree_entries()
     identities = []
     for path in required_source_paths():
         require(path in entries and entries[path][1] == "blob", "required B6 source is not a base-main blob: " + path)
         mode, _kind, blob = entries[path]
         require(mode in {"100644", "100755"}, "required B6 source has unsupported Git mode: " + path)
-        raw = (ROOT / path).read_bytes()
-        git_raw = _git("cat-file", "blob", blob)
+        raw = _reviewed_source(path, historical)
+        git_raw = _reviewed_git_source(path, blob, historical)
         git_blob = hashlib.sha1(b"blob " + str(len(git_raw)).encode("ascii") + b"\0" + git_raw).hexdigest()
         require(git_blob == blob, "B6 exact base Git object differs from tree blob identity: " + path)
         require(_sha(_normalized(raw)) == _sha(_normalized(git_raw)),
