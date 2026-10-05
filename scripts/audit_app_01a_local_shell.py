@@ -18,7 +18,8 @@ PATHS = ("api/app_factory.py", "api/server.py", "run_desktop.py", "runtime/local
          "tests/test_core_01d_ci_offline_transport_inventory_evolution.py",
          "tests/test_core_01d_port02c_trigger_authority_b6.py",
          "tests/test_core_01d_owner_one_shot_issue_comment_authority_b3.py",
-         "tests/test_core_01d_frozen_artifact_replay_authority_b5.py")
+         "tests/test_core_01d_frozen_artifact_replay_authority_b5.py",
+         "tests/portability/test_port_02_release_identity.py")
 RECEIPT = "artifacts/product/app_01a_local_shell_v1.json"
 
 
@@ -48,6 +49,9 @@ def build():
                 "source_inventory_sha256": hashlib.sha256(canonical(identities)).hexdigest(),
                 "a2_inventory": {"path": "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v10.json",
                                  "canonical_sha256": json.loads((ROOT / "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v10.json").read_bytes())["canonical_sha256"]},
+                "resource_evolution": {"classification": "APP01A_VERIFIED_UI_BYTES_ONLY_NO_CORE_PARITY_CHANGE",
+                                       "historical_port02a_manifest_sha256": "95eeb5bcd983dd66d3952a18948edf7aaf0a121dff247cdc7f67a42186d817c2",
+                                       "changed_ui_resources": ["ui/index.html", "ui/app.js"]},
                 "contracts": {"factory": "EXPLICIT_VERIFIED_DEPENDENCIES", "session": "OS_CSPRNG_256BIT_MEMORY_ONLY_V1",
                               "health": "ATHENA_LOCAL_HEALTH_V1", "capabilities": "ATHENA_LOCAL_CAPABILITIES_V1",
                               "bootstrap": "ORIGIN_GUARDED_NATIVE_TO_JS_SINGLE_DELIVERY_NO_JS_API"},
@@ -78,6 +82,10 @@ def validate():
         raise ValueError("APP-01A source identity mismatch")
     if document.get("source_inventory_sha256") != hashlib.sha256(canonical(observed)).hexdigest():
         raise ValueError("APP-01A source inventory mismatch")
+    inventory_path = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v10.json"
+    inventory = json.loads((ROOT / inventory_path).read_bytes())
+    if document.get("a2_inventory") != {"path": inventory_path, "canonical_sha256": inventory["canonical_sha256"]}:
+        raise ValueError("APP-01A current A2 inventory reference mismatch")
     if any(type(value) is not int or value != 0 for value in document["safety"].values()):
         raise ValueError("APP-01A safety counts mismatch")
     return document

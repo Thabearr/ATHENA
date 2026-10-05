@@ -169,6 +169,7 @@ def main(argv=None):
                 backend.close()
             except DesktopLaunchError:
                 print("ATHENA local shutdown failed closed.", file=sys.stderr)
+                return 1
 
 
 if __name__ == "__main__":

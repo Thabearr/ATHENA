@@ -256,6 +256,19 @@ def test_malicious_responder_never_loads_ui(monkeypatch):
     assert calls == ["construct", "challenge", "close"]
 
 
+def test_shutdown_failure_does_not_report_smoke_success(monkeypatch):
+    class RejectedShutdown:
+        def __init__(self, resources):
+            pass
+        def start(self):
+            pass
+        def close(self):
+            raise DesktopLaunchError("local backend did not stop")
+    monkeypatch.setattr(run_desktop, "resolve_resources", lambda args: object())
+    monkeypatch.setattr(run_desktop, "LocalBackend", RejectedShutdown)
+    assert run_desktop.main(["--port02c-smoke"]) == 1
+
+
 def test_missing_ui_and_unsupported_platform_fail_closed(resources, monkeypatch):
     kwargs = dict(release_identity=resources.identity, resource_resolver=resources, local_session=LocalSession(),
                   capability_service=AthenaCapabilityService(resources), origin="http://127.0.0.1:12345")

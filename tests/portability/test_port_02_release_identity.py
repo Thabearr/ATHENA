@@ -583,12 +583,25 @@ def test_port_02_receipt_is_canonical_self_hashed_and_pins_parity(tmp_path: Path
     assert raw_receipt == receipt_audit.canonical_json_bytes(document)
     summary = receipt_audit.validate_receipt(document)
     assert summary["canonical_sha256"] == document["canonical_sha256"]
-    root, trusted, _manifest = build_synthetic_release(tmp_path)
+    root, trusted, current_manifest = build_synthetic_release(tmp_path)
     if _platform_tags() == (
         document["installed_proof"]["platform_tag"],
         document["installed_proof"]["architecture_tag"],
     ):
-        assert trusted == document["installed_proof"]["trusted_manifest_sha256"]
+        # The immutable PORT-02A proof predates APP-01A's verified UI bytes.
+        # Reconstruct its exact manifest, rather than rewriting its old pin or
+        # mistaking an authorized UI successor for a canonical-core change.
+        from copy import deepcopy
+        from scripts import audit_app_01a_local_shell as app01a
+        successor = app01a.validate()
+        historical_manifest = deepcopy(current_manifest)
+        for path in UI_PATHS:
+            before = successor["base_identities"][path]["sha256"]
+            after = successor["source_identities"].get(path, before)
+            assert _manifest_record(current_manifest, path)["byte_sha256"] == after
+            _manifest_record(historical_manifest, path)["byte_sha256"] = before
+        historical_raw = release_identity.canonical_release_manifest_bytes(historical_manifest)
+        assert hashlib.sha256(historical_raw).hexdigest() == document["installed_proof"]["trusted_manifest_sha256"]
     installed = release_identity.verify_installed_release(root, trusted)
     bindings = core.resolve_canonical_core(
         _authority_manifest(),
