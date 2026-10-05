@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +18,23 @@ def _row(receipt, path_suffix: str, event: str):
     return next(row for row in receipt["review_rows"]
                 if row["identity"]["workflow_path"].endswith(path_suffix)
                 and row["identity"]["trigger_kind"] == event)
+
+
+def test_source_identity_tolerates_checkout_eol_conversion_without_weakening_git_blob_pin(monkeypatch):
+    target = b4.TARGETS[0][0]
+    original = Path.read_bytes
+
+    def crlf_view(path):
+        raw = original(path)
+        if Path(path) == b4.ROOT / target:
+            return raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        return raw
+
+    monkeypatch.setattr(Path, "read_bytes", crlf_view)
+    observed = b4._identity(target)
+    expected_blob, expected_sha = b4.SOURCE_PINS[target]
+    assert observed["git_blob_sha1"] == expected_blob
+    assert observed["normalized_source_sha256"] == expected_sha
 
 
 def test_exact_nine_surface_scope_and_completion_v6_inheritance(receipt):

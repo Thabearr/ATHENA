@@ -1,5 +1,6 @@
 """Offline assertions for B2 source, GitHub metadata, and trigger authority."""
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +17,26 @@ def receipt():
 
 def _rows(receipt):
     return {(row["workflow_path"], row["trigger_kind"]): row for row in receipt["review_rows"]}
+
+
+def test_b2_source_identity_tolerates_checkout_eol_conversion(monkeypatch):
+    target = next(iter(b2.SOURCE_PINS))
+    original = Path.read_bytes
+
+    def crlf_view(path):
+        raw = original(path)
+        if Path(path) == b2.ROOT / target:
+            return raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        return raw
+
+    monkeypatch.setattr(Path, "read_bytes", crlf_view)
+    observed = b2.source_identity(target)
+    expected_blob, expected_sha = b2.SOURCE_PINS[target]
+    assert observed == {
+        "path": target,
+        "git_blob_sha1": expected_blob,
+        "normalized_source_sha256": expected_sha,
+    }
 
 
 def test_exact_five_trigger_surfaces_and_current_unknown_set(receipt):

@@ -44,16 +44,17 @@ def test_resealed_completion_or_scope_falsehoods_fail(receipt,mutation):
  review.seal(value)
  with pytest.raises(AssertionError):current.validate_receipt(value,receipt)
 
-def test_current_master_authenticates_v9_and_preserves_historical_v2(receipt):
+def test_current_master_authenticates_v10_and_preserves_historical_v2(receipt):
  from scripts import audit_checkpoint_e_workflows as master
- from scripts import audit_core_01d_checkpoint_e_completion_v9 as a2
+ from scripts import audit_core_01d_checkpoint_e_completion_v10 as current_v10
  value=master.audit()
- assert value['current_completion_receipt_sha256']==a2.audit()['receipt_sha256']
+ assert value['current_completion_receipt_sha256']==current_v10.audit()['receipt_sha256']
  assert value['historical_completion_v2_receipt_sha256']==receipt['canonical_sha256']
  assert value['historical_completion_v1_receipt_sha256']==review.COMPLETION_V1_SHA
- assert value['remaining_unreviewed_surface_count']==1
- assert value['checkpoint_e']==value['p4_4']=='INCOMPLETE'
- assert receipt['remaining_blocker_ids']==value['blockers']
+ assert value['remaining_unreviewed_surface_count']==0
+ assert value['checkpoint_e']==value['p4_4']=='COMPLETE'
+ assert value['blockers']==[]
+ assert receipt['remaining_blocker_ids']
 
 def test_unapproved_runtime_change_cannot_hide_in_historical_projection(monkeypatch):
  original=review.retention.v4.v3._git

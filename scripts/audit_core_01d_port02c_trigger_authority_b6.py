@@ -329,11 +329,13 @@ def _base_tree_entries() -> dict[str, tuple[str, str, str]]:
             require(blob == row.get("git_blob_sha1"),
                     "checked-out B6 source differs from authenticated base blob: " + path)
             source = (ROOT / path).read_bytes()
-            require(hashlib.sha1(b"blob " + str(len(source)).encode("ascii") + b"\0" + source).hexdigest()
+            git_source = _git("cat-file", "blob", blob)
+            require(hashlib.sha1(b"blob " + str(len(git_source)).encode("ascii") + b"\0" + git_source).hexdigest()
                     == blob,
-                    "checked-out B6 source bytes differ from Git blob: " + path)
+                    "checked-out B6 Git object bytes differ from blob identity: " + path)
             require(_sha(_normalized(source)) == row.get("normalized_source_sha256")
-                    and len(source) == row.get("byte_size")
+                    and _sha(_normalized(git_source)) == row.get("normalized_source_sha256")
+                    and len(git_source) == row.get("byte_size")
                     and row.get("role") == _source_role(path)
                     and row.get("discovery_edges") == _source_edges(path),
                     "checked-out B6 source identity or classification drift: " + path)
@@ -420,13 +422,16 @@ def build_source_inventory() -> dict[str, Any]:
         mode, _kind, blob = entries[path]
         require(mode in {"100644", "100755"}, "required B6 source has unsupported Git mode: " + path)
         raw = (ROOT / path).read_bytes()
-        git_blob = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
-        require(git_blob == blob, "B6 current worktree source differs from exact main bytes: " + path)
+        git_raw = _git("cat-file", "blob", blob)
+        git_blob = hashlib.sha1(b"blob " + str(len(git_raw)).encode("ascii") + b"\0" + git_raw).hexdigest()
+        require(git_blob == blob, "B6 exact base Git object differs from tree blob identity: " + path)
+        require(_sha(_normalized(raw)) == _sha(_normalized(git_raw)),
+                "B6 current worktree source differs from exact main content: " + path)
         identities.append({
             "path": path,
             "git_blob_sha1": blob,
-            "normalized_source_sha256": _sha(_normalized(raw)),
-            "byte_size": len(raw),
+            "normalized_source_sha256": _sha(_normalized(git_raw)),
+            "byte_size": len(git_raw),
             "role": _source_role(path),
             "discovery_edges": _source_edges(path),
         })
@@ -951,8 +956,12 @@ def build_receipt() -> dict[str, Any]:
     parent, b5_value, a2_v7 = _validate_inherited_state()
     require(a2_v7["canonical_sha256"] == A2_V7_SHA, "A2 V7 predecessor identity changed")
     source_inventory = validate_source_inventory()
-    a2_current = boundary.authenticate_inventory()
-    require(a2_current.get("generation") == 8, "A2 current source inventory is not generation V8")
+    a2_current = boundary.read(boundary.inventory_generation_path(8))
+    require(a2_current.get("generation") == 8
+            and a2_current.get("canonical_sha256") == "856129ba6eafb0281f10a16639f26fd477b2ba6a2fb00957ee79fa539539412d",
+            "immutable A2 generation V8 identity drift")
+    require(boundary.authenticate_inventory().get("generation", 0) >= 8,
+            "current A2 inventory no longer extends immutable V8")
     contract = _workflow_contract()
     caller = _repository_caller_scan()
     require(caller["result"] == "NO_CURRENT_REPOSITORY_CALLER_FOUND_SOURCE_SCAN",
