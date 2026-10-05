@@ -202,6 +202,10 @@ def test_checkpoint_additive_seam_preserves_v4_but_delegates_current_status():
     assert v4.RECEIPT_PATH in paths and transfer.RECEIPT_PATH in paths
     result = checkpoint.audit()
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion
-    assert result["blockers"] == completion.audit()["remaining_blockers"]
+    assert completion.audit()["remaining_blockers"] == [
+        "all_retained_workflow_authority_and_dynamic_reachability_review_complete",
+        "no_unknown_current_artifact_or_notification_authority",
+    ]
+    assert result["blockers"] == []
     assert result["current_live_missing_artifact_relation_count"] == 0
     assert result["checkpoint_e"] == result["p4_4"] == "COMPLETE"
