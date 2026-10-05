@@ -218,6 +218,10 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
         "scripts/audit_core_01d_checkpoint_e_completion_v8.py",
         "tests/test_core_01d_frozen_artifact_replay_authority_b5.py",
         "tests/test_core_01d_checkpoint_e_completion_v8.py",
+        "scripts/audit_core_01d_port02c_trigger_authority_b6.py",
+        "scripts/audit_core_01d_checkpoint_e_completion_v9.py",
+        "tests/test_core_01d_port02c_trigger_authority_b6.py",
+        "tests/test_core_01d_checkpoint_e_completion_v9.py",
     }
     original_tree = boundary.git("ls-tree", "-r", "HEAD")
     projected = completion_v2.a2_historical_projection(original_tree)

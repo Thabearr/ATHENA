@@ -234,6 +234,10 @@ def test_completion_v2_additive_projection_allowlist_is_exact_and_narrow():
         "tests/fixtures/core_01d/frozen-artifact-replay-authority-b5-source-inventory-v1.json",
         "tests/fixtures/core_01d/core-01d-frozen-artifact-replay-authority-b5-v1.json",
         "tests/fixtures/core_01d/core-01d-checkpoint-e-completion-v8.json",
+        "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v8.json",
+        "tests/fixtures/core_01d/port02c-trigger-authority-b6-source-inventory-v1.json",
+        "tests/fixtures/core_01d/core-01d-port02c-trigger-authority-b6-v1.json",
+        "tests/fixtures/core_01d/core-01d-checkpoint-e-completion-v9.json",
     }
     assert completion_v2.B1_ADDITIVE_EVIDENCE_PATHS == expected
     assert not any("*" in path for path in completion_v2.B1_ADDITIVE_EVIDENCE_PATHS)
