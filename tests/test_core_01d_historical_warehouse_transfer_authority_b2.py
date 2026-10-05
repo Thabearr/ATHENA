@@ -264,5 +264,6 @@ def test_completion_v2_additive_projection_allowlist_is_exact_and_narrow():
         "tests/fixtures/core_01d/core-01d-win-either-half-trigger-authority-b7-v1.json",
         "tests/fixtures/core_01d/core-01d-checkpoint-e-completion-v10.json",
     }
+    assert completion_v2.PASS_A_HISTORICAL_BLOBS == {"tests/test_core_01d_workflow_consolidation.py": "65fd881b593f3e0537a7965ac97441d1dc1bc16b"}
     assert completion_v2.B1_ADDITIVE_EVIDENCE_PATHS == expected
     assert not any("*" in path for path in completion_v2.B1_ADDITIVE_EVIDENCE_PATHS)

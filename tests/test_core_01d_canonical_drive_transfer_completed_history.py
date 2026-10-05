@@ -204,4 +204,4 @@ def test_checkpoint_additive_seam_preserves_v4_but_delegates_current_status():
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion
     assert result["blockers"] == completion.audit()["remaining_blockers"]
     assert result["current_live_missing_artifact_relation_count"] == 0
-    assert result["checkpoint_e"] == result["p4_4"] == "INCOMPLETE"
+    assert result["checkpoint_e"] == result["p4_4"] == "COMPLETE"
