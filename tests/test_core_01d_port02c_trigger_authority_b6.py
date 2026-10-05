@@ -47,6 +47,23 @@ def test_depth_one_pr_checkout_uses_pinned_base_inventory_without_fetch(monkeypa
     assert inventory == boundary.read(b6.SOURCE_INVENTORY_PATH)
 
 
+def test_depth_one_workflow_invariance_uses_pinned_checked_out_subtree(monkeypatch):
+    original_git = b6._git
+
+    def shallow_checkout_git(*args):
+        if b6.BASE_MAIN in args:
+            raise subprocess.CalledProcessError(128, ["git", *args])
+        return original_git(*args)
+
+    monkeypatch.setattr(b6, "_git", shallow_checkout_git)
+    result = b6._validate_architecture_ledgers()
+
+    assert result["workflow_tree_sha1"] == b6.WORKFLOW_TREE
+    assert result["workflow_diff_count"] == 0
+    assert result["transition_count"] == 14
+    assert result["retired_workflow_count"] == 3
+
+
 def test_trigger_surfaces_remain_separate_with_exact_current_reachability():
     receipt = b6.validate_receipt()
     rows = {row["identity"]["trigger_kind"]: row for row in receipt["review_rows"]}

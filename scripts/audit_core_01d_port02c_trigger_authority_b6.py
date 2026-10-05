@@ -750,8 +750,12 @@ def _validate_inherited_state() -> tuple[dict[str, Any], dict[str, Any], dict[st
 
 
 def _validate_architecture_ledgers() -> dict[str, Any]:
-    workflow_tree = _git("rev-parse", f"{BASE_MAIN}:.github/workflows").decode().strip()
-    require(workflow_tree == WORKFLOW_TREE, "base-main workflow tree identity drift")
+    # The pinned Completion V8 receipt binds the authoritative base/tree. Its
+    # workflow subtree identity is the same immutable WORKFLOW_TREE constant.
+    # In depth-one PR CI the base commit object is absent, so authenticate the
+    # checked-out merge snapshot's workflow subtree against that pin directly.
+    workflow_tree = _git("rev-parse", "HEAD:.github/workflows").decode().strip()
+    require(workflow_tree == WORKFLOW_TREE, "checked-out workflow tree identity drift")
     evolution = _read_json("artifacts/architecture/p4_workflow_evolution_ledger_v1.json")
     retirement = _read_json("artifacts/architecture/p4_3_workflow_retirement_ledger_v1.json")
     require(evolution.get("canonical_sha256") == EVOLUTION_SHA
@@ -760,10 +764,7 @@ def _validate_architecture_ledgers() -> dict[str, Any]:
     require(retirement.get("canonical_sha256") == RETIREMENT_SHA
             and len(retirement.get("retirements", [])) == 3,
             "workflow retirement ledger identity/count drift")
-    current_worktree = _git("rev-parse", "HEAD:.github/workflows").decode().strip()
-    require(current_worktree == WORKFLOW_TREE, "B6 changed the workflow tree")
-    changed = _git("diff", "--name-only", BASE_MAIN, "--", ".github/workflows").decode().splitlines()
-    require(not changed, "B6 modified a workflow source")
+    require(workflow_tree == WORKFLOW_TREE, "B6 changed the workflow tree")
     return {
         "workflow_tree_sha1": workflow_tree,
         "workflow_diff_count": 0,
