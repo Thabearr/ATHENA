@@ -44,6 +44,10 @@ B1_ADDITIVE_EVIDENCE_PATHS={
  'tests/fixtures/core_01d/port02c-trigger-authority-b6-source-inventory-v1.json',
  'tests/fixtures/core_01d/core-01d-port02c-trigger-authority-b6-v1.json',
  'tests/fixtures/core_01d/core-01d-checkpoint-e-completion-v9.json',
+ 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v9.json',
+ 'tests/fixtures/core_01d/win-either-half-trigger-authority-b7-source-inventory-v1.json',
+ 'tests/fixtures/core_01d/core-01d-win-either-half-trigger-authority-b7-v1.json',
+ 'tests/fixtures/core_01d/core-01d-checkpoint-e-completion-v10.json',
 }
 # Existing offline P3 tests and the source-bound Tests shard selector publish
 # these local products. This audit never consumes them as authority proof.
