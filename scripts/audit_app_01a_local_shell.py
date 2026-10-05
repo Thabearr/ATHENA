@@ -24,6 +24,7 @@ PATHS = ("api/app_factory.py", "api/server.py", "run_desktop.py", "runtime/local
 PATHS += ("scripts/audit_core_01d_checkpoint_e_completion_v2.py",
           "scripts/audit_core_01d_port02c_trigger_authority_b6.py",
           "scripts/audit_checkpoint_e_workflows.py", "docs/product/app_01a_local_shell.md")
+PATHS += ("tests/test_core_01d_exact_pr_trigger_disposition_b1.py",)
 RECEIPT = "artifacts/product/app_01a_local_shell_v1.json"
 INVENTORY = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v10.json"
 HISTORICAL_RUNTIME_PATHS = {"api/server.py", "run_desktop.py", "ui/index.html", "ui/app.js"}
