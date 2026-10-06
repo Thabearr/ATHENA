@@ -26,10 +26,10 @@ PATHS += ("scripts/audit_core_01d_checkpoint_e_completion_v2.py",
           "scripts/audit_checkpoint_e_workflows.py", "docs/product/app_01a_local_shell.md")
 PATHS += ("tests/test_core_01d_exact_pr_trigger_disposition_b1.py",)
 RECEIPT = "artifacts/product/app_01a_local_shell_v1.json"
-INVENTORY = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v17.json"
+INVENTORY = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v18.json"
 HISTORICAL_A2_INVENTORY_PATHS = frozenset(
     f"tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v{generation}.json"
-    for generation in range(10, 18)
+    for generation in range(10, 19)
 )
 HISTORICAL_RUNTIME_PATHS = {"api/server.py", "run_desktop.py", "ui/index.html", "ui/app.js"}
 
