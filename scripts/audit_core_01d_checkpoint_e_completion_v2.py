@@ -15,7 +15,11 @@ ALLOWED_PASS_A_PATHS={review.RECEIPT_PATH,RECEIPT_PATH,review.INVENTORY_PATH,
  'tests/test_core_01d_authority_reachability_review_a.py','tests/test_core_01d_checkpoint_e_completion_v2.py',
  'scripts/audit_checkpoint_e_workflows.py','docs/architecture/core_01d_checkpoint_e.md','tests/test_core_01d_checkpoint_e_completion.py','tests/test_core_01d_canonical_drive_transfer_completed_history.py'}
 NEW_PASS_A_PATHS=ALLOWED_PASS_A_PATHS-{'scripts/audit_checkpoint_e_workflows.py','docs/architecture/core_01d_checkpoint_e.md','tests/test_core_01d_checkpoint_e_completion.py','tests/test_core_01d_canonical_drive_transfer_completed_history.py'}
-APP01B_ADDITIVE_PATHS={'docs/product/app_01b_preview_admission.md'}
+APP01B_ADDITIVE_PATHS={
+ 'docs/product/app_01b_preview_admission.md',
+ 'tests/fixtures/core_01d_schedule/append-only-projections/app_01b/pre-d1-execution-envelope.py.txt',
+ 'tests/fixtures/core_01d/pass1-v1-source/test-core-01-schedule-date-disposition.py',
+}
 UNCHANGED_SCOPE_SHA='5465e4dc03a46d4e64e81586720cebf9cb40d9dd53ce1fbe534fb825b5d9f32d'
 # Current additive authority-review documents are authenticated by their own
 # pass auditors, completion overlays, and A2 generation chain. Keep only these
@@ -23,6 +27,8 @@ UNCHANGED_SCOPE_SHA='5465e4dc03a46d4e64e81586720cebf9cb40d9dd53ce1fbe534fb825b5d
 PASS_A_HISTORICAL_BLOBS={
  'tests/test_core_01d_workflow_consolidation.py':'65fd881b593f3e0537a7965ac97441d1dc1bc16b',
  'domain/execution_envelope.py':'8f0a84db708fef11fabb857b21b1322cb5b5a36e',
+ 'scripts/audit_core_01_schedule_date_disposition.py':'6f8d453cee00a13865c984b9a80880678b4fd84c',
+ 'tests/test_core_01_schedule_date_disposition.py':'f658773457d6a46bbd25f6b2a5636fff019b0043',
 }
 B1_ADDITIVE_EVIDENCE_PATHS={
  'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v3.json',
@@ -73,6 +79,10 @@ def app_successor_paths():
  from scripts import audit_app_01a_local_shell as app
  return app.authenticated_historical_paths()[0]
 
+def current_successor_inventory_paths(a2):
+ # V3 onward is an authenticated, contiguous additive evidence chain.
+ return {path for generation,path in a2.discover_inventory_generations() if generation>=3}
+
 def a2_historical_projection(raw):
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  # Authenticate all current caller/guard source before using a historical view.
@@ -87,7 +97,11 @@ def a2_historical_projection(raw):
  predecessor_paths={row['path'] for row in predecessor['source_identities']}
  latest_paths={row['path'] for row in latest['source_identities']}
  generation_additions=latest_paths-predecessor_paths
- new_paths=(a2.A2_PATHS-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|B1_ADDITIVE_EVIDENCE_PATHS|APP01B_ADDITIVE_PATHS
+ # Authenticated A2 successor inventory documents are additive evidence, not
+ # part of the immutable Pass-A historical tree. Discover their contiguous
+ # chain from V3 onward after authenticate_inventory has verified it.
+ successor_inventory_paths=current_successor_inventory_paths(a2)
+ new_paths=(a2.A2_PATHS-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|successor_inventory_paths|B1_ADDITIVE_EVIDENCE_PATHS|APP01B_ADDITIVE_PATHS
  rows=[]
  for line in raw.splitlines(keepends=True):
   path=line.split(b'\t',1)[1].strip().decode()
@@ -102,7 +116,8 @@ def a2_historical_projection(raw):
 def authenticate_current_scope():
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  generation_additions=a2_generation_additions(a2)
- allowed=ALLOWED_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|app_successor_paths()
+ successor_inventory_paths=current_successor_inventory_paths(a2)
+ allowed=ALLOWED_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|successor_inventory_paths|app_successor_paths()
  git=review.retention.v4.v3._git
  review.require(review.sha256(unchanged_inventory(a2_historical_projection(git('ls-tree','-r','HEAD'))))==UNCHANGED_SCOPE_SHA,'Pass-A runtime/workflow/ledger/historical source change outside bounded evidence scope')
  review.require(set(git('diff','--name-only','HEAD').decode().splitlines())<=allowed,'unapproved dirty source in Pass A or its exact A2-generation/evidence seam')

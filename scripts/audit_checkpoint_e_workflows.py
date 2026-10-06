@@ -133,6 +133,11 @@ PASS1_V1_BASE_SOURCE_FIXTURES = {
         "ac77ec10776758b0a5209cbc227d8f50eb511d8e",
         "baabb01e1361139952b50f03df19b5f72cd78edc7d85b5795eba60fdef2dc438",
     ),
+    "tests/test_core_01_schedule_date_disposition.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/test-core-01-schedule-date-disposition.py",
+        "f658773457d6a46bbd25f6b2a5636fff019b0043",
+        "aa0ed975266cd905c956de2aa951828194ae4387a3cce45f2cdaa7dcab3f83b9",
+    ),
 }
 BASE_PATH = "tests/fixtures/core_01d/exact-main-source-inventory.json"
 HISTORY_PATH = "tests/fixtures/core_01d/workflow-history-20261001.json"
@@ -150,9 +155,11 @@ CANONICAL = ".github/workflows/athena-run.yml"
 SHADOW = ".github/workflows/current-shadow-all-market.yml"
 ALLOWED_STATUS = {"CANONICAL_SUPPORTED", "EXPLICIT_RETAINED_COMPATIBILITY", "DIAGNOSTIC_ONLY", "HISTORICAL_ONLY", "UNKNOWN"}
 PASS_A_HISTORICAL_SOURCE_BLOBS = {
-    # D1 adds a versioned source identity to this canonical module. Historical
-    # Pass-A reconstruction continues to inspect the exact pre-D1 blob.
+    # D1 adds versioned identities/source projection support. Historical Pass-A
+    # reconstruction continues to inspect each exact pre-D1 source blob.
     "domain/execution_envelope.py": "8f0a84db708fef11fabb857b21b1322cb5b5a36e",
+    "scripts/audit_core_01_schedule_date_disposition.py": "6f8d453cee00a13865c984b9a80880678b4fd84c",
+    "tests/test_core_01_schedule_date_disposition.py": "f658773457d6a46bbd25f6b2a5636fff019b0043",
 }
 
 
