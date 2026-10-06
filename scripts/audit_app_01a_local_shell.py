@@ -29,7 +29,7 @@ RECEIPT = "artifacts/product/app_01a_local_shell_v1.json"
 INVENTORY = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v18.json"
 HISTORICAL_A2_INVENTORY_PATHS = frozenset(
     f"tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v{generation}.json"
-    for generation in range(10, 21)
+    for generation in range(10, 22)
 )
 HISTORICAL_RUNTIME_PATHS = {"api/server.py", "run_desktop.py", "ui/index.html", "ui/app.js"}
 
@@ -106,7 +106,7 @@ def validate():
         "canonical_sha256": historical.get("canonical_sha256"),
     }:
         raise ValueError("APP-01A historical A2 identity mismatch")
-    if latest.get("generation") < 20:
+    if latest.get("generation") < 21:
         raise ValueError("APP-01A current source successor is unavailable")
     historical_source_ids = {
         row["path"]: row["lf_source_sha256"] for row in historical["source_identities"]

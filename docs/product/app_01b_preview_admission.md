@@ -165,8 +165,9 @@ preview unavailable.
 ## Evidence and limits
 
 The APP-01A receipt is unchanged and remains authenticated against its exact
-V18 source inventory. D1 appends A2 V19 for the implementation and V20 for the
-bounded historical projection update; V1 through V19 remain the append-only predecessor chain. The
+V18 source inventory. D1 appends A2 V19, V20 and V21 to preserve the
+implementation and bounded historical projection updates; V1 through V20
+remain the append-only predecessor chain. The
 workflow YAML diff is zero. Tests inject the only successful repository and
 prove zero provider sockets, executor calls, worker launches, Current Shadow,
 share-code, login, cookie, wallet, stake and wager actions. This does not claim
