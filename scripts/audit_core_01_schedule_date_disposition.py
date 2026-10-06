@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 from domain import current_shadow_fixture_date_request as legacy
 from domain import execution_envelope as envelope
 from domain.run_contracts import canonical_json_bytes
-from runtime.source_identity import read_tracked_head_blob as read_current_head_blob
+from runtime.source_identity import DevelopmentSourceIdentity, read_tracked_head_blob as read_current_head_blob
 from services.athena_run_request_parser import CLI_TIMEZONE_ID, parse_explicit_request
 from services.athena_run_workflow_request import resolve_workflow_request
 
@@ -35,6 +35,13 @@ CORE01B_BEFORE_FIXTURE = "tests/fixtures/architecture/revised_workflows/athena-r
 CORE01C_WORKFLOW_AFTER_BLOB = "7ebeabcd0e4b0b388363760f6284afb63d97cad7"
 CORE01C_WORKFLOW_AFTER_SHA256 = "fb54376740a7cff8e100a15c629cdbd9b1a34dc6fe8005362a8a2bbcee2faed2"
 CORE01C_BEFORE_FIXTURE = "tests/fixtures/architecture/revised_workflows/current-shadow-all-market-pre-core-01c-compatibility-thin.yml"
+PRE_D1_EXECUTION_ENVELOPE_PROJECTION = (
+    "tests/fixtures/core_01d_schedule/append-only-projections/app_01b/"
+    "pre-d1-execution-envelope.py.txt"
+)
+PRE_D1_EXECUTION_ENVELOPE_PAYLOAD_SHA256 = (
+    "edf3bc7069e831ec1119259114f513b15c665c7f89a5bf90f1a967717dfa00f8"
+)
 
 # Exact reviewed main blobs, not repinned predecessor self-identities. Full
 # payload verification and filtered worktree verification use PORT-01's helper.
@@ -72,6 +79,25 @@ def require(condition: bool, message: str) -> None:
         raise DispositionError(message)
 
 
+def pinned_pre_d1_execution_envelope(root: Path = ROOT):
+    """Read the exact pre-D1 bytes needed by this immutable CORE-01A audit."""
+    raw = (Path(root) / PRE_D1_EXECUTION_ENVELOPE_PROJECTION).read_bytes()
+    blob = hashlib.sha1(f"blob {len(raw)}\0".encode("ascii") + raw).hexdigest()
+    payload_sha256 = hashlib.sha256(raw).hexdigest()
+    require(blob == SOURCE_BLOBS["domain/execution_envelope.py"],
+            "pinned pre-D1 execution-envelope Git blob differs")
+    require(payload_sha256 == PRE_D1_EXECUTION_ENVELOPE_PAYLOAD_SHA256,
+            "pinned pre-D1 execution-envelope payload differs")
+    identity = DevelopmentSourceIdentity(
+        repository_relative_path="domain/execution_envelope.py",
+        git_blob_sha1=blob,
+        git_blob_payload_sha256=payload_sha256,
+        filtered_worktree_git_blob_sha1=None,
+        raw_worktree_sha256=None,
+    )
+    return raw, identity
+
+
 def canonical(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True,
                       separators=(",", ":")).encode("utf-8")
@@ -101,7 +127,10 @@ def parse_canonical(raw: bytes) -> dict[str, Any]:
 def inspect_sources(root: Path) -> tuple[dict[str, Any], dict[str, bytes]]:
     identities, payloads = {}, {}
     for path, blob in SOURCE_BLOBS.items():
-        raw, identity = read_tracked_head_blob(root, path)
+        if path == "domain/execution_envelope.py":
+            raw, identity = pinned_pre_d1_execution_envelope(root)
+        else:
+            raw, identity = read_tracked_head_blob(root, path)
         if path in {"services/athena_run_service.py", "domain/current_shadow_run_contract_adapter.py"} and identity.git_blob_sha1 != blob:
             from scripts.audit_lg_a_worker_launch_failure_remediation import historical_source
             raw, identity = historical_source(path, root=root)

@@ -165,10 +165,12 @@ preview unavailable.
 ## Evidence and limits
 
 The APP-01A receipt is unchanged and remains authenticated against its exact
-V18 source inventory. D1 appends A2 V19, V20 and V21 to preserve the
-implementation and bounded historical projection updates; V1 through V20
-remain the append-only predecessor chain. The
-workflow YAML diff is zero. Tests inject the only successful repository and
+V18 source inventory. D1 appends A2 V19 through V22 to preserve the
+implementation and bounded historical projection updates; V1 through V21
+remain the append-only predecessor chain. The historical CORE-01A
+schedule-date audit preserves its original envelope source through an exact
+pre-D1 projection fixture without changing its receipt or source identities.
+The workflow YAML diff is zero. Tests inject the only successful repository and
 prove zero provider sockets, executor calls, worker launches, Current Shadow,
 share-code, login, cookie, wallet, stake and wager actions. This does not claim
 completed persistence, run admission in the supported shell, provider
