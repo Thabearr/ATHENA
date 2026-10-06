@@ -91,7 +91,8 @@ def test_v10_preserves_retention_and_workflow_lineage_invariants(authenticated_v
 
 def test_v10_binds_append_only_a2_generation_v9_to_v8(authenticated_v10):
     value, _ = authenticated_v10
-    generation = boundary.authenticate_inventory()
+    assert boundary.authenticate_inventory()["generation"] >= 9
+    generation = b7.authenticated_historical_a2_v9()
     assert generation["generation"] == 9
     assert generation["predecessor_inventory"] == {
         "path": boundary.inventory_generation_path(8),

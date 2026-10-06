@@ -67,10 +67,16 @@ def a2_generation_additions(a2):
  latest_paths={row['path'] for row in latest['source_identities']}
  return latest_paths-predecessor_paths
 
+def app_successor_paths():
+ from scripts import audit_app_01a_local_shell as app
+ return app.authenticated_historical_paths()[0]
+
 def a2_historical_projection(raw):
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  # Authenticate all current caller/guard source before using a historical view.
  latest=a2.authenticate_inventory()
+ from scripts import audit_app_01a_local_shell as app
+ raw=app.historical_tree_projection(raw)
  # The immutable Pass-A projection predates the generic A2 inventory
  # generation chain. Exclude only Python sources first admitted after V2;
  # the latest generation authenticates their exact current bytes, while V2
@@ -94,7 +100,7 @@ def a2_historical_projection(raw):
 def authenticate_current_scope():
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  generation_additions=a2_generation_additions(a2)
- allowed=ALLOWED_PASS_A_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions
+ allowed=ALLOWED_PASS_A_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|app_successor_paths()
  git=review.retention.v4.v3._git
  review.require(review.sha256(unchanged_inventory(a2_historical_projection(git('ls-tree','-r','HEAD'))))==UNCHANGED_SCOPE_SHA,'Pass-A runtime/workflow/ledger/historical source change outside bounded evidence scope')
  review.require(set(git('diff','--name-only','HEAD').decode().splitlines())<=allowed,'unapproved dirty source in Pass A or its exact A2-generation/evidence seam')
@@ -122,7 +128,7 @@ def historical_v1_git_view():
   if args==('diff','--name-only','HEAD'):
    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
    generation_additions=a2_generation_additions(a2)
-   return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions)
+   return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|app_successor_paths())
   return raw
  module._git=projected
  try: yield

@@ -37,6 +37,7 @@ B6_RECEIPT_PATH = b6.RECEIPT_PATH
 B6_RECEIPT_SHA = "b9efafc34139a26de58da6cd2421dd43a174e375cabd0a2ccecdd5f21cb04966"
 A2_V8_PATH = boundary.inventory_generation_path(8)
 A2_V8_SHA = "856129ba6eafb0281f10a16639f26fd477b2ba6a2fb00957ee79fa539539412d"
+A2_V9_SHA = "24c350c282ca07f1efd46828b777bfc8795e0dec689dc1f91b471da099492a96"
 WORKFLOW = ".github/workflows/validate-win-either-half-campaign-commitment.yml"
 WORKFLOW_BLOB = "24432c98ce2000ad5eb43276f99ef93d67da22ad"
 WORKFLOW_SOURCE_SHA256 = "6ffd59b561c083bb305c1241927220882248b69ce47f34f4bf97f2f60b873e3b"
@@ -577,6 +578,19 @@ def _review_row(contract: dict[str, Any], domain: dict[str, Any], network_scan: 
     }
 
 
+def authenticated_historical_a2_v9() -> dict[str, Any]:
+    """Authenticate latest corpus first, then exact immutable B7 generation.
+
+    A later local-shell inventory is not a rewrite of the B7 review. A broken
+    latest generation still fails closed; this is never a fallback selector.
+    """
+    boundary.authenticate_inventory()
+    value = boundary.read_generation(boundary.inventory_generation_path(9))
+    require(value.get("canonical_sha256") == A2_V9_SHA,
+            "immutable B7 A2 V9 identity drift")
+    return value
+
+
 def build_receipt() -> dict[str, Any]:
     parent = completion_v9.validate_receipt()
     require(parent.get("canonical_sha256") == COMPLETION_V9_SHA,
@@ -598,9 +612,9 @@ def build_receipt() -> dict[str, Any]:
     require(b6_receipt.get("canonical_sha256") == B6_RECEIPT_SHA,
             "immutable B6 receipt identity drift")
     inventory = validate_source_inventory()
-    a2_current = boundary.authenticate_inventory()
+    a2_current = authenticated_historical_a2_v9()
     require(a2_current.get("generation") == 9,
-            "B7 requires the contiguous current A2 generation V9")
+            "B7 requires its immutable A2 generation V9")
     require(a2_current.get("predecessor_inventory") == {
         "path": A2_V8_PATH,
         "canonical_sha256": A2_V8_SHA,

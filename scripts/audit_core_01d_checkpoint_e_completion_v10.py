@@ -56,8 +56,8 @@ def build_receipt() -> dict[str, Any]:
     a2_v8 = boundary.read(boundary.inventory_generation_path(8))
     require(a2_v8.get("canonical_sha256") == A2_V8_SHA and a2_v8.get("generation") == 8,
             "immutable A2 V8 identity drift")
-    a2_v9 = boundary.authenticate_inventory()
-    require(a2_v9.get("generation") == 9, "Completion V10 requires current A2 generation V9")
+    a2_v9 = b7.authenticated_historical_a2_v9()
+    require(a2_v9.get("generation") == 9, "Completion V10 requires immutable B7 A2 generation V9")
     require(a2_v9.get("predecessor_inventory") == {
         "path": boundary.inventory_generation_path(8),
         "canonical_sha256": A2_V8_SHA,
