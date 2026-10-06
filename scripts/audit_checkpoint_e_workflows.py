@@ -149,6 +149,11 @@ HISTORY_INPUT_SHA = "66ef6267af033a6e907aebe16ae44c20a15d9a4c5425960aa1da2003c89
 CANONICAL = ".github/workflows/athena-run.yml"
 SHADOW = ".github/workflows/current-shadow-all-market.yml"
 ALLOWED_STATUS = {"CANONICAL_SUPPORTED", "EXPLICIT_RETAINED_COMPATIBILITY", "DIAGNOSTIC_ONLY", "HISTORICAL_ONLY", "UNKNOWN"}
+PASS_A_HISTORICAL_SOURCE_BLOBS = {
+    # D1 adds a versioned source identity to this canonical module. Historical
+    # Pass-A reconstruction continues to inspect the exact pre-D1 blob.
+    "domain/execution_envelope.py": "8f0a84db708fef11fabb857b21b1322cb5b5a36e",
+}
 
 
 def require(value, message):
@@ -237,6 +242,9 @@ def git_inventory():
             result[path]["git_blob_sha1"] = successor["base_identities"][path]["git_blob_sha1"]
         else:
             result.pop(path, None)
+    for path, blob in PASS_A_HISTORICAL_SOURCE_BLOBS.items():
+        require(path in result, "Pass-A historical source missing: " + path)
+        result[path]["git_blob_sha1"] = blob
     from scripts.core_01d_historical_source import identities
     for path, entry in identities().items():
         result[path]["git_blob_sha1"] = entry["git_blob_sha1"]
@@ -496,6 +504,8 @@ def base_input():
     for path, actual in zip(value["scan_paths"], hashed):
         if path in app01a.PATHS and path in successor["base_identities"]:
             actual = successor["base_identities"][path]["git_blob_sha1"]
+        if path in PASS_A_HISTORICAL_SOURCE_BLOBS:
+            actual = PASS_A_HISTORICAL_SOURCE_BLOBS[path]
         if path in a2.HISTORICAL_TEST_BLOBS:
             actual = a2.HISTORICAL_TEST_BLOBS[path]
         from scripts.core_01d_historical_source import identities

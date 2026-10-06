@@ -29,7 +29,7 @@ RECEIPT = "artifacts/product/app_01a_local_shell_v1.json"
 INVENTORY = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v18.json"
 HISTORICAL_A2_INVENTORY_PATHS = frozenset(
     f"tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v{generation}.json"
-    for generation in range(10, 19)
+    for generation in range(10, 21)
 )
 HISTORICAL_RUNTIME_PATHS = {"api/server.py", "run_desktop.py", "ui/index.html", "ui/app.js"}
 
@@ -92,17 +92,38 @@ def validate():
     unsealed = {key: value for key, value in document.items() if key != "canonical_sha256"}
     if document.get("canonical_sha256") != hashlib.sha256(canonical(unsealed)).hexdigest():
         raise ValueError("APP-01A receipt seal mismatch")
+    if document.get("canonical_sha256") != "3e58c91f5af38615786d634e088ad4c0f53a05f272453930ebef27705a47c537":
+        raise ValueError("APP-01A immutable receipt identity mismatch")
     if document.get("base_commit") != BASE or document.get("base_tree") != "72fc46765b901276a890bf4d222b67087017d108":
         raise ValueError("APP-01A base identity mismatch")
-    observed = {path: hashlib.sha256((ROOT / path).read_bytes().replace(b"\r\n", b"\n")).hexdigest() for path in PATHS}
-    if document.get("source_identities") != observed:
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    latest = boundary.authenticate_inventory()
+    historical = boundary.read_generation(INVENTORY)
+    if historical.get("generation") != 18:
+        raise ValueError("APP-01A historical A2 generation mismatch")
+    if document.get("a2_inventory") != {
+        "path": INVENTORY,
+        "canonical_sha256": historical.get("canonical_sha256"),
+    }:
+        raise ValueError("APP-01A historical A2 identity mismatch")
+    if latest.get("generation") < 20:
+        raise ValueError("APP-01A current source successor is unavailable")
+    historical_source_ids = {
+        row["path"]: row["lf_source_sha256"] for row in historical["source_identities"]
+    }
+    expected = document.get("source_identities")
+    if type(expected) is not dict:
         raise ValueError("APP-01A source identity mismatch")
-    if document.get("source_inventory_sha256") != hashlib.sha256(canonical(observed)).hexdigest():
+    for path in PATHS:
+        pinned = expected.get(path)
+        if path in historical_source_ids:
+            observed = historical_source_ids[path]
+        else:
+            observed = hashlib.sha256((ROOT / path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+        if pinned != observed:
+            raise ValueError("APP-01A source identity mismatch")
+    if document.get("source_inventory_sha256") != hashlib.sha256(canonical(expected)).hexdigest():
         raise ValueError("APP-01A source inventory mismatch")
-    inventory_path = INVENTORY
-    inventory = json.loads((ROOT / inventory_path).read_bytes())
-    if document.get("a2_inventory") != {"path": inventory_path, "canonical_sha256": inventory["canonical_sha256"]}:
-        raise ValueError("APP-01A current A2 inventory reference mismatch")
     if any(type(value) is not int or value != 0 for value in document["safety"].values()):
         raise ValueError("APP-01A safety counts mismatch")
     return document
@@ -150,8 +171,6 @@ def historical_tree_projection(raw):
 
 
 if __name__ == "__main__":
-    target = ROOT / RECEIPT
-    target.parent.mkdir(parents=True, exist_ok=True)
-    result = build()
-    target.write_bytes(canonical(result))
-    print(json.dumps({"receipt": RECEIPT, "canonical_sha256": result["canonical_sha256"]}))
+    result = validate()
+    print(json.dumps({"receipt": RECEIPT, "canonical_sha256": result["canonical_sha256"],
+                      "immutable": True}))

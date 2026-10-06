@@ -29,6 +29,7 @@ from runtime.resources import (
     default_writable_roots,
 )
 from services.athena_capability_service import AthenaCapabilityService, release_summary
+from services.athena_preview_service import AthenaPreviewAdmissionService
 
 
 class DesktopLaunchError(ValueError):
@@ -100,9 +101,13 @@ class LocalBackend:
             self.listener.bind(("127.0.0.1", 0))
             self.listener.listen(128)
             self.origin = f"http://127.0.0.1:{self.listener.getsockname()[1]}"
+            preview_admission_service = AthenaPreviewAdmissionService(resources)
             app = create_app(release_identity=resources.identity, resource_resolver=resources,
                              writable_roots=self.writable_roots,
-                             local_session=self.session, capability_service=AthenaCapabilityService(resources),
+                             local_session=self.session,
+                             capability_service=AthenaCapabilityService(
+                                 resources, preview_admission_service=preview_admission_service),
+                             preview_admission_service=preview_admission_service,
                              origin=self.origin)
             self.server = uvicorn.Server(uvicorn.Config(app, log_level="critical", access_log=False))
             self.thread = threading.Thread(target=self.server.run, kwargs={"sockets": [self.listener]})
