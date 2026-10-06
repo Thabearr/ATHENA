@@ -596,8 +596,45 @@ def authenticate_inventory(directory=None, current=None):
     authenticate_historical_v1()
     if current is None:
         current = build_inventory() if directory == INVENTORY_DIRECTORY else inventory_document(latest)
-    require(current == latest, "source or process discovery drift requires reviewed A2 inventory successor generation: "
-             + latest_path)
+    if current != latest:
+        differing = sorted(key for key in set(current) | set(latest)
+                           if current.get(key) != latest.get(key))
+        detail = {"fields": differing}
+        if "source_identities" in differing:
+            actual = {row["path"]: row["lf_source_sha256"] for row in current["source_identities"]}
+            expected = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
+            detail["source_identities"] = {
+                "added_paths": sorted(set(actual) - set(expected)),
+                "removed_paths": sorted(set(expected) - set(actual)),
+                "changed_paths": sorted(path for path in set(actual) & set(expected)
+                                        if actual[path] != expected[path]),
+            }
+        obligation_field = "transport_and_process_discovery_obligations"
+        if obligation_field in differing:
+            def counts(rows):
+                result = {}
+                for row in rows:
+                    key = json.dumps(row, sort_keys=True, separators=(",", ":"))
+                    result[key] = result.get(key, 0) + 1
+                return result
+            actual = counts(current[obligation_field])
+            expected = counts(latest[obligation_field])
+            detail[obligation_field] = {
+                "current_count": len(current[obligation_field]),
+                "expected_count": len(latest[obligation_field]),
+                "current_only": [
+                    {"row": json.loads(key), "count": count - expected.get(key, 0)}
+                    for key, count in sorted(actual.items()) if count > expected.get(key, 0)
+                ][:30],
+                "expected_only": [
+                    {"row": json.loads(key), "count": count - actual.get(key, 0)}
+                    for key, count in sorted(expected.items()) if count > actual.get(key, 0)
+                ][:30],
+            }
+        raise AssertionError(
+            "source or process discovery drift requires reviewed A2 inventory successor generation: "
+            + latest_path + "; detail=" + json.dumps(detail, sort_keys=True)
+        )
     return latest
 
 
