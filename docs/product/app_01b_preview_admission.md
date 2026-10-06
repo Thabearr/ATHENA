@@ -165,9 +165,9 @@ preview unavailable.
 ## Evidence and limits
 
 The APP-01A receipt is unchanged and remains authenticated against its exact
-V18 source inventory. D1 appends A2 V19 through V28 to preserve the
-implementation and bounded historical projection updates; V1 through V27
-remain the append-only predecessor chain. A2 V28 canonical SHA-256 is `3e20bf8828fd211b22d129f0e3d1d8139c62861c1c4414dac9caecc93c2047a9`. The historical CORE-01A
+V18 source inventory. D1 appends A2 V19 through V29 to preserve the
+implementation and bounded historical projection updates; V1 through V28
+remain the append-only predecessor chain. A2 V29 canonical SHA-256 is `9ef0aa423204ccab1090a7059e821de4cf0e8cf1ad531040ce60c448d140f2a2`. V29 names V28 (`3e20bf8828fd211b22d129f0e3d1d8139c62861c1c4414dac9caecc93c2047a9`) as its unrevised predecessor. The historical CORE-01A
 schedule-date audit preserves its original envelope source through an exact
 pre-D1 projection fixture without changing its receipt or source identities.
 The workflow YAML diff is zero. Tests inject the only successful repository and
