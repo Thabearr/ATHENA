@@ -18,7 +18,7 @@ NEW_PASS_A_PATHS=ALLOWED_PASS_A_PATHS-{'scripts/audit_checkpoint_e_workflows.py'
 APP01B_ADDITIVE_PATHS={
  'docs/product/app_01b_preview_admission.md',
  'tests/fixtures/core_01d_schedule/append-only-projections/app_01b/pre-d1-execution-envelope.py.txt',
- 'tests/fixtures/core_01d/pass1-v1-source/test-core-01-schedule-date-disposition.py',
+ 'tests/fixtures/core_01d/pass1-v1-source/test-core-01-schedule-date-disposition.py.txt',
 }
 UNCHANGED_SCOPE_SHA='5465e4dc03a46d4e64e81586720cebf9cb40d9dd53ce1fbe534fb825b5d9f32d'
 # Current additive authority-review documents are authenticated by their own

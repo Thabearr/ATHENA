@@ -134,7 +134,7 @@ PASS1_V1_BASE_SOURCE_FIXTURES = {
         "baabb01e1361139952b50f03df19b5f72cd78edc7d85b5795eba60fdef2dc438",
     ),
     "tests/test_core_01_schedule_date_disposition.py": (
-        "tests/fixtures/core_01d/pass1-v1-source/test-core-01-schedule-date-disposition.py",
+        "tests/fixtures/core_01d/pass1-v1-source/test-core-01-schedule-date-disposition.py.txt",
         "f658773457d6a46bbd25f6b2a5636fff019b0043",
         "aa0ed975266cd905c956de2aa951828194ae4387a3cce45f2cdaa7dcab3f83b9",
     ),

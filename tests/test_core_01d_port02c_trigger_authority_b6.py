@@ -257,7 +257,7 @@ def test_current_product_release_support_and_no_caller_or_retirement_are_preserv
 
 def test_a2_generation_v8_is_immutable_prefix_and_b6_python_remains_in_latest_inventory():
     chain = boundary.load_inventory_generations()
-    assert [path for path, _ in chain] == [boundary.inventory_generation_path(i) for i in range(1, 27)]
+    assert [path for path, _ in chain] == [boundary.inventory_generation_path(i) for i in range(1, 28)]
     for generation in range(1, 8):
         path = boundary.inventory_generation_path(generation)
         current_bytes = (b6.ROOT / path).read_bytes()
@@ -275,11 +275,11 @@ def test_a2_generation_v8_is_immutable_prefix_and_b6_python_remains_in_latest_in
         "rewritten": False,
     }
     latest = boundary.authenticate_inventory()
-    assert latest["generation"] == 26
+    assert latest["generation"] == 27
     assert latest["predecessor_inventory"] == {
-        "path": boundary.inventory_generation_path(25),
-        "canonical_sha256": "fca7c8c3dcbcfb4de3fd4101e3f1392006fcb6e2bbbea69cb86bc17527934b28",
-        "generation": 25,
+        "path": boundary.inventory_generation_path(26),
+        "canonical_sha256": "c3f7a7f342061a3e8b135eac7f9c2be3f3e75c05bf3af616ac49dd4764a708c1",
+        "generation": 26,
         "rewritten": False,
     }
     paths = {row["path"] for row in latest["source_identities"]}
