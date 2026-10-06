@@ -16,7 +16,7 @@ import pytest
 from api.app_factory import AppFactoryError, create_app
 from runtime.local_session import LocalSession, LocalSessionError
 from runtime.release_identity import canonical_release_manifest_bytes, verify_installed_release
-from runtime.resources import ResourceResolver
+from runtime.resources import ResourceResolver, WritableRoots
 from services.athena_capability_service import AthenaCapabilityService
 from run_desktop import LocalBackend, DesktopLaunchError, bootstrap_script, verify_health
 import run_desktop
@@ -47,10 +47,21 @@ def resources(tmp_path):
 
 
 @pytest.fixture
-def control(resources):
+def writable_roots(resources, tmp_path):
+    return WritableRoots(
+        data_root=tmp_path / "user-data",
+        cache_root=tmp_path / "user-cache",
+        state_root=tmp_path / "user-state",
+        installed_release_root=resources.identity.release_root,
+    )
+
+
+@pytest.fixture
+def control(resources, writable_roots):
     session = LocalSession()
     app = create_app(release_identity=resources.identity, resource_resolver=resources, local_session=session,
-                     capability_service=AthenaCapabilityService(resources), origin="http://127.0.0.1:12345")
+                     writable_roots=writable_roots, capability_service=AthenaCapabilityService(resources),
+                     origin="http://127.0.0.1:12345")
     client = TestClient(app, base_url="http://127.0.0.1:12345")
     return client, app, session
 
@@ -89,7 +100,7 @@ def test_session_secure_restart_and_redaction():
         first.credential()
 
 
-def test_health_and_capabilities_offline(control, resources, monkeypatch):
+def test_health_and_capabilities_offline(control, resources, writable_roots, monkeypatch):
     client, app, session = control
     original = socket.socket.connect
     external = []
@@ -112,6 +123,13 @@ def test_health_and_capabilities_offline(control, resources, monkeypatch):
     assert client.get("/api/generate", headers=headers(session)).status_code == 404
     assert client.get("/").content == (ROOT / "ui/index.html").read_bytes()
     assert external == []
+    sentinel = str(writable_roots.data_root)
+    assert all(sentinel not in response.text for response in (observed, capabilities))
+    assert sentinel.encode() not in client.get("/").content
+    assert sentinel not in client.get("/api/v1/health").text
+    assert not any(path.exists() for path in (
+        writable_roots.data_root, writable_roots.cache_root, writable_roots.state_root
+    ))
 
 
 @pytest.mark.parametrize("path", ["/api/v1/health", "/api/v1/capabilities"])
@@ -169,17 +187,90 @@ def test_resource_corruption_fails_closed(resources):
     (resources.identity.release_root / "ui/app.js").write_bytes(b"corrupt")
     with pytest.raises(AppFactoryError, match="resources"):
         create_app(release_identity=resources.identity, resource_resolver=resources, local_session=LocalSession(),
-                   capability_service=AthenaCapabilityService(resources), origin="http://127.0.0.1:12345")
+                   writable_roots=WritableRoots(
+                       data_root=resources.identity.release_root.parent / "user-data",
+                       cache_root=resources.identity.release_root.parent / "user-cache",
+                       state_root=resources.identity.release_root.parent / "user-state",
+                       installed_release_root=resources.identity.release_root,
+                   ), capability_service=AthenaCapabilityService(resources), origin="http://127.0.0.1:12345")
 
 
 def test_invalid_dependencies_fail_closed(resources):
     kwargs = dict(release_identity=resources.identity, resource_resolver=resources, local_session=LocalSession(),
+                  writable_roots=WritableRoots(
+                      data_root=resources.identity.release_root.parent / "user-data",
+                      cache_root=resources.identity.release_root.parent / "user-cache",
+                      state_root=resources.identity.release_root.parent / "user-state",
+                      installed_release_root=resources.identity.release_root,
+                  ),
                   capability_service=AthenaCapabilityService(resources), origin="http://127.0.0.1:12345")
     for field, value in (("release_identity", object()), ("resource_resolver", object()),
+                         ("writable_roots", object()),
                          ("local_session", object()), ("capability_service", object()),
                          ("origin", "http://localhost:12345"), ("origin", "http://127.0.0.1:99999")):
         with pytest.raises(AppFactoryError):
             create_app(**{**kwargs, field: value})
+
+
+def test_factory_requires_explicit_data_root_and_rejects_resource_overlap(resources, writable_roots):
+    kwargs = dict(release_identity=resources.identity, resource_resolver=resources,
+                  local_session=LocalSession(), capability_service=AthenaCapabilityService(resources),
+                  origin="http://127.0.0.1:12345")
+    with pytest.raises(TypeError):
+        create_app(**kwargs)
+    with pytest.raises(AppFactoryError, match="invalid trusted application dependencies"):
+        create_app(**{**kwargs, "writable_roots": object()})
+
+    inside_release = WritableRoots(
+        data_root=resources.identity.release_root / "application-data",
+        cache_root=resources.identity.release_root.parent / "other-cache",
+        state_root=resources.identity.release_root.parent / "other-state",
+    )
+    with pytest.raises(AppFactoryError) as rejected:
+        create_app(**{**kwargs, "writable_roots": inside_release})
+    assert str(rejected.value) == "invalid trusted application dependencies"
+    assert str(resources.identity.release_root) not in str(rejected.value)
+
+    app = create_app(**{**kwargs, "writable_roots": writable_roots})
+    assert app.state.writable_roots == writable_roots
+
+
+def test_factory_keeps_explicit_data_root_independent_of_cwd(resources, writable_roots, monkeypatch, tmp_path):
+    other_cwd = tmp_path / "unrelated-working-directory"
+    other_cwd.mkdir()
+    monkeypatch.chdir(ROOT)
+    app = create_app(release_identity=resources.identity, resource_resolver=resources,
+                     writable_roots=writable_roots, local_session=LocalSession(),
+                     capability_service=AthenaCapabilityService(resources), origin="http://127.0.0.1:12345")
+    monkeypatch.chdir(other_cwd)
+    assert app.state.writable_roots.data_root == writable_roots.data_root
+    assert app.state.writable_roots.data_root not in (ROOT, other_cwd)
+    assert not writable_roots.data_root.exists()
+
+
+def test_launcher_resolves_roots_from_os_user_locations_not_cwd(resources, monkeypatch, tmp_path):
+    other_cwd = tmp_path / "different-launch-directory"
+    other_cwd.mkdir()
+    if sys.platform == "win32":
+        local_app_data = tmp_path / "user-profile" / "AppData" / "Local"
+        monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+        expected_data = local_app_data / "ATHENA" / "data"
+    elif sys.platform.startswith("linux"):
+        home = tmp_path / "user-profile"
+        monkeypatch.setenv("HOME", str(home))
+        for name in ("XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
+            monkeypatch.delenv(name, raising=False)
+        expected_data = home / ".local" / "share" / "athena"
+    else:
+        pytest.skip("supported launcher platforms are covered by PORT-02C")
+
+    monkeypatch.chdir(ROOT)
+    first = run_desktop.resolve_writable_roots(resources)
+    monkeypatch.chdir(other_cwd)
+    second = run_desktop.resolve_writable_roots(resources)
+    assert first.data_root == second.data_root == expected_data.resolve()
+    assert first.installed_release_root == resources.identity.release_root
+    assert not first.data_root.exists()
 
 
 def test_handshake_never_discloses_credential_and_has_distinct_roles(control, resources):
@@ -286,6 +377,12 @@ def test_shutdown_failure_does_not_report_smoke_success(monkeypatch):
 
 def test_missing_ui_and_unsupported_platform_fail_closed(resources, monkeypatch):
     kwargs = dict(release_identity=resources.identity, resource_resolver=resources, local_session=LocalSession(),
+                  writable_roots=WritableRoots(
+                      data_root=resources.identity.release_root.parent / "user-data",
+                      cache_root=resources.identity.release_root.parent / "user-cache",
+                      state_root=resources.identity.release_root.parent / "user-state",
+                      installed_release_root=resources.identity.release_root,
+                  ),
                   capability_service=AthenaCapabilityService(resources), origin="http://127.0.0.1:12345")
     with monkeypatch.context() as change:
         change.setattr(sys, "platform", "darwin")
@@ -332,6 +429,11 @@ def test_app_receipt_matches_exact_source():
     receipt = audit.validate()
     assert receipt["source_review_counter_open"] == "2/5"
     assert receipt["authority"]["run_admission"] is False
+    assert receipt["contracts"]["application_data_root"] == (
+        "PORT_02A_WRITABLE_ROOTS_EXACT_TYPE_SEPARATE_FROM_RESOURCES"
+    )
+    assert "runtime/resources.py" in receipt["source_identities"]
+    assert receipt["a2_inventory"]["path"] == audit.INVENTORY
     for name, original in (("ui/legacy-index.html", "ui/index.html"), ("ui/legacy-app.js", "ui/app.js")):
         digest = hashlib.sha256((ROOT / name).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
         assert digest == receipt["base_identities"][original]["sha256"]

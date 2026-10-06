@@ -7,10 +7,18 @@ authority. A capability snapshot is never an admission decision.
 ## Construction and resource trust
 
 `api.app_factory.create_app` requires an exact verified release identity and
-its resource resolver, one launch session and its capability service. It
-serves verified byte snapshots of the three bundled UI resources. The
-capability service parses the verified component authority registry using
-the existing registry contract. It does not infer model readiness from
+its resource resolver, the canonical `runtime.resources.WritableRoots`
+dependency, one launch session and its capability service. `run_desktop.py`
+resolves the three writable roots from the operating system's user-data
+locations before creating the app; it does not use the current directory or
+repository root. The factory validates and retains this exact typed seam on
+internal app state for later local modules. The application data root remains
+separate from the verified release/resource root, and the absolute path is
+never sent to the browser or included in health, capability, log or error
+responses. Binding paths creates no directories and initializes no database.
+APP-01A adds no persistence, job storage, preview or run-admission behavior.
+The capability service parses the verified component authority registry
+using the existing registry contract. It does not infer model readiness from
 weights or model files. Windows and Linux CPython 3.12 are the qualified
 runtime family used by the existing PORT-02C slice.
 
@@ -30,6 +38,8 @@ root is derived from the frozen executable's reviewed bundle layout and
 its trusted pin is supplied through the existing qualification caller's
 `MANIFEST_SHA` environment value. The flag does not open a UI. Missing or
 invalid pins fail closed. This is a qualification seam, not release signing.
+Normal frozen end-user launch still requires an explicit trusted release pin;
+installer trust handoff and release signing remain later work.
 
 ## Session and bootstrap
 

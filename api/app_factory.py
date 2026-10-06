@@ -9,7 +9,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
 from runtime.local_session import LocalSession
-from runtime.resources import ResourceResolver
+from runtime.release_identity import DevelopmentCheckoutIdentity, InstalledReleaseIdentity
+from runtime.resources import ResourceResolutionError, ResourceResolver, WritableRoots
 from services.athena_capability_service import AthenaCapabilityService, release_summary
 
 
@@ -17,7 +18,49 @@ class AppFactoryError(ValueError):
     """Trusted local application dependencies failed verification."""
 
 
-def create_app(*, release_identity, resource_resolver, local_session, capability_service, origin):
+def _root_contains(parent, child):
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_writable_roots(value, identity):
+    if type(value) is not WritableRoots:
+        raise AppFactoryError("invalid trusted application dependencies")
+    try:
+        validated = WritableRoots(
+            data_root=value.data_root,
+            cache_root=value.cache_root,
+            state_root=value.state_root,
+            installed_release_root=value.installed_release_root,
+        )
+    except (AttributeError, ResourceResolutionError, TypeError, ValueError):
+        raise AppFactoryError("invalid trusted application dependencies") from None
+    if validated != value:
+        raise AppFactoryError("invalid trusted application dependencies")
+    if type(identity) is InstalledReleaseIdentity:
+        resource_root = identity.release_root
+        if validated.installed_release_root != resource_root:
+            raise AppFactoryError("invalid trusted application dependencies")
+    elif type(identity) is DevelopmentCheckoutIdentity:
+        resource_root = identity.repository_root
+        if validated.installed_release_root is not None:
+            raise AppFactoryError("invalid trusted application dependencies")
+    else:
+        raise AppFactoryError("invalid trusted application dependencies")
+    if any(
+        _root_contains(resource_root, root) or _root_contains(root, resource_root)
+        for root in (validated.data_root, validated.cache_root, validated.state_root)
+    ):
+        raise AppFactoryError("invalid trusted application dependencies")
+    return validated
+
+
+def create_app(*, release_identity, resource_resolver, writable_roots: WritableRoots,
+               local_session, capability_service, origin):
+    validated_roots = _validate_writable_roots(writable_roots, release_identity)
     if (type(resource_resolver) is not ResourceResolver
             or resource_resolver.identity is not release_identity
             or type(local_session) is not LocalSession
@@ -42,6 +85,9 @@ def create_app(*, release_identity, resource_resolver, local_session, capability
     except Exception:
         raise AppFactoryError("trusted application resources could not be verified") from None
     app = FastAPI(title="ATHENA Research Preview", docs_url=None, redoc_url=None, openapi_url=None)
+    # Retain the exact reviewed path seam for future local routes. This binds
+    # paths internally without creating directories or exposing them publicly.
+    app.state.writable_roots = validated_roots
     host = origin.removeprefix("http://")
 
     @app.middleware("http")

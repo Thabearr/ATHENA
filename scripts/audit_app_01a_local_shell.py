@@ -10,7 +10,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 BASE = "40ee3fcabe34fbbcf1cabfe240fad5cc58ced805"
 PATHS = ("api/app_factory.py", "api/server.py", "run_desktop.py", "runtime/local_session.py",
-         "services/athena_capability_service.py", "ui/index.html", "ui/app.js",
+         "runtime/resources.py", "services/athena_capability_service.py", "ui/index.html", "ui/app.js",
          "ui/legacy-index.html", "ui/legacy-app.js",
          "tests/test_app_01a_local_shell.py", "scripts/audit_app_01a_local_shell.py",
          "scripts/audit_core_01d_win_either_half_trigger_authority_b7.py",
@@ -26,7 +26,11 @@ PATHS += ("scripts/audit_core_01d_checkpoint_e_completion_v2.py",
           "scripts/audit_checkpoint_e_workflows.py", "docs/product/app_01a_local_shell.md")
 PATHS += ("tests/test_core_01d_exact_pr_trigger_disposition_b1.py",)
 RECEIPT = "artifacts/product/app_01a_local_shell_v1.json"
-INVENTORY = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v10.json"
+INVENTORY = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v16.json"
+HISTORICAL_A2_INVENTORY_PATHS = frozenset(
+    f"tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v{generation}.json"
+    for generation in range(10, 17)
+)
 HISTORICAL_RUNTIME_PATHS = {"api/server.py", "run_desktop.py", "ui/index.html", "ui/app.js"}
 
 
@@ -58,12 +62,14 @@ def build():
                 "historical_runtime_payloads": {path: base64.b64encode(git("show", BASE + ":" + path)).decode("ascii")
                                                 for path in sorted(HISTORICAL_RUNTIME_PATHS)},
                 "source_inventory_sha256": hashlib.sha256(canonical(identities)).hexdigest(),
-                "a2_inventory": {"path": "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v10.json",
-                                 "canonical_sha256": json.loads((ROOT / "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v10.json").read_bytes())["canonical_sha256"]},
+                "a2_inventory": {"path": INVENTORY,
+                                 "canonical_sha256": json.loads((ROOT / INVENTORY).read_bytes())["canonical_sha256"]},
                 "resource_evolution": {"classification": "APP01A_VERIFIED_UI_BYTES_ONLY_NO_CORE_PARITY_CHANGE",
                                        "historical_port02a_manifest_sha256": "95eeb5bcd983dd66d3952a18948edf7aaf0a121dff247cdc7f67a42186d817c2",
                                        "changed_ui_resources": ["ui/index.html", "ui/app.js"]},
-                "contracts": {"factory": "EXPLICIT_VERIFIED_DEPENDENCIES", "session": "OS_CSPRNG_256BIT_MEMORY_ONLY_V1",
+                "contracts": {"factory": "EXPLICIT_VERIFIED_DEPENDENCIES_AND_WRITABLE_ROOTS",
+                              "application_data_root": "PORT_02A_WRITABLE_ROOTS_EXACT_TYPE_SEPARATE_FROM_RESOURCES",
+                              "session": "OS_CSPRNG_256BIT_MEMORY_ONLY_V1",
                               "health": "ATHENA_LOCAL_HEALTH_V1", "capabilities": "ATHENA_LOCAL_CAPABILITIES_V1",
                               "bootstrap": "ORIGIN_GUARDED_NATIVE_TO_JS_SINGLE_DELIVERY_NO_JS_API"},
                 "authority": {"provider": False, "model_readiness": "unproven", "run_admission": False,
@@ -93,7 +99,7 @@ def validate():
         raise ValueError("APP-01A source identity mismatch")
     if document.get("source_inventory_sha256") != hashlib.sha256(canonical(observed)).hexdigest():
         raise ValueError("APP-01A source inventory mismatch")
-    inventory_path = "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v10.json"
+    inventory_path = INVENTORY
     inventory = json.loads((ROOT / inventory_path).read_bytes())
     if document.get("a2_inventory") != {"path": inventory_path, "canonical_sha256": inventory["canonical_sha256"]}:
         raise ValueError("APP-01A current A2 inventory reference mismatch")
@@ -107,7 +113,7 @@ def authenticated_historical_paths():
     from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
     boundary.authenticate_inventory()
     document = validate()
-    return set(PATHS) | {RECEIPT, INVENTORY}, document
+    return set(PATHS) | {RECEIPT, INVENTORY} | HISTORICAL_A2_INVENTORY_PATHS, document
 
 
 def historical_runtime_payload(path):
@@ -129,6 +135,7 @@ def _decode_historical_runtime_payload(document, path):
 
 def historical_tree_projection(raw):
     paths, document = authenticated_historical_paths()
+    paths |= HISTORICAL_A2_INVENTORY_PATHS
     rows = []
     for line in raw.splitlines(keepends=True):
         metadata, name = line.split(b"\t", 1)

@@ -16,8 +16,18 @@ import uvicorn
 
 from api.app_factory import create_app
 from runtime.local_session import LocalSession
-from runtime.release_identity import verify_development_checkout, verify_installed_release
-from runtime.resources import ResourceResolver
+from runtime.release_identity import (
+    DevelopmentCheckoutIdentity,
+    InstalledReleaseIdentity,
+    verify_development_checkout,
+    verify_installed_release,
+)
+from runtime.resources import (
+    ResourceResolutionError,
+    ResourceResolver,
+    WritableRoots,
+    default_writable_roots,
+)
 from services.athena_capability_service import AthenaCapabilityService, release_summary
 
 
@@ -51,6 +61,24 @@ def resolve_resources(args):
     return ResourceResolver.for_development(identity)
 
 
+def resolve_writable_roots(resources) -> WritableRoots:
+    """Bind OS user-data locations without consulting the current directory."""
+    if type(resources) is not ResourceResolver:
+        raise DesktopLaunchError("trusted local application paths could not be resolved")
+    identity = resources.identity
+    if type(identity) is InstalledReleaseIdentity:
+        installed_release_root = identity.release_root
+    elif type(identity) is DevelopmentCheckoutIdentity:
+        installed_release_root = None
+    else:
+        raise DesktopLaunchError("trusted local application paths could not be resolved")
+    try:
+        return default_writable_roots(installed_release_root=installed_release_root)
+    except ResourceResolutionError:
+        # Never include environment-derived paths in a startup error.
+        raise DesktopLaunchError("trusted local application paths could not be resolved") from None
+
+
 def verify_health(observed, *, session, identity):
     expected = {"contract": "ATHENA_LOCAL_HEALTH_V1", "instance_id": session.instance_id,
                 "challenge": session.challenge, "server_proof": session.proof("server"), "release": release_summary(identity),
@@ -64,6 +92,7 @@ def verify_health(observed, *, session, identity):
 class LocalBackend:
     def __init__(self, resources):
         self.resources = resources
+        self.writable_roots = resolve_writable_roots(resources)
         self.session = LocalSession()
         self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
@@ -72,6 +101,7 @@ class LocalBackend:
             self.listener.listen(128)
             self.origin = f"http://127.0.0.1:{self.listener.getsockname()[1]}"
             app = create_app(release_identity=resources.identity, resource_resolver=resources,
+                             writable_roots=self.writable_roots,
                              local_session=self.session, capability_service=AthenaCapabilityService(resources),
                              origin=self.origin)
             self.server = uvicorn.Server(uvicorn.Config(app, log_level="critical", access_log=False))
