@@ -275,11 +275,11 @@ def test_a2_generation_v8_is_immutable_prefix_and_b6_python_remains_in_latest_in
         "rewritten": False,
     }
     latest = boundary.authenticate_inventory()
-    assert latest["generation"] == 27
+    assert latest["generation"] == 28
     assert latest["predecessor_inventory"] == {
-        "path": boundary.inventory_generation_path(26),
-        "canonical_sha256": "c3f7a7f342061a3e8b135eac7f9c2be3f3e75c05bf3af616ac49dd4764a708c1",
-        "generation": 26,
+        "path": boundary.inventory_generation_path(27),
+        "canonical_sha256": "5d93ad141905c3cdf0dd1e757c5056ac6cb7f604054b6f928860fac599eb1612",
+        "generation": 27,
         "rewritten": False,
     }
     paths = {row["path"] for row in latest["source_identities"]}
