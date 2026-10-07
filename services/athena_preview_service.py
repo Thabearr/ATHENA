@@ -13,7 +13,7 @@ import hashlib
 import re
 import secrets
 import threading
-from typing import Callable, Literal, Protocol
+from typing import Callable, Literal, Protocol, runtime_checkable
 
 from domain.execution_envelope import (
     DATE_RESOLUTION_POLICY_ID,
@@ -85,6 +85,15 @@ class StoredPreview:
     envelope_bytes: bytes
     preview_bytes: bytes
     expires_at: datetime
+
+
+@runtime_checkable
+class PreviewStore(Protocol):
+    """D1 preview persistence contract (process-local default or durable)."""
+
+    def put(self, item: StoredPreview, *, now: datetime) -> None: ...
+
+    def get(self, preview_id: str, *, now: datetime) -> StoredPreview | None: ...
 
 
 class ProcessLocalPreviewStore:
@@ -314,14 +323,14 @@ class AthenaPreviewAdmissionService:
         self,
         resources: ResourceResolver,
         *,
-        preview_store: ProcessLocalPreviewStore | None = None,
+        preview_store: PreviewStore | None = None,
         admission_repository: AdmissionRepository | None = None,
         clock: Callable[[], datetime] = _utc_now,
     ):
         if type(resources) is not ResourceResolver or not callable(clock):
             raise ValueError("verified preview dependencies are required")
-        if preview_store is not None and type(preview_store) is not ProcessLocalPreviewStore:
-            raise ValueError("exact process-local preview store is required")
+        if preview_store is not None and not isinstance(preview_store, PreviewStore):
+            raise ValueError("preview store must satisfy the PreviewStore contract")
         if admission_repository is not None and (
             not callable(getattr(admission_repository, "lookup", None))
             or not callable(getattr(admission_repository, "admit", None))
