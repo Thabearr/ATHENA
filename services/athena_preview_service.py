@@ -51,6 +51,7 @@ from services.athena_run_service import AthenaRunService
 PREVIEW_TTL = timedelta(minutes=30)
 MAX_PREVIEWS_PER_APP = 1024
 _DATE_TEXT = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$", re.ASCII)
+_SHA256_TEXT = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$", re.ASCII)
 _PREVIEW_ID = re.compile(r"^[A-Za-z0-9_-]{32,128}$", re.ASCII)
 _RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", re.ASCII)
@@ -136,24 +137,88 @@ class AdmissionCandidate:
     idempotency_key: str
     authority_manifest_sha256: str
     source_identity_sha256: str
+    preview_expires_at: datetime
+
+    def __post_init__(self) -> None:
+        if type(self.preview_expires_at) is not datetime:
+            raise ValueError("preview expiry must be an exact datetime")
+        try:
+            expiry = _aware_utc(self.preview_expires_at)
+        except ValueError as exc:
+            raise ValueError("preview expiry must be an aware UTC instant") from exc
+        object.__setattr__(self, "preview_expires_at", expiry)
+
+
+@dataclass(frozen=True)
+class AdmissionReplayIdentity:
+    """Minimal immutable key used to recover a committed response after restart."""
+
+    idempotency_key: str
+    preview_id: str
+    execution_envelope_sha256: str
+
+    def __post_init__(self) -> None:
+        if type(self.idempotency_key) is not str or _IDEMPOTENCY_KEY.fullmatch(self.idempotency_key) is None:
+            raise ValueError("idempotency key is outside the reviewed vocabulary")
+        if type(self.preview_id) is not str:
+            raise ValueError("preview ID must be exact text")
+        if type(self.execution_envelope_sha256) is not str or _SHA256_TEXT.fullmatch(
+            self.execution_envelope_sha256
+        ) is None:
+            raise ValueError("execution envelope digest must be lowercase SHA-256 text")
+
+
+@dataclass(frozen=True)
+class AdmissionLookupResult:
+    disposition: Literal["not_found", "idempotent_replay", "idempotency_conflict"]
+    run_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.disposition not in {"not_found", "idempotent_replay", "idempotency_conflict"}:
+            raise ValueError("unknown admission lookup disposition")
+        if self.disposition == "idempotent_replay":
+            if type(self.run_id) is not str or _RUN_ID.fullmatch(self.run_id) is None:
+                raise ValueError("idempotent lookup must return an exact run identity")
+        elif self.run_id is not None:
+            raise ValueError("non-replay lookup cannot claim a run identity")
 
 
 @dataclass(frozen=True)
 class AdmissionResult:
     disposition: Literal[
-        "admitted", "idempotent_replay", "idempotency_conflict", "preview_consumed_conflict"
+        "admitted", "idempotent_replay", "idempotency_conflict", "preview_consumed_conflict",
+        "preview_expired",
     ]
     run_id: str | None = None
 
 
 class AdmissionRepository(Protocol):
-    """Atomic D4-owned identity/commit port; no worker work is part of commit."""
+    """Narrow D4-owned replay/commit port; no worker work is part of either call.
+
+    ``lookup`` is an authoritative, read-only probe keyed by the exact
+    idempotency key, preview ID and envelope digest. ``admit`` must perform its
+    key-ownership check, preview-consumption check, commit-clock expiry check
+    and creation of one run identity in a single transaction/critical section.
+    A committed exact replay is resolved before expiry is considered, so a
+    lost response remains recoverable after the preview TTL. For a new commit,
+    the repository compares its current UTC commit time with the exact
+    ``preview_expires_at`` carried by the candidate; a caller-side check is not
+    an atomic substitute. Neither method may launch work.
+    """
+
+    def lookup(self, identity: AdmissionReplayIdentity) -> AdmissionLookupResult: ...
 
     def admit(self, candidate: AdmissionCandidate) -> AdmissionResult: ...
 
 
 class UnavailableAdmissionRepository:
     """Supported D1 backend until the reviewed durable D3/D4 store exists."""
+
+    def lookup(self, identity: AdmissionReplayIdentity) -> AdmissionLookupResult:
+        # This backend cannot truthfully assert either presence or absence of a
+        # previously committed run. The service may continue active-preview
+        # checks but must fail closed if replay recovery is needed.
+        raise AdmissionRepositoryUnavailable
 
     def admit(self, candidate: AdmissionCandidate) -> AdmissionResult:
         raise AdmissionRepositoryUnavailable
@@ -257,8 +322,11 @@ class AthenaPreviewAdmissionService:
             raise ValueError("verified preview dependencies are required")
         if preview_store is not None and type(preview_store) is not ProcessLocalPreviewStore:
             raise ValueError("exact process-local preview store is required")
-        if admission_repository is not None and not callable(getattr(admission_repository, "admit", None)):
-            raise ValueError("admission repository port is required")
+        if admission_repository is not None and (
+            not callable(getattr(admission_repository, "lookup", None))
+            or not callable(getattr(admission_repository, "admit", None))
+        ):
+            raise ValueError("admission repository lookup and atomic commit ports are required")
         self.resources = resources
         self.preview_store = ProcessLocalPreviewStore() if preview_store is None else preview_store
         self.admission_repository = (
@@ -409,10 +477,47 @@ class AthenaPreviewAdmissionService:
         execution_envelope_sha256: str,
         idempotency_key: str,
     ) -> AdmissionResult:
+        if type(idempotency_key) is not str or _IDEMPOTENCY_KEY.fullmatch(idempotency_key) is None:
+            raise _api_error(422, "INVALID_IDEMPOTENCY_KEY")
+        if type(execution_envelope_sha256) is not str or _SHA256_TEXT.fullmatch(
+            execution_envelope_sha256
+        ) is None:
+            raise _api_error(422, "INVALID_INTENT")
+        if type(preview_id) is not str:
+            raise _api_error(409, "PREVIEW_EXPIRED")
+
+        replay_identity = AdmissionReplayIdentity(
+            idempotency_key=idempotency_key,
+            preview_id=preview_id,
+            execution_envelope_sha256=execution_envelope_sha256,
+        )
+        probe_unavailable = False
+        try:
+            lookup = self.admission_repository.lookup(replay_identity)
+        except AdmissionRepositoryUnavailable:
+            # The installed D1 backend cannot assert that a prior commit is
+            # absent. Keep checking a live process-local preview so a new
+            # admission still reaches the typed DURABLE_RUN_STORE_UNAVAILABLE
+            # result at the commit port.
+            probe_unavailable = True
+        except Exception:
+            raise _api_error(503, "DURABLE_RUN_STORE_UNAVAILABLE") from None
+        else:
+            if type(lookup) is not AdmissionLookupResult:
+                raise _api_error(503, "DURABLE_RUN_STORE_UNAVAILABLE")
+            if lookup.disposition == "idempotency_conflict":
+                raise _api_error(409, "IDEMPOTENCY_CONFLICT")
+            if lookup.disposition == "idempotent_replay":
+                if type(lookup.run_id) is not str or _RUN_ID.fullmatch(lookup.run_id) is None:
+                    raise _api_error(503, "DURABLE_RUN_STORE_UNAVAILABLE")
+                return AdmissionResult("idempotent_replay", lookup.run_id)
+
         now = self._now()
         stored = self.preview_store.get(preview_id, now=now)
         # Unknown, malformed and expired IDs intentionally share one response.
         if stored is None:
+            if probe_unavailable:
+                raise _api_error(503, "DURABLE_RUN_STORE_UNAVAILABLE")
             raise _api_error(409, "PREVIEW_EXPIRED")
         envelope_digest = hashlib.sha256(stored.envelope_bytes).hexdigest()
         if (
@@ -463,12 +568,6 @@ class AthenaPreviewAdmissionService:
             raise _api_error(409, "PREVIEW_DIGEST_MISMATCH")
         if preview.blockers:
             raise _api_error(409, "PREVIEW_BLOCKED")
-        if (
-            type(idempotency_key) is not str
-            or _IDEMPOTENCY_KEY.fullmatch(idempotency_key) is None
-        ):
-            raise _api_error(422, "INVALID_IDEMPOTENCY_KEY")
-
         candidate = AdmissionCandidate(
             preview_id=stored.preview_id,
             request_bytes=stored.request_bytes,
@@ -478,6 +577,7 @@ class AthenaPreviewAdmissionService:
             idempotency_key=idempotency_key,
             authority_manifest_sha256=envelope.authority_manifest_sha256,
             source_identity_sha256=hashlib.sha256(canonical_json_bytes(current_source)).hexdigest(),
+            preview_expires_at=envelope.expires_at,
         )
         try:
             result = self.admission_repository.admit(candidate)
@@ -492,6 +592,8 @@ class AthenaPreviewAdmissionService:
             raise _api_error(409, "IDEMPOTENCY_CONFLICT")
         if result.disposition == "preview_consumed_conflict":
             raise _api_error(409, "PREVIEW_ALREADY_CONSUMED_CONFLICT")
+        if result.disposition == "preview_expired":
+            raise _api_error(409, "PREVIEW_EXPIRED")
         if (
             result.disposition not in {"admitted", "idempotent_replay"}
             or type(result.run_id) is not str
@@ -503,8 +605,10 @@ class AthenaPreviewAdmissionService:
 
 __all__ = [
     "AdmissionCandidate",
+    "AdmissionLookupResult",
     "AdmissionRepository",
     "AdmissionRepositoryUnavailable",
+    "AdmissionReplayIdentity",
     "AdmissionResult",
     "AthenaPreviewAdmissionService",
     "MAX_PREVIEWS_PER_APP",

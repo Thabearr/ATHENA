@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 from datetime import date
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
+
+
+_SHA256_TEXT = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
 
 
 class StrictTransportDTO(BaseModel):
@@ -41,6 +45,13 @@ class RunAdmissionDTO(StrictTransportDTO):
     preview_id: StrictStr
     execution_envelope_sha256: StrictStr
     idempotency_key: StrictStr
+
+    @field_validator("execution_envelope_sha256")
+    @classmethod
+    def validate_envelope_digest(cls, value: str) -> str:
+        if type(value) is not str or _SHA256_TEXT.fullmatch(value) is None:
+            raise ValueError("execution_envelope_sha256 must be lowercase SHA-256 text")
+        return value
 
 
 class ErrorDTO(StrictTransportDTO):

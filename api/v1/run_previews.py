@@ -80,7 +80,7 @@ async def _parse_dto(request: Request, dto_type: Type[BaseModel]) -> BaseModel:
         if dto_type is RunPreviewIntentDTO and "dates" in top_fields:
             raise _error("INVALID_DATE") from None
         if dto_type is RunAdmissionDTO and "execution_envelope_sha256" in top_fields:
-            raise _error("PREVIEW_DIGEST_MISMATCH") from None
+            raise _error("INVALID_INTENT") from None
         raise _error("INVALID_INTENT") from None
 
 

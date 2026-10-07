@@ -85,27 +85,42 @@ The only accepted admission body is:
 ```
 
 The caller cannot replace dates, target legs, profile, operation intent,
-authority or source identity. Admission applies these checks in order after
-C5 session, exact Host and same-Origin middleware:
+authority or source identity. After C5 session, exact Host and same-Origin
+middleware, admission uses this ordering:
 
-1. Validate the strict DTO and resolve the opaque preview ID.
-2. Require an existing unexpired preview. Unknown and expired IDs share the
-   same safe response.
-3. Match the echoed envelope digest and canonically reparse the stored exact
-   request and envelope bytes.
-4. Revalidate the bound source/release identity and recompute current
-   `AuthorityManifest` for the exact stored `RunRequest`.
-5. Re-evaluate the stored envelope and reject requested-operation blockers.
-6. Validate the bounded ASCII idempotency key.
-7. Call the injected atomic admission repository port.
+1. Validate the strict DTO, including a lowercase 64-hex envelope digest and
+   bounded ASCII idempotency key. Malformed values are invalid input (422).
+2. Probe the repository by the exact tuple `(idempotency_key, preview_id,
+   execution_envelope_sha256)`, before requiring process-local preview bytes.
+   An already committed exact tuple returns its original `run_id` as
+   `idempotent_replay`; the same key with a different preview ID or digest is
+   `IDEMPOTENCY_CONFLICT` (409). This replay path does not re-run source,
+   authority, provider, executor or delivery work.
+3. Only when the repository confirms no commit for that key, require an existing
+   unexpired process-local preview. Unknown and expired IDs share the same safe
+   response. If the repository is unavailable and the local preview is gone,
+   the service returns `DURABLE_RUN_STORE_UNAVAILABLE` rather than asserting
+   that no prior commit exists.
+4. Match the syntactically valid echoed digest against the stored envelope and
+   canonically reparse the exact request, envelope and preview bytes. A valid
+   lowercase digest that does not match is `PREVIEW_DIGEST_MISMATCH` (409).
+5. Revalidate the bound source/release identity, recompute current
+   `AuthorityManifest` for the exact stored `RunRequest`, re-evaluate the
+   envelope and reject requested-operation blockers.
+6. Pass the exact immutable candidate, including the typed envelope
+   `expires_at`, to the repository's atomic admission operation.
 
-The repository port receives the preview ID, exact request/envelope bytes and
-hashes, idempotency key, and current authority/source identity hashes. Its
-atomic contract is: the same key and same exact identity return the same
-`run_id`; the same key with changed identity conflicts; and one preview cannot
-be committed under two different keys. A successful HTTP 202 may be returned
-only after that durable commit completes. There is no worker, executor,
-background task, provider, Current Shadow or delivery call after commit in D1.
+The repository port exposes an authoritative read-only replay lookup and an
+atomic commit. The atomic operation owns, in one transaction/critical section,
+commit-time UTC expiry comparison, idempotency-key ownership, one-preview/one-run
+consumption and creation of exactly one run identity. A matching commit found
+inside that section is replayed before expiry is considered; a new candidate
+whose `preview_expires_at` has passed receives the typed `preview_expired`
+disposition, mapped to `PREVIEW_EXPIRED` (409). Thus an early process-local
+expiry check is only a fast rejection and is not treated as commit-time proof.
+A successful HTTP 202 may be returned only after an atomic commit or exact
+idempotent replay. There is no worker, executor, background task, provider,
+Current Shadow or delivery call after either path in D1.
 
 `request_sha256` identifies canonical user intent. It is not `run_id`: a run
 identity also binds an admitted preview, exact execution envelope, current
@@ -116,21 +131,29 @@ repository.
 
 ## Supported backend and sequencing
 
-The preview store is bounded, process-local memory attached to one app
-instance, uses cryptographically random opaque IDs and retains the exact
-canonical request/envelope/preview bytes until expiry. Restart invalidates
-previews. There is no durability claim or app database table. If the store is
-at capacity, new preview requests fail safely rather than evicting an unexpired
-preview.
+Unadmitted previews are bounded, process-local memory attached to one app
+instance. They use cryptographically random opaque IDs and retain exact
+canonical request/envelope/preview bytes only until expiry; restart invalidates
+those unadmitted preview records. A committed admission is different: an
+available repository can recover its exact key + preview ID + envelope digest
+identity after preview expiry or process restart and return the existing run
+ID without new work. If the store is at capacity, new preview requests fail
+safely rather than evicting an unexpired preview.
 
-The installed `LocalBackend` injects `UnavailableAdmissionRepository`. After
-all admission checks, it returns `DURABLE_RUN_STORE_UNAVAILABLE` with HTTP 503,
-no `run_id`, and no external work. A deterministic atomic fake repository is
-used only in tests to prove 202 and idempotency semantics. D3 owns app preview
-and identity/capability persistence; D4 owns durable runs, attempts, ordered
-events, external-operation ledger and the transactional repository; E1 owns
-job/worker launch. D1 creates none of those tables or services. In particular,
-`run_admission_authority` remains false.
+The installed `LocalBackend` injects `UnavailableAdmissionRepository`. Its
+replay lookup fails as unavailable; it does not fabricate a prior run or claim
+that the key is absent. An active, otherwise-valid new admission continues to
+the unavailable atomic commit and returns `DURABLE_RUN_STORE_UNAVAILABLE`
+(HTTP 503) with no `run_id` or external work. If a prior commit cannot be
+looked up because the backend is unavailable and the process-local preview is
+gone, the result is also 503, not a false expiry/absence claim. A deterministic
+atomic fake repository is used only in tests to prove expiry, replay and
+single-consumption semantics. D3 owns app preview and identity/capability
+persistence; D4 owns durable runs, attempts, ordered events, external-operation
+ledger and the transactional repository; E1 owns job/worker launch. D1 creates
+none of those tables or services. In particular, `run_admission_authority`
+remains false and durable admission remains unavailable in the supported shell
+until the later data/job missions.
 
 The capability snapshot reports `run_preview=available` only while the
 verified source identity supports preview. It describes preview as read-only
@@ -146,7 +169,8 @@ All route-level errors are typed DTOs with `code`, `safe_message`, finite
 tracebacks, credentials, environment values or filesystem paths. The machine
 codes are:
 
-- HTTP 422: `INVALID_INTENT`, `TARGET_TOTAL_ODDS_NOT_SUPPORTED`,
+- HTTP 422: `INVALID_INTENT` (including missing or malformed
+  `execution_envelope_sha256`), `TARGET_TOTAL_ODDS_NOT_SUPPORTED`,
   `UNSUPPORTED_BOOKIE`, `INVALID_DATE`, `INVALID_IDEMPOTENCY_KEY`.
 - HTTP 409: `PREVIEW_EXPIRED`, `PREVIEW_DIGEST_MISMATCH`,
   `PREVIEW_STALE_AUTHORITY`, `PREVIEW_BLOCKED`, `IDEMPOTENCY_CONFLICT`,

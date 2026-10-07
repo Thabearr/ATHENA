@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -24,10 +25,12 @@ from runtime.resources import ResourceResolver, WritableRoots
 from services.athena_capability_service import AthenaCapabilityService
 from services.athena_preview_service import (
     AdmissionCandidate,
+    AdmissionLookupResult,
     AdmissionRepositoryUnavailable,
     AdmissionResult,
     AthenaPreviewAdmissionService,
     PREVIEW_TTL,
+    PreviewAdmissionError,
 )
 from services.athena_run_service import AthenaRunService
 
@@ -51,47 +54,83 @@ class MutableClock:
 
 
 class AtomicFakeAdmissionRepository:
-    """Test-only transactional fake proving the repository port semantics."""
+    """Test-only transaction fake implementing the production repository contract."""
 
-    def __init__(self):
+    def __init__(self, *, clock=None, before_commit=None, lookup_barrier=None):
         self.calls: list[AdmissionCandidate] = []
-        self.by_key: dict[str, tuple[tuple[object, ...], str]] = {}
-        self.by_preview: dict[str, tuple[str, tuple[object, ...], str]] = {}
+        self.lookup_calls = []
+        self.atomic_dispositions: list[str] = []
+        self.by_key: dict[str, tuple[str, str, str]] = {}
+        self.by_preview: dict[str, tuple[str, str]] = {}
+        self.runs: dict[str, AdmissionCandidate] = {}
+        self.clock = clock or MutableClock()
+        self.before_commit = before_commit
+        self.lookup_barrier = lookup_barrier
+        self.commit_count = 0
         self._lock = threading.Lock()
 
-    @staticmethod
-    def _identity(candidate: AdmissionCandidate) -> tuple[object, ...]:
-        return (
-            candidate.preview_id,
-            candidate.request_bytes,
-            candidate.request_sha256,
-            candidate.execution_envelope_bytes,
-            candidate.execution_envelope_sha256,
-            candidate.authority_manifest_sha256,
-            candidate.source_identity_sha256,
-        )
+    def lookup(self, identity) -> AdmissionLookupResult:
+        with self._lock:
+            self.lookup_calls.append(identity)
+            committed = self.by_key.get(identity.idempotency_key)
+            if committed is None:
+                result = AdmissionLookupResult("not_found")
+            elif committed[:2] != (identity.preview_id, identity.execution_envelope_sha256):
+                result = AdmissionLookupResult("idempotency_conflict")
+            else:
+                result = AdmissionLookupResult("idempotent_replay", committed[2])
+        if self.lookup_barrier is not None:
+            self.lookup_barrier.wait(timeout=10)
+        return result
 
     def admit(self, candidate: AdmissionCandidate) -> AdmissionResult:
         with self._lock:
             self.calls.append(candidate)
-            identity = self._identity(candidate)
             existing_key = self.by_key.get(candidate.idempotency_key)
             if existing_key is not None:
-                if existing_key[0] != identity:
+                if existing_key[:2] != (candidate.preview_id, candidate.execution_envelope_sha256):
+                    self.atomic_dispositions.append("idempotency_conflict")
                     return AdmissionResult("idempotency_conflict")
-                return AdmissionResult("idempotent_replay", existing_key[1])
+                self.atomic_dispositions.append("idempotent_replay")
+                return AdmissionResult("idempotent_replay", existing_key[2])
+
+            # The fake's transaction clock and expiry comparison live inside
+            # the same critical section as identity ownership and insertion.
+            # Tests can advance it after service prechecks but before this read.
+            if self.before_commit is not None:
+                self.before_commit()
+            commit_time = self.clock()
+            if type(commit_time) is not datetime or commit_time.tzinfo is None or commit_time.utcoffset() is None:
+                raise AssertionError("fake repository clock must be aware UTC")
+            if commit_time.astimezone(timezone.utc) >= candidate.preview_expires_at:
+                self.atomic_dispositions.append("preview_expired")
+                return AdmissionResult("preview_expired")
+
             existing_preview = self.by_preview.get(candidate.preview_id)
             if existing_preview is not None:
+                self.atomic_dispositions.append("preview_consumed_conflict")
                 return AdmissionResult("preview_consumed_conflict")
             run_id = f"run-{len(self.by_key) + 1}"
-            self.by_key[candidate.idempotency_key] = (identity, run_id)
-            self.by_preview[candidate.preview_id] = (candidate.idempotency_key, identity, run_id)
+            self.by_key[candidate.idempotency_key] = (
+                candidate.preview_id, candidate.execution_envelope_sha256, run_id
+            )
+            self.by_preview[candidate.preview_id] = (
+                candidate.idempotency_key, candidate.execution_envelope_sha256
+            )
+            self.runs[run_id] = candidate
+            self.commit_count += 1
+            self.atomic_dispositions.append("admitted")
             return AdmissionResult("admitted", run_id)
 
 
 class CountingUnavailableRepository:
     def __init__(self):
         self.calls: list[AdmissionCandidate] = []
+
+    def lookup(self, identity) -> AdmissionLookupResult:
+        self.lookup_calls = getattr(self, "lookup_calls", [])
+        self.lookup_calls.append(identity)
+        raise AdmissionRepositoryUnavailable
 
     def admit(self, candidate: AdmissionCandidate) -> AdmissionResult:
         self.calls.append(candidate)
@@ -149,6 +188,10 @@ def harness(resources, tmp_path):
 def make_harness(resources, tmp_path, *, repository=None, clock=None):
     session = LocalSession()
     clock = clock or MutableClock()
+    if type(repository) is AtomicFakeAdmissionRepository:
+        # The transaction clock must be the same controllable clock as the
+        # service clock; tests may advance it between precheck and commit.
+        repository.clock = clock
     service = AthenaPreviewAdmissionService(
         resources,
         admission_repository=repository,
@@ -390,6 +433,51 @@ def test_preview_expiry_rejects_before_repository_call(resources, tmp_path):
     assert repo.calls == []
 
 
+def test_repository_rechecks_expiry_inside_atomic_commit_after_service_prechecks(resources, tmp_path, monkeypatch):
+    clock = MutableClock()
+    issued_at = clock()
+    repo = AtomicFakeAdmissionRepository(
+        clock=clock,
+        before_commit=lambda: clock.advance(PREVIEW_TTL + timedelta(microseconds=1)),
+    )
+    client, service, session, _, _ = make_harness(resources, tmp_path, repository=repo, clock=clock)
+    preview = create_preview(client, session)
+
+    external = []
+    original_connect = socket.socket.connect
+
+    def deny_external(self, address):
+        if self.family == getattr(socket, "AF_UNIX", -1):
+            return original_connect(self, address)
+        if isinstance(address, tuple) and address[0] in {"127.0.0.1", "::1"}:
+            return original_connect(self, address)
+        external.append(address)
+        raise AssertionError("external/provider transport reached")
+
+    monkeypatch.setattr(socket.socket, "connect", deny_external)
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("process launch attempted")
+    ))
+    monkeypatch.setattr(AthenaRunService, "run", lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("run/executor called")
+    ))
+    response = client.post("/api/v1/runs", headers=auth(session), json=admission_body(preview, key="expiry-race"))
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "PREVIEW_EXPIRED"
+    assert repo.atomic_dispositions == ["preview_expired"]
+    assert repo.commit_count == 0
+    assert repo.runs == {}
+    assert repo.by_key == {}
+    assert repo.by_preview == {}
+    assert len(repo.calls) == 1
+    assert repo.calls[0].preview_expires_at == issued_at + PREVIEW_TTL
+    # The service fetched the still-live preview before the fake transaction
+    # advanced its independent commit clock; the failed commit consumed none.
+    assert service.preview_store.get(preview["preview_id"], now=issued_at) is not None
+    assert external == []
+
+
 def test_unknown_and_expired_preview_ids_have_the_same_non_enumerating_error(harness):
     client, _, session, _, clock = harness
     result = create_preview(client, session)
@@ -397,9 +485,11 @@ def test_unknown_and_expired_preview_ids_have_the_same_non_enumerating_error(har
         result, preview_id="x" * 43))
     clock.advance(PREVIEW_TTL + timedelta(seconds=1))
     expired = client.post("/api/v1/runs", headers=auth(session), json=admission_body(result))
-    assert unknown.status_code == expired.status_code == 409
+    assert unknown.status_code == expired.status_code == 503
     assert unknown.json() == expired.json()
-    assert unknown.json()["code"] == "PREVIEW_EXPIRED"
+    # The installed backend cannot truthfully rule out a previously committed
+    # identity when its replay probe is unavailable and local bytes are gone.
+    assert unknown.json()["code"] == "DURABLE_RUN_STORE_UNAVAILABLE"
 
 
 def test_digest_mismatch_rejects_before_repository_call(resources, tmp_path):
@@ -410,6 +500,33 @@ def test_digest_mismatch_rejects_before_repository_call(resources, tmp_path):
                            json=admission_body(result, digest="0" * 64))
     assert response.status_code == 409
     assert response.json()["code"] == "PREVIEW_DIGEST_MISMATCH"
+    assert repo.calls == []
+
+
+def test_missing_envelope_digest_is_invalid_input(resources, tmp_path):
+    repo = AtomicFakeAdmissionRepository()
+    client, _, session, _, _ = make_harness(resources, tmp_path, repository=repo)
+    preview = create_preview(client, session)
+    body = admission_body(preview)
+    del body["execution_envelope_sha256"]
+    response = client.post("/api/v1/runs", headers=auth(session), json=body)
+    assert response.status_code == 422
+    assert response.json()["code"] == "INVALID_INTENT"
+    assert repo.lookup_calls == []
+    assert repo.calls == []
+
+
+@pytest.mark.parametrize("digest", [None, 7, "0" * 63, "0" * 65, "A" * 64, "g" * 64])
+def test_malformed_envelope_digests_are_422_invalid_input(resources, tmp_path, digest):
+    repo = AtomicFakeAdmissionRepository()
+    client, _, session, _, _ = make_harness(resources, tmp_path, repository=repo)
+    preview = create_preview(client, session)
+    body = admission_body(preview)
+    body["execution_envelope_sha256"] = digest
+    response = client.post("/api/v1/runs", headers=auth(session), json=body)
+    assert response.status_code == 422
+    assert response.json()["code"] == "INVALID_INTENT"
+    assert repo.lookup_calls == []
     assert repo.calls == []
 
 
@@ -465,6 +582,8 @@ def test_test_repository_proves_idempotent_commit_and_single_preview_consumption
     assert first.json()["admission_state"] == "admitted"
     assert retry.json()["admission_state"] == "idempotent_replay"
     assert first.json()["run_id"] == retry.json()["run_id"] == lost_response_retry.json()["run_id"]
+    assert repo.commit_count == 1
+    assert len(repo.runs) == 1
 
     different_preview = create_preview(client, session)
     same_key_different_identity = client.post(
@@ -480,9 +599,132 @@ def test_test_repository_proves_idempotent_commit_and_single_preview_consumption
     )
     assert different_key_same_preview.status_code == 409
     assert different_key_same_preview.json()["code"] == "PREVIEW_ALREADY_CONSUMED_CONFLICT"
+    assert repo.commit_count == 1
 
 
-def test_invalid_idempotency_key_is_checked_after_all_preview_rechecks(resources, tmp_path):
+def test_committed_admission_replays_after_preview_expiry(resources, tmp_path):
+    repo, clock = AtomicFakeAdmissionRepository(), MutableClock()
+    client, _, session, _, _ = make_harness(resources, tmp_path, repository=repo, clock=clock)
+    preview = create_preview(client, session)
+    body = admission_body(preview, key="expired-replay")
+    first = client.post("/api/v1/runs", headers=auth(session), json=body)
+    assert first.status_code == 202
+    clock.advance(PREVIEW_TTL + timedelta(seconds=1))
+    retry = client.post("/api/v1/runs", headers=auth(session), json=body)
+    assert retry.status_code == 202
+    assert retry.json() == {"run_id": first.json()["run_id"], "admission_state": "idempotent_replay"}
+    assert repo.commit_count == 1
+    assert len(repo.runs) == len(repo.by_key) == len(repo.by_preview) == 1
+    assert len(repo.calls) == 1
+
+
+def test_committed_admission_replays_after_process_local_preview_store_restart(resources, tmp_path):
+    repo, clock = AtomicFakeAdmissionRepository(), MutableClock()
+    client1, _, session1, _, _ = make_harness(resources, tmp_path / "first-process", repository=repo, clock=clock)
+    preview = create_preview(client1, session1)
+    body = admission_body(preview, key="restart-replay")
+    first = client1.post("/api/v1/runs", headers=auth(session1), json=body)
+    assert first.status_code == 202
+
+    clock.advance(PREVIEW_TTL + timedelta(seconds=1))
+    client2, service2, session2, _, _ = make_harness(
+        resources, tmp_path / "restarted-process", repository=repo, clock=clock
+    )
+    assert service2.preview_store._items == {}
+    replay = client2.post("/api/v1/runs", headers=auth(session2), json=body)
+    assert replay.status_code == 202
+    assert replay.json() == {"run_id": first.json()["run_id"], "admission_state": "idempotent_replay"}
+    assert service2.preview_store._items == {}
+    assert repo.commit_count == 1
+    assert len(repo.calls) == 1
+
+
+def test_changed_admission_identity_conflicts_after_expiry_and_restart(resources, tmp_path):
+    repo, clock = AtomicFakeAdmissionRepository(), MutableClock()
+    client1, _, session1, _, _ = make_harness(resources, tmp_path / "first-process", repository=repo, clock=clock)
+    first_preview = create_preview(client1, session1)
+    changed_preview = create_preview(client1, session1)
+    first_body = admission_body(first_preview, key="collision-after-restart")
+    first = client1.post("/api/v1/runs", headers=auth(session1), json=first_body)
+    assert first.status_code == 202
+    assert first_preview["preview_id"] != changed_preview["preview_id"]
+
+    clock.advance(PREVIEW_TTL + timedelta(seconds=1))
+    client2, _, session2, _, _ = make_harness(
+        resources, tmp_path / "restarted-process", repository=repo, clock=clock
+    )
+    changed_preview_identity = client2.post(
+        "/api/v1/runs", headers=auth(session2),
+        json=admission_body(changed_preview, key="collision-after-restart"),
+    )
+    changed_digest = "0" * 64 if first_preview["execution_envelope_sha256"] != "0" * 64 else "1" * 64
+    changed_digest_identity = client2.post(
+        "/api/v1/runs", headers=auth(session2),
+        json=admission_body(first_preview, key="collision-after-restart", digest=changed_digest),
+    )
+    for response in (changed_preview_identity, changed_digest_identity):
+        assert response.status_code == 409
+        assert response.json()["code"] == "IDEMPOTENCY_CONFLICT"
+    assert repo.commit_count == 1
+    assert len(repo.runs) == len(repo.by_key) == 1
+    assert len(repo.calls) == 1
+
+
+def test_concurrent_same_key_admissions_converge_on_one_atomic_run(resources, tmp_path):
+    clock = MutableClock()
+    repo = AtomicFakeAdmissionRepository(clock=clock, lookup_barrier=threading.Barrier(2))
+    client, service, session, _, _ = make_harness(resources, tmp_path, repository=repo, clock=clock)
+    preview = create_preview(client, session)
+
+    def submit():
+        try:
+            return service.admit(
+                preview_id=preview["preview_id"],
+                execution_envelope_sha256=preview["execution_envelope_sha256"],
+                idempotency_key="concurrent-same-key",
+            )
+        except PreviewAdmissionError as exc:
+            return (exc.status_code, exc.code)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [future.result(timeout=20) for future in (pool.submit(submit), pool.submit(submit))]
+    assert all(type(result) is AdmissionResult for result in results)
+    assert {result.disposition for result in results} == {"admitted", "idempotent_replay"}
+    assert len({result.run_id for result in results}) == 1
+    assert repo.commit_count == 1
+    assert len(repo.by_key) == len(repo.by_preview) == len(repo.runs) == 1
+
+
+def test_concurrent_different_keys_cannot_consume_one_preview_twice(resources, tmp_path):
+    clock = MutableClock()
+    repo = AtomicFakeAdmissionRepository(clock=clock, lookup_barrier=threading.Barrier(2))
+    client, service, session, _, _ = make_harness(resources, tmp_path, repository=repo, clock=clock)
+    preview = create_preview(client, session)
+
+    def submit(key):
+        try:
+            return service.admit(
+                preview_id=preview["preview_id"],
+                execution_envelope_sha256=preview["execution_envelope_sha256"],
+                idempotency_key=key,
+            )
+        except PreviewAdmissionError as exc:
+            return (exc.status_code, exc.code)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [future.result(timeout=20) for future in (
+            pool.submit(submit, "concurrent-key-one"), pool.submit(submit, "concurrent-key-two")
+        )]
+    admitted = [result for result in results if type(result) is AdmissionResult]
+    rejected = [result for result in results if type(result) is tuple]
+    assert len(admitted) == len(rejected) == 1
+    assert admitted[0].disposition == "admitted"
+    assert rejected[0] == (409, "PREVIEW_ALREADY_CONSUMED_CONFLICT")
+    assert repo.commit_count == 1
+    assert len(repo.by_key) == len(repo.by_preview) == len(repo.runs) == 1
+
+
+def test_invalid_idempotency_key_is_rejected_before_repository_probe(resources, tmp_path):
     repo = AtomicFakeAdmissionRepository()
     client, _, session, _, _ = make_harness(resources, tmp_path, repository=repo)
     result = create_preview(client, session)
@@ -490,6 +732,7 @@ def test_invalid_idempotency_key_is_checked_after_all_preview_rechecks(resources
                            json=admission_body(result, key="../path"))
     assert response.status_code == 422
     assert response.json()["code"] == "INVALID_IDEMPOTENCY_KEY"
+    assert repo.lookup_calls == []
     assert repo.calls == []
 
 
@@ -534,6 +777,22 @@ def test_supported_default_backend_fails_closed_without_fabricated_run_id(harnes
     assert response.json()["code"] == "DURABLE_RUN_STORE_UNAVAILABLE"
     assert "run_id" not in response.json()
     assert "traceback" not in response.text.lower()
+
+
+def test_unavailable_backend_does_not_claim_replay_when_process_store_was_lost(resources, tmp_path):
+    repo, clock = CountingUnavailableRepository(), MutableClock()
+    client1, _, session1, _, _ = make_harness(resources, tmp_path / "first-process", repository=repo, clock=clock)
+    preview = create_preview(client1, session1)
+    body = admission_body(preview, key="unavailable-after-restart")
+    clock.advance(PREVIEW_TTL + timedelta(seconds=1))
+
+    client2, _, session2, _, _ = make_harness(resources, tmp_path / "restarted-process", repository=repo, clock=clock)
+    response = client2.post("/api/v1/runs", headers=auth(session2), json=body)
+    assert response.status_code == 503
+    assert response.json()["code"] == "DURABLE_RUN_STORE_UNAVAILABLE"
+    assert "run_id" not in response.json()
+    assert repo.calls == []
+    assert len(repo.lookup_calls) == 1
 
 
 def test_unavailable_backend_is_called_only_after_all_checks(resources, tmp_path):
