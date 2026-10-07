@@ -174,14 +174,14 @@ def test_mutations_to_scope_current_reachability_or_pr130_guard_order_are_reject
 
 def test_workflow_tree_is_unchanged_and_the_a2_generation_chain_is_contiguous():
     chain = boundary.load_inventory_generations()
-    assert [i for i, _ in enumerate(chain, 1)] == list(range(1, 53))
+    assert [i for i, _ in enumerate(chain, 1)] == list(range(1, 57))
     v10 = boundary.read_generation(boundary.inventory_generation_path(10))
     assert v10["canonical_sha256"] == "9b5ca4fc23fee7f5100f3ad9d9dafce4bd1fc580c77d546ff285284a2507f475"
     latest = chain[-1][1]
-    assert latest["generation"] == 52
-    assert latest["predecessor_inventory"]["generation"] == 51
-    assert latest["predecessor_inventory"]["path"] == boundary.inventory_generation_path(51)
-    assert latest["predecessor_inventory"]["canonical_sha256"] == "16a7d3a369faeca9b0de54dfc86ab9d394e92720af348c2ef4b07fce30dc9298"
+    assert latest["generation"] == 56
+    assert latest["predecessor_inventory"]["generation"] == 55
+    assert latest["predecessor_inventory"]["path"] == boundary.inventory_generation_path(55)
+    assert latest["predecessor_inventory"]["canonical_sha256"] == "17ceeadef00a1452f521070daea73daf32dcdaebbdbfe350a326f51f7509290c"
     assert latest["predecessor_inventory"]["rewritten"] is False
     assert boundary.authenticate_inventory() == latest
     assert subprocess.check_output(["git", "rev-parse", "HEAD:.github/workflows"], cwd=b3.ROOT).decode().strip() == b3.WORKFLOW_TREE
