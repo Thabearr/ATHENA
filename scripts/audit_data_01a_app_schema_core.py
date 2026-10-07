@@ -14,8 +14,10 @@ SNAPSHOT = "tests/fixtures/core_01d/data_01a_historical/port_02c_build_config.py
 BUILD_CONFIG_SHA256 = "ccda416cefd71854af226a23d8b4f2631dabb28e95912e99b2fa6333682d66ca"
 BUILD_CONFIG_BLOB = "db26c06a915b643e985fd677451285f8a717e8b9"
 NEW_PATHS = {
+    "docs/product/data_01a_storage_safety.md",
     RECEIPT, SNAPSHOT, "scripts/audit_data_01a_app_schema_core.py",
     "database/app_migrations.py", "database/app_repository.py",
+    "database/app_migration_evidence.py",
     "database/migrations/0001_app_control_core.sql",
     "services/app_preview_store.py", "tests/test_data_01a_app_schema.py",
 }
@@ -30,7 +32,7 @@ def authenticate():
     boundary.require(receipt["base_commit"] == "9d674169c680a256d20db81e2bddf733b13c85cb",
                      "D3 base identity drift")
     inventory = boundary.read_generation(receipt["a2_inventory"]["path"])
-    boundary.require(inventory["generation"] == 66 and latest["generation"] >= 66
+    boundary.require(inventory["generation"] == 67 and latest["generation"] >= 67
                      and inventory["canonical_sha256"] == receipt["a2_inventory"]["canonical_sha256"],
                      "D3 A2 binding drift")
     identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}

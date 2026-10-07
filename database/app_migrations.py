@@ -27,6 +27,8 @@ from typing import Any
 
 from domain.run_contracts import canonical_sha256
 from runtime.resources import ResourceResolver, WritableRoots
+from runtime.release_identity import InstalledReleaseIdentity
+from database.app_migration_evidence import contained, retain_pre_migration_evidence, verify_retained_manifest
 
 APP_STORE_FILENAME = "athena-app.sqlite3"
 
@@ -79,7 +81,7 @@ def connect_app_store(
     target = str(path)
     uri = False
     if readonly:
-        target = f"file:{path.as_posix()}?mode=ro"
+        target = path.resolve().as_uri() + "?mode=ro"
         uri = True
     try:
         conn = sqlite3.connect(
@@ -315,6 +317,8 @@ def _verify_pre_state(conn: sqlite3.Connection) -> None:
     app_tables = _app_tables(conn)
     if not versions and app_tables:
         raise AppSchemaMismatchError("app tables present without a ledger (partial state)")
+    if _table_names(conn) - set(expected_app_tables()):
+        raise AppSchemaMismatchError("unowned tables in app migration target")
     if versions and not app_tables:
         raise AppSchemaMismatchError("app ledger present without app tables (partial state)")
     if versions != list(range(1, len(versions) + 1)):
@@ -341,9 +345,18 @@ def apply_app_migrations(
     """
     if type(release_id) is not str or not release_id:
         raise AppSchemaMismatchError("release_id must be non-empty exact text")
-    migrations = read_app_migrations(resources)
+    if type(resources) is not ResourceResolver or type(writable_roots) is not WritableRoots:
+        raise AppSchemaMismatchError("verified resolver and writable roots are required")
+    if type(resources.identity) is InstalledReleaseIdentity and writable_roots.installed_release_root != resources.identity.release_root:
+        raise AppSchemaMismatchError("writable roots do not bind the verified installed release")
+    writable_roots.ensure_created()
     store = app_store_path(writable_roots)
-    store.parent.mkdir(parents=True, exist_ok=True)
+    contained(writable_roots.data_root, APP_STORE_FILENAME)
+    for suffix in ("-wal", "-shm", "-journal"):
+        contained(writable_roots.data_root, APP_STORE_FILENAME + suffix)
+    existed = store.exists()
+    backup_sha = retain_pre_migration_evidence(resources, writable_roots, store, existed)
+    migrations = read_app_migrations(resources)
 
     conn = connect_app_store(store, synchronous="FULL")
     try:
@@ -352,19 +365,18 @@ def apply_app_migrations(
             recorded = applied_versions(conn)
             if version in recorded:
                 row = conn.execute(
-                    "SELECT migration_sha256 FROM app_schema_migrations WHERE version = ?",
+                    "SELECT migration_sha256, backup_manifest_sha256 FROM app_schema_migrations WHERE version = ?",
                     (version,),
                 ).fetchone()
                 if row is None or str(row[0]) != byte_sha:
                     raise AppSchemaMismatchError(
                         f"migration {version} recorded SHA-256 disagrees with resource bytes"
                     )
+                verify_retained_manifest(writable_roots.data_root, row[1])
                 continue
             if version != len(recorded) + 1:
                 raise AppSchemaMismatchError(f"migration {version} would introduce a version gap")
 
-            backup_manifest = pre_migration_backup_manifest(conn)
-            backup_sha = canonical_sha256(backup_manifest)
             sql_text = raw.decode("utf-8")
 
             conn.execute("BEGIN")
@@ -377,6 +389,11 @@ def apply_app_migrations(
                         raise AppSchemaMismatchError(
                             f"migration {logical_path} did not create table {table}"
                         )
+                if _table_names(conn) != set(expected_app_tables()):
+                    raise AppSchemaMismatchError("migration created an unexpected table set")
+                for table, columns in expected_app_tables().items():
+                    if _table_columns(conn, table) != list(columns):
+                        raise AppSchemaMismatchError("migration column identity drift")
                 violations = conn.execute("PRAGMA foreign_key_check").fetchall()
                 if violations:
                     raise AppSchemaMismatchError(

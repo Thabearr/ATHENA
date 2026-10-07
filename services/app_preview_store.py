@@ -68,34 +68,9 @@ class DurablePreviewStore:
         if self._repository.fetch_preview_record(item.preview_id) is not None:
             raise ValueError("preview ID collision")
 
-        report_bytes = item.preview_bytes
-        report_sha256 = hashlib.sha256(report_bytes).hexdigest()
-        snapshot_id = f"capability-{report_sha256}"
-        evaluated_at = envelope.issued_at
-
-        # Ensure the local presentation profile exists (idempotent).
-        self._repository.ensure_local_profile(now=checked_now)
-        # Capability evidence is attributed to the running, verified release.
-        self._repository.record_capability_snapshot(
-            snapshot_id=snapshot_id,
-            release_id=self._release_id,
-            profile=profile,
-            report_bytes=report_bytes,
-            report_sha256=report_sha256,
-            evaluated_at=evaluated_at,
-            expires_at=envelope.expires_at,
-        )
-        self._repository.insert_preview_record(
-            preview_id=item.preview_id,
-            profile_id=self._local_profile_id,
-            request_bytes=item.request_bytes,
-            request_sha256=hashlib.sha256(item.request_bytes).hexdigest(),
-            envelope_bytes=item.envelope_bytes,
-            envelope_sha256=hashlib.sha256(item.envelope_bytes).hexdigest(),
-            capability_snapshot_id=snapshot_id,
-            created_at=evaluated_at,
-            expires_at=envelope.expires_at,
-        )
+        self._repository.persist_preview_bundle(
+            item=item, envelope=envelope, release_id=self._release_id,
+            profile_id=self._local_profile_id, now=checked_now)
 
     def get(self, preview_id: str, *, now: datetime) -> StoredPreview | None:
         checked_now = _aware_utc(now)
@@ -124,14 +99,12 @@ class DurablePreviewStore:
         except Exception:
             return None
 
-        candidate = StoredPreview(
-            preview_id=record["preview_id"],
-            request_bytes=request_bytes,
-            envelope_bytes=envelope_bytes,
-            preview_bytes=report_bytes,
-            expires_at=_parse_utc_text(record["expires_at"]),
-        )
         try:
+            candidate = StoredPreview(
+                preview_id=record["preview_id"], request_bytes=request_bytes,
+                envelope_bytes=envelope_bytes, preview_bytes=report_bytes,
+                expires_at=_parse_utc_text(record["expires_at"]),
+            )
             _verify_stored_identity(candidate)
         except Exception:
             # Fail-closed: corrupted or drifted records are indistinguishable

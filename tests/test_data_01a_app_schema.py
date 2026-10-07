@@ -34,7 +34,7 @@ from database.app_migrations import (
     read_app_migrations,
     verify_app_schema,
 )
-from database.app_repository import AppRepository, AppValidationError, CAPABILITY_PROFILES, LOCAL_PROFILE_ID
+from database.app_repository import AppRepository, AppValidationError, CAPABILITY_PROFILES, LOCAL_PROFILE_ID, release_provenance, logical_locator
 from services.app_preview_store import DurablePreviewStore
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,11 +98,12 @@ def resources(tmp_path):
 
 
 @pytest.fixture
-def roots(tmp_path):
+def roots(tmp_path, resources):
     r = WritableRoots(
         data_root=tmp_path / "user-data",
         cache_root=tmp_path / "user-cache",
         state_root=tmp_path / "user-state",
+        installed_release_root=resources.identity.release_root,
     )
     r.ensure_created()
     return r
@@ -118,11 +119,7 @@ def open_repo(resources, roots, *, release_id="test-release"):
 
 
 def record_test_release(repo, now):
-    repo.record_release_manifest(
-        release_id="test-release", source_mode="INSTALLED_RELEASE", source_commit=None,
-        platform="windows", architecture=None, build_id="b", manifest_bytes=None,
-        manifest_byte_sha256=None, trust_mode="t", signature_key_id=None, verified_at=now,
-    )
+    repo.record_release_manifest(**release_provenance(repo.verified_identity, verified_at=now))
 
 
 def make_stored_preview(resources, clock):
@@ -296,8 +293,8 @@ def test_repository_preference_json_round_trip(resources, roots, clock):
     try:
         repo.ensure_local_profile(now=now)
         value = {"mode": "dark", "n": 3, "flag": True, "list": [1, 2]}
-        repo.set_preference(profile_id=LOCAL_PROFILE_ID, preference_key="ui", value=value, updated_at=now)
-        assert repo.get_preference(profile_id=LOCAL_PROFILE_ID, preference_key="ui") == value
+        repo.set_preference(profile_id=LOCAL_PROFILE_ID, preference_key="theme", value=value, updated_at=now)
+        assert repo.get_preference(profile_id=LOCAL_PROFILE_ID, preference_key="theme") == value
     finally:
         repo.close()
 
@@ -305,15 +302,16 @@ def test_repository_preference_json_round_trip(resources, roots, clock):
 def test_repository_fk_restrict_blocks_orphan_delete(resources, roots, clock):
     repo = open_repo(resources, roots)
     now = clock()
-    conn = repo._conn
+    conn = connect_app_store(app_store_path(roots), synchronous="FULL")
     try:
         pid = repo.ensure_local_profile(now=now)
-        repo.set_preference(profile_id=pid, preference_key="k", value=1, updated_at=now)
+        repo.set_preference(profile_id=pid, preference_key="page_size", value=1, updated_at=now)
         conn.execute("BEGIN")
         with pytest.raises(Exception):
             conn.execute("DELETE FROM app_profiles WHERE profile_id = ?", (pid,))
         conn.execute("ROLLBACK")
     finally:
+        conn.close()
         repo.close()
 
 
@@ -479,13 +477,14 @@ def test_durable_preview_store_rejects_corrupted_record(resources, roots, clock)
         store = DurablePreviewStore(repo, release_id="test-release")
         store.put(stored, now=clock())
         # Corrupt a stored byte column: digests no longer agree -> get returns None.
-        conn = repo._conn
+        conn = connect_app_store(app_store_path(roots), synchronous="FULL")
         conn.execute("BEGIN")
         conn.execute(
             "UPDATE app_run_previews SET request_bytes = ? WHERE preview_id = ?",
             (b'{"tampered": true}', stored.preview_id),
         )
         conn.execute("COMMIT")
+        conn.close()
         assert store.get(stored.preview_id, now=clock()) is None
     finally:
         repo.close()
@@ -545,3 +544,264 @@ def test_legacy_migration_is_untouched_and_not_in_app_family():
     paths = [path for _, path in APP_MIGRATIONS]
     assert "database/migrations/0001_app_control_core.sql" in paths
     assert "database/migrations/002_add_elo_columns.sql" not in paths
+
+
+@pytest.mark.parametrize("path", ["../x", "a/../x", "/abs/x", "C:\\x", "C:/x", "//server/share", "a//b", "a/./b", "a\x00b", "a\nb"])
+def test_artifact_locator_rejects_unsafe_forms(path):
+    with pytest.raises(AppValidationError):
+        logical_locator(path)
+    assert logical_locator("artifacts/local/report.json") == "artifacts/local/report.json"
+
+
+@pytest.mark.parametrize("key", ["provider_acquisition", "run_admission_authority", "authority_profile", "create_share_code", "wager", "unknown"])
+def test_preferences_reject_authority_keys(resources, roots, clock, key):
+    with open_repo(resources, roots) as repo:
+        repo.ensure_local_profile(now=clock())
+        with pytest.raises(AppValidationError):
+            repo.set_preference(profile_id=LOCAL_PROFILE_ID, preference_key=key, value=True, updated_at=clock())
+
+
+def test_atomic_preview_failure_rolls_back_both_rows(resources, roots, clock, monkeypatch):
+    _, item = make_stored_preview(resources, clock)
+    with open_repo(resources, roots) as repo:
+        record_test_release(repo, clock())
+        store = DurablePreviewStore(repo, release_id="test-release")
+        def fail():
+            raise RuntimeError("injected between capability and preview")
+        monkeypatch.setattr(repo, "_after_capability_insert", fail)
+        with pytest.raises(RuntimeError):
+            store.put(item, now=clock())
+        conn = connect_app_store(app_store_path(roots), readonly=True)
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM app_capability_snapshots").fetchone() == (0,)
+            assert conn.execute("SELECT COUNT(*) FROM app_run_previews").fetchone() == (0,)
+        finally:
+            conn.close()
+        monkeypatch.setattr(repo, "_after_capability_insert", lambda: None)
+        store.put(item, now=clock())
+        assert store.get(item.preview_id, now=clock()) == item
+
+
+def test_release_manifest_corruption_is_rejected(resources, roots, clock):
+    with open_repo(resources, roots) as repo:
+        record_test_release(repo, clock())
+        conn = connect_app_store(app_store_path(roots), synchronous="FULL")
+        try:
+            conn.execute("UPDATE app_release_manifests SET manifest_bytes = ?", (b"corrupt",))
+        finally:
+            conn.close()
+        with pytest.raises(AppValidationError):
+            record_test_release(repo, clock())
+
+
+def test_preview_source_cannot_persist_under_other_release(resources, roots, clock):
+    _, item = make_stored_preview(resources, clock)
+    with open_repo(resources, roots) as repo:
+        record_test_release(repo, clock())
+        with pytest.raises(AppValidationError):
+            DurablePreviewStore(repo, release_id="different-release").put(item, now=clock())
+        assert repo.fetch_preview_record(item.preview_id) is None
+
+
+def test_migration_evidence_absent_then_existing_backup(resources, roots):
+    from database.app_migration_evidence import verify_retained_manifest, publish
+    store = apply_app_migrations(resources, roots, release_id="test-release")
+    conn = connect_app_store(store, readonly=True)
+    try:
+        digest = conn.execute("SELECT backup_manifest_sha256 FROM app_schema_migrations").fetchone()[0]
+    finally:
+        conn.close()
+    absent = verify_retained_manifest(roots.data_root, digest)
+    assert absent["app_store_state"] == "ABSENT" and absent["backup"] is None
+    assert absent["ownership_inventory"]["roots"][0]["exists"] is False
+    apply_app_migrations(resources, roots, release_id="test-release")
+    manifests = list((roots.data_root / "migration-evidence").glob("*.json"))
+    assert len(manifests) == 2
+    existing = next(verify_retained_manifest(roots.data_root, p.stem) for p in manifests if p.stem != digest)
+    backup = roots.data_root / existing["backup"]["logical_path"]
+    import sqlite3
+    snapshot = sqlite3.connect(backup.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        assert snapshot.execute("SELECT COUNT(*) FROM app_schema_migrations").fetchone() == (1,)
+    finally:
+        snapshot.close()
+    assert str(roots.data_root) not in (roots.data_root / "migration-evidence" / (digest + ".json")).read_text()
+    with pytest.raises(ValueError):
+        publish(roots.data_root, "migration-evidence/" + digest + ".json", b"overwrite")
+
+
+def test_failed_migration_preserves_evidence(resources, roots, monkeypatch):
+    import database.app_migrations as migrations
+    monkeypatch.setattr(migrations, "_statements", lambda sql: ["INVALID SQL"])
+    with pytest.raises(Exception):
+        apply_app_migrations(resources, roots, release_id="test-release")
+    assert list((roots.data_root / "migration-evidence").glob("*.json"))
+
+
+def test_failed_existing_store_migration_preserves_openable_backup(resources, roots, monkeypatch):
+    import sqlite3
+    import database.app_migrations as migrations
+    conn = sqlite3.connect(app_store_path(roots))
+    conn.close()
+    monkeypatch.setattr(migrations, "_statements", lambda sql: ["INVALID SQL"])
+    with pytest.raises(Exception):
+        apply_app_migrations(resources, roots, release_id="test-release")
+    from database.app_migration_evidence import verify_retained_manifest
+    manifest = next((roots.data_root / "migration-evidence").glob("*.json"))
+    value = verify_retained_manifest(roots.data_root, manifest.stem)
+    assert value["app_store_state"] == "EXISTING"
+    backup = roots.data_root / value["backup"]["logical_path"]
+    conn = sqlite3.connect(backup.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    finally:
+        conn.close()
+
+
+def test_evidence_directory_link_escape_fails(resources, roots, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    try:
+        (roots.data_root / "migration-evidence").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation unavailable on this platform")
+    with pytest.raises(ValueError):
+        apply_app_migrations(resources, roots, release_id="test-release")
+    assert list(outside.iterdir()) == []
+    assert not app_store_path(roots).exists()
+
+
+def test_installed_inventory_never_adopts_repository_legacy_db(resources, roots):
+    legacy = resources.identity.release_root.parent / "database" / "athena.db"
+    legacy.parent.mkdir()
+    legacy.write_bytes(b"legacy evidence must remain exact")
+    apply_app_migrations(resources, roots, release_id="test-release")
+    assert legacy.read_bytes() == b"legacy evidence must remain exact"
+    from database.app_migration_evidence import verify_retained_manifest
+    path = next((roots.data_root / "migration-evidence").glob("*.json"))
+    inventory = verify_retained_manifest(roots.data_root, path.stem)["ownership_inventory"]
+    assert len(inventory["roots"]) == 1
+    assert inventory["roots"][0]["owner"] == "APP_CONTROL"
+
+
+def test_verified_development_inventory_preserves_legacy_and_warehouse(tmp_path):
+    import subprocess
+    import sqlite3
+    from runtime.release_identity import verify_development_checkout
+    from database.app_migration_evidence import verify_retained_manifest
+    checkout = tmp_path / "development"
+    checkout.mkdir()
+    for path in ("runtime/source_identity.py", "database/migrations/0001_app_control_core.sql"):
+        target = checkout / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((ROOT / path).read_bytes())
+    (checkout / ".gitignore").write_text("database/*.db\n", encoding="utf-8")
+    def git(*args):
+        return subprocess.run(["git", "-c", "user.name=Moses Oluwasegun",
+                               "-c", "user.email=113853913+Thabearr@users.noreply.github.com", "-C", str(checkout), *args],
+                              check=True, capture_output=True)
+    git("init", "--quiet")
+    git("add", ".")
+    git("commit", "--quiet", "-m", "D3 bounded database inventory fixture")
+    paths = [checkout / "database/athena.db", checkout / "database/athena_history.db"]
+    for path in paths:
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE preserved (value TEXT)")
+        conn.execute("INSERT INTO preserved VALUES ('evidence')")
+        conn.commit()
+        conn.close()
+    before = {p: p.read_bytes() for p in paths}
+    identity = verify_development_checkout(checkout)
+    resolver = ResourceResolver.for_development(identity)
+    roots = WritableRoots(data_root=tmp_path / "data", cache_root=tmp_path / "cache", state_root=tmp_path / "state")
+    apply_app_migrations(resolver, roots, release_id="development-checkout:" + identity.head_commit_sha)
+    manifest = next((roots.data_root / "migration-evidence").glob("*.json"))
+    inventory = verify_retained_manifest(roots.data_root, manifest.stem)["ownership_inventory"]
+    assert {r["owner"] for r in inventory["roots"]} == {"APP_CONTROL", "LEGACY_OPERATIONAL", "HISTORICAL_WAREHOUSE"}
+    assert all(p.read_bytes() == before[p] for p in paths)
+    assert all(not row["migration_write_target"] for row in inventory["roots"][1:])
+
+
+def test_source_a_cannot_persist_under_verified_source_b(resources, roots, clock, tmp_path):
+    import json
+    import shutil
+    _, item = make_stored_preview(resources, clock)
+    root_b = tmp_path / "other-release"
+    shutil.copytree(resources.identity.release_root, root_b)
+    value = json.loads((root_b / "release-manifest.json").read_bytes())
+    value["release_id"] = "release-b"
+    raw = canonical_release_manifest_bytes(value)
+    (root_b / "release-manifest.json").write_bytes(raw)
+    resources_b = ResourceResolver.for_installed(verify_installed_release(root_b, hashlib.sha256(raw).hexdigest()))
+    roots_b = WritableRoots(data_root=roots.data_root, cache_root=roots.cache_root,
+                            state_root=roots.state_root, installed_release_root=root_b)
+    with open_repo(resources_b, roots_b, release_id="release-b") as repo:
+        record_test_release(repo, clock())
+        with pytest.raises(AppValidationError):
+            DurablePreviewStore(repo, release_id="release-b").put(item, now=clock())
+        assert repo.fetch_preview_record(item.preview_id) is None
+
+
+def test_repository_close_is_idempotent_and_rejects_use(resources, roots):
+    repo = open_repo(resources, roots)
+    repo.close()
+    repo.close()
+    with pytest.raises(AppValidationError):
+        repo.get_profile(LOCAL_PROFILE_ID)
+    with open_repo(resources, roots) as restarted:
+        assert restarted.get_profile(LOCAL_PROFILE_ID) is None
+
+
+def test_actual_preview_threadpool_and_concurrent_requests(resources, roots, clock, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import get_ident
+    from fastapi.testclient import TestClient
+    from api.app_factory import create_app
+    from runtime.local_session import LocalSession
+    from services.athena_capability_service import AthenaCapabilityService
+    from services.athena_read_service import AthenaReadService
+    import socket
+    import subprocess
+    actions = []
+    def forbidden(*args, **kwargs):
+        actions.append("network-or-worker")
+        pytest.fail("preview attempted provider/delivery/network/worker work")
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    origin = "http://127.0.0.1:8765"
+    session = LocalSession()
+    owner_thread = get_ident()
+    with open_repo(resources, roots) as repo:
+        record_test_release(repo, clock())
+        observed_threads = []
+        repo._after_capability_insert = lambda: observed_threads.append(get_ident())
+        store = DurablePreviewStore(repo, release_id="test-release")
+        service = AthenaPreviewAdmissionService(resources, preview_store=store, clock=clock)
+        app = create_app(release_identity=resources.identity, resource_resolver=resources,
+                         writable_roots=roots, local_session=session,
+                         capability_service=AthenaCapabilityService(resources, preview_admission_service=service),
+                         preview_admission_service=service, read_service=AthenaReadService.unavailable(), origin=origin)
+        headers = {"Host": "127.0.0.1:8765", "Origin": origin, "X-Athena-Session": session.credential()}
+        body = {"dates": [PREVIEW_DATE], "target_legs": 3, "target_total_odds": None,
+                "bookie": "sportybet", "profile": "main", "acquire_sources": False, "create_share_code": False}
+        with TestClient(app) as client:
+            def preview(_):
+                response = client.post("/api/v1/run-previews", headers=headers, json=body)
+                assert response.status_code == 200, response.text
+                return response.json()
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(preview, range(2)))
+            refused = client.post("/api/v1/runs", headers=headers, json={
+                "preview_id": results[0]["preview_id"],
+                "execution_envelope_sha256": results[0]["execution_envelope_sha256"],
+                "idempotency_key": "d3-must-not-admit",
+            })
+            assert "DURABLE_RUN_STORE_UNAVAILABLE" in refused.text
+            assert refused.status_code != 200
+        assert observed_threads and all(t != owner_thread for t in observed_threads)
+        for result in results:
+            assert store.get(result["preview_id"], now=clock()) is not None
+    with open_repo(resources, roots) as reopened:
+        restarted = DurablePreviewStore(reopened, release_id="test-release")
+        for result in results:
+            assert restarted.get(result["preview_id"], now=clock()) is not None
+    assert actions == []

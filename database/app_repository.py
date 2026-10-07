@@ -16,12 +16,17 @@ delivery, wager, or run authority.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from contextvars import ContextVar
+from functools import wraps
+from pathlib import PurePosixPath
+from threading import Condition
 import hashlib
 import json
 import platform
 import re
 import sqlite3
 import sys
+import unicodedata
 from typing import Any
 
 from domain.run_contracts import canonical_json_bytes
@@ -34,7 +39,9 @@ from database.app_migrations import (
     apply_app_migrations,
     connect_app_store,
     verify_app_schema,
+    read_app_migrations,
 )
+from database.app_migration_evidence import contained
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _UTC_TEXT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3,6}Z")
@@ -44,6 +51,53 @@ FAVORITE_ENTITY_KINDS = ("competition", "market")
 CAPABILITY_PROFILES = ("MAIN", "SHADOW")
 
 LOCAL_PROFILE_ID = "local-default"
+PRESENTATION_PREFERENCES = frozenset({"theme", "display_timezone", "page_size"})
+_OPERATION_CONNECTION = ContextVar("app_repository_operation_connection", default=None)
+
+
+def _operation(*, write=False):
+    """Each public operation owns a thread-local, short-lived verified connection."""
+    def decorate(method):
+        @wraps(method)
+        def run(self, *args, **kwargs):
+            with self._lifecycle:
+                if self._closed:
+                    raise AppValidationError("app repository is closed")
+                self._active += 1
+            conn = None
+            token = None
+            try:
+                contained(self._store_path.parent, self._store_path.name)
+                for suffix in ("-wal", "-shm", "-journal"):
+                    contained(self._store_path.parent, self._store_path.name + suffix)
+                conn = connect_app_store(self._store_path, readonly=not write,
+                                         synchronous="FULL" if write else "NORMAL")
+                verify_app_schema(conn)
+                recorded = conn.execute("SELECT version, migration_sha256 FROM app_schema_migrations ORDER BY version").fetchall()
+                if recorded != self._migration_identities:
+                    raise AppValidationError("migration identity drift")
+                token = _OPERATION_CONNECTION.set(conn)
+                return method(self, *args, **kwargs)
+            finally:
+                if token is not None:
+                    _OPERATION_CONNECTION.reset(token)
+                if conn is not None:
+                    conn.close()
+                with self._lifecycle:
+                    self._active -= 1
+                    self._lifecycle.notify_all()
+        return run
+    return decorate
+
+
+def logical_locator(value):
+    value = _text(value, "logical_path")
+    if (value.startswith("/") or "\\" in value or ":" in value
+            or any(unicodedata.category(c) in {"Cc", "Cf", "Cs"} for c in value)
+            or any(part in {"", ".", ".."} for part in value.split("/"))
+            or PurePosixPath(value).as_posix() != value):
+        raise AppValidationError("logical_path must be a canonical relative POSIX locator")
+    return value
 
 
 class AppValidationError(ValueError):
@@ -109,9 +163,13 @@ def _require_agreement(raw: bytes, expected_sha: str, label: str) -> None:
 class AppRepository:
     """Validated typed persistence for the app-owned store."""
 
-    def __init__(self, conn: sqlite3.Connection, store_path: Any) -> None:
-        self._conn = conn
+    def __init__(self, store_path, migration_identities, verified_identity) -> None:
         self._store_path = store_path
+        self._migration_identities = migration_identities
+        self.verified_identity = verified_identity
+        self._lifecycle = Condition()
+        self._closed = False
+        self._active = 0
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -126,16 +184,16 @@ class AppRepository:
     ) -> "AppRepository":
         """Run app-schema migrations once and open a verified connection."""
         store = apply_app_migrations(resources, writable_roots, release_id=release_id, now=now)
-        conn = connect_app_store(store, synchronous="FULL")
-        # Startup integrity verification: pragma + schema/ledger agreement.
-        verify_app_schema(conn)
-        return cls(conn, store)
+        migrations = read_app_migrations(resources)
+        result = cls(store, [(version, digest) for version, _, _, digest in migrations], resources.identity)
+        result._resources = resources
+        return result
 
     def close(self) -> None:
-        try:
-            self._conn.close()
-        except sqlite3.Error:  # pragma: no cover - best-effort teardown
-            pass
+        with self._lifecycle:
+            self._closed = True
+            while self._active:
+                self._lifecycle.wait()
 
     def __enter__(self) -> "AppRepository":
         return self
@@ -144,15 +202,17 @@ class AppRepository:
         self.close()
 
     def _write(self) -> sqlite3.Connection:
-        self._conn.execute("PRAGMA synchronous = FULL")
-        return self._conn
+        return self._read()
 
     def _read(self) -> sqlite3.Connection:
-        self._conn.execute("PRAGMA synchronous = NORMAL")
-        return self._conn
+        conn = _OPERATION_CONNECTION.get()
+        if conn is None:
+            raise AppValidationError("connection used outside repository operation")
+        return conn
 
     # --- release provenance (truthful) -------------------------------------
 
+    @_operation(write=True)
     def record_release_manifest(
         self,
         *,
@@ -192,7 +252,7 @@ class AppRepository:
         try:
             existing = conn.execute(
                 "SELECT source_mode, source_commit, platform, architecture, build_id, "
-                "manifest_byte_sha256, trust_mode, signature_key_id FROM app_release_manifests "
+                "manifest_byte_sha256, trust_mode, signature_key_id, manifest_bytes FROM app_release_manifests "
                 "WHERE release_id = ?",
                 (release_id,),
             ).fetchone()
@@ -205,8 +265,11 @@ class AppRepository:
                 manifest_byte_sha256,
                 trust_mode,
                 signature_key_id,
+                manifest_bytes,
             )
             if existing is not None:
+                if existing[-1] is not None:
+                    _require_agreement(existing[-1], existing[5], "stored manifest_bytes")
                 if tuple(existing) != row:
                     raise AppValidationError("conflicting release provenance for release_id")
                 conn.execute("COMMIT")
@@ -234,6 +297,7 @@ class AppRepository:
             conn.execute("ROLLBACK")
             raise
 
+    @_operation()
     def get_release_manifest(self, release_id: str) -> dict[str, Any] | None:
         release_id = _text(release_id, "release_id")
         conn = self._read()
@@ -245,10 +309,13 @@ class AppRepository:
         ).fetchone()
         if row is None:
             return None
+        if row[6] is not None:
+            _require_agreement(row[6], row[7], "stored manifest_bytes")
         return _row_to_dict(row, _RELEASE_MANIFEST_COLUMNS)
 
     # --- local presentation profiles ---------------------------------------
 
+    @_operation(write=True)
     def create_profile(self, *, profile_id: str, display_name: str, created_at: datetime) -> None:
         profile_id = _text(profile_id, "profile_id")
         display_name = _text(display_name, "display_name")
@@ -268,6 +335,7 @@ class AppRepository:
             conn.execute("ROLLBACK")
             raise
 
+    @_operation()
     def get_profile(self, profile_id: str) -> dict[str, Any] | None:
         profile_id = _text(profile_id, "profile_id")
         conn = self._read()
@@ -277,17 +345,30 @@ class AppRepository:
         ).fetchone()
         return None if row is None else _row_to_dict(row, _PROFILE_COLUMNS)
 
+    @_operation(write=True)
     def ensure_local_profile(self, *, now: datetime) -> str:
         """Ensure the default local presentation profile exists (idempotent)."""
-        if self.get_profile(LOCAL_PROFILE_ID) is None:
-            self.create_profile(profile_id=LOCAL_PROFILE_ID, display_name="Local", created_at=now)
+        conn = self._write()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("INSERT INTO app_profiles VALUES (?, ?, ?) ON CONFLICT(profile_id) DO NOTHING",
+                         (LOCAL_PROFILE_ID, "Local", _utc(now, "now")))
+            if conn.execute("SELECT display_name FROM app_profiles WHERE profile_id = ?", (LOCAL_PROFILE_ID,)).fetchone() != ("Local",):
+                raise AppValidationError("local profile identity drift")
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
         return LOCAL_PROFILE_ID
 
     # --- preferences (validated JSON round-trip) ---------------------------
 
+    @_operation(write=True)
     def set_preference(self, *, profile_id: str, preference_key: str, value: Any, updated_at: datetime) -> None:
         profile_id = _text(profile_id, "profile_id")
         preference_key = _text(preference_key, "preference_key")
+        if preference_key not in PRESENTATION_PREFERENCES:
+            raise AppValidationError("preference is not presentation-only")
         updated_text = _utc(updated_at, "updated_at")
         value_json = _canonical_json_text(value)
         # Fail-closed round-trip: the canonical text must reproduce the value.
@@ -308,6 +389,7 @@ class AppRepository:
             conn.execute("ROLLBACK")
             raise
 
+    @_operation()
     def get_preference(self, *, profile_id: str, preference_key: str) -> Any | None:
         profile_id = _text(profile_id, "profile_id")
         preference_key = _text(preference_key, "preference_key")
@@ -322,6 +404,7 @@ class AppRepository:
 
     # --- favorites ---------------------------------------------------------
 
+    @_operation(write=True)
     def add_favorite(self, *, profile_id: str, entity_kind: str, entity_identity: str, created_at: datetime) -> None:
         profile_id = _text(profile_id, "profile_id")
         entity_kind = _text(entity_kind, "entity_kind")
@@ -346,6 +429,7 @@ class AppRepository:
             conn.execute("ROLLBACK")
             raise
 
+    @_operation()
     def list_favorites(self, *, profile_id: str) -> list[dict[str, Any]]:
         profile_id = _text(profile_id, "profile_id")
         conn = self._read()
@@ -356,6 +440,7 @@ class AppRepository:
         ).fetchall()
         return [_row_to_dict(row, _FAVORITE_COLUMNS) for row in rows]
 
+    @_operation(write=True)
     def remove_favorite(self, *, profile_id: str, entity_kind: str, entity_identity: str) -> None:
         profile_id = _text(profile_id, "profile_id")
         entity_kind = _text(entity_kind, "entity_kind")
@@ -374,6 +459,7 @@ class AppRepository:
 
     # --- artifacts + edges -------------------------------------------------
 
+    @_operation(write=True)
     def record_artifact(
         self,
         *,
@@ -395,7 +481,7 @@ class AppRepository:
         byte_count = _int(byte_count, "byte_count", minimum=0)
         media_type = _text(media_type, "media_type")
         artifact_kind = _text(artifact_kind, "artifact_kind")
-        logical_path = _text(logical_path, "logical_path")
+        logical_path = logical_locator(logical_path)
         evidence_class = _text(evidence_class, "evidence_class")
         verification_policy_id = _optional_text(verification_policy_id, "verification_policy_id")
         verified_text = None if verified_at is None else _utc(verified_at, "verified_at")
@@ -429,6 +515,7 @@ class AppRepository:
             conn.execute("ROLLBACK")
             raise
 
+    @_operation()
     def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
         artifact_id = _text(artifact_id, "artifact_id")
         conn = self._read()
@@ -440,6 +527,7 @@ class AppRepository:
         ).fetchone()
         return None if row is None else _row_to_dict(row, _ARTIFACT_COLUMNS)
 
+    @_operation(write=True)
     def link_artifact(self, *, parent_artifact_id: str, child_artifact_id: str, relation: str) -> None:
         parent_artifact_id = _text(parent_artifact_id, "parent_artifact_id")
         child_artifact_id = _text(child_artifact_id, "child_artifact_id")
@@ -466,6 +554,7 @@ class AppRepository:
             conn.execute("ROLLBACK")
             raise
 
+    @_operation()
     def get_artifact_edges(self, artifact_id: str) -> list[dict[str, Any]]:
         artifact_id = _text(artifact_id, "artifact_id")
         conn = self._read()
@@ -479,6 +568,7 @@ class AppRepository:
 
     # --- capability snapshots ---------------------------------------------
 
+    @_operation(write=True)
     def record_capability_snapshot(
         self,
         *,
@@ -506,11 +596,11 @@ class AppRepository:
         try:
             self._require_release(conn, release_id)
             existing = conn.execute(
-                "SELECT report_sha256, release_id, profile FROM app_capability_snapshots WHERE snapshot_id = ?",
+                "SELECT report_sha256, release_id, profile, report_bytes, evaluated_at, expires_at FROM app_capability_snapshots WHERE snapshot_id = ?",
                 (snapshot_id,),
             ).fetchone()
             if existing is not None:
-                if tuple(existing) != (report_sha256, release_id, profile):
+                if tuple(existing) != (report_sha256, release_id, profile, report_bytes, evaluated_text, expires_text):
                     raise AppValidationError("conflicting capability snapshot identity")
                 conn.execute("COMMIT")
                 return
@@ -524,6 +614,7 @@ class AppRepository:
             conn.execute("ROLLBACK")
             raise
 
+    @_operation()
     def get_capability_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
         snapshot_id = _text(snapshot_id, "snapshot_id")
         conn = self._read()
@@ -536,6 +627,65 @@ class AppRepository:
 
     # --- run previews (exact bytes) ---------------------------------------
 
+    @_operation(write=True)
+    def persist_preview_bundle(self, *, item, envelope, release_id, profile_id, now):
+        """One transaction for presentation profile, capability and exact D1 bytes."""
+        from services.athena_preview_service import _source_identity
+        if envelope.source_identity != _source_identity(self._resources):
+            raise AppValidationError("preview source differs from verified runtime release")
+        provenance = release_provenance(self.verified_identity, verified_at=now)
+        if release_id != provenance["release_id"]:
+            raise AppValidationError("preview release differs from verified runtime release")
+        profile_id = _text(profile_id, "profile_id")
+        if profile_id != LOCAL_PROFILE_ID:
+            raise AppValidationError("unsupported local presentation profile")
+        profile = envelope.authority_manifest.authority_profile
+        if profile not in CAPABILITY_PROFILES:
+            raise AppValidationError("invalid authority profile")
+        report_sha = _byte_sha(item.preview_bytes, "preview_bytes")
+        snapshot_id = "capability-" + report_sha
+        issued = _utc(envelope.issued_at, "issued_at")
+        expires = _utc(envelope.expires_at, "expires_at")
+        conn = self._write()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute("SELECT " + ", ".join(_RELEASE_MANIFEST_COLUMNS) +
+                               " FROM app_release_manifests WHERE release_id = ?", (release_id,)).fetchone()
+            if row is None:
+                raise AppValidationError("unknown verified release")
+            captured = _row_to_dict(row, _RELEASE_MANIFEST_COLUMNS)
+            if captured["manifest_bytes"] is not None:
+                _require_agreement(captured["manifest_bytes"], captured["manifest_byte_sha256"], "stored manifest_bytes")
+            if any(captured[k] != v for k, v in provenance.items() if k != "verified_at"):
+                raise AppValidationError("stored release provenance differs from verified runtime")
+            conn.execute("INSERT INTO app_profiles VALUES (?, ?, ?) ON CONFLICT(profile_id) DO NOTHING",
+                         (profile_id, "Local", _utc(now, "now")))
+            existing_profile = conn.execute("SELECT display_name FROM app_profiles WHERE profile_id = ?", (profile_id,)).fetchone()
+            if existing_profile != ("Local",):
+                raise AppValidationError("local presentation profile drift")
+            snapshot = (release_id, profile, item.preview_bytes, report_sha, issued, expires)
+            existing = conn.execute("SELECT release_id, profile, report_bytes, report_sha256, evaluated_at, expires_at "
+                                    "FROM app_capability_snapshots WHERE snapshot_id = ?", (snapshot_id,)).fetchone()
+            if existing is not None and tuple(existing) != snapshot:
+                raise AppValidationError("conflicting capability snapshot identity")
+            if existing is None:
+                conn.execute("INSERT INTO app_capability_snapshots VALUES (?, ?, ?, ?, ?, ?, ?)",
+                             (snapshot_id, *snapshot))
+            self._after_capability_insert()
+            if conn.execute("SELECT 1 FROM app_run_previews WHERE preview_id = ?", (item.preview_id,)).fetchone():
+                raise AppValidationError("preview ID collision")
+            conn.execute("INSERT INTO app_run_previews VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (item.preview_id, profile_id, item.request_bytes, hashlib.sha256(item.request_bytes).hexdigest(),
+                          item.envelope_bytes, hashlib.sha256(item.envelope_bytes).hexdigest(), snapshot_id, issued, expires))
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+    def _after_capability_insert(self):
+        """Internal failure-injection seam; no provider/executor/delivery work."""
+
+    @_operation(write=True)
     def insert_preview_record(
         self,
         *,
@@ -596,6 +746,7 @@ class AppRepository:
             conn.execute("ROLLBACK")
             raise
 
+    @_operation()
     def fetch_preview_record(self, preview_id: str) -> dict[str, Any] | None:
         preview_id = _text(preview_id, "preview_id")
         conn = self._read()
@@ -727,7 +878,7 @@ def release_provenance(identity: Any, *, verified_at: datetime) -> dict[str, Any
         }
     if type(identity) is DevelopmentCheckoutIdentity:
         return {
-            "release_id": identity.head_commit_sha,
+            "release_id": "development-checkout:" + identity.head_commit_sha,
             "source_mode": "DEVELOPMENT_CHECKOUT",
             "source_commit": identity.head_commit_sha,
             "platform": _running_platform_tag(),

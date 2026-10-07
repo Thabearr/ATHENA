@@ -327,6 +327,9 @@ def test_capabilities_reverify_contract_and_never_use_weights(control, resources
 
 def test_owned_ephemeral_listener_offline(resources, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(run_desktop, "resolve_writable_roots", lambda *args, **kwargs: WritableRoots(
+        data_root=tmp_path / "data", cache_root=tmp_path / "cache", state_root=tmp_path / "state",
+        installed_release_root=resources.identity.release_root))
     original = socket.socket.connect
     calls = []
     def permitted(self, address):

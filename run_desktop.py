@@ -173,6 +173,8 @@ class LocalBackend:
         if self.thread.is_alive():
             self.thread.join(timeout=10)
         self.listener.close()
+        if self.app_repository is not None:
+            self.app_repository.close()
         if self.thread.is_alive():
             raise DesktopLaunchError("local backend did not stop")
 

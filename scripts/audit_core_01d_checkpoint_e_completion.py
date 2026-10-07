@@ -104,6 +104,7 @@ APP01C_BOUNDED_PATHS = {
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v64.json",
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v65.json",
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v66.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v67.json",
     "tests/test_api_error_handling.py",
     "tests/test_app_01a_local_shell.py",
     "tests/test_app_01b_preview_admission.py",
