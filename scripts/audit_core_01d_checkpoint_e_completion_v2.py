@@ -34,6 +34,7 @@ APP01C_ADDITIVE_PATHS={
  'tests/test_app_01a_local_shell.py',
  'tests/test_app_01b_preview_admission.py',
  'tests/test_core_01d_ci_offline_transport_inventory_evolution.py',
+ 'tests/test_core_01d_frozen_artifact_replay_authority_b5.py',
  'tests/test_core_01d_port02c_trigger_authority_b6.py',
  'tests/test_product_baseline_v1.py',
 }

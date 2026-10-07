@@ -257,7 +257,7 @@ def test_current_product_release_support_and_no_caller_or_retirement_are_preserv
 
 def test_a2_generation_v8_is_immutable_prefix_and_b6_python_remains_in_latest_inventory():
     chain = boundary.load_inventory_generations()
-    assert [path for path, _ in chain] == [boundary.inventory_generation_path(i) for i in range(1, 38)]
+    assert [path for path, _ in chain] == [boundary.inventory_generation_path(i) for i in range(1, 42)]
     for generation in range(1, 8):
         path = boundary.inventory_generation_path(generation)
         current_bytes = (b6.ROOT / path).read_bytes()
@@ -280,12 +280,20 @@ def test_a2_generation_v8_is_immutable_prefix_and_b6_python_remains_in_latest_in
     assert v35["canonical_sha256"] == "446460f116aec411284d69c65394435c9996052e9e611ae84f873d111387c4cd"
     v36 = boundary.read_generation(boundary.inventory_generation_path(36))
     assert v36["canonical_sha256"] == "04be46014ba688351f88a5fdb2b58d29455f24de6a1d0ca5a51a24c9763e1224"
+    v37 = boundary.read_generation(boundary.inventory_generation_path(37))
+    assert v37["canonical_sha256"] == "33ed379bb8941fbfd1672fcb2d69543c5970a17471ccde3de4d85293f822b79e"
+    v38 = boundary.read_generation(boundary.inventory_generation_path(38))
+    assert v38["canonical_sha256"] == "c0169b031d7451b0182a42416cf84a97687bbda47004b41c5ce5c2f022882e88"
+    v39 = boundary.read_generation(boundary.inventory_generation_path(39))
+    assert v39["canonical_sha256"] == "2b0f6b305f9ce77b75f1a08fc35ecc3b4cf5b952aff2a8b0b4cd701621a3f75c"
+    v40 = boundary.read_generation(boundary.inventory_generation_path(40))
+    assert v40["canonical_sha256"] == "64bbe0f42d0874442a39d9e35f77a100d5da17ecbc1538b25c5e4a38405e56bb"
     latest = boundary.authenticate_inventory()
-    assert latest["generation"] == 37
+    assert latest["generation"] == 41
     assert latest["predecessor_inventory"] == {
-        "path": boundary.inventory_generation_path(36),
-        "canonical_sha256": v36["canonical_sha256"],
-        "generation": 36,
+        "path": boundary.inventory_generation_path(40),
+        "canonical_sha256": v40["canonical_sha256"],
+        "generation": 40,
         "rewritten": False,
     }
     paths = {row["path"] for row in latest["source_identities"]}
