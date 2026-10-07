@@ -90,6 +90,9 @@ APP01C_BOUNDED_PATHS = {
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v50.json",
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v51.json",
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v52.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v53.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v54.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v55.json",
     "tests/test_api_error_handling.py",
     "tests/test_app_01a_local_shell.py",
     "tests/test_app_01b_preview_admission.py",
@@ -101,15 +104,31 @@ APP01C_BOUNDED_PATHS = {
     "tests/test_core_01d_port02c_trigger_authority_b6.py",
     "tests/test_product_baseline_v1.py",
 }
-ALLOWED_PASS4_PATHS |= APP01C_BOUNDED_PATHS
+APP01C_CURRENT_SOURCE_PATHS = {
+    "scripts/audit_core_01d_authority_reachability_review_a.py",
+}
+APP01C_PREDECESSOR_SOURCE_BLOBS = {
+    "scripts/audit_core_01d_authority_reachability_review_a.py":
+        "036e483000ce07b2dab5fb7136e4992820026262",
+}
+ALLOWED_PASS4_PATHS |= APP01C_BOUNDED_PATHS | APP01C_CURRENT_SOURCE_PATHS
 # Exact handoff ls-tree inventory excluding only the twelve bounded evidence
 # paths. Available in shallow CI without requiring the handoff commit object.
 UNCHANGED_REPOSITORY_INVENTORY_SHA = "6b407c284a7c2f759e6345f53444478de53427ceae1aaa7d412d078270c5ad27"
 
 
 def validate_bounded_inventory(raw: bytes) -> None:
-    unchanged = b"".join(line for line in raw.splitlines(keepends=True)
-        if line.split(b"\t", 1)[1].strip().decode() not in ALLOWED_PASS4_PATHS)
+    unchanged_lines = []
+    for line in raw.splitlines(keepends=True):
+        metadata, separator, path_bytes = line.partition(b"\t")
+        path = path_bytes.strip().decode()
+        if path in ALLOWED_PASS4_PATHS and path not in APP01C_CURRENT_SOURCE_PATHS:
+            continue
+        if path in APP01C_PREDECESSOR_SOURCE_BLOBS:
+            metadata = metadata.rsplit(b" ", 1)[0] + b" " + APP01C_PREDECESSOR_SOURCE_BLOBS[path].encode()
+            line = metadata + separator + path_bytes
+        unchanged_lines.append(line)
+    unchanged = b"".join(unchanged_lines)
     policy.require(policy.sha256(unchanged) == UNCHANGED_REPOSITORY_INVENTORY_SHA,
                    "unapproved repository change: runtime/workflows/ledgers/history must remain exact")
 

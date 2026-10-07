@@ -27,6 +27,7 @@ APP01C_ADDITIVE_PATHS={
  'scripts/audit_core_01d_checkpoint_e_completion.py',
  'scripts/audit_checkpoint_e_workflows.py',
  'scripts/audit_core_01d_checkpoint_e_completion_v2.py',
+ 'scripts/audit_core_01d_authority_reachability_review_a.py',
  'api/app_factory.py',
  'api/schemas.py',
  'api/server.py',

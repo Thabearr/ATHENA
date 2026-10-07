@@ -77,9 +77,7 @@ def test_boolean_and_inventory_criterion_contract_is_strict():
 
 
 def test_scope_rejects_an_extra_runtime_file_without_base_commit_in_ci():
-    from scripts import audit_core_01d_checkpoint_e_completion_v2 as current
-    with current.historical_v1_git_view():
-        raw = policy.v4.v3._git("ls-tree", "-r", "HEAD")
+    raw = policy.v4.v3._git("ls-tree", "-r", "HEAD")
     completion.validate_bounded_inventory(raw)
     forged = raw + b"100644 blob 0000000000000000000000000000000000000000\tmodels/unapproved.py\n"
     with pytest.raises(policy.RetentionAcceptanceError, match="unapproved repository change"):

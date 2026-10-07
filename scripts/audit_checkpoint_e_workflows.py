@@ -519,6 +519,14 @@ def base_input():
                 },
                 "Pass-1 supporting source differs from its V2 authenticated identity: " + path,
             )
+        elif path in PASS_A_HISTORICAL_SOURCE_BLOBS:
+            require(
+                current.get(path) == {
+                    "mode": identity["mode"],
+                    "git_blob_sha1": PASS_A_HISTORICAL_SOURCE_BLOBS[path],
+                },
+                "Pass-A source differs from its exact D1 predecessor identity: " + path,
+            )
         else:
             require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
     # Git can be clean while the working tree has edits. Verify inspected source
