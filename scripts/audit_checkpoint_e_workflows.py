@@ -389,6 +389,8 @@ def verified_additive_artifact_paths():
             "Completion V10 final authority closure failed authentication")
     from scripts import audit_app_01a_local_shell as app01a
     app01a.authenticated_historical_paths()
+    from scripts import audit_data_01a_app_schema_core as data01a
+    data01a.authenticate()
     return (
         MATRIX_PATH,
         RECEIPT_PATH,
@@ -429,6 +431,7 @@ def verified_additive_artifact_paths():
         completion_v10.RECEIPT_PATH,
         a2.inventory_generation_path(9),
         app01a.RECEIPT,
+        data01a.RECEIPT,
     )
 
 
