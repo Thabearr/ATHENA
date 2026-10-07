@@ -7,6 +7,7 @@ from domain.component_authority_registry import ComponentAuthorityRegistry
 
 from runtime.release_identity import DevelopmentCheckoutIdentity, InstalledReleaseIdentity
 from runtime.resources import ResourceResolver
+from services.athena_preview_service import AthenaPreviewAdmissionService
 
 
 CONTRACT_PATH = "config/architecture/component-authority-registry-v1.json"
@@ -24,10 +25,13 @@ def release_summary(identity):
 
 
 class AthenaCapabilityService:
-    def __init__(self, resources: ResourceResolver):
-        if type(resources) is not ResourceResolver:
-            raise ValueError("verified resource resolver required")
+    def __init__(self, resources: ResourceResolver, *, preview_admission_service: AthenaPreviewAdmissionService):
+        if (type(resources) is not ResourceResolver
+                or type(preview_admission_service) is not AthenaPreviewAdmissionService
+                or preview_admission_service.resources is not resources):
+            raise ValueError("verified capability dependencies required")
         self.resources = resources
+        self.preview_admission_service = preview_admission_service
 
     def snapshot(self):
         raw = self.resources.read_bytes(CONTRACT_PATH, expected_role="AUTHORITY_REGISTRY")
@@ -35,10 +39,15 @@ class AthenaCapabilityService:
         reference = hashlib.sha256(raw).hexdigest()
         # Parsing a verified registry proves local contract availability only.
         # It grants no execution/provider authority and no model qualification.
+        preview_available = self.preview_admission_service.preview_source_available()
         rows = [
             ("local_contract_inspection", "available" if contract.records else "unavailable_unproven",
              "Verified authority records: " + str(len(contract.records)) + ". This is local inspection only."),
-            ("run_preview", "blocked_implementation", "APP-01B admission is not implemented by this shell."),
+            ("run_preview", "available" if preview_available else "unavailable_unproven",
+             "Preview is local read-only computation and grants no execution authority." if preview_available
+             else "The verified source identity is currently unavailable for local preview."),
+            ("run_admission", "blocked_implementation",
+             "Durable app run storage and the later job service are not implemented by this shell."),
             ("provider_acquisition", "blocked_authority", "This local control plane has no acquisition authority."),
             ("market_model_readiness", "unavailable_unproven", "No current model or market qualification is supplied."),
             ("legacy_provider_api", "retained_compatibility", "Retained development routes are outside this shell."),

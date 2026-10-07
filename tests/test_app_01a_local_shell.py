@@ -18,6 +18,7 @@ from runtime.local_session import LocalSession, LocalSessionError
 from runtime.release_identity import canonical_release_manifest_bytes, verify_installed_release
 from runtime.resources import ResourceResolver, WritableRoots
 from services.athena_capability_service import AthenaCapabilityService
+from services.athena_preview_service import AthenaPreviewAdmissionService
 from run_desktop import LocalBackend, DesktopLaunchError, bootstrap_script, verify_health
 import run_desktop
 
@@ -59,8 +60,12 @@ def writable_roots(resources, tmp_path):
 @pytest.fixture
 def control(resources, writable_roots):
     session = LocalSession()
+    preview_admission_service = AthenaPreviewAdmissionService(resources)
     app = create_app(release_identity=resources.identity, resource_resolver=resources, local_session=session,
-                     writable_roots=writable_roots, capability_service=AthenaCapabilityService(resources),
+                     writable_roots=writable_roots,
+                     capability_service=AthenaCapabilityService(
+                         resources, preview_admission_service=preview_admission_service),
+                     preview_admission_service=preview_admission_service,
                      origin="http://127.0.0.1:12345")
     client = TestClient(app, base_url="http://127.0.0.1:12345")
     return client, app, session
@@ -185,6 +190,7 @@ def test_stale_challenge_release_and_restart(control, resources):
 
 def test_resource_corruption_fails_closed(resources):
     (resources.identity.release_root / "ui/app.js").write_bytes(b"corrupt")
+    preview_admission_service = AthenaPreviewAdmissionService(resources)
     with pytest.raises(AppFactoryError, match="resources"):
         create_app(release_identity=resources.identity, resource_resolver=resources, local_session=LocalSession(),
                    writable_roots=WritableRoots(
@@ -192,10 +198,14 @@ def test_resource_corruption_fails_closed(resources):
                        cache_root=resources.identity.release_root.parent / "user-cache",
                        state_root=resources.identity.release_root.parent / "user-state",
                        installed_release_root=resources.identity.release_root,
-                   ), capability_service=AthenaCapabilityService(resources), origin="http://127.0.0.1:12345")
+                   ), capability_service=AthenaCapabilityService(
+                       resources, preview_admission_service=preview_admission_service),
+                   preview_admission_service=preview_admission_service,
+                   origin="http://127.0.0.1:12345")
 
 
 def test_invalid_dependencies_fail_closed(resources):
+    preview_admission_service = AthenaPreviewAdmissionService(resources)
     kwargs = dict(release_identity=resources.identity, resource_resolver=resources, local_session=LocalSession(),
                   writable_roots=WritableRoots(
                       data_root=resources.identity.release_root.parent / "user-data",
@@ -203,7 +213,10 @@ def test_invalid_dependencies_fail_closed(resources):
                       state_root=resources.identity.release_root.parent / "user-state",
                       installed_release_root=resources.identity.release_root,
                   ),
-                  capability_service=AthenaCapabilityService(resources), origin="http://127.0.0.1:12345")
+                  capability_service=AthenaCapabilityService(
+                      resources, preview_admission_service=preview_admission_service),
+                  preview_admission_service=preview_admission_service,
+                  origin="http://127.0.0.1:12345")
     for field, value in (("release_identity", object()), ("resource_resolver", object()),
                          ("writable_roots", object()),
                          ("local_session", object()), ("capability_service", object()),
@@ -213,8 +226,11 @@ def test_invalid_dependencies_fail_closed(resources):
 
 
 def test_factory_requires_explicit_data_root_and_rejects_resource_overlap(resources, writable_roots):
+    preview_admission_service = AthenaPreviewAdmissionService(resources)
     kwargs = dict(release_identity=resources.identity, resource_resolver=resources,
-                  local_session=LocalSession(), capability_service=AthenaCapabilityService(resources),
+                  local_session=LocalSession(), capability_service=AthenaCapabilityService(
+                      resources, preview_admission_service=preview_admission_service),
+                  preview_admission_service=preview_admission_service,
                   origin="http://127.0.0.1:12345")
     with pytest.raises(TypeError):
         create_app(**kwargs)
@@ -239,9 +255,13 @@ def test_factory_keeps_explicit_data_root_independent_of_cwd(resources, writable
     other_cwd = tmp_path / "unrelated-working-directory"
     other_cwd.mkdir()
     monkeypatch.chdir(ROOT)
+    preview_admission_service = AthenaPreviewAdmissionService(resources)
     app = create_app(release_identity=resources.identity, resource_resolver=resources,
                      writable_roots=writable_roots, local_session=LocalSession(),
-                     capability_service=AthenaCapabilityService(resources), origin="http://127.0.0.1:12345")
+                     capability_service=AthenaCapabilityService(
+                         resources, preview_admission_service=preview_admission_service),
+                     preview_admission_service=preview_admission_service,
+                     origin="http://127.0.0.1:12345")
     monkeypatch.chdir(other_cwd)
     assert app.state.writable_roots.data_root == writable_roots.data_root
     assert app.state.writable_roots.data_root not in (ROOT, other_cwd)
@@ -376,6 +396,7 @@ def test_shutdown_failure_does_not_report_smoke_success(monkeypatch):
 
 
 def test_missing_ui_and_unsupported_platform_fail_closed(resources, monkeypatch):
+    preview_admission_service = AthenaPreviewAdmissionService(resources)
     kwargs = dict(release_identity=resources.identity, resource_resolver=resources, local_session=LocalSession(),
                   writable_roots=WritableRoots(
                       data_root=resources.identity.release_root.parent / "user-data",
@@ -383,7 +404,10 @@ def test_missing_ui_and_unsupported_platform_fail_closed(resources, monkeypatch)
                       state_root=resources.identity.release_root.parent / "user-state",
                       installed_release_root=resources.identity.release_root,
                   ),
-                  capability_service=AthenaCapabilityService(resources), origin="http://127.0.0.1:12345")
+                  capability_service=AthenaCapabilityService(
+                      resources, preview_admission_service=preview_admission_service),
+                  preview_admission_service=preview_admission_service,
+                  origin="http://127.0.0.1:12345")
     with monkeypatch.context() as change:
         change.setattr(sys, "platform", "darwin")
         with pytest.raises(AppFactoryError, match="unsupported"):

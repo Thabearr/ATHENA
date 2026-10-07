@@ -27,20 +27,12 @@ from domain.run_contracts import (
 
 EXECUTION_ENVELOPE_SCHEMA_VERSION = 2
 EXECUTION_ENVELOPE_POLICY_ID = "ATHENA_EXECUTION_ENVELOPE_V2"
-EXECUTION_ENVELOPE_V3_SCHEMA_VERSION = 3
-EXECUTION_ENVELOPE_V3_POLICY_ID = "ATHENA_EXECUTION_ENVELOPE_V3"
 EXECUTION_ENVELOPE_CONTRACT = "ExecutionEnvelope"
 EXECUTION_PREVIEW_SCHEMA_VERSION = 2
 EXECUTION_PREVIEW_POLICY_ID = "ATHENA_EXECUTION_PREVIEW_V2"
-EXECUTION_PREVIEW_V3_SCHEMA_VERSION = 3
-EXECUTION_PREVIEW_V3_POLICY_ID = "ATHENA_EXECUTION_PREVIEW_V3"
 EXECUTION_PREVIEW_CONTRACT = "ExecutionPreview"
 REQUESTED_OPERATION_INTENT_CONTRACT = "RequestedOperationIntent"
 SOURCE_RELEASE_IDENTITY_CONTRACT = "SourceReleaseIdentity"
-SOURCE_RELEASE_IDENTITY_V3_SCHEMA_VERSION = 3
-SOURCE_RELEASE_IDENTITY_V3_POLICY_ID = "ATHENA_SOURCE_RELEASE_IDENTITY_V3"
-PINNED_RELEASE_MANIFEST_POLICY_ID = "ATHENA_INSTALLED_RELEASE_MANIFEST_V1"
-PINNED_RELEASE_MANIFEST_TRUST_MODE = "TRUSTED_MANIFEST_SHA256_V1"
 ADMISSION_BLOCKER_CONTRACT = "AdmissionBlocker"
 
 DATE_RESOLUTION_POLICY_ID = "ATHENA_REQUEST_DATE_RESOLUTION_LAGOS_V1"
@@ -49,9 +41,7 @@ PREVIEW_CLOCK_POLICY_ID = "ATHENA_INJECTED_PREVIEW_CLOCK_V1"
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.ASCII)
-_RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$", re.ASCII)
-_SOURCE_KINDS_V2 = frozenset({"GIT_COMMIT", "SIGNED_RELEASE"})
-_SOURCE_KINDS_V3 = _SOURCE_KINDS_V2 | {"PINNED_RELEASE_MANIFEST"}
+_SOURCE_KINDS = frozenset({"GIT_COMMIT", "SIGNED_RELEASE"})
 _OPERATIONS = ("ACQUIRE_SOURCES", "CREATE_SHARE_CODE")
 _OPERATION_CAPABILITIES = {
     "ACQUIRE_SOURCES": "provider_acquisition",
@@ -175,147 +165,39 @@ class RequestedOperationIntent:
 
 @dataclass(frozen=True)
 class SourceReleaseIdentity:
-    """Typed source identity with byte-stable V2 and truthful V3 release pins.
-
-    V2 intentionally keeps its original three-field serialization and only
-    accepts its original identity kinds. V3 adds a distinct pinned-manifest
-    identity for installed releases whose manifest is trusted out of band;
-    that pin is not a signing claim.
-    """
+    """Typed source identity that supports Git now and signed releases later."""
 
     kind: str
     value: str
-    schema_version: int = 2
-    manifest_sha256: str | None = None
-    release_id: str | None = None
-    build_id: str | None = None
-    platform_tag: str | None = None
-    architecture_tag: str | None = None
-    manifest_policy_id: str | None = None
-    manifest_schema_version: int | None = None
-    trust_mode: str | None = None
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not int or self.schema_version not in {2, 3}:
-            raise ExecutionEnvelopeError("source identity schema version is unsupported")
-        allowed = _SOURCE_KINDS_V2 if self.schema_version == 2 else _SOURCE_KINDS_V3
-        if type(self.kind) is not str or self.kind not in allowed:
+        if type(self.kind) is not str or self.kind not in _SOURCE_KINDS:
             raise ExecutionEnvelopeError("source identity kind is unknown")
         value = _exact_text(self.value, "source identity value")
         if not value.isascii() or not value.isprintable():
             raise ExecutionEnvelopeError("source identity value must be printable ASCII")
         if self.kind == "GIT_COMMIT" and _GIT_SHA_RE.fullmatch(value) is None:
             raise ExecutionEnvelopeError("GIT_COMMIT source identity must be lowercase 40-hex SHA")
-        release_fields = (
-            self.manifest_sha256,
-            self.release_id,
-            self.build_id,
-            self.platform_tag,
-            self.architecture_tag,
-            self.manifest_policy_id,
-            self.manifest_schema_version,
-            self.trust_mode,
-        )
-        if self.schema_version == 2:
-            if any(item is not None for item in release_fields):
-                raise ExecutionEnvelopeError("V2 source identity fields drifted")
-            return
-        if self.kind != "PINNED_RELEASE_MANIFEST":
-            if any(item is not None for item in release_fields):
-                raise ExecutionEnvelopeError("non-manifest V3 source identity fields drifted")
-            return
-        if (
-            type(self.manifest_sha256) is not str
-            or _SHA256_RE.fullmatch(self.manifest_sha256) is None
-            or value != self.manifest_sha256
-        ):
-            raise ExecutionEnvelopeError("pinned manifest identity must bind its exact SHA-256")
-        for label, item in (
-            ("release_id", self.release_id),
-            ("build_id", self.build_id),
-            ("platform_tag", self.platform_tag),
-            ("architecture_tag", self.architecture_tag),
-            ("manifest_policy_id", self.manifest_policy_id),
-            ("trust_mode", self.trust_mode),
-        ):
-            checked = _exact_text(item, label)
-            if not checked.isascii() or not _RELEASE_ID_RE.fullmatch(checked):
-                raise ExecutionEnvelopeError(f"{label} must be bounded safe ASCII identity text")
-        if type(self.manifest_schema_version) is not int or self.manifest_schema_version < 1:
-            raise ExecutionEnvelopeError("manifest schema version must be positive exact integer")
-        if (
-            self.manifest_schema_version != 1
-            or self.manifest_policy_id != PINNED_RELEASE_MANIFEST_POLICY_ID
-            or self.trust_mode != PINNED_RELEASE_MANIFEST_TRUST_MODE
-            or self.platform_tag not in {"linux", "windows"}
-            or self.architecture_tag not in {"x86_64", "aarch64"}
-        ):
-            raise ExecutionEnvelopeError("pinned release manifest identity policy drifted")
 
-    def to_dict(self) -> dict[str, Any]:
-        if self.schema_version == 2:
-            return {
-                "contract": SOURCE_RELEASE_IDENTITY_CONTRACT,
-                "kind": self.kind,
-                "value": self.value,
-            }
+    def to_dict(self) -> dict[str, str]:
         return {
-            "schema_version": SOURCE_RELEASE_IDENTITY_V3_SCHEMA_VERSION,
-            "policy_id": SOURCE_RELEASE_IDENTITY_V3_POLICY_ID,
             "contract": SOURCE_RELEASE_IDENTITY_CONTRACT,
             "kind": self.kind,
             "value": self.value,
-            "manifest_sha256": self.manifest_sha256,
-            "release_id": self.release_id,
-            "build_id": self.build_id,
-            "platform_tag": self.platform_tag,
-            "architecture_tag": self.architecture_tag,
-            "manifest_policy_id": self.manifest_policy_id,
-            "manifest_schema_version": self.manifest_schema_version,
-            "trust_mode": self.trust_mode,
         }
 
     @classmethod
     def from_dict(cls, value: Any) -> "SourceReleaseIdentity":
-        if type(value) is not dict:
+        if type(value) is not dict or set(value) != {"contract", "kind", "value"}:
             raise ExecutionEnvelopeError("SourceReleaseIdentity fields drifted")
-        if set(value) == {"contract", "kind", "value"}:
-            if value["contract"] != SOURCE_RELEASE_IDENTITY_CONTRACT:
-                raise ExecutionEnvelopeError("SourceReleaseIdentity contract identity drifted")
-            return cls(kind=value["kind"], value=value["value"])
-        required_v3 = {
-            "schema_version", "policy_id", "contract", "kind", "value",
-            "manifest_sha256", "release_id", "build_id", "platform_tag",
-            "architecture_tag", "manifest_policy_id", "manifest_schema_version",
-            "trust_mode",
-        }
-        if set(value) != required_v3:
-            raise ExecutionEnvelopeError("SourceReleaseIdentity fields drifted")
-        if (
-            type(value["schema_version"]) is not int
-            or value["schema_version"] != SOURCE_RELEASE_IDENTITY_V3_SCHEMA_VERSION
-            or value["policy_id"] != SOURCE_RELEASE_IDENTITY_V3_POLICY_ID
-            or value["contract"] != SOURCE_RELEASE_IDENTITY_CONTRACT
-        ):
-            raise ExecutionEnvelopeError("SourceReleaseIdentity V3 identity drifted")
-        return cls(
-            kind=value["kind"],
-            value=value["value"],
-            schema_version=SOURCE_RELEASE_IDENTITY_V3_SCHEMA_VERSION,
-            manifest_sha256=value["manifest_sha256"],
-            release_id=value["release_id"],
-            build_id=value["build_id"],
-            platform_tag=value["platform_tag"],
-            architecture_tag=value["architecture_tag"],
-            manifest_policy_id=value["manifest_policy_id"],
-            manifest_schema_version=value["manifest_schema_version"],
-            trust_mode=value["trust_mode"],
-        )
+        if value["contract"] != SOURCE_RELEASE_IDENTITY_CONTRACT:
+            raise ExecutionEnvelopeError("SourceReleaseIdentity contract identity drifted")
+        return cls(kind=value["kind"], value=value["value"])
 
 
 @dataclass(frozen=True)
 class ExecutionEnvelope:
-    """Immutable versioned admission contract binding exact V1 request bytes."""
+    """Immutable V2 admission contract binding exact V1 request bytes."""
 
     request_bytes: bytes
     request_sha256: str
@@ -331,14 +213,8 @@ class ExecutionEnvelope:
     source_identity: SourceReleaseIdentity
     issued_at: datetime
     expires_at: datetime
-    schema_version: int = EXECUTION_ENVELOPE_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not int or self.schema_version not in {
-            EXECUTION_ENVELOPE_SCHEMA_VERSION,
-            EXECUTION_ENVELOPE_V3_SCHEMA_VERSION,
-        }:
-            raise ExecutionEnvelopeError("ExecutionEnvelope schema version drifted")
         if type(self.request_bytes) is not bytes:
             raise ExecutionEnvelopeError("request_bytes must be exact bytes")
         try:
@@ -385,8 +261,6 @@ class ExecutionEnvelope:
             raise ExecutionEnvelopeError("preview clock policy identity drifted")
         if type(self.source_identity) is not SourceReleaseIdentity:
             raise ExecutionEnvelopeError("source_identity must be exact SourceReleaseIdentity")
-        if self.source_identity.schema_version != self.schema_version:
-            raise ExecutionEnvelopeError("source identity schema version does not match envelope")
         clock_observed_at = _exact_datetime(self.clock_observed_at, "clock_observed_at")
         issued_at = _exact_datetime(self.issued_at, "issued_at")
         expires_at = _exact_datetime(self.expires_at, "expires_at")
@@ -403,14 +277,9 @@ class ExecutionEnvelope:
         return RunRequest.from_json_bytes(self.request_bytes)
 
     def to_dict(self) -> dict[str, Any]:
-        policy_id = (
-            EXECUTION_ENVELOPE_POLICY_ID
-            if self.schema_version == EXECUTION_ENVELOPE_SCHEMA_VERSION
-            else EXECUTION_ENVELOPE_V3_POLICY_ID
-        )
         return {
-            "schema_version": self.schema_version,
-            "policy_id": policy_id,
+            "schema_version": EXECUTION_ENVELOPE_SCHEMA_VERSION,
+            "policy_id": EXECUTION_ENVELOPE_POLICY_ID,
             "contract": EXECUTION_ENVELOPE_CONTRACT,
             "request_bytes_base64": base64.b64encode(self.request_bytes).decode("ascii"),
             "request_sha256": self.request_sha256,
@@ -450,7 +319,6 @@ class ExecutionEnvelope:
         clock_observed_at: datetime,
         issued_at: datetime,
         expires_at: datetime,
-        schema_version: int = EXECUTION_ENVELOPE_SCHEMA_VERSION,
     ) -> "ExecutionEnvelope":
         try:
             request = RunRequest.from_json_bytes(request_bytes)
@@ -471,7 +339,6 @@ class ExecutionEnvelope:
             source_identity=source_identity,
             issued_at=issued_at,
             expires_at=expires_at,
-            schema_version=schema_version,
         )
 
     @classmethod
@@ -485,19 +352,10 @@ class ExecutionEnvelope:
         }
         if type(value) is not dict or set(value) != required:
             raise ExecutionEnvelopeError("ExecutionEnvelope fields drifted")
-        schema_version = value["schema_version"]
-        if type(schema_version) is not int or schema_version not in {
-            EXECUTION_ENVELOPE_SCHEMA_VERSION,
-            EXECUTION_ENVELOPE_V3_SCHEMA_VERSION,
-        }:
+        if type(value["schema_version"]) is not int or value["schema_version"] != EXECUTION_ENVELOPE_SCHEMA_VERSION:
             raise ExecutionEnvelopeError("ExecutionEnvelope schema version drifted")
-        expected_policy = (
-            EXECUTION_ENVELOPE_POLICY_ID
-            if schema_version == EXECUTION_ENVELOPE_SCHEMA_VERSION
-            else EXECUTION_ENVELOPE_V3_POLICY_ID
-        )
-        if value["policy_id"] != expected_policy or value["contract"] != EXECUTION_ENVELOPE_CONTRACT:
-            raise ExecutionEnvelopeError("ExecutionEnvelope schema version/policy identity drifted")
+        if value["policy_id"] != EXECUTION_ENVELOPE_POLICY_ID or value["contract"] != EXECUTION_ENVELOPE_CONTRACT:
+            raise ExecutionEnvelopeError("ExecutionEnvelope policy/contract identity drifted")
         encoded = value["request_bytes_base64"]
         if type(encoded) is not str:
             raise ExecutionEnvelopeError("request_bytes_base64 must be exact text")
@@ -515,9 +373,6 @@ class ExecutionEnvelope:
             manifest = AuthorityManifest.from_dict(value["authority_manifest"])
         except RunContractError as exc:
             raise ExecutionEnvelopeError("authority_manifest is invalid") from exc
-        source_identity = SourceReleaseIdentity.from_dict(value["source_identity"])
-        if source_identity.schema_version != schema_version:
-            raise ExecutionEnvelopeError("source identity schema version does not match envelope")
         return cls(
             request_bytes=request_bytes,
             request_sha256=value["request_sha256"],
@@ -530,10 +385,9 @@ class ExecutionEnvelope:
             date_resolution_timezone_id=value["date_resolution_timezone_id"],
             clock_policy_id=value["clock_policy_id"],
             clock_observed_at=_parse_timestamp(value["clock_observed_at"], "clock_observed_at"),
-            source_identity=source_identity,
+            source_identity=SourceReleaseIdentity.from_dict(value["source_identity"]),
             issued_at=_parse_timestamp(value["issued_at"], "issued_at"),
             expires_at=_parse_timestamp(value["expires_at"], "expires_at"),
-            schema_version=schema_version,
         )
 
     @classmethod
@@ -595,14 +449,8 @@ class ExecutionPreview:
     blockers: tuple[AdmissionBlocker, ...]
     source_identity: SourceReleaseIdentity
     expires_at: datetime
-    schema_version: int = EXECUTION_PREVIEW_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not int or self.schema_version not in {
-            EXECUTION_PREVIEW_SCHEMA_VERSION,
-            EXECUTION_PREVIEW_V3_SCHEMA_VERSION,
-        }:
-            raise ExecutionEnvelopeError("ExecutionPreview schema version drifted")
         _exact_sha256(self.execution_envelope_sha256, "execution_envelope_sha256")
         _exact_sha256(self.request_sha256, "request_sha256")
         if type(self.requested_operations) is not RequestedOperationIntent:
@@ -614,8 +462,6 @@ class ExecutionPreview:
             raise ExecutionEnvelopeError("preview capability identity SHA-256 mismatch")
         if type(self.source_identity) is not SourceReleaseIdentity:
             raise ExecutionEnvelopeError("preview source_identity must be exact SourceReleaseIdentity")
-        if self.source_identity.schema_version != self.schema_version:
-            raise ExecutionEnvelopeError("preview source identity schema version does not match preview")
         if type(self.allowed_operations) is not tuple or type(self.denied_operations) is not tuple:
             raise ExecutionEnvelopeError("preview operation decisions must be exact tuples")
         if type(self.blockers) is not tuple or any(type(item) is not AdmissionBlocker for item in self.blockers):
@@ -630,14 +476,9 @@ class ExecutionPreview:
         object.__setattr__(self, "expires_at", _exact_datetime(self.expires_at, "expires_at"))
 
     def to_dict(self) -> dict[str, Any]:
-        policy_id = (
-            EXECUTION_PREVIEW_POLICY_ID
-            if self.schema_version == EXECUTION_PREVIEW_SCHEMA_VERSION
-            else EXECUTION_PREVIEW_V3_POLICY_ID
-        )
         return {
-            "schema_version": self.schema_version,
-            "policy_id": policy_id,
+            "schema_version": EXECUTION_PREVIEW_SCHEMA_VERSION,
+            "policy_id": EXECUTION_PREVIEW_POLICY_ID,
             "contract": EXECUTION_PREVIEW_CONTRACT,
             "execution_envelope_sha256": self.execution_envelope_sha256,
             "request_sha256": self.request_sha256,
@@ -669,19 +510,10 @@ class ExecutionPreview:
         }
         if type(value) is not dict or set(value) != required:
             raise ExecutionEnvelopeError("ExecutionPreview fields drifted")
-        schema_version = value["schema_version"]
-        if type(schema_version) is not int or schema_version not in {
-            EXECUTION_PREVIEW_SCHEMA_VERSION,
-            EXECUTION_PREVIEW_V3_SCHEMA_VERSION,
-        }:
+        if type(value["schema_version"]) is not int or value["schema_version"] != EXECUTION_PREVIEW_SCHEMA_VERSION:
             raise ExecutionEnvelopeError("ExecutionPreview schema version drifted")
-        expected_policy = (
-            EXECUTION_PREVIEW_POLICY_ID
-            if schema_version == EXECUTION_PREVIEW_SCHEMA_VERSION
-            else EXECUTION_PREVIEW_V3_POLICY_ID
-        )
-        if value["policy_id"] != expected_policy or value["contract"] != EXECUTION_PREVIEW_CONTRACT:
-            raise ExecutionEnvelopeError("ExecutionPreview schema version/policy identity drifted")
+        if value["policy_id"] != EXECUTION_PREVIEW_POLICY_ID or value["contract"] != EXECUTION_PREVIEW_CONTRACT:
+            raise ExecutionEnvelopeError("ExecutionPreview policy/contract identity drifted")
         if type(value["authority_manifest"]) is not dict:
             raise ExecutionEnvelopeError("preview authority_manifest must be a JSON object")
         try:
@@ -690,9 +522,6 @@ class ExecutionPreview:
             raise ExecutionEnvelopeError("preview authority_manifest is invalid") from exc
         if type(value["allowed_operations"]) is not list or type(value["denied_operations"]) is not list or type(value["blockers"]) is not list:
             raise ExecutionEnvelopeError("preview decision fields must be JSON lists")
-        source_identity = SourceReleaseIdentity.from_dict(value["source_identity"])
-        if source_identity.schema_version != schema_version:
-            raise ExecutionEnvelopeError("preview source identity schema version does not match preview")
         return cls(
             execution_envelope_sha256=value["execution_envelope_sha256"],
             request_sha256=value["request_sha256"],
@@ -702,9 +531,8 @@ class ExecutionPreview:
             allowed_operations=tuple(value["allowed_operations"]),
             denied_operations=tuple(value["denied_operations"]),
             blockers=tuple(AdmissionBlocker.from_dict(item) for item in value["blockers"]),
-            source_identity=source_identity,
+            source_identity=SourceReleaseIdentity.from_dict(value["source_identity"]),
             expires_at=_parse_timestamp(value["expires_at"], "expires_at"),
-            schema_version=schema_version,
         )
 
     @classmethod
@@ -761,7 +589,6 @@ def evaluate_execution_envelope(envelope: ExecutionEnvelope) -> ExecutionPreview
         blockers=blockers,
         source_identity=envelope.source_identity,
         expires_at=envelope.expires_at,
-        schema_version=envelope.schema_version,
     )
 
 
@@ -771,22 +598,14 @@ __all__ = [
     "EXECUTION_ENVELOPE_CONTRACT",
     "EXECUTION_ENVELOPE_POLICY_ID",
     "EXECUTION_ENVELOPE_SCHEMA_VERSION",
-    "EXECUTION_ENVELOPE_V3_POLICY_ID",
-    "EXECUTION_ENVELOPE_V3_SCHEMA_VERSION",
     "EXECUTION_PREVIEW_CONTRACT",
     "EXECUTION_PREVIEW_POLICY_ID",
     "EXECUTION_PREVIEW_SCHEMA_VERSION",
-    "EXECUTION_PREVIEW_V3_POLICY_ID",
-    "EXECUTION_PREVIEW_V3_SCHEMA_VERSION",
     "ExecutionEnvelope",
     "ExecutionEnvelopeError",
     "ExecutionPreview",
     "PREVIEW_CLOCK_POLICY_ID",
-    "PINNED_RELEASE_MANIFEST_POLICY_ID",
-    "PINNED_RELEASE_MANIFEST_TRUST_MODE",
     "RequestedOperationIntent",
     "SourceReleaseIdentity",
-    "SOURCE_RELEASE_IDENTITY_V3_POLICY_ID",
-    "SOURCE_RELEASE_IDENTITY_V3_SCHEMA_VERSION",
     "evaluate_execution_envelope",
 ]

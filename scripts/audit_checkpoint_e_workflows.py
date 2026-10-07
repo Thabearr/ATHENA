@@ -133,6 +133,11 @@ PASS1_V1_BASE_SOURCE_FIXTURES = {
         "ac77ec10776758b0a5209cbc227d8f50eb511d8e",
         "baabb01e1361139952b50f03df19b5f72cd78edc7d85b5795eba60fdef2dc438",
     ),
+    "tests/test_core_01_schedule_date_disposition.py": (
+        "tests/fixtures/core_01d/pass1-v1-source/test-core-01-schedule-date-disposition.py.txt",
+        "f658773457d6a46bbd25f6b2a5636fff019b0043",
+        "aa0ed975266cd905c956de2aa951828194ae4387a3cce45f2cdaa7dcab3f83b9",
+    ),
 }
 BASE_PATH = "tests/fixtures/core_01d/exact-main-source-inventory.json"
 HISTORY_PATH = "tests/fixtures/core_01d/workflow-history-20261001.json"
@@ -149,6 +154,13 @@ HISTORY_INPUT_SHA = "66ef6267af033a6e907aebe16ae44c20a15d9a4c5425960aa1da2003c89
 CANONICAL = ".github/workflows/athena-run.yml"
 SHADOW = ".github/workflows/current-shadow-all-market.yml"
 ALLOWED_STATUS = {"CANONICAL_SUPPORTED", "EXPLICIT_RETAINED_COMPATIBILITY", "DIAGNOSTIC_ONLY", "HISTORICAL_ONLY", "UNKNOWN"}
+PASS_A_HISTORICAL_SOURCE_BLOBS = {
+    # D1 adds versioned identities/source projection support. Historical Pass-A
+    # reconstruction continues to inspect each exact pre-D1 source blob.
+    "domain/execution_envelope.py": "8f0a84db708fef11fabb857b21b1322cb5b5a36e",
+    "scripts/audit_core_01_schedule_date_disposition.py": "6f8d453cee00a13865c984b9a80880678b4fd84c",
+    "tests/test_core_01_schedule_date_disposition.py": "f658773457d6a46bbd25f6b2a5636fff019b0043",
+}
 
 
 def require(value, message):
@@ -237,6 +249,9 @@ def git_inventory():
             result[path]["git_blob_sha1"] = successor["base_identities"][path]["git_blob_sha1"]
         else:
             result.pop(path, None)
+    for path, blob in PASS_A_HISTORICAL_SOURCE_BLOBS.items():
+        require(path in result, "Pass-A historical source missing: " + path)
+        result[path]["git_blob_sha1"] = blob
     from scripts.core_01d_historical_source import identities
     for path, entry in identities().items():
         result[path]["git_blob_sha1"] = entry["git_blob_sha1"]
@@ -496,6 +511,8 @@ def base_input():
     for path, actual in zip(value["scan_paths"], hashed):
         if path in app01a.PATHS and path in successor["base_identities"]:
             actual = successor["base_identities"][path]["git_blob_sha1"]
+        if path in PASS_A_HISTORICAL_SOURCE_BLOBS:
+            actual = PASS_A_HISTORICAL_SOURCE_BLOBS[path]
         if path in a2.HISTORICAL_TEST_BLOBS:
             actual = a2.HISTORICAL_TEST_BLOBS[path]
         from scripts.core_01d_historical_source import identities
