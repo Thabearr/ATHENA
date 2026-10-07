@@ -134,7 +134,14 @@ def authenticated_historical_paths():
     from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
     boundary.authenticate_inventory()
     document = validate()
-    return set(PATHS) | {RECEIPT, INVENTORY} | HISTORICAL_A2_INVENTORY_PATHS, document
+    from scripts import audit_data_01a_app_schema_core as data01a
+    data01a.historical_build_config()
+    document = dict(document)
+    document["base_identities"] = dict(document["base_identities"])
+    document["base_identities"][data01a.BUILD_CONFIG] = {
+        "git_blob_sha1": data01a.BUILD_CONFIG_BLOB, "sha256": data01a.BUILD_CONFIG_SHA256,
+    }
+    return set(PATHS) | {RECEIPT, INVENTORY, data01a.BUILD_CONFIG} | HISTORICAL_A2_INVENTORY_PATHS | data01a.NEW_PATHS, document
 
 
 def historical_runtime_payload(path):

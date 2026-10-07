@@ -540,7 +540,7 @@ def test_port_02c_allowlist_stages_app_migration():
 
 def test_legacy_migration_is_untouched_and_not_in_app_family():
     legacy = (ROOT / "database/migrations/002_add_elo_columns.sql").read_bytes()
-    assert hashlib.sha256(legacy).hexdigest() == "PLACEHOLDER" or True  # byte source exists
+    assert hashlib.sha256(legacy.replace(b"\r\n", b"\n")).hexdigest() == "07470e07648698be11f0d3067e0f7cc72f6ca0540f9e7ec1472b9702f057c759"
     from database.app_migrations import APP_MIGRATIONS
     paths = [path for _, path in APP_MIGRATIONS]
     assert "database/migrations/0001_app_control_core.sql" in paths

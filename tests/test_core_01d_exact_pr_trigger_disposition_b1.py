@@ -198,6 +198,11 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
     latest_paths = {row["path"] for row in latest["source_identities"]}
     added = latest_paths - v2_paths
     assert added == {
+        "database/app_migrations.py",
+        "database/app_repository.py",
+        "services/app_preview_store.py",
+        "tests/test_data_01a_app_schema.py",
+        "scripts/audit_data_01a_app_schema_core.py",
         "api/app_factory.py",
         "runtime/local_session.py",
         "services/athena_capability_service.py",
