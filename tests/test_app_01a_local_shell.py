@@ -19,6 +19,7 @@ from runtime.release_identity import canonical_release_manifest_bytes, verify_in
 from runtime.resources import ResourceResolver, WritableRoots
 from services.athena_capability_service import AthenaCapabilityService
 from services.athena_preview_service import AthenaPreviewAdmissionService
+from services.athena_read_service import AthenaReadService
 from run_desktop import LocalBackend, DesktopLaunchError, bootstrap_script, verify_health
 import run_desktop
 
@@ -66,6 +67,7 @@ def control(resources, writable_roots):
                      capability_service=AthenaCapabilityService(
                          resources, preview_admission_service=preview_admission_service),
                      preview_admission_service=preview_admission_service,
+                     read_service=AthenaReadService.unavailable(),
                      origin="http://127.0.0.1:12345")
     client = TestClient(app, base_url="http://127.0.0.1:12345")
     return client, app, session
@@ -123,7 +125,8 @@ def test_health_and_capabilities_offline(control, resources, writable_roots, mon
     assert capabilities.status_code == 200
     assert capabilities.json()["run_admission_authority"] is False
     assert {r["state"] for r in capabilities.json()["capabilities"]} == {
-        "available", "blocked_authority", "blocked_implementation", "unavailable_unproven", "retained_compatibility"}
+        "available", "blocked_authority", "blocked_implementation", "unavailable_unproven",
+        "retained_compatibility", "deprecated_blocked"}
     assert not any("CORS" in str(m.cls) for m in app.user_middleware)
     assert client.get("/api/generate", headers=headers(session)).status_code == 404
     assert client.get("/").content == (ROOT / "ui/index.html").read_bytes()
@@ -201,6 +204,7 @@ def test_resource_corruption_fails_closed(resources):
                    ), capability_service=AthenaCapabilityService(
                        resources, preview_admission_service=preview_admission_service),
                    preview_admission_service=preview_admission_service,
+                   read_service=AthenaReadService.unavailable(),
                    origin="http://127.0.0.1:12345")
 
 
@@ -216,10 +220,12 @@ def test_invalid_dependencies_fail_closed(resources):
                   capability_service=AthenaCapabilityService(
                       resources, preview_admission_service=preview_admission_service),
                   preview_admission_service=preview_admission_service,
+                  read_service=AthenaReadService.unavailable(),
                   origin="http://127.0.0.1:12345")
     for field, value in (("release_identity", object()), ("resource_resolver", object()),
                          ("writable_roots", object()),
                          ("local_session", object()), ("capability_service", object()),
+                         ("read_service", object()),
                          ("origin", "http://localhost:12345"), ("origin", "http://127.0.0.1:99999")):
         with pytest.raises(AppFactoryError):
             create_app(**{**kwargs, field: value})
@@ -231,6 +237,7 @@ def test_factory_requires_explicit_data_root_and_rejects_resource_overlap(resour
                   local_session=LocalSession(), capability_service=AthenaCapabilityService(
                       resources, preview_admission_service=preview_admission_service),
                   preview_admission_service=preview_admission_service,
+                  read_service=AthenaReadService.unavailable(),
                   origin="http://127.0.0.1:12345")
     with pytest.raises(TypeError):
         create_app(**kwargs)
@@ -261,6 +268,7 @@ def test_factory_keeps_explicit_data_root_independent_of_cwd(resources, writable
                      capability_service=AthenaCapabilityService(
                          resources, preview_admission_service=preview_admission_service),
                      preview_admission_service=preview_admission_service,
+                     read_service=AthenaReadService.unavailable(),
                      origin="http://127.0.0.1:12345")
     monkeypatch.chdir(other_cwd)
     assert app.state.writable_roots.data_root == writable_roots.data_root
@@ -407,6 +415,7 @@ def test_missing_ui_and_unsupported_platform_fail_closed(resources, monkeypatch)
                   capability_service=AthenaCapabilityService(
                       resources, preview_admission_service=preview_admission_service),
                   preview_admission_service=preview_admission_service,
+                  read_service=AthenaReadService.unavailable(),
                   origin="http://127.0.0.1:12345")
     with monkeypatch.context() as change:
         change.setattr(sys, "platform", "darwin")

@@ -162,14 +162,72 @@ def test_completion_v3_and_a2_evidence_are_byte_identical_to_the_bridge_base():
 # --- D. current latest inventory -------------------------------------------
 def test_latest_generation_is_a_full_reviewed_copy_of_the_current_corpus():
     latest = boundary.authenticate_inventory()
-    assert latest.get("generation") == 30
+    assert latest.get("generation") == 65
+    v34 = boundary.read_generation(boundary.inventory_generation_path(34))
+    assert v34["canonical_sha256"] == "7f432dc51e6ceb18becacfee06593fe33bbefc85d0417109896068e5d7d090b2"
+    v35 = boundary.read_generation(boundary.inventory_generation_path(35))
+    assert v35["canonical_sha256"] == "446460f116aec411284d69c65394435c9996052e9e611ae84f873d111387c4cd"
+    v36 = boundary.read_generation(boundary.inventory_generation_path(36))
+    assert v36["canonical_sha256"] == "04be46014ba688351f88a5fdb2b58d29455f24de6a1d0ca5a51a24c9763e1224"
+    v37 = boundary.read_generation(boundary.inventory_generation_path(37))
+    assert v37["canonical_sha256"] == "33ed379bb8941fbfd1672fcb2d69543c5970a17471ccde3de4d85293f822b79e"
+    v38 = boundary.read_generation(boundary.inventory_generation_path(38))
+    assert v38["canonical_sha256"] == "c0169b031d7451b0182a42416cf84a97687bbda47004b41c5ce5c2f022882e88"
+    v39 = boundary.read_generation(boundary.inventory_generation_path(39))
+    assert v39["canonical_sha256"] == "2b0f6b305f9ce77b75f1a08fc35ecc3b4cf5b952aff2a8b0b4cd701621a3f75c"
+    v40 = boundary.read_generation(boundary.inventory_generation_path(40))
+    assert v40["canonical_sha256"] == "64bbe0f42d0874442a39d9e35f77a100d5da17ecbc1538b25c5e4a38405e56bb"
+    v41 = boundary.read_generation(boundary.inventory_generation_path(41))
+    assert v41["canonical_sha256"] == "13d9db97b050184621ed34427e787272ce222f6263e66d3d232a0a2148b62335"
+    v42 = boundary.read_generation(boundary.inventory_generation_path(42))
+    assert v42["canonical_sha256"] == "4b7b7cd3dbedc6226c12fb3bca9d957e2b03061d7f7bf75e39a360579c829edc"
+    v45 = boundary.read_generation(boundary.inventory_generation_path(45))
+    assert v45["canonical_sha256"] == "242ff9e70f605c0031d3513262bdc2ed7553fee0f071efb33915976478ccb9ba"
+    v46 = boundary.read_generation(boundary.inventory_generation_path(46))
+    assert v46["canonical_sha256"] == "dd6dd1c658710933ebc5ff50894b5b4cf61091b2b57dc0694b87c9d2a6ded6d3"
+    v52 = boundary.read_generation(boundary.inventory_generation_path(52))
+    assert v52["canonical_sha256"] == "750e91414820516ba415568f3c8b333a931dd530e4e870eecea15a26b32754e5"
+    v53 = boundary.read_generation(boundary.inventory_generation_path(53))
+    assert v53["canonical_sha256"] == "eaf220400e02235c21520dde63f3aff0702d7b2020b41ababf5f30da60ac4cba"
+    v54 = boundary.read_generation(boundary.inventory_generation_path(54))
+    assert v54["canonical_sha256"] == "274d5329d0e7a9c27e61c646802a9e33a6290fee61389baaa18d3d3df4b31834"
+    v55 = boundary.read_generation(boundary.inventory_generation_path(55))
+    assert v55["canonical_sha256"] == "17ceeadef00a1452f521070daea73daf32dcdaebbdbfe350a326f51f7509290c"
+    v56 = boundary.read_generation(boundary.inventory_generation_path(56))
+    assert v56["canonical_sha256"] == "35cab4d4ee0e2d6df0ccaec418ff4dcbdb70b7f76c96cadbff291fcc6ccfdbf9"
+    v57 = boundary.read_generation(boundary.inventory_generation_path(57))
+    assert v57["canonical_sha256"] == "86a35f7944ffff156799e93380247306fb0611643affc09005bfc42482150f9b"
+    v58 = boundary.read_generation(boundary.inventory_generation_path(58))
+    assert v58["canonical_sha256"] == "c9ef73c1fa97aec6b861ae459ad0d750f4e208cdc1e252181478e14766fefe0e"
+    v59 = boundary.read_generation(boundary.inventory_generation_path(59))
+    assert v59["canonical_sha256"] == "6cebe65f03ca905885e5c45196ddc48a7972b348b6cf2607374bf5c1b05542d0"
+    v60 = boundary.read_generation(boundary.inventory_generation_path(60))
+    assert v60["canonical_sha256"] == "3bd5912d6c6ccbab80e5872e71dac379beefa7f7395239091f81e9c263e5bed7"
+    v61 = boundary.read_generation(boundary.inventory_generation_path(61))
+    assert v61["canonical_sha256"] == "34766452cb5f5efb7b236dceb07d54dfadb64f2ee4ea22f0be2cec71a52f267c"
+    v63 = boundary.read_generation(boundary.inventory_generation_path(63))
+    assert v63["canonical_sha256"] == "67b8bef15691f0e3124ff0610be42c3d68bef3d149c22a22fe9054546066de8a"
+    v64 = boundary.read_generation(boundary.inventory_generation_path(64))
+    assert v64["canonical_sha256"] == "e0b1441a053ba7b51bc0d228e553234f6a6002dc73bfc405a124f9c4834802d8"
     assert latest == boundary.build_inventory()
     assert latest["predecessor_inventory"] == {
-        "path": boundary.inventory_generation_path(29),
-        "canonical_sha256": "9ef0aa423204ccab1090a7059e821de4cf0e8cf1ad531040ce60c448d140f2a2",
-        "generation": 29,
+        "path": boundary.inventory_generation_path(64),
+        "canonical_sha256": v64["canonical_sha256"],
+        "generation": 64,
         "rewritten": False,
     }
+    assert boundary.read_generation(boundary.inventory_generation_path(30))["canonical_sha256"] == (
+        "bd4ea91731b2819911051cea90d09cff880194022082e5bb7c3637409cdba4d0"
+    )
+    assert boundary.read_generation(boundary.inventory_generation_path(31))["canonical_sha256"] == (
+        "92048f7c721369f409cb7ef7e09ae437e626458d2baf59738299f3db722dbdc8"
+    )
+    assert boundary.read_generation(boundary.inventory_generation_path(32))["canonical_sha256"] == (
+        "b7421f255527285c70e671d34c029bc00a98d3e29ef0415633e8e4c990cdc0b0"
+    )
+    assert boundary.read_generation(boundary.inventory_generation_path(33))["canonical_sha256"] == (
+        "366222cfe37299fa49365aa8566f8b60d3c401ecc0fde5535298d76304a0d7c8"
+    )
     assert latest["bridge_base_main_sha"] == boundary.BRIDGE_BASE_MAIN
     assert latest["historical_a2_reviewed_head"] == boundary.A2_REVIEWED_HEAD
     current_paths = {row["path"] for row in latest["source_identities"]}
@@ -302,8 +360,8 @@ def test_no_environment_switch_selects_or_skips_a_generation(monkeypatch):
     for name in ("ATHENA_CORE_01D_INVENTORY_GENERATION", "ATHENA_CORE_01D_INVENTORY_DIRECTORY",
                  "CORE_01D_SKIP_INVENTORY", "ATHENA_SKIP_SOURCE_REVIEW"):
         monkeypatch.setenv(name, "1")
-    assert boundary.discover_inventory_generations()[-1][0] == 30
-    assert boundary.authenticate_inventory()["generation"] == 30
+    assert boundary.discover_inventory_generations()[-1][0] == 65
+    assert boundary.authenticate_inventory()["generation"] == 65
     scratch = boundary.ROOT / "tests" / "test_core_01d_unreviewed_scratch_probe.py"
     assert not scratch.exists()
     scratch.write_bytes(SCRATCH_SOURCE)
@@ -391,7 +449,7 @@ def test_depth1_checkout_proves_historical_evidence_from_pinned_identities(monke
     assert boundary.authenticate_historical_v1()["canonical_sha256"] == V1_CANONICAL_SHA256
     assert boundary.authenticate_historical_activation_and_no_bypass() is True
     assert boundary.read(boundary.RECEIPT_PATH) == boundary.build_receipt()
-    assert boundary.authenticate_inventory()["generation"] == 30
+    assert boundary.authenticate_inventory()["generation"] == 65
     # The fallback reads pinned A2 identities rather than current worktree
     # bytes: this bridge changed sitecustomize.py, so those differ from A2.
     pinned = boundary.historical_source("sitecustomize.py")["lf_source_sha256"]
@@ -444,8 +502,8 @@ def test_bridge_receipt_declares_additive_zero_reclassification_state():
 # --- chain discovery itself -------------------------------------------------
 def test_generation_discovery_is_contiguous_and_not_lexicographic():
     generations = [generation for generation, _ in boundary.discover_inventory_generations()]
-    assert generations == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
-    assert _current_chain()[-1][0] == boundary.inventory_generation_path(30)
+    assert generations == list(range(1, 66))
+    assert _current_chain()[-1][0] == boundary.inventory_generation_path(65)
     assert boundary.read(boundary.INVENTORY_V2_PATH)["predecessor_inventory"]["generation"] == 1
     assert boundary.read(boundary.inventory_generation_path(3))["predecessor_inventory"] == {
         "path": boundary.INVENTORY_V2_PATH,
@@ -611,10 +669,10 @@ def test_app01a_v18_preserves_v17_and_binds_current_receipt_inventory():
         "rewritten": False,
     }
     latest = boundary.authenticate_inventory()
-    assert latest["generation"] == 30
+    assert latest["generation"] == 65
     assert latest["predecessor_inventory"] == {
-        "path": boundary.inventory_generation_path(29),
-        "canonical_sha256": "9ef0aa423204ccab1090a7059e821de4cf0e8cf1ad531040ce60c448d140f2a2",
-        "generation": 29,
+        "path": boundary.inventory_generation_path(64),
+        "canonical_sha256": "e0b1441a053ba7b51bc0d228e553234f6a6002dc73bfc405a124f9c4834802d8",
+        "generation": 64,
         "rewritten": False,
     }

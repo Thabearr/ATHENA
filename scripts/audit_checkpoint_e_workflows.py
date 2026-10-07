@@ -7,6 +7,7 @@ CI. No provider module, GitHub transport, executor or real SMTP is invoked.
 from __future__ import annotations
 
 import argparse
+import base64
 from datetime import datetime
 import hashlib
 import json
@@ -160,6 +161,25 @@ PASS_A_HISTORICAL_SOURCE_BLOBS = {
     "domain/execution_envelope.py": "8f0a84db708fef11fabb857b21b1322cb5b5a36e",
     "scripts/audit_core_01_schedule_date_disposition.py": "6f8d453cee00a13865c984b9a80880678b4fd84c",
     "tests/test_core_01_schedule_date_disposition.py": "f658773457d6a46bbd25f6b2a5636fff019b0043",
+    # D2 changes current sources that existed in the D1 main tree. Their
+    # pre-D2 bytes remain in dedicated fixtures while the current versions are
+    # authenticated first by the append-only A2 source inventory.
+    "api/server.py": "1e8d3b8968a37eed78741e018fa4da057578223c",
+    "run_desktop.py": "39c4cf8c780eb2831b637a69ff0648b6eb465874",
+    "tests/test_api_error_handling.py": "a827e02b95779ca0478ffa74db34e41de1e04b42",
+    "tests/test_product_baseline_v1.py": "2d552f49cf84462bd1b32e86eea2a96ee0570b64",
+}
+PASS_A_BASE_SOURCE_BLOBS = {
+    "api/server.py": "21c9aa432aaccd8db041778a26365f12f6af80de",
+    "run_desktop.py": "3495618a198ccde18cad7d578362b1366e4bcedc",
+    "tests/test_api_error_handling.py": "a827e02b95779ca0478ffa74db34e41de1e04b42",
+    "tests/test_product_baseline_v1.py": "2d552f49cf84462bd1b32e86eea2a96ee0570b64",
+}
+PASS_A_HISTORICAL_SOURCE_FIXTURES = {
+    "api/server.py": "tests/fixtures/core_01d/app_01c_historical/api_server.py.b64",
+    "run_desktop.py": "tests/fixtures/core_01d/app_01c_historical/run_desktop.py.txt",
+    "tests/test_api_error_handling.py": "tests/fixtures/core_01d/app_01c_historical/test_api_error_handling.py.txt",
+    "tests/test_product_baseline_v1.py": "tests/fixtures/core_01d/app_01c_historical/test_product_baseline_v1.py.txt",
 }
 
 
@@ -187,6 +207,17 @@ def seal(value):
 
 
 def read(path):
+    if path in PASS_A_HISTORICAL_SOURCE_FIXTURES:
+        fixture = PASS_A_HISTORICAL_SOURCE_FIXTURES[path]
+        raw = (ROOT / fixture).read_bytes()
+        if fixture.endswith(".b64"):
+            raw = base64.b64decode(raw.strip(), validate=True)
+        else:
+            raw = raw.replace(b"\r\n", b"\n")
+        blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+        require(blob == PASS_A_HISTORICAL_SOURCE_BLOBS[path],
+                "pinned D2 predecessor source fixture drift: " + path)
+        return raw
     from scripts import audit_app_01a_local_shell as app01a
     if path in app01a.HISTORICAL_RUNTIME_PATHS:
         return app01a.historical_runtime_payload(path)
@@ -494,6 +525,14 @@ def base_input():
                 },
                 "Pass-1 supporting source differs from its V2 authenticated identity: " + path,
             )
+        elif path in PASS_A_HISTORICAL_SOURCE_FIXTURES:
+            require(
+                identity == {
+                    "mode": "100644",
+                    "git_blob_sha1": PASS_A_BASE_SOURCE_BLOBS[path],
+                },
+                "Pass-A base inventory differs from its exact V1 source identity: " + path,
+            )
         else:
             require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
     # Git can be clean while the working tree has edits. Verify inspected source
@@ -523,6 +562,7 @@ def base_input():
             audit_after if path == HISTORICAL_AUDIT
             else fresh_workflow_after_blob if path == fresh_workflow_path and fresh_workflow_after_blob
             else supporting_source_blobs[path] if path in supporting_source_blobs
+            else PASS_A_HISTORICAL_SOURCE_BLOBS[path] if path in PASS_A_HISTORICAL_SOURCE_FIXTURES
             else value["files"][path]["git_blob_sha1"]
         )
         require(actual == expected_blob, f"worktree source differs: {path}")

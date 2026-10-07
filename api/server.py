@@ -4,23 +4,16 @@ import time
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from fastapi import FastAPI, APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
 # Retained development API only. The trusted shell uses api.app_factory.
 # Provider implementations and legacy routers are imported only on explicit use.
 router = APIRouter()
-
-
-def AccaBuilder():
-    from services.legacy_acca_builder_compat import AccaBuilder
-    return AccaBuilder()
 
 
 def FotMobAdvancedScraper():
     from workers.fotmob_advanced_scraper import FotMobAdvancedScraper
     return FotMobAdvancedScraper()
 
-
-from typing import Optional
 
 _CACHE_TTL_SECONDS = 300
 _fixtures_cache = {}
@@ -37,12 +30,6 @@ def _get_cached_fixtures(days: int):
     matches = scraper.fetch_upcoming_matches(days_ahead=days)
     _fixtures_cache[cache_key] = {"timestamp": now, "data": matches}
     return matches
-
-class GenerateRequest(BaseModel):
-    days: int = 1
-    folds: int = 20
-    league: Optional[str] = None
-    strict: bool = True
 
 @router.get("/api/status")
 def get_status():
@@ -72,23 +59,14 @@ def get_upcoming_fixtures(days: int = Query(1, ge=1, le=14)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/api/generate")
-def generate_acca(req: GenerateRequest):
-    """Generate an accumulator using the ATHENA pipeline."""
-    try:
-        builder = AccaBuilder()
-        acca = builder.build(
-            days=req.days,
-            fold_size=req.folds,
-            strict=req.strict,
-            league=req.league
-        )
-        if not acca.get("success"):
-            raise HTTPException(status_code=400, detail=acca.get("error", "Generation failed"))
-        return acca
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def generate_acca():
+    """Quarantine the retained synchronous generation URL without execution."""
+    return JSONResponse(
+        {"code": "LEGACY_GENERATE_BLOCKED",
+         "message": "Synchronous legacy generation is unsupported. Use the versioned run preview and admission contract.",
+         "replacement": "/api/v1/run-previews"},
+        status_code=410,
+    )
 
 _compatibility_app = None
 

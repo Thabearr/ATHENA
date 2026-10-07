@@ -1,6 +1,7 @@
 """Offline, source-bound Pass-A authority review; capability is not permission."""
 from __future__ import annotations
 import argparse
+import base64
 import ast
 import copy
 import hashlib
@@ -21,6 +22,8 @@ POLICY_ID = 'ATHENA_CORE_01D_AUTHORITY_REACHABILITY_REVIEW_A_V1'
 RECEIPT_PATH = 'artifacts/architecture/core_01d_authority_reachability_review_a_v1.json'
 INVENTORY_PATH = 'tests/fixtures/core_01d/authority-reachability-pass-a-source-inventory-v1.json'
 INVENTORY_SHA = 'f3cdbec57c380f7a77ce97e4bfab627241cc8b73d0817ec2abfa2f27cf2e209f'
+HISTORICAL_CHECKPOINT_E_SOURCE = 'tests/fixtures/core_01d/app_01c_historical/checkpoint_e_completion.py.b64'
+HISTORICAL_CHECKPOINT_E_SOURCE_SHA1 = 'bef5bd7bcb3c27fe27cb6efc80a7e7f67e7c7de9'
 COMPLETION_V1 = 'artifacts/architecture/core_01d_checkpoint_e_completion_v1.json'
 COMPLETION_V1_SHA = 'aa65bef7841b7dd8a45ffddc65c25c06c14319d1711bc52ef62fcc50059b1731'
 MATRIX_PATH = 'artifacts/architecture/checkpoint_e_workflow_capability_matrix_v2.json'
@@ -82,8 +85,13 @@ def source_bytes(path):
   raw=a2.HISTORICAL_CONFTEST_BYTES
   require(hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==a2.HISTORICAL_TEST_BLOBS[path], 'historical conftest identity drift')
   return raw
+ if path=='scripts/audit_core_01d_checkpoint_e_completion.py':
+  raw=base64.b64decode((ROOT/HISTORICAL_CHECKPOINT_E_SOURCE).read_bytes().strip(),validate=True)
+  require(hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==HISTORICAL_CHECKPOINT_E_SOURCE_SHA1, 'historical checkpoint E source identity drift')
+  return raw
  paths=sorted(({row['path'] for row in read_json(INVENTORY_PATH)['sources']} |
-               {p.relative_to(ROOT).as_posix() for p in (ROOT/'.github/workflows').glob('*.yml')})-{'tests/conftest.py'})
+               {p.relative_to(ROOT).as_posix() for p in (ROOT/'.github/workflows').glob('*.yml')})-{
+                   'tests/conftest.py', 'scripts/audit_core_01d_checkpoint_e_completion.py'})
  signature=tuple((p,(ROOT/p).read_bytes()) for p in paths)
  require(path in paths,'unclassified historical source path')
  return _tracked_payloads(signature)[path]

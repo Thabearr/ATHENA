@@ -13,6 +13,7 @@ from runtime.release_identity import DevelopmentCheckoutIdentity, InstalledRelea
 from runtime.resources import ResourceResolutionError, ResourceResolver, WritableRoots
 from services.athena_capability_service import AthenaCapabilityService, release_summary
 from services.athena_preview_service import AthenaPreviewAdmissionService
+from services.athena_read_service import AthenaReadService
 
 
 class AppFactoryError(ValueError):
@@ -60,7 +61,7 @@ def _validate_writable_roots(value, identity):
 
 
 def create_app(*, release_identity, resource_resolver, writable_roots: WritableRoots,
-               local_session, capability_service, preview_admission_service, origin):
+               local_session, capability_service, preview_admission_service, read_service, origin):
     validated_roots = _validate_writable_roots(writable_roots, release_identity)
     if (type(resource_resolver) is not ResourceResolver
             or resource_resolver.identity is not release_identity
@@ -70,6 +71,7 @@ def create_app(*, release_identity, resource_resolver, writable_roots: WritableR
             or type(preview_admission_service) is not AthenaPreviewAdmissionService
             or preview_admission_service.resources is not resource_resolver
             or capability_service.preview_admission_service is not preview_admission_service
+            or type(read_service) is not AthenaReadService
             or type(origin) is not str
             or not re.fullmatch(r"http://127\.0\.0\.1:[1-9][0-9]{0,4}", origin)):
         raise AppFactoryError("invalid trusted application dependencies")
@@ -93,6 +95,7 @@ def create_app(*, release_identity, resource_resolver, writable_roots: WritableR
     # paths internally without creating directories or exposing them publicly.
     app.state.writable_roots = validated_roots
     app.state.preview_admission_service = preview_admission_service
+    app.state.read_service = read_service
     host = origin.removeprefix("http://")
 
     @app.middleware("http")
@@ -152,5 +155,11 @@ def create_app(*, release_identity, resource_resolver, writable_roots: WritableR
 
         app.add_api_route(url, make_asset(payload, media), methods=["GET", "HEAD"])
     from api.v1.run_previews import router as preview_router
+    from api.v1.runs import router as runs_router
+    from api.v1.fixtures import router as fixtures_router
+    from api.v1.exports import router as exports_router
     app.include_router(preview_router)
+    app.include_router(runs_router)
+    app.include_router(fixtures_router)
+    app.include_router(exports_router)
     return app

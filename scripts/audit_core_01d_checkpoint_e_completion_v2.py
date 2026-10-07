@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 import json
+import types
 from scripts import audit_core_01d_authority_reachability_review_a as review
 from scripts import audit_core_01d_checkpoint_e_completion as v1
 
@@ -20,7 +21,77 @@ APP01B_ADDITIVE_PATHS={
  'tests/fixtures/core_01d_schedule/append-only-projections/app_01b/pre-d1-execution-envelope.py.txt',
  'tests/fixtures/core_01d/pass1-v1-source/test-core-01-schedule-date-disposition.py.txt',
 }
-UNCHANGED_SCOPE_SHA='5465e4dc03a46d4e64e81586720cebf9cb40d9dd53ce1fbe534fb825b5d9f32d'
+# D2 changes current API/application sources that already existed in the
+# immutable Pass-A tree. Their exact current bytes are authenticated by the
+# append-only A2 inventory; keep those additive D2 changes out of the V1 view.
+APP01C_ADDITIVE_PATHS={
+ 'scripts/audit_core_01d_checkpoint_e_completion.py',
+ 'scripts/audit_checkpoint_e_workflows.py',
+ 'scripts/audit_core_01d_checkpoint_e_completion_v2.py',
+ 'scripts/audit_core_01d_authority_reachability_review_a.py',
+ 'api/app_factory.py',
+ 'api/schemas.py',
+ 'api/server.py',
+ 'api/v1/common.py',
+ 'api/v1/exports.py',
+ 'api/v1/fixtures.py',
+ 'api/v1/runs.py',
+ 'docs/product/app_01c_versioned_api.md',
+ 'run_desktop.py',
+ 'services/athena_capability_service.py',
+ 'services/athena_read_service.py',
+ 'tests/fixtures/core_01d/app_01c_historical/api_server.py.b64',
+ 'tests/fixtures/core_01d/app_01c_historical/checkpoint_e_completion.py.b64',
+ 'tests/fixtures/core_01d/app_01c_historical/run_desktop.py.txt',
+ 'tests/fixtures/core_01d/app_01c_historical/test_api_error_handling.py.txt',
+ 'tests/fixtures/core_01d/app_01c_historical/test_product_baseline_v1.py.txt',
+ 'tests/test_api_error_handling.py',
+ 'tests/test_app_01a_local_shell.py',
+ 'tests/test_app_01b_preview_admission.py',
+ 'tests/test_app_01c_versioned_read_api.py',
+ 'tests/test_core_01d_ci_offline_transport_inventory_evolution.py',
+ 'tests/test_core_01d_exact_pr_trigger_disposition_b1.py',
+ 'tests/test_core_01d_frozen_artifact_replay_authority_b5.py',
+ 'tests/test_core_01d_owner_one_shot_issue_comment_authority_b3.py',
+ 'tests/test_core_01d_port02c_trigger_authority_b6.py',
+ 'tests/test_product_baseline_v1.py',
+}
+# D2 predecessor tree blob identities for changed, pre-existing sources that
+# are not already projected by the APP-01A historical runtime/source view.
+# These are pinned to the exact D1 base main at the APP-01C handoff.
+APP01C_PREDECESSOR_BLOBS={
+ 'scripts/audit_core_01d_checkpoint_e_completion.py':'bef5bd7bcb3c27fe27cb6efc80a7e7f67e7c7de9',
+ 'scripts/audit_checkpoint_e_workflows.py':'19ddce133ba37ef63931f658e267a562c0cb15d0',
+ 'scripts/audit_core_01d_checkpoint_e_completion_v2.py':'4fcd597964c8ccddeb0822e6c326f45712547e60',
+ 'scripts/audit_core_01d_authority_reachability_review_a.py':'036e483000ce07b2dab5fb7136e4992820026262',
+ 'api/app_factory.py':'715fdbc051962af2c8f51700b4b368af1ec88015',
+ 'api/schemas.py':'addb7c8d333c6c723192629d58738588953b55e9',
+ 'api/server.py':'1e8d3b8968a37eed78741e018fa4da057578223c',
+ 'run_desktop.py':'39c4cf8c780eb2831b637a69ff0648b6eb465874',
+ 'services/athena_capability_service.py':'25d4e8cf609effec84624219cebacb40a30437c2',
+ 'tests/test_api_error_handling.py':'a827e02b95779ca0478ffa74db34e41de1e04b42',
+ 'tests/test_app_01a_local_shell.py':'2176d1c0e6ceb1db1457f65a0f9325a39ea45aa9',
+ 'tests/test_app_01b_preview_admission.py':'7733431bb44801e46e6804144099e2779deba8ee',
+ 'tests/test_core_01d_ci_offline_transport_inventory_evolution.py':'85e9436f7c70c5e970764e5b4e554ca5f939f39d',
+ 'tests/test_core_01d_exact_pr_trigger_disposition_b1.py':'e49b70b8876f5826dddd46e7e822be7f594edb71',
+ 'tests/test_core_01d_frozen_artifact_replay_authority_b5.py':'ed3f8ae3a28dcf40d33bcff2121dd8f983206999',
+ 'tests/test_core_01d_owner_one_shot_issue_comment_authority_b3.py':'8ecc7eab8dc5514512a6c7a68e006556c928ad09',
+ 'tests/test_core_01d_port02c_trigger_authority_b6.py':'594a7b4f8c5a9d798d13af2f4c7e35635371bbb6',
+ 'tests/test_product_baseline_v1.py':'2d552f49cf84462bd1b32e86eea2a96ee0570b64',
+}
+APP01C_NEW_PATHS={
+ 'api/v1/common.py','api/v1/exports.py','api/v1/fixtures.py','api/v1/runs.py',
+ 'docs/product/app_01c_versioned_api.md','services/athena_read_service.py',
+ 'tests/fixtures/core_01d/app_01c_historical/api_server.py.b64',
+ 'tests/fixtures/core_01d/app_01c_historical/checkpoint_e_completion.py.b64',
+ 'tests/fixtures/core_01d/app_01c_historical/run_desktop.py.txt',
+ 'tests/fixtures/core_01d/app_01c_historical/test_api_error_handling.py.txt',
+ 'tests/fixtures/core_01d/app_01c_historical/test_product_baseline_v1.py.txt',
+ 'tests/test_app_01c_versioned_read_api.py',
+}
+# Exact filtered scope digest after D2 added its authenticated APP01C paths.
+# The origin/main and candidate projections both hash to this identity.
+UNCHANGED_SCOPE_SHA='d7298582950c19d3be973d81871da276cccf6174b2aef726bd5dcb638f6a7cf3'
 # Current additive authority-review documents are authenticated by their own
 # pass auditors, completion overlays, and A2 generation chain. Keep only these
 # exact additive paths out of the immutable Pass-A historical tree projection.
@@ -66,7 +137,7 @@ LOCAL_TEST_PRODUCTS={'.pytest-shard-files','p3-0-e1-live-readiness.json','artifa
 
 
 def unchanged_inventory(raw):
- return b''.join(line for line in raw.splitlines(keepends=True) if line.split(b'\t',1)[1].strip().decode() not in ALLOWED_PASS_A_PATHS|APP01B_ADDITIVE_PATHS)
+ return b''.join(line for line in raw.splitlines(keepends=True) if line.split(b'\t',1)[1].strip().decode() not in ALLOWED_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS)
 
 def a2_generation_additions(a2):
  latest=a2.authenticate_inventory()
@@ -101,7 +172,7 @@ def a2_historical_projection(raw):
  # part of the immutable Pass-A historical tree. Discover their contiguous
  # chain from V3 onward after authenticate_inventory has verified it.
  successor_inventory_paths=current_successor_inventory_paths(a2)
- new_paths=(a2.A2_PATHS-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|successor_inventory_paths|B1_ADDITIVE_EVIDENCE_PATHS|APP01B_ADDITIVE_PATHS
+ new_paths=(a2.A2_PATHS-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|successor_inventory_paths|B1_ADDITIVE_EVIDENCE_PATHS|APP01B_ADDITIVE_PATHS|APP01C_NEW_PATHS
  rows=[]
  for line in raw.splitlines(keepends=True):
   path=line.split(b'\t',1)[1].strip().decode()
@@ -110,6 +181,8 @@ def a2_historical_projection(raw):
    line=('100644 blob '+PASS_A_HISTORICAL_BLOBS[path]+'\t'+path+'\n').encode()
   elif path in a2.HISTORICAL_TEST_BLOBS:
    line=('100644 blob '+a2.HISTORICAL_TEST_BLOBS[path]+'\t'+path+'\n').encode()
+  elif path in APP01C_PREDECESSOR_BLOBS and path not in app.PATHS:
+   line=('100644 blob '+APP01C_PREDECESSOR_BLOBS[path]+'\t'+path+'\n').encode()
   rows.append(line)
  return b''.join(rows)
 
@@ -117,7 +190,7 @@ def authenticate_current_scope():
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  generation_additions=a2_generation_additions(a2)
  successor_inventory_paths=current_successor_inventory_paths(a2)
- allowed=ALLOWED_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|successor_inventory_paths|app_successor_paths()
+ allowed=ALLOWED_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|successor_inventory_paths|app_successor_paths()
  git=review.retention.v4.v3._git
  review.require(review.sha256(unchanged_inventory(a2_historical_projection(git('ls-tree','-r','HEAD'))))==UNCHANGED_SCOPE_SHA,'Pass-A runtime/workflow/ledger/historical source change outside bounded evidence scope')
  review.require(set(git('diff','--name-only','HEAD').decode().splitlines())<=allowed,'unapproved dirty source in Pass A or its exact A2-generation/evidence seam')
@@ -145,7 +218,7 @@ def historical_v1_git_view():
   if args==('diff','--name-only','HEAD'):
    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
    generation_additions=a2_generation_additions(a2)
-   return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|app_successor_paths())
+   return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|app_successor_paths())
   return raw
  module._git=projected
  try: yield
@@ -155,9 +228,13 @@ def historical_v1_git_view():
 
 def historical_v1_receipt():
  value=review.authenticate_json(review.COMPLETION_V1,review.COMPLETION_V1_SHA)
+ source=review.source_bytes('scripts/audit_core_01d_checkpoint_e_completion.py')
+ historical=types.ModuleType('_athena_checkpoint_e_completion_v1')
+ historical.__file__=str(review.ROOT/review.HISTORICAL_CHECKPOINT_E_SOURCE)
+ exec(compile(source,historical.__file__,'exec'),historical.__dict__)
  with historical_v1_git_view():
-  expected=v1.build_receipt()
-  v1.validate_receipt(value,expected)
+  expected=historical.build_receipt()
+  historical.validate_receipt(value,expected)
  return value
 
 

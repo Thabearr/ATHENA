@@ -33,6 +33,7 @@ from services.athena_preview_service import (
     PreviewAdmissionError,
 )
 from services.athena_run_service import AthenaRunService
+from services.athena_read_service import AthenaReadService
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -212,6 +213,7 @@ def make_harness(resources, tmp_path, *, repository=None, clock=None):
             resources, preview_admission_service=service
         ),
         preview_admission_service=service,
+        read_service=AthenaReadService.unavailable(),
         origin=ORIGIN,
     )
     return TestClient(app), service, session, roots, clock
