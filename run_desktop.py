@@ -30,6 +30,7 @@ from runtime.resources import (
 )
 from services.athena_capability_service import AthenaCapabilityService, release_summary
 from services.athena_preview_service import AthenaPreviewAdmissionService
+from services.athena_read_service import AthenaReadService
 
 
 class DesktopLaunchError(ValueError):
@@ -108,6 +109,7 @@ class LocalBackend:
                              capability_service=AthenaCapabilityService(
                                  resources, preview_admission_service=preview_admission_service),
                              preview_admission_service=preview_admission_service,
+                             read_service=AthenaReadService.unavailable(),
                              origin=self.origin)
             self.server = uvicorn.Server(uvicorn.Config(app, log_level="critical", access_log=False))
             self.thread = threading.Thread(target=self.server.run, kwargs={"sockets": [self.listener]})

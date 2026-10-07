@@ -127,7 +127,12 @@ def test_entrypoint_inventory_traces_legacy_and_canonical_surfaces():
         assert route in triggers
     generate = next(e for e in api if e["symbol_or_trigger"] == "POST /api/generate")
     assert generate["current_classification"] == "RETAINED_COMPATIBILITY"
-    assert "from services.legacy_acca_builder_compat import AccaBuilder" in (ROOT / "api/server.py").read_text(encoding="utf-8")
+    from scripts import audit_app_01a_local_shell as app_01a_audit
+    historical_server = app_01a_audit.historical_runtime_payload("api/server.py")
+    if isinstance(historical_server, bytes):
+        historical_server = historical_server.decode("utf-8")
+    assert "from services.legacy_acca_builder_compat import AccaBuilder" in historical_server
+    assert "builder.build(" in historical_server
     assert any(e["symbol_or_trigger"] in {"GET /api/leagues", "GET /api/fixtures"} and e["external_side_effects"] != "NONE" for e in api)
     paths = {e["source_path"] for e in entries}
     assert {"run_desktop.py", "services/athena_run_service.py", ".github/workflows/athena-run.yml", ".github/workflows/current-shadow-all-market.yml"} <= paths
