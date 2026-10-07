@@ -117,5 +117,7 @@ def test_master_current_status_is_independently_authenticated(receipt):
     assert result["blockers"] == []
     assert result["checkpoint_e"] == result["p4_4"] == "COMPLETE"
     assert result["remaining_unreviewed_surface_count"] == 0
-    with current.historical_v1_git_view():
-        assert completion.audit()["result"] == "PASS"
+    # Authenticate the retained historical source fixture itself. The current
+    # validator has evolved to allow the D2 source set, so it is not the V1
+    # validator authority inside a historical tree projection.
+    assert current.historical_v1_receipt() == receipt
