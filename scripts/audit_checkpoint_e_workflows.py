@@ -519,7 +519,7 @@ def base_input():
                 },
                 "Pass-1 supporting source differs from its V2 authenticated identity: " + path,
             )
-        elif path in PASS_A_HISTORICAL_SOURCE_BLOBS:
+        elif path in PASS_A_HISTORICAL_SOURCE_FIXTURES:
             require(
                 current.get(path) == {
                     "mode": identity["mode"],

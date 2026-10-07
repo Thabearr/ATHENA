@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 import json
+import types
 from scripts import audit_core_01d_authority_reachability_review_a as review
 from scripts import audit_core_01d_checkpoint_e_completion as v1
 
@@ -192,9 +193,13 @@ def historical_v1_git_view():
 
 def historical_v1_receipt():
  value=review.authenticate_json(review.COMPLETION_V1,review.COMPLETION_V1_SHA)
+ source=review.source_bytes('scripts/audit_core_01d_checkpoint_e_completion.py')
+ historical=types.ModuleType('_athena_checkpoint_e_completion_v1')
+ historical.__file__=str(review.ROOT/review.HISTORICAL_CHECKPOINT_E_SOURCE)
+ exec(compile(source,historical.__file__,'exec'),historical.__dict__)
  with historical_v1_git_view():
-  expected=v1.build_receipt()
-  v1.validate_receipt(value,expected)
+  expected=historical.build_receipt()
+  historical.validate_receipt(value,expected)
  return value
 
 
