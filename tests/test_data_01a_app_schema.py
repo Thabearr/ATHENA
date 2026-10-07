@@ -31,6 +31,7 @@ from database.app_migrations import (
     connect_app_store,
     current_schema_version,
     expected_app_tables,
+    expected_schema_structure,
     read_app_migrations,
     verify_app_schema,
 )
@@ -148,7 +149,7 @@ def test_app_migration_creates_exact_nine_tables(resources, roots):
     conn = connect_app_store(store, synchronous="FULL")
     try:
         assert current_schema_version(conn) == 1
-        verify_app_schema(conn)
+        verify_app_schema(conn, expected_structure=expected_schema_structure(read_app_migrations(resources)))
         tables = expected_app_tables()
         assert len(tables) == 9
         names = {
@@ -221,7 +222,7 @@ def test_app_schema_fails_closed_on_missing_table(resources, roots):
     conn = connect_app_store(app_store_path(roots), synchronous="FULL")
     try:
         with pytest.raises(AppSchemaMismatchError):
-            verify_app_schema(conn)
+            verify_app_schema(conn, expected_structure=expected_schema_structure(read_app_migrations(resources)))
     finally:
         conn.close()
 
@@ -238,7 +239,7 @@ def test_app_schema_fails_closed_on_unknown_app_table(resources, roots):
     conn = connect_app_store(app_store_path(roots), synchronous="FULL")
     try:
         with pytest.raises(AppSchemaMismatchError):
-            verify_app_schema(conn)
+            verify_app_schema(conn, expected_structure=expected_schema_structure(read_app_migrations(resources)))
     finally:
         conn.close()
 
@@ -255,7 +256,7 @@ def test_app_schema_fails_closed_on_version_gap(resources, roots):
     conn = connect_app_store(app_store_path(roots), synchronous="FULL")
     try:
         with pytest.raises(AppSchemaMismatchError):
-            verify_app_schema(conn)
+            verify_app_schema(conn, expected_structure=expected_schema_structure(read_app_migrations(resources)))
     finally:
         conn.close()
 
@@ -616,15 +617,7 @@ def test_migration_evidence_absent_then_existing_backup(resources, roots):
     assert absent["ownership_inventory"]["roots"][0]["exists"] is False
     apply_app_migrations(resources, roots, release_id="test-release")
     manifests = list((roots.data_root / "migration-evidence").glob("*.json"))
-    assert len(manifests) == 2
-    existing = next(verify_retained_manifest(roots.data_root, p.stem) for p in manifests if p.stem != digest)
-    backup = roots.data_root / existing["backup"]["logical_path"]
-    import sqlite3
-    snapshot = sqlite3.connect(backup.resolve().as_uri() + "?mode=ro", uri=True)
-    try:
-        assert snapshot.execute("SELECT COUNT(*) FROM app_schema_migrations").fetchone() == (1,)
-    finally:
-        snapshot.close()
+    assert len(manifests) == 1
     assert str(roots.data_root) not in (roots.data_root / "migration-evidence" / (digest + ".json")).read_text()
     with pytest.raises(ValueError):
         publish(roots.data_root, "migration-evidence/" + digest + ".json", b"overwrite")
@@ -632,7 +625,7 @@ def test_migration_evidence_absent_then_existing_backup(resources, roots):
 
 def test_failed_migration_preserves_evidence(resources, roots, monkeypatch):
     import database.app_migrations as migrations
-    monkeypatch.setattr(migrations, "_statements", lambda sql: ["INVALID SQL"])
+    inject_migration_ddl_failure(monkeypatch, migrations)
     with pytest.raises(Exception):
         apply_app_migrations(resources, roots, release_id="test-release")
     assert list((roots.data_root / "migration-evidence").glob("*.json"))
@@ -643,7 +636,7 @@ def test_failed_existing_store_migration_preserves_openable_backup(resources, ro
     import database.app_migrations as migrations
     conn = sqlite3.connect(app_store_path(roots))
     conn.close()
-    monkeypatch.setattr(migrations, "_statements", lambda sql: ["INVALID SQL"])
+    inject_migration_ddl_failure(monkeypatch, migrations)
     with pytest.raises(Exception):
         apply_app_migrations(resources, roots, release_id="test-release")
     from database.app_migration_evidence import verify_retained_manifest
@@ -805,3 +798,139 @@ def test_actual_preview_threadpool_and_concurrent_requests(resources, roots, clo
         for result in results:
             assert restarted.get(result["preview_id"], now=clock()) is not None
     assert actions == []
+
+
+def inject_migration_ddl_failure(monkeypatch, migrations):
+    original_connect = migrations.connect_app_store
+    original_statements = migrations._statements
+    writing = [False]
+    def connect(*args, **kwargs):
+        writing[0] = not kwargs.get("readonly", False)
+        return original_connect(*args, **kwargs)
+    monkeypatch.setattr(migrations, "connect_app_store", connect)
+    monkeypatch.setattr(migrations, "_statements", lambda sql: ["INVALID SQL"] if writing[0] else original_statements(sql))
+
+
+def evidence_files(roots):
+    return {p.relative_to(roots.data_root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in (roots.data_root / "migration-evidence").rglob("*") if p.is_file()}
+
+
+def test_noop_startups_never_retain_new_evidence(resources, roots, clock):
+    from database.app_migration_evidence import verify_retained_manifest
+    _, item = make_stored_preview(resources, clock)
+    with open_repo(resources, roots) as repo:
+        record_test_release(repo, clock())
+        DurablePreviewStore(repo, release_id="test-release").put(item, now=clock())
+    before = evidence_files(roots)
+    for _ in range(5):
+        with open_repo(resources, roots) as repo:
+            assert DurablePreviewStore(repo, release_id="test-release").get(item.preview_id, now=clock()) == item
+        assert evidence_files(roots) == before
+    conn = connect_app_store(app_store_path(roots), readonly=True)
+    try:
+        digest = conn.execute("SELECT backup_manifest_sha256 FROM app_schema_migrations").fetchone()[0]
+    finally:
+        conn.close()
+    assert verify_retained_manifest(roots.data_root, digest)["app_store_state"] == "ABSENT"
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_only_pending_version_retains_consistent_backup(resources, roots, monkeypatch, fail):
+    import database.app_migrations as migrations
+    from database.app_migration_evidence import verify_retained_manifest
+    import sqlite3
+    apply_app_migrations(resources, roots, release_id="test-release")
+    before = evidence_files(roots)
+    future = b"CREATE INDEX test_only_future_profile_name ON app_profiles(display_name);"
+    logical = "database/migrations/test_only_future.sql"
+    original_read = ResourceResolver.read_bytes
+    def read(self, path, **kwargs):
+        if path == logical:
+            assert kwargs["expected_role"] == "MIGRATION"
+            return future
+        return original_read(self, path, **kwargs)
+    monkeypatch.setattr(ResourceResolver, "read_bytes", read)
+    monkeypatch.setattr(migrations, "APP_MIGRATIONS", migrations.APP_MIGRATIONS + ((2, logical),))
+    if fail:
+        original_connect = migrations.connect_app_store
+        original_statements = migrations._statements
+        writing = [False]
+        def connect(*args, **kwargs):
+            writing[0] = not kwargs.get("readonly", False)
+            return original_connect(*args, **kwargs)
+        def statements(sql):
+            if writing[0] and "test_only_future_profile_name" in sql:
+                return ["INVALID INJECTED DDL"]
+            return original_statements(sql)
+        monkeypatch.setattr(migrations, "connect_app_store", connect)
+        monkeypatch.setattr(migrations, "_statements", statements)
+        with pytest.raises(sqlite3.Error):
+            apply_app_migrations(resources, roots, release_id="test-release")
+    else:
+        apply_app_migrations(resources, roots, release_id="test-release")
+    added = set(evidence_files(roots)) - set(before)
+    manifests = [p for p in added if p.count("/") == 1 and p.endswith(".json")]
+    backups = [p for p in added if p.endswith(".sqlite3")]
+    assert len(manifests) == len(backups) == 1
+    digest = Path(manifests[0]).stem
+    manifest = verify_retained_manifest(roots.data_root, digest)
+    snapshot = sqlite3.connect((roots.data_root / manifest["backup"]["logical_path"]).resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        assert snapshot.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert snapshot.execute("SELECT version FROM app_schema_migrations").fetchall() == [(1,)]
+    finally:
+        snapshot.close()
+    conn = connect_app_store(app_store_path(roots), readonly=True)
+    try:
+        assert conn.execute("SELECT version FROM app_schema_migrations ORDER BY version").fetchall() == ([(1,)] if fail else [(1,), (2,)])
+        if not fail:
+            assert conn.execute("SELECT backup_manifest_sha256 FROM app_schema_migrations WHERE version=2").fetchone() == (digest,)
+    finally:
+        conn.close()
+    if not fail:
+        retained = evidence_files(roots)
+        apply_app_migrations(resources, roots, release_id="test-release")
+        assert evidence_files(roots) == retained
+
+
+@pytest.mark.parametrize("table,old,new", [
+    ("app_run_previews", ",\n    FOREIGN KEY (capability_snapshot_id) REFERENCES app_capability_snapshots(snapshot_id) ON DELETE RESTRICT", ""),
+    ("app_favorites", ",\n    CHECK (entity_kind IN ('competition', 'market'))", ""),
+    ("app_artifacts", "    UNIQUE (logical_path),\n", ""),
+    ("app_run_previews", "ON DELETE RESTRICT", "ON DELETE CASCADE"),
+    ("app_profiles", "display_name TEXT NOT NULL", "display_name INTEGER NOT NULL"),
+    ("app_profiles", "display_name TEXT NOT NULL", "display_name TEXT"),
+])
+def test_constraint_tampering_same_columns_refuses_open(resources, roots, table, old, new):
+    import sqlite3
+    apply_app_migrations(resources, roots, release_id="test-release")
+    conn = sqlite3.connect(app_store_path(roots))
+    try:
+        sql = conn.execute("SELECT sql FROM sqlite_schema WHERE name=?", (table,)).fetchone()[0]
+        assert old in sql
+        before_columns = conn.execute('PRAGMA table_info("' + table + '")').fetchall()
+        conn.execute('DROP TABLE "' + table + '"')
+        conn.execute(sql.replace(old, new))
+        conn.commit()
+        assert [r[1] for r in before_columns] == [r[1] for r in conn.execute('PRAGMA table_info("' + table + '")')]
+    finally:
+        conn.close()
+    before = evidence_files(roots)
+    with pytest.raises(AppSchemaMismatchError, match="structure drift"):
+        open_repo(resources, roots)
+    assert evidence_files(roots) == before
+
+
+@pytest.mark.parametrize("sql", ["CREATE VIEW unreviewed AS SELECT * FROM app_profiles", "CREATE TRIGGER unreviewed AFTER INSERT ON app_profiles BEGIN SELECT 1; END"])
+def test_unreviewed_schema_objects_refuse_open(resources, roots, sql):
+    import sqlite3
+    apply_app_migrations(resources, roots, release_id="test-release")
+    conn = sqlite3.connect(app_store_path(roots))
+    try:
+        conn.execute(sql)
+        conn.commit()
+    finally:
+        conn.close()
+    with pytest.raises(AppSchemaMismatchError, match="structure drift"):
+        open_repo(resources, roots)

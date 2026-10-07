@@ -18,7 +18,13 @@ presentation profile, release verification, exact capability snapshot and previe
 A failure between the inserts rolls back the whole bundle. The preview source
 must equal the reverified runtime release, not merely a database provenance row.
 
-Before opening/creating the migration target, a bounded ownership inventory is
+Migration resources and existing ledger/schema are authenticated before deciding
+whether any migration is pending. Exact-version startup verifies the existing
+ledger-linked recovery evidence and returns without retaining new files. It does
+not create a new inventory, manifest, or SQLite backup for routine application use.
+
+Only for a genuinely pending migration, before opening/creating the write target,
+a bounded ownership inventory is
 published under `migration-evidence/inventories/<sha256>.json`. For an existing
 SQLite database, SQLite's backup API produces a consistent, content-addressed
 snapshot under `migration-evidence/backups/<sha256>.sqlite3`; live WAL files are
@@ -27,6 +33,13 @@ never naively copied. The canonical pre-state manifest is published as
 Temporary files are fsynced and atomically published without overwriting existing
 evidence. Links/junctions are rejected. Failed migrations retain recovery material.
 An absent database records absence and has no fabricated SQLite backup.
+
+The trusted schema is constructed in a separate in-memory SQLite database from
+verified migration bytes. Validation compares the object set and deterministic
+SQL tokens (including CHECK expressions), table_xinfo, foreign_key_list,
+index_list and index_xinfo. Types, nullability, primary/unique keys, RESTRICT
+references and unexpected triggers/views are authenticated before repository
+operations. Drift is rejected, never repaired or treated as a pending migration.
 
 ## Owner-directed rollback
 

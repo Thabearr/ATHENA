@@ -32,7 +32,7 @@ def authenticate():
     boundary.require(receipt["base_commit"] == "9d674169c680a256d20db81e2bddf733b13c85cb",
                      "D3 base identity drift")
     inventory = boundary.read_generation(receipt["a2_inventory"]["path"])
-    boundary.require(inventory["generation"] == 67 and latest["generation"] >= 67
+    boundary.require(inventory["generation"] == 68 and latest["generation"] >= 68
                      and inventory["canonical_sha256"] == receipt["a2_inventory"]["canonical_sha256"],
                      "D3 A2 binding drift")
     identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}

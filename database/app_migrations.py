@@ -20,6 +20,7 @@ truthful pre-migration inventory (empty for a fresh store).
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
@@ -273,7 +274,42 @@ def expected_app_tables() -> dict[str, tuple[str, ...]]:
     return dict(_EXPECTED_APP_TABLES_V1)
 
 
-def verify_app_schema(conn: sqlite3.Connection) -> None:
+def schema_structure(conn):
+    """SQLite structure plus tokenized constraints; whitespace/comments have no meaning."""
+    def tokens(sql):
+        if sql is None:
+            return None
+        parts = re.findall(r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|`[^`]*`|\[[^\]]*\]|--[^\n]*|/\*[\s\S]*?\*/|[A-Za-z_][A-Za-z_0-9]*|\d+|[^\s]", sql)
+        return tuple(p if p[0] in "'\"`[" else p.upper() for p in parts if not p.startswith(("--", "/*")))
+    objects = conn.execute("SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name").fetchall()
+    result = [(kind, name, table, tokens(sql)) for kind, name, table, sql in objects]
+    for kind, name, _, _ in objects:
+        if kind != "table":
+            continue
+        quoted = '"' + name.replace('"', '""') + '"'
+        result.append(("columns", name, tuple(conn.execute("PRAGMA table_xinfo(" + quoted + ")"))))
+        result.append(("foreign_keys", name, tuple(conn.execute("PRAGMA foreign_key_list(" + quoted + ")"))))
+        indexes = sorted(conn.execute("PRAGMA index_list(" + quoted + ")").fetchall(), key=lambda row: row[1])
+        result.append(("indexes", name, tuple(tuple(row[1:]) for row in indexes)))
+        for index in indexes:
+            index_name = '"' + index[1].replace('"', '""') + '"'
+            result.append(("index_columns", index[1], tuple(conn.execute("PRAGMA index_xinfo(" + index_name + ")"))))
+    return tuple(result)
+
+
+def expected_schema_structure(migrations):
+    expected = sqlite3.connect(":memory:")
+    try:
+        expected.execute("PRAGMA foreign_keys=ON")
+        for _, _, raw, _ in migrations:
+            for statement in _statements(raw.decode("utf-8")):
+                expected.execute(statement)
+        return schema_structure(expected)
+    finally:
+        expected.close()
+
+
+def verify_app_schema(conn: sqlite3.Connection, *, expected_structure=None) -> None:
     """Fail-closed ledger/schema agreement for the current binary."""
     max_binary = APP_MIGRATIONS[-1][0]
     versions = applied_versions(conn)
@@ -309,6 +345,10 @@ def verify_app_schema(conn: sqlite3.Connection) -> None:
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
     if violations:
         raise AppSchemaMismatchError(f"app schema foreign key violation: {violations}")
+    if expected_structure is None:
+        raise AppSchemaMismatchError("verified expected schema structure is required")
+    if schema_structure(conn) != expected_structure:
+        raise AppSchemaMismatchError("app schema constraint/structure drift")
 
 
 def _verify_pre_state(conn: sqlite3.Connection) -> None:
@@ -354,9 +394,30 @@ def apply_app_migrations(
     contained(writable_roots.data_root, APP_STORE_FILENAME)
     for suffix in ("-wal", "-shm", "-journal"):
         contained(writable_roots.data_root, APP_STORE_FILENAME + suffix)
-    existed = store.exists()
-    backup_sha = retain_pre_migration_evidence(resources, writable_roots, store, existed)
     migrations = read_app_migrations(resources)
+    expected_structure = expected_schema_structure(migrations)
+    existed = store.exists()
+    if existed:
+        probe = sqlite3.connect(store.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            probe.execute("PRAGMA foreign_keys=ON")
+            _verify_pre_state(probe)
+            versions = applied_versions(probe)
+            for version, _, _, digest in migrations[:len(versions)]:
+                row = probe.execute("SELECT migration_sha256, backup_manifest_sha256 FROM app_schema_migrations WHERE version=?", (version,)).fetchone()
+                if row is None or row[0] != digest:
+                    raise AppSchemaMismatchError("recorded migration identity drift")
+                verify_retained_manifest(writable_roots.data_root, row[1])
+            if versions:
+                prior_structure = expected_schema_structure(migrations[:len(versions)])
+                if schema_structure(probe) != prior_structure:
+                    raise AppSchemaMismatchError("app schema constraint/structure drift before migration")
+            if len(versions) == len(migrations):
+                verify_app_schema(probe, expected_structure=expected_structure)
+                return store
+        finally:
+            probe.close()
+    backup_sha = retain_pre_migration_evidence(resources, writable_roots, store, existed)
 
     conn = connect_app_store(store, synchronous="FULL")
     try:
@@ -394,6 +455,8 @@ def apply_app_migrations(
                 for table, columns in expected_app_tables().items():
                     if _table_columns(conn, table) != list(columns):
                         raise AppSchemaMismatchError("migration column identity drift")
+                if schema_structure(conn) != expected_schema_structure(migrations[:version]):
+                    raise AppSchemaMismatchError("migration constraint/structure drift")
                 violations = conn.execute("PRAGMA foreign_key_check").fetchall()
                 if violations:
                     raise AppSchemaMismatchError(
@@ -417,7 +480,7 @@ def apply_app_migrations(
     try:
         if not _pragma_flag(fresh, "foreign_keys"):
             raise AppSchemaMismatchError("app store did not re-enable foreign_keys after migration")
-        verify_app_schema(fresh)
+        verify_app_schema(fresh, expected_structure=expected_structure)
     finally:
         fresh.close()
     return store

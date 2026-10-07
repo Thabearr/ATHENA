@@ -40,6 +40,7 @@ from database.app_migrations import (
     connect_app_store,
     verify_app_schema,
     read_app_migrations,
+    expected_schema_structure,
 )
 from database.app_migration_evidence import contained
 
@@ -72,7 +73,7 @@ def _operation(*, write=False):
                     contained(self._store_path.parent, self._store_path.name + suffix)
                 conn = connect_app_store(self._store_path, readonly=not write,
                                          synchronous="FULL" if write else "NORMAL")
-                verify_app_schema(conn)
+                verify_app_schema(conn, expected_structure=self._expected_structure)
                 recorded = conn.execute("SELECT version, migration_sha256 FROM app_schema_migrations ORDER BY version").fetchall()
                 if recorded != self._migration_identities:
                     raise AppValidationError("migration identity drift")
@@ -187,6 +188,7 @@ class AppRepository:
         migrations = read_app_migrations(resources)
         result = cls(store, [(version, digest) for version, _, _, digest in migrations], resources.identity)
         result._resources = resources
+        result._expected_structure = expected_schema_structure(migrations)
         return result
 
     def close(self) -> None:
