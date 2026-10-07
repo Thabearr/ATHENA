@@ -39,6 +39,7 @@ APP01C_ADDITIVE_PATHS={
  'services/athena_capability_service.py',
  'services/athena_read_service.py',
  'tests/fixtures/core_01d/app_01c_historical/api_server.py.b64',
+ 'tests/fixtures/core_01d/app_01c_historical/checkpoint_e_completion.py.b64',
  'tests/fixtures/core_01d/app_01c_historical/run_desktop.py.txt',
  'tests/fixtures/core_01d/app_01c_historical/test_api_error_handling.py.txt',
  'tests/fixtures/core_01d/app_01c_historical/test_product_baseline_v1.py.txt',
