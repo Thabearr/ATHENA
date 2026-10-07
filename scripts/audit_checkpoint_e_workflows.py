@@ -169,6 +169,12 @@ PASS_A_HISTORICAL_SOURCE_BLOBS = {
     "tests/test_api_error_handling.py": "a827e02b95779ca0478ffa74db34e41de1e04b42",
     "tests/test_product_baseline_v1.py": "2d552f49cf84462bd1b32e86eea2a96ee0570b64",
 }
+PASS_A_BASE_SOURCE_BLOBS = {
+    "api/server.py": "21c9aa432aaccd8db041778a26365f12f6af80de",
+    "run_desktop.py": "3495618a198ccde18cad7d578362b1366e4bcedc",
+    "tests/test_api_error_handling.py": "a827e02b95779ca0478ffa74db34e41de1e04b42",
+    "tests/test_product_baseline_v1.py": "2d552f49cf84462bd1b32e86eea2a96ee0570b64",
+}
 PASS_A_HISTORICAL_SOURCE_FIXTURES = {
     "api/server.py": "tests/fixtures/core_01d/app_01c_historical/api_server.py.b64",
     "run_desktop.py": "tests/fixtures/core_01d/app_01c_historical/run_desktop.py.txt",
@@ -522,10 +528,10 @@ def base_input():
         elif path in PASS_A_HISTORICAL_SOURCE_FIXTURES:
             require(
                 identity == {
-                    "mode": identity["mode"],
-                    "git_blob_sha1": PASS_A_HISTORICAL_SOURCE_BLOBS[path],
+                    "mode": "100644",
+                    "git_blob_sha1": PASS_A_BASE_SOURCE_BLOBS[path],
                 },
-                "Pass-A inventory differs from its exact D1 predecessor source fixture: " + path,
+                "Pass-A base inventory differs from its exact V1 source identity: " + path,
             )
         else:
             require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
@@ -556,6 +562,7 @@ def base_input():
             audit_after if path == HISTORICAL_AUDIT
             else fresh_workflow_after_blob if path == fresh_workflow_path and fresh_workflow_after_blob
             else supporting_source_blobs[path] if path in supporting_source_blobs
+            else PASS_A_HISTORICAL_SOURCE_BLOBS[path] if path in PASS_A_HISTORICAL_SOURCE_FIXTURES
             else value["files"][path]["git_blob_sha1"]
         )
         require(actual == expected_blob, f"worktree source differs: {path}")
