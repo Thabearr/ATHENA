@@ -24,21 +24,38 @@ APP01B_ADDITIVE_PATHS={
 # immutable Pass-A tree. Their exact current bytes are authenticated by the
 # append-only A2 inventory; keep those additive D2 changes out of the V1 view.
 APP01C_ADDITIVE_PATHS={
+ 'scripts/audit_core_01d_checkpoint_e_completion.py',
+ 'scripts/audit_checkpoint_e_workflows.py',
+ 'scripts/audit_core_01d_checkpoint_e_completion_v2.py',
  'api/app_factory.py',
  'api/schemas.py',
  'api/server.py',
+ 'api/v1/common.py',
+ 'api/v1/exports.py',
+ 'api/v1/fixtures.py',
+ 'api/v1/runs.py',
  'docs/product/app_01c_versioned_api.md',
  'run_desktop.py',
  'services/athena_capability_service.py',
+ 'services/athena_read_service.py',
+ 'tests/fixtures/core_01d/app_01c_historical/api_server.py.b64',
+ 'tests/fixtures/core_01d/app_01c_historical/run_desktop.py.txt',
+ 'tests/fixtures/core_01d/app_01c_historical/test_api_error_handling.py.txt',
+ 'tests/fixtures/core_01d/app_01c_historical/test_product_baseline_v1.py.txt',
  'tests/test_api_error_handling.py',
  'tests/test_app_01a_local_shell.py',
  'tests/test_app_01b_preview_admission.py',
+ 'tests/test_app_01c_versioned_read_api.py',
  'tests/test_core_01d_ci_offline_transport_inventory_evolution.py',
+ 'tests/test_core_01d_exact_pr_trigger_disposition_b1.py',
  'tests/test_core_01d_frozen_artifact_replay_authority_b5.py',
+ 'tests/test_core_01d_owner_one_shot_issue_comment_authority_b3.py',
  'tests/test_core_01d_port02c_trigger_authority_b6.py',
  'tests/test_product_baseline_v1.py',
 }
-UNCHANGED_SCOPE_SHA='7e9f1cadd5b266d13b7c75c3bd11146ba56088ae2684a0494b3183381156da3f'
+# Exact filtered scope digest after D2 added its authenticated APP01C paths.
+# The origin/main and candidate projections both hash to this identity.
+UNCHANGED_SCOPE_SHA='d7298582950c19d3be973d81871da276cccf6174b2aef726bd5dcb638f6a7cf3'
 # Current additive authority-review documents are authenticated by their own
 # pass auditors, completion overlays, and A2 generation chain. Keep only these
 # exact additive paths out of the immutable Pass-A historical tree projection.

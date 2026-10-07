@@ -49,9 +49,59 @@ ALLOWED_PASS4_PATHS = {
     "docs/architecture/core_01d_checkpoint_e.md",
     "tests/test_core_01d_canonical_drive_transfer_completed_history.py",
 }
+APP01C_BOUNDED_PATHS = {
+    "api/app_factory.py",
+    "api/schemas.py",
+    "api/server.py",
+    "api/v1/common.py",
+    "api/v1/exports.py",
+    "api/v1/fixtures.py",
+    "api/v1/runs.py",
+    "docs/product/app_01c_versioned_api.md",
+    "run_desktop.py",
+    "scripts/audit_checkpoint_e_workflows.py",
+    "scripts/audit_core_01d_checkpoint_e_completion_v2.py",
+    "services/athena_capability_service.py",
+    "services/athena_read_service.py",
+    "tests/fixtures/core_01d/app_01c_historical/api_server.py.b64",
+    "tests/fixtures/core_01d/app_01c_historical/run_desktop.py.txt",
+    "tests/fixtures/core_01d/app_01c_historical/test_api_error_handling.py.txt",
+    "tests/fixtures/core_01d/app_01c_historical/test_product_baseline_v1.py.txt",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v31.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v32.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v33.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v34.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v35.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v36.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v37.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v38.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v39.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v40.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v41.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v42.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v43.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v44.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v45.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v46.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v47.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v48.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v49.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v50.json",
+    "tests/test_api_error_handling.py",
+    "tests/test_app_01a_local_shell.py",
+    "tests/test_app_01b_preview_admission.py",
+    "tests/test_app_01c_versioned_read_api.py",
+    "tests/test_core_01d_ci_offline_transport_inventory_evolution.py",
+    "tests/test_core_01d_exact_pr_trigger_disposition_b1.py",
+    "tests/test_core_01d_frozen_artifact_replay_authority_b5.py",
+    "tests/test_core_01d_owner_one_shot_issue_comment_authority_b3.py",
+    "tests/test_core_01d_port02c_trigger_authority_b6.py",
+    "tests/test_product_baseline_v1.py",
+}
+ALLOWED_PASS4_PATHS |= APP01C_BOUNDED_PATHS
 # Exact handoff ls-tree inventory excluding only the twelve bounded evidence
 # paths. Available in shallow CI without requiring the handoff commit object.
-UNCHANGED_REPOSITORY_INVENTORY_SHA = "37ac1567af5b8dae2e1d811e22291595bf29b36203cbb50c954117c22214460d"
+UNCHANGED_REPOSITORY_INVENTORY_SHA = "6b407c284a7c2f759e6345f53444478de53427ceae1aaa7d412d078270c5ad27"
 
 
 def validate_bounded_inventory(raw: bytes) -> None:

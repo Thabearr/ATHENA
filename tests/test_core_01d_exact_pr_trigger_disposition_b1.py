@@ -236,6 +236,12 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
         "api/v1/run_previews.py",
         "services/athena_preview_service.py",
         "tests/test_app_01b_preview_admission.py",
+        "api/v1/common.py",
+        "api/v1/exports.py",
+        "api/v1/fixtures.py",
+        "api/v1/runs.py",
+        "services/athena_read_service.py",
+        "tests/test_app_01c_versioned_read_api.py",
     }
     original_tree = boundary.git("ls-tree", "-r", "HEAD")
     projected = completion_v2.a2_historical_projection(original_tree)
