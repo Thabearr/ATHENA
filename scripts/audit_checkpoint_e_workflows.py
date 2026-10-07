@@ -521,11 +521,11 @@ def base_input():
             )
         elif path in PASS_A_HISTORICAL_SOURCE_FIXTURES:
             require(
-                current.get(path) == {
+                identity == {
                     "mode": identity["mode"],
                     "git_blob_sha1": PASS_A_HISTORICAL_SOURCE_BLOBS[path],
                 },
-                "Pass-A source differs from its exact D1 predecessor identity: " + path,
+                "Pass-A inventory differs from its exact D1 predecessor source fixture: " + path,
             )
         else:
             require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
