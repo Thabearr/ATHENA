@@ -118,7 +118,7 @@ def test_receipt_mutations_fail_closed(changed):
 
 def test_current_a2_inventory_extends_immutable_generations_eight_and_nine_through_v67():
     chain = boundary.discover_inventory_generations()
-    assert [generation for generation, _ in chain] == list(range(1, 70))
+    assert [generation for generation, _ in chain] == list(range(1, 72))
     v8 = boundary.read(boundary.inventory_generation_path(8))
     assert v8["generation"] == 8
     assert v8["canonical_sha256"] == "856129ba6eafb0281f10a16639f26fd477b2ba6a2fb00957ee79fa539539412d"
@@ -159,10 +159,10 @@ def test_current_a2_inventory_extends_immutable_generations_eight_and_nine_throu
     v46 = boundary.read_generation(boundary.inventory_generation_path(46))
     assert v46["canonical_sha256"] == "dd6dd1c658710933ebc5ff50894b5b4cf61091b2b57dc0694b87c9d2a6ded6d3"
     latest = boundary.authenticate_inventory()
-    assert latest["generation"] == 69
+    assert latest["generation"] == 71
     assert latest["predecessor_inventory"] == {
-        "path": boundary.inventory_generation_path(68),
-        "canonical_sha256": "38766b0fd2e2627bc05bd687ba404ddb2b6b186c034294ed4183150d52ec52dd",
-        "generation": 68,
+        "path": boundary.inventory_generation_path(70),
+        "canonical_sha256": "bc12c07f2d840be6abf77f2ec2bea1ffca8b34256b5c293db67dfbbf5b3909a5",
+        "generation": 70,
         "rewritten": False,
     }

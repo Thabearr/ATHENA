@@ -61,7 +61,15 @@ login, cookie, wallet, stake or wager integration exists.
 
 ## Receipt-first terminal projection
 
-The offline caller supplies canonical RunReceipt bytes. The storage wrapper
+The offline caller supplies canonical RunReceipt bytes. Receipt producer commit
+must equal the independently verified GIT_COMMIT source and original development
+provenance. Receipt evidence must explicitly bind run_id, release_id and
+execution_envelope_sha256. Installed hash-pinned manifests have no source commit:
+their receipts fail closed as unsupported producer lineage, without inventing a
+Git commit, signature, or E2 execution evidence. Named future dependency
+E2/PACKAGING_AUTHENTICATED_INSTALLED_PRODUCER_PROVENANCE (authenticated
+installed-release receipt producer provenance from packaging/E2) remains
+OPEN. The storage wrapper
 binds them to run, request, envelope, release, expected state version and attempt
 lease identities. Request and authority must match and delivery results are
 rejected. The wrapper is atomically published through fsynced temporary bytes
@@ -90,3 +98,35 @@ the immutable D3 receipt's source hash. This bounded projection works in shallow
 offline CI without ancestor fetches; it does not relax unrelated source checks
 or rewrite the D3 receipt or A2 V1–V68. A native resource regression requires both
 app migrations in the closed bundle allowlist and triggers native CI naturally.
+
+## Independent-review trust corrections
+
+CONFIRMED requires a retained EXTERNAL_RESPONSE artifact of the same run and
+role, safely contained and verified against exact raw SHA and byte count.
+Missing, cross-run, wrong-role or corrupted responses cannot change SENT.
+Explicit recovery changes a crashed SENT operation to OUTCOME_UNKNOWN, never
+resends it. Response-free FAILED requires a reviewed synthetic failure code
+(`SYNTHETIC_LOCAL_FAILURE` or `SYNTHETIC_CONFIRMED_FAILURE`); it is not confirmation.
+
+PREPARED to SENT requires RUNNING inside the same BEGIN IMMEDIATE transaction as
+the transition. If cancellation owns the writer lock first, the send is denied.
+If SENT commits first, later cancellation permits only proven settlement or
+explicit uncertainty/recovery under the original fencing token.
+
+Historical reads and exact committed replay authenticate original request,
+envelope, capability report and retained release provenance, not the current
+release identity. Installed history verifies canonical retained manifest bytes,
+their original envelope pin, and all provenance metadata, with no signature or
+source-commit claim. Development history additionally requires its original
+local Git commit object; missing evidence is explicitly unavailable. Current
+admission and all active mutations still require the fresh current source and
+source-controlled authority, so a release-B installation cannot resume A's run.
+
+Admission reauthenticates the exact D3 capability report BLOB/digest, canonical
+ExecutionPreview, profile, release and expiry, and the D1 authority engine inside
+the admission transaction. Blocked, stale or tampered capability evidence creates
+no run or genesis event. Verified committed replay remains available before TTL
+reevaluation and does not authorize work.
+
+This correction preserves A2 V1–V69 and app migration 0002. New proof source is
+bound by the append-only V70 successor, with V69 as its exact unrevised predecessor.

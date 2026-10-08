@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import hashlib
 import json
@@ -12,6 +13,10 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 RECEIPT = "artifacts/product/data_01b_durable_run_state_v1.json"
 SNAPSHOT = "tests/fixtures/core_01d/data_01b_historical/d3_source_bytes.json"
+REVIEWED_HEAD = "e5b9793d1c609ad331819c228484e5c088e686d9"
+REVIEWED_A2_SHA = "009185f7e2743b29bd5fa4f7c71815c54ccf1158e759a10aa0c68fdb263d910a"
+V70_A2_SHA256 = "bc12c07f2d840be6abf77f2ec2bea1ffca8b34256b5c293db67dfbbf5b3909a5"
+FROZEN_SECOND_MIGRATION_SHA = "3c0098dcd77e32a9e115dfcd40bd019901309894bb780ad66e90ed3846b60e97"
 FROZEN_MIGRATION_SHA = "6d380b30733f99d3740b8d6dd89810fb31ca568625319b433023f48c9f667b7c"
 SOURCES = (
     "database/app_migrations.py", "database/run_repository.py",
@@ -39,6 +44,8 @@ NEW_PATHS = {
     "tests/test_data_01b_durable_run_state.py", "docs/product/data_01b_run_storage.md",
     "scripts/audit_data_01b_durable_run_state.py", RECEIPT,
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v69.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v70.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v71.json",
     "tests/native/test_data_01b_bundle_migrations.py",
     SNAPSHOT,
 }
@@ -85,6 +92,8 @@ def build_receipt():
     if hashlib.sha256(first).hexdigest() != FROZEN_MIGRATION_SHA:
         raise AssertionError("frozen migration 0001 changed")
     second = (ROOT / "database/migrations/0002_app_runs_operations.sql").read_bytes().replace(b"\r\n", b"\n")
+    if hashlib.sha256(second).hexdigest() != FROZEN_SECOND_MIGRATION_SHA:
+        raise AssertionError("reviewed migration 0002 changed")
     conn = sqlite3.connect(":memory:")
     try:
         conn.executescript(first.decode("utf-8"))
@@ -105,6 +114,31 @@ def build_receipt():
             raise AssertionError("out-of-scope admission wiring changed: " + path)
     if "DURABLE_RUN_STORE_UNAVAILABLE" not in api or "UnavailableAdmissionRepository() if admission_repository is None" not in service:
         raise AssertionError("production unavailable admission boundary changed")
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    predecessor = boundary.read_generation(boundary.inventory_generation_path(70))
+    inventory = boundary.read_generation(boundary.inventory_generation_path(71))
+    if (predecessor["canonical_sha256"] != V70_A2_SHA256
+            or inventory["predecessor_inventory"] != {
+                "path": boundary.inventory_generation_path(70), "canonical_sha256": V70_A2_SHA256,
+                "generation": 70, "rewritten": False}):
+        raise AssertionError("review successor A2 ancestry drift")
+    regressions = {
+        "confirmed_response": "test_confirmed_requires_retained_response_without_mutation",
+        "cancel_send_race": "test_cancel_send_race_independent_connections_serializes_winner",
+        "historical_release": "test_historical_release_a_read_replay_under_b_but_no_current_mutation",
+        "receipt_producer": "test_unverified_receipt_producer_rejected_before_publication",
+        "blocked_admission": "test_genuinely_blocked_snapshot_cannot_admit",
+    }
+    definitions = {node.name for node in ast.walk(ast.parse(
+        (ROOT / "tests/test_data_01b_durable_run_state.py").read_text(encoding="utf-8")))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    if not set(regressions.values()) <= definitions:
+        raise AssertionError("independent-review adversarial regressions missing")
+    changed = subprocess.run(["git", "diff", "--name-only", "7e609e3d2006d2a72d9bf347cb917c0585538322"],
+                             cwd=ROOT, check=True, capture_output=True).stdout.decode().splitlines()
+    if any(path.startswith(".github/workflows/") or path in {
+            "database/athena.db", "database/athena_history.db"} for path in changed):
+        raise AssertionError("prohibited workflow or legacy database delta")
     value = {
         "schema_version": 1, "policy_id": "ATHENA_DATA_01B_DURABLE_RUN_STATE_V1",
         "base_main_sha": "7e609e3d2006d2a72d9bf347cb917c0585538322",
@@ -113,8 +147,24 @@ def build_receipt():
         "d3_receipt_sha256": "3f1b04be1d97391b87e958eb008910b822567673582b61947f00099b9aa71c59",
         "migration_0001_raw_sha256": FROZEN_MIGRATION_SHA,
         "migration_0002_lf_sha256": hashlib.sha256(second).hexdigest(),
-        "a2_predecessor": {"generation": 68, "rewritten": False,
-                           "canonical_sha256": "38766b0fd2e2627bc05bd687ba404ddb2b6b186c034294ed4183150d52ec52dd"},
+        "reviewed_blocked_head": REVIEWED_HEAD,
+        "reviewed_blocked_receipt_sha256": "41891924ca3b7ca207fe5ba26e6ea1440b7f5937e4ea6e9aef07a92974545388",
+        "open_future_dependencies": [{"id": "E2/PACKAGING_AUTHENTICATED_INSTALLED_PRODUCER_PROVENANCE", "status": "OPEN"}],
+        "a2_inventory": {"generation": 71, "path": boundary.inventory_generation_path(71),
+                         "canonical_sha256": inventory["canonical_sha256"]},
+        "a2_predecessor": {"generation": 70, "rewritten": False, "canonical_sha256": V70_A2_SHA256},
+        "proof_semantics": {
+            "confirmed_requires_retained_same_run_response": True,
+            "new_send_requires_running_inside_writer_transaction": True,
+            "historical_provenance_separate_from_current_mutation_authority": True,
+            "terminal_requires_verified_git_producer_and_run_bindings": True,
+            "installed_commit_lineage_not_fabricated": True,
+            "admission_reauthenticates_capability_and_current_authority": True,
+            "adversarial_regressions": regressions,
+        },
+        "workflow_yaml_delta": 0, "legacy_database_delta": 0,
+        "prohibited_runtime_actions": dict.fromkeys(("provider", "live", "share_code", "login",
+            "cookie", "wallet", "stake", "wager", "worker", "manual_workflow"), 0),
         "app_table_count": 14, "added_tables": sorted(TABLES),
         "production_admission": "UNAVAILABLE_503", "production_operations_enabled": False,
         "executor_authority": False, "merge_authorized": False,
@@ -142,7 +192,7 @@ def main():
 def authenticate_successor(latest):
     raw = (ROOT / RECEIPT).read_bytes()
     value = build_receipt()
-    if raw != canonical(value) or latest["generation"] < 69:
+    if raw != canonical(value) or latest["generation"] < 71:
         raise AssertionError("D4 successor source receipt mismatch")
     inventory = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
     for row in value["source_identities"]:

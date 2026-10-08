@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import re
+import subprocess
 import uuid
 
 from database.app_migration_evidence import contained, publish
@@ -19,7 +20,12 @@ from database.app_migrations import (
     read_app_migrations, verify_app_schema,
 )
 from domain.run_contracts import canonical_json_bytes, RunRequest, RunReceipt
-from domain.execution_envelope import ExecutionEnvelope
+from domain.execution_envelope import ExecutionEnvelope, ExecutionPreview, evaluate_execution_envelope
+from runtime.release_identity import (
+    DEVELOPMENT_IDENTITY_POLICY_ID, TRUST_MODE, DevelopmentCheckoutIdentity,
+    _parse_manifest, _validate_manifest_shape,
+)
+from services.athena_run_service import AthenaRunService
 from services.athena_preview_service import (
     AdmissionLookupResult, AdmissionResult, AdmissionReplayIdentity,
     _source_identity,
@@ -48,6 +54,18 @@ class RunLeaseFenced(RunRepositoryError):
 
 class ExternalOperationViolation(RunRepositoryError):
     """Operation would exceed the offline storage boundary."""
+
+
+class HistoricalReleaseUnavailable(RunRepositoryError):
+    """Original release evidence cannot be authenticated; never execution authority."""
+
+    code = "HISTORICAL_RELEASE_UNAVAILABLE"
+
+
+class ReceiptProducerUnavailable(RunRepositoryError):
+    """Canonical receipt claims a producer the retained source cannot prove."""
+
+    code = "RECEIPT_PRODUCER_UNAVAILABLE"
 
 
 def _utc(value):
@@ -112,22 +130,95 @@ class DurableRunRepository:
         ).fetchone()
         if row is None:
             return AdmissionLookupResult("not_found")
-        self._verify_run_identity(conn, row[0])
+        self._verify_run_identity(conn, row[0], current=False)
         if row[1:] != (identity.preview_id, identity.execution_envelope_sha256):
             return AdmissionLookupResult("idempotency_conflict")
         return AdmissionLookupResult("idempotent_replay", _identity(row[0]))
 
-    def _verify_run_identity(self, conn, run_id):
-        row = conn.execute("SELECT request_bytes,request_sha256,envelope_bytes,envelope_sha256,release_id FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
+    def _verify_release(self, conn, release_id, source):
+        row = conn.execute("SELECT source_mode,source_commit,platform,architecture,build_id,manifest_bytes,manifest_byte_sha256,trust_mode,signature_key_id,verified_at FROM app_release_manifests WHERE release_id=?", (release_id,)).fetchone()
+        if row is None or row[8] is not None:
+            raise HistoricalReleaseUnavailable("original release provenance unavailable or unsupported signature claim")
+        try:
+            if _utc(datetime.fromisoformat(row[9].replace("Z", "+00:00"))) != row[9]:
+                raise ValueError("noncanonical verification time")
+            if source.kind == "PINNED_RELEASE_MANIFEST":
+                raw = row[5]
+                manifest = _parse_manifest(raw)
+                _validate_manifest_shape(manifest)
+                if (hashlib.sha256(raw).hexdigest() != source.manifest_sha256
+                        or row[6] != source.manifest_sha256
+                        or row[:5] != ("INSTALLED_RELEASE", None, source.platform_tag,
+                                       source.architecture_tag, source.build_id)
+                        or row[7] != TRUST_MODE or row[7] != source.trust_mode
+                        or release_id != source.release_id
+                        or any(manifest[key] != getattr(source, field) for key, field in (
+                            ("release_id", "release_id"), ("build_id", "build_id"),
+                            ("platform_tag", "platform_tag"), ("architecture_tag", "architecture_tag"),
+                            ("policy_id", "manifest_policy_id"), ("schema_version", "manifest_schema_version")))):
+                    raise ValueError("original manifest pin/metadata mismatch")
+            elif source.kind == "GIT_COMMIT":
+                if (release_id != "development-checkout:" + source.value
+                        or row[0] != "DEVELOPMENT_CHECKOUT" or row[1] != source.value
+                        or row[4] != source.value or row[5:7] != (None, None)
+                        or row[7] != DEVELOPMENT_IDENTITY_POLICY_ID
+                        or row[2] not in {"windows", "linux"} or row[3] not in {"x86_64", "aarch64"}):
+                    raise ValueError("original development provenance mismatch")
+                if type(self.verified_identity) is not DevelopmentCheckoutIdentity:
+                    raise HistoricalReleaseUnavailable("historical Git producer object unavailable in installed mode")
+                result = subprocess.run(["git", "cat-file", "-t", source.value],
+                                        cwd=self.verified_identity.repository_root,
+                                        check=False, capture_output=True, timeout=10)
+                if result.returncode or result.stdout.strip() != b"commit":
+                    raise HistoricalReleaseUnavailable("historical Git commit object unavailable")
+            else:
+                raise HistoricalReleaseUnavailable("unsupported original release provenance")
+        except HistoricalReleaseUnavailable:
+            raise
+        except (ValueError, TypeError, AttributeError, OSError, subprocess.SubprocessError) as exc:
+            raise HistoricalReleaseUnavailable("original release provenance verification failed") from exc
+        return row
+
+    def _verify_capability(self, conn, preview_id, envelope, request_bytes, release_id, *, now=None):
+        row = conn.execute("SELECT p.profile_id,p.request_bytes,p.request_sha256,p.envelope_bytes,p.envelope_sha256,p.expires_at,c.release_id,c.profile,c.report_bytes,c.report_sha256,c.evaluated_at,c.expires_at FROM app_run_previews p JOIN app_capability_snapshots c ON c.snapshot_id=p.capability_snapshot_id WHERE p.preview_id=?", (preview_id,)).fetchone()
+        expected = (LOCAL_PROFILE_ID, request_bytes, envelope.request_sha256,
+                    envelope.canonical_bytes, envelope.canonical_sha256, _utc(envelope.expires_at),
+                    release_id, envelope.authority_manifest.authority_profile)
+        if row is None or row[:8] != expected:
+            raise RunRepositoryError("retained preview/capability identity mismatch")
+        if type(row[8]) is not bytes or hashlib.sha256(row[8]).hexdigest() != row[9]:
+            raise RunRepositoryError("retained capability report digest mismatch")
+        preview = ExecutionPreview.from_json_bytes(row[8])
+        if (preview.canonical_bytes != evaluate_execution_envelope(envelope).canonical_bytes
+                or row[10] != _utc(envelope.issued_at) or row[11] != _utc(envelope.expires_at)):
+            raise RunRepositoryError("retained capability report/expiry mismatch")
+        if now is not None and now >= preview.expires_at:
+            raise RunRepositoryError("capability snapshot expired")
+        return preview
+
+    @staticmethod
+    def _require_current_authority(envelope):
+        request = RunRequest.from_json_bytes(envelope.request_bytes)
+        if (AthenaRunService.authority_manifest_for(request) != envelope.authority_manifest
+                or evaluate_execution_envelope(envelope).blockers):
+            raise RunRepositoryError("current authority differs or preview is blocked")
+
+    def _verify_run_identity(self, conn, run_id, *, current=True):
+        row = conn.execute("SELECT request_bytes,request_sha256,envelope_bytes,envelope_sha256,release_id,preview_id FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
         if row is None:
             raise RunRepositoryError("unknown run")
         request = RunRequest.from_json_bytes(row[0])
         envelope = ExecutionEnvelope.from_json_bytes(row[2])
         if (request.canonical_sha256 != row[1] or envelope.canonical_sha256 != row[3]
-                or envelope.request_sha256 != row[1]
-                or envelope.source_identity != _source_identity(self._resources)
-                or row[4] != release_provenance(self.verified_identity, verified_at=self._clock())["release_id"]):
+                or envelope.request_sha256 != row[1] or envelope.request_bytes != row[0]):
             raise RunRepositoryError("run source/request/envelope/release identity drift")
+        self._verify_release(conn, row[4], envelope.source_identity)
+        self._verify_capability(conn, row[5], envelope, row[0], row[4])
+        if current:
+            if (envelope.source_identity != _source_identity(self._resources)
+                    or row[4] != release_provenance(self.verified_identity, verified_at=self._clock())["release_id"]):
+                raise RunRepositoryError("active run release differs from current verified source")
+            self._require_current_authority(envelope)
         return envelope
 
     def lookup(self, identity):
@@ -170,6 +261,12 @@ class DurableRunRepository:
                     or envelope.source_identity != source
                     or hashlib.sha256(canonical_json_bytes(source)).hexdigest() != candidate.source_identity_sha256):
                 raise RunRepositoryError("candidate authority/source identity mismatch")
+            self._verify_release(conn, row[6], envelope.source_identity)
+            preview = self._verify_capability(conn, candidate.preview_id, envelope,
+                                              row[1], row[6], now=now)
+            self._require_current_authority(envelope)
+            if preview.blockers:
+                raise RunRepositoryError("blocked capability snapshot cannot admit a run")
             run_id = _identity("run-" + uuid.uuid4().hex)
             conn.execute(
                 "INSERT INTO app_runs(run_id,profile_id,preview_id,idempotency_key,request_bytes,request_sha256,envelope_bytes,envelope_sha256,release_id,state,state_version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'QUEUED',0,?,?)",
@@ -264,7 +361,7 @@ class DurableRunRepository:
         if type(after_sequence) is not int or after_sequence < 0 or type(limit) is not int or not 1 <= limit <= 1000:
             raise RunRepositoryError("invalid event page")
         with self._operation() as conn:
-            self._verify_run_identity(conn, run_id)
+            self._verify_run_identity(conn, run_id, current=False)
             rows = conn.execute("SELECT sequence,state_version,event_type,payload_bytes,payload_sha256,observed_at FROM app_run_events WHERE run_id=? AND sequence>? ORDER BY sequence LIMIT ?",
                                 (run_id, after_sequence, limit)).fetchall()
             for index, row in enumerate(rows, start=1):
@@ -328,10 +425,19 @@ class DurableRunRepository:
         if not conn.execute("SELECT 1 FROM app_run_artifacts WHERE run_id=? AND artifact_id=? AND role=? AND retained_root=1",
                             (run_id, artifact_id, role)).fetchone():
             raise RunRepositoryError("artifact is not retained for this run/role")
-        row = conn.execute("SELECT logical_path,byte_sha256,byte_count FROM app_artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
-        raw = contained(self._data_root, logical_locator(row[0])).read_bytes()
-        if hashlib.sha256(raw).hexdigest() != row[1] or len(raw) != row[2]:
-            raise RunRepositoryError("retained artifact bytes mismatch")
+        if role == "EXTERNAL_RESPONSE" and conn.execute(
+                "SELECT 1 FROM app_run_artifacts WHERE artifact_id=? AND role=? AND run_id<>?",
+                (artifact_id, role, run_id)).fetchone():
+            raise RunRepositoryError("response artifact belongs to another run")
+        row = conn.execute("SELECT logical_path,byte_sha256,byte_count,artifact_kind FROM app_artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
+        try:
+            if row is None or row[3] != role:
+                raise RunRepositoryError("retained artifact kind/role mismatch")
+            raw = contained(self._data_root, logical_locator(row[0])).read_bytes()
+            if hashlib.sha256(raw).hexdigest() != row[1] or len(raw) != row[2]:
+                raise RunRepositoryError("retained artifact bytes mismatch")
+        except (OSError, ValueError) as exc:
+            raise RunRepositoryError("retained artifact is missing, unsafe or unverified") from exc
 
     def link_run_artifact(self, run_id, artifact_id, *, role, attempt_id, lease_token):
         if role not in {"EXTERNAL_INPUT", "EXTERNAL_RESPONSE"}:
@@ -339,9 +445,13 @@ class DurableRunRepository:
         _identity(artifact_id)
         with self._operation(write=True) as conn:
             self._fence(conn, run_id, attempt_id, lease_token)
-            row = conn.execute("SELECT logical_path,byte_sha256,byte_count FROM app_artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
-            if row is None:
-                raise RunRepositoryError("missing retained artifact")
+            if role == "EXTERNAL_RESPONSE" and conn.execute(
+                    "SELECT 1 FROM app_run_artifacts WHERE artifact_id=? AND role=? AND run_id<>?",
+                    (artifact_id, role, run_id)).fetchone():
+                raise RunRepositoryError("response artifact belongs to another run")
+            row = conn.execute("SELECT logical_path,byte_sha256,byte_count,artifact_kind FROM app_artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
+            if row is None or row[3] != role:
+                raise RunRepositoryError("missing retained artifact or kind/role mismatch")
             raw = contained(self._data_root, logical_locator(row[0])).read_bytes()
             if hashlib.sha256(raw).hexdigest() != row[1] or len(raw) != row[2]:
                 raise RunRepositoryError("retained artifact bytes mismatch")
@@ -355,6 +465,11 @@ class DurableRunRepository:
                        "SENT": {"CONFIRMED", "FAILED", "OUTCOME_UNKNOWN"}}
         if state not in transitions.get(expected_state, set()):
             raise ExternalOperationViolation("operation transition/retry forbidden")
+        if state == "CONFIRMED" and response_artifact_id is None:
+            raise ExternalOperationViolation("CONFIRMED requires a retained proven response")
+        if state == "FAILED" and response_artifact_id is None and error_code not in {
+                "SYNTHETIC_LOCAL_FAILURE", "SYNTHETIC_CONFIRMED_FAILURE"}:
+            raise ExternalOperationViolation("response-free failure requires a reviewed synthetic failure code")
         if error_code is not None:
             _identity(error_code)
             if state not in {"FAILED", "OUTCOME_UNKNOWN"}:
@@ -365,6 +480,9 @@ class DurableRunRepository:
                                (run_id, operation_id)).fetchone()
             if row != (attempt_id, expected_state, "TESTING_SYNTHETIC"):
                 raise ExternalOperationViolation("operation owner/state mismatch")
+            if expected_state == "PREPARED" and state == "SENT":
+                if conn.execute("SELECT state FROM app_runs WHERE run_id=?", (run_id,)).fetchone()[0] != "RUNNING":
+                    raise ExternalOperationViolation("cancellation forbids a new send transition")
             if response_artifact_id is not None:
                 if state not in {"CONFIRMED", "FAILED"}:
                     raise ExternalOperationViolation("response artifact requires a known result")
@@ -394,12 +512,23 @@ class DurableRunRepository:
             row = cursor.fetchone()
             if row is None:
                 return None
-            self._verify_run_identity(conn, run_id)
+            self._verify_run_identity(conn, run_id, current=False)
             result = dict(zip((column[0] for column in cursor.description), row))
             for raw_key, digest_key in (("request_bytes", "request_sha256"), ("envelope_bytes", "envelope_sha256")):
                 if hashlib.sha256(result[raw_key]).hexdigest() != result[digest_key]:
                     raise RunRepositoryError("run immutable identity digest mismatch")
-            return result
+        return result
+
+    def _verify_receipt_producer(self, conn, run_id, receipt, envelope, release_id):
+        provenance = self._verify_release(conn, release_id, envelope.source_identity)
+        if envelope.source_identity.kind != "GIT_COMMIT" or provenance[1] is None:
+            raise ReceiptProducerUnavailable("installed hash pin has no independently verified producer commit; named future dependency E2/PACKAGING_AUTHENTICATED_INSTALLED_PRODUCER_PROVENANCE remains open")
+        if receipt.exact_commit_sha != provenance[1] or receipt.exact_commit_sha != envelope.source_identity.value:
+            raise ReceiptProducerUnavailable("receipt producer commit differs from verified run source")
+        expected = {"run_id": run_id, "execution_envelope_sha256": envelope.canonical_sha256,
+                    "release_id": release_id}
+        if any(receipt.evidence.get(key) != value for key, value in expected.items()):
+            raise ReceiptProducerUnavailable("receipt run/envelope/release producer binding mismatch")
 
     def publish_terminal_receipt(self, run_id, *, receipt_bytes, expected_version, attempt_id, lease_token):
         """Publish immutable offline projection evidence BEFORE changing SQLite.
@@ -419,6 +548,7 @@ class DurableRunRepository:
             envelope = ExecutionEnvelope.from_json_bytes(envelope_raw)
             if receipt.authority_manifest != envelope.authority_manifest:
                 raise RunRepositoryError("receipt authority mismatch")
+            self._verify_receipt_producer(conn, run_id, receipt, envelope, row[2])
             value = {"policy_id": "ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1",
                      "run_id": run_id, "request_sha256": row[0], "envelope_sha256": row[1],
                      "release_id": row[2], "expected_version": expected_version,
@@ -450,13 +580,14 @@ class DurableRunRepository:
             row = conn.execute("SELECT request_sha256,envelope_sha256,release_id,state,state_version,receipt_artifact_id FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
             if row is None or row[:3] != (value["request_sha256"], value["envelope_sha256"], value["release_id"]):
                 raise RunRepositoryError("receipt run identity mismatch")
-            self._verify_run_identity(conn, run_id)
+            self._verify_run_identity(conn, run_id, current=False)
             envelope_raw = conn.execute("SELECT envelope_bytes FROM app_runs WHERE run_id=?", (run_id,)).fetchone()[0]
             envelope = ExecutionEnvelope.from_json_bytes(envelope_raw)
             if (receipt.request.canonical_sha256 != row[0]
                     or receipt.authority_manifest != envelope.authority_manifest
                     or receipt.share_code_result is not None):
                 raise RunRepositoryError("receipt contract identity mismatch")
+            self._verify_receipt_producer(conn, run_id, receipt, envelope, row[2])
             if row[3] == "TERMINAL" and row[5] == artifact_id:
                 return False
             self._fence(conn, run_id, value["attempt_id"], value["lease_token"])
