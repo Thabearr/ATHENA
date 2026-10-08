@@ -103,6 +103,9 @@ APP01C_BOUNDED_PATHS = {
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v63.json",
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v64.json",
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v65.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v66.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v67.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v68.json",
     "tests/test_api_error_handling.py",
     "tests/test_app_01a_local_shell.py",
     "tests/test_app_01b_preview_admission.py",
@@ -128,10 +131,23 @@ UNCHANGED_REPOSITORY_INVENTORY_SHA = "6b407c284a7c2f759e6345f53444478de53427ceae
 
 
 def validate_bounded_inventory(raw: bytes) -> None:
+    from scripts import audit_data_01a_app_schema_core as data01a
+    data01a.historical_build_config()
+    predecessor_blobs = {
+        "scripts/audit_app_01a_local_shell.py": "a87d9e5edaeae54f6514bb6efae6874244d32ead",
+        "scripts/audit_core_01d_port02c_trigger_authority_b6.py": "cdee96e9a5cca5ee272b47e00cbede9ca96a4d22",
+        data01a.BUILD_CONFIG: data01a.BUILD_CONFIG_BLOB,
+        "services/athena_preview_service.py": "b8c3898baa28a4243c80a2b58ed284365ae854ab",
+    }
     unchanged_lines = []
     for line in raw.splitlines(keepends=True):
         metadata, separator, path_bytes = line.partition(b"\t")
         path = path_bytes.strip().decode()
+        if path in data01a.NEW_PATHS:
+            continue
+        if path in predecessor_blobs:
+            metadata = metadata.rsplit(b" ", 1)[0] + b" " + predecessor_blobs[path].encode()
+            line = metadata + separator + path_bytes
         if path in ALLOWED_PASS4_PATHS and path not in APP01C_CURRENT_SOURCE_PATHS:
             continue
         if path in APP01C_PREDECESSOR_SOURCE_BLOBS:

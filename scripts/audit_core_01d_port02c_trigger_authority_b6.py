@@ -274,6 +274,9 @@ def _reviewed_source(path: str, historical: dict[str, Any]) -> bytes:
     # The B6 receipt stays bound to its pre-APP launcher/UI. Authenticate the
     # complete current successor before reading the bounded historical bytes.
     from scripts import audit_app_01a_local_shell as app01a
+    from scripts import audit_data_01a_app_schema_core as data01a
+    if path == data01a.BUILD_CONFIG:
+        return data01a.historical_build_config()
     if path in app01a.HISTORICAL_RUNTIME_PATHS:
         return app01a._decode_historical_runtime_payload(historical, path)
     return (ROOT / path).read_bytes()
@@ -281,6 +284,11 @@ def _reviewed_source(path: str, historical: dict[str, Any]) -> bytes:
 
 def _reviewed_git_source(path: str, blob: str, historical: dict[str, Any]) -> bytes:
     from scripts import audit_app_01a_local_shell as app01a
+    from scripts import audit_data_01a_app_schema_core as data01a
+    if path == data01a.BUILD_CONFIG:
+        raw = data01a.historical_build_config()
+        require(blob == data01a.BUILD_CONFIG_BLOB, "D3 historical B6 blob mismatch")
+        return raw
     if path in app01a.HISTORICAL_RUNTIME_PATHS:
         raw = app01a._decode_historical_runtime_payload(historical, path)
         require(hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() == blob,
@@ -347,7 +355,7 @@ def _base_tree_entries() -> dict[str, tuple[str, str, str]]:
                     and mode_kind_blob[0] in {"100644", "100755"},
                     "required B6 source is not a checked-out regular Git blob: " + path)
             mode, _kind, blob = mode_kind_blob
-            if path in app01a.HISTORICAL_RUNTIME_PATHS:
+            if path in app01a.HISTORICAL_RUNTIME_PATHS or path == "scripts/port_02c_build_config.py":
                 blob = row.get("git_blob_sha1")
             require(blob == row.get("git_blob_sha1"),
                     "checked-out B6 source differs from authenticated base blob: " + path)

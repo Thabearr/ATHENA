@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import platform
+from datetime import datetime, timezone
 from pathlib import Path
 import socket
 import sys
@@ -15,6 +16,7 @@ import urllib.request
 import uvicorn
 
 from api.app_factory import create_app
+from database.app_repository import AppRepository, release_provenance
 from runtime.local_session import LocalSession
 from runtime.release_identity import (
     DevelopmentCheckoutIdentity,
@@ -31,6 +33,7 @@ from runtime.resources import (
 from services.athena_capability_service import AthenaCapabilityService, release_summary
 from services.athena_preview_service import AthenaPreviewAdmissionService
 from services.athena_read_service import AthenaReadService
+from services.app_preview_store import DurablePreviewStore
 
 
 class DesktopLaunchError(ValueError):
@@ -91,18 +94,34 @@ def verify_health(observed, *, session, identity):
         raise DesktopLaunchError("local backend identity verification failed")
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class LocalBackend:
     def __init__(self, resources):
         self.resources = resources
         self.writable_roots = resolve_writable_roots(resources)
         self.session = LocalSession()
+        self.app_repository = None
         self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             # Hold the actual socket through startup; never check then rebind.
             self.listener.bind(("127.0.0.1", 0))
             self.listener.listen(128)
             self.origin = f"http://127.0.0.1:{self.listener.getsockname()[1]}"
-            preview_admission_service = AthenaPreviewAdmissionService(resources)
+            # D3 app store: run the additive app schema once at startup and
+            # capture truthful, immutable release provenance from the verified
+            # identity. This store never grants run authority (POST /api/v1/runs
+            # stays DURABLE_RUN_STORE_UNAVAILABLE).
+            provenance = release_provenance(resources.identity, verified_at=_utc_now())
+            self.app_repository = AppRepository.open(
+                resources, self.writable_roots, release_id=provenance["release_id"])
+            self.app_repository.record_release_manifest(**provenance)
+            preview_store = DurablePreviewStore(
+                self.app_repository, release_id=provenance["release_id"])
+            preview_admission_service = AthenaPreviewAdmissionService(
+                resources, preview_store=preview_store)
             app = create_app(release_identity=resources.identity, resource_resolver=resources,
                              writable_roots=self.writable_roots,
                              local_session=self.session,
@@ -114,6 +133,8 @@ class LocalBackend:
             self.server = uvicorn.Server(uvicorn.Config(app, log_level="critical", access_log=False))
             self.thread = threading.Thread(target=self.server.run, kwargs={"sockets": [self.listener]})
         except Exception:
+            if self.app_repository is not None:
+                self.app_repository.close()
             self.listener.close()
             self.session.invalidate()
             raise DesktopLaunchError("trusted local backend could not be constructed") from None
@@ -152,6 +173,8 @@ class LocalBackend:
         if self.thread.is_alive():
             self.thread.join(timeout=10)
         self.listener.close()
+        if self.app_repository is not None:
+            self.app_repository.close()
         if self.thread.is_alive():
             raise DesktopLaunchError("local backend did not stop")
 

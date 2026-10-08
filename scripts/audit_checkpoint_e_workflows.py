@@ -389,6 +389,8 @@ def verified_additive_artifact_paths():
             "Completion V10 final authority closure failed authentication")
     from scripts import audit_app_01a_local_shell as app01a
     app01a.authenticated_historical_paths()
+    from scripts import audit_data_01a_app_schema_core as data01a
+    data01a.authenticate()
     return (
         MATRIX_PATH,
         RECEIPT_PATH,
@@ -429,6 +431,7 @@ def verified_additive_artifact_paths():
         completion_v10.RECEIPT_PATH,
         a2.inventory_generation_path(9),
         app01a.RECEIPT,
+        data01a.RECEIPT,
     )
 
 
@@ -546,9 +549,9 @@ def base_input():
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     a2.authenticate_inventory()
     from scripts import audit_app_01a_local_shell as app01a
-    _, successor = app01a.authenticated_historical_paths()
+    successor_paths, successor = app01a.authenticated_historical_paths()
     for path, actual in zip(value["scan_paths"], hashed):
-        if path in app01a.PATHS and path in successor["base_identities"]:
+        if path in successor_paths and path in successor["base_identities"]:
             actual = successor["base_identities"][path]["git_blob_sha1"]
         if path in PASS_A_HISTORICAL_SOURCE_BLOBS:
             actual = PASS_A_HISTORICAL_SOURCE_BLOBS[path]

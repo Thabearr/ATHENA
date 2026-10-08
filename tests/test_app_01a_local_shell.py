@@ -32,7 +32,8 @@ def resources(tmp_path):
     root.mkdir()
     records = []
     for path, role in (("ui/index.html", "UI"), ("ui/app.js", "UI"), ("ui/styles.css", "UI"),
-                       ("config/architecture/component-authority-registry-v1.json", "AUTHORITY_REGISTRY")):
+                       ("config/architecture/component-authority-registry-v1.json", "AUTHORITY_REGISTRY"),
+                       ("database/migrations/0001_app_control_core.sql", "MIGRATION")):
         payload = (ROOT / path).read_bytes()
         target = root / path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -43,7 +44,7 @@ def resources(tmp_path):
     raw = canonical_release_manifest_bytes({"schema_version": 1, "policy_id": "ATHENA_INSTALLED_RELEASE_MANIFEST_V1",
         "release_id": "test-release", "build_id": "test-build", "platform_tag": "windows" if sys.platform == "win32" else "linux",
         "architecture_tag": {"amd64": "x86_64", "x86_64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}[platform.machine().lower()],
-        "closed_world_roots": ["config", "ui"], "resources": sorted(records, key=lambda r: r["logical_path"])})
+        "closed_world_roots": ["config", "database/migrations", "ui"], "resources": sorted(records, key=lambda r: r["logical_path"])})
     (root / "release-manifest.json").write_bytes(raw)
     return ResourceResolver.for_installed(verify_installed_release(root, hashlib.sha256(raw).hexdigest()))
 
@@ -326,6 +327,9 @@ def test_capabilities_reverify_contract_and_never_use_weights(control, resources
 
 def test_owned_ephemeral_listener_offline(resources, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(run_desktop, "resolve_writable_roots", lambda *args, **kwargs: WritableRoots(
+        data_root=tmp_path / "data", cache_root=tmp_path / "cache", state_root=tmp_path / "state",
+        installed_release_root=resources.identity.release_root))
     original = socket.socket.connect
     calls = []
     def permitted(self, address):
