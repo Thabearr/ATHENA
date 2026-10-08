@@ -23,6 +23,7 @@ SOURCES = (
     "scripts/audit_data_01a_app_schema_core.py",
     "scripts/audit_app_01a_local_shell.py",
     "scripts/audit_core_01d_checkpoint_e_completion.py",
+    "scripts/audit_checkpoint_e_workflows.py",
     "tests/test_core_01d_exact_pr_trigger_disposition_b1.py",
     "tests/test_core_01d_ci_offline_transport_inventory_evolution.py",
     "tests/test_core_01d_port02c_trigger_authority_b6.py",
