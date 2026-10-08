@@ -16,7 +16,9 @@ SNAPSHOT = "tests/fixtures/core_01d/data_01b_historical/d3_source_bytes.json"
 REVIEWED_HEAD = "e5b9793d1c609ad331819c228484e5c088e686d9"
 REVIEWED_A2_SHA = "009185f7e2743b29bd5fa4f7c71815c54ccf1158e759a10aa0c68fdb263d910a"
 V70_A2_SHA256 = "bc12c07f2d840be6abf77f2ec2bea1ffca8b34256b5c293db67dfbbf5b3909a5"
+V71_A2_SHA256 = "0aaf97fca9ee2870910c63dc9d7aacef2b6caf56a5fb02293b900142d8c6bc11"
 FROZEN_SECOND_MIGRATION_SHA = "3c0098dcd77e32a9e115dfcd40bd019901309894bb780ad66e90ed3846b60e97"
+WORKFLOW_TREE_PIN = "9b08653f1a12bb1b3d964fbd910396ff955740da"
 FROZEN_MIGRATION_SHA = "6d380b30733f99d3740b8d6dd89810fb31ca568625319b433023f48c9f667b7c"
 SOURCES = (
     "database/app_migrations.py", "database/run_repository.py",
@@ -46,6 +48,7 @@ NEW_PATHS = {
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v69.json",
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v70.json",
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v71.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v72.json",
     "tests/native/test_data_01b_bundle_migrations.py",
     SNAPSHOT,
 }
@@ -115,12 +118,12 @@ def build_receipt():
     if "DURABLE_RUN_STORE_UNAVAILABLE" not in api or "UnavailableAdmissionRepository() if admission_repository is None" not in service:
         raise AssertionError("production unavailable admission boundary changed")
     from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
-    predecessor = boundary.read_generation(boundary.inventory_generation_path(70))
-    inventory = boundary.read_generation(boundary.inventory_generation_path(71))
-    if (predecessor["canonical_sha256"] != V70_A2_SHA256
+    predecessor = boundary.read_generation(boundary.inventory_generation_path(71))
+    inventory = boundary.read_generation(boundary.inventory_generation_path(72))
+    if (predecessor["canonical_sha256"] != V71_A2_SHA256
             or inventory["predecessor_inventory"] != {
-                "path": boundary.inventory_generation_path(70), "canonical_sha256": V70_A2_SHA256,
-                "generation": 70, "rewritten": False}):
+                "path": boundary.inventory_generation_path(71), "canonical_sha256": V71_A2_SHA256,
+                "generation": 71, "rewritten": False}):
         raise AssertionError("review successor A2 ancestry drift")
     regressions = {
         "confirmed_response": "test_confirmed_requires_retained_response_without_mutation",
@@ -134,8 +137,20 @@ def build_receipt():
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
     if not set(regressions.values()) <= definitions:
         raise AssertionError("independent-review adversarial regressions missing")
-    changed = subprocess.run(["git", "diff", "--name-only", "7e609e3d2006d2a72d9bf347cb917c0585538322"],
-                             cwd=ROOT, check=True, capture_output=True).stdout.decode().splitlines()
+    try:
+        changed = subprocess.run(["git", "diff", "--name-only", "7e609e3d2006d2a72d9bf347cb917c0585538322"],
+                                 cwd=ROOT, check=True, capture_output=True).stdout.decode().splitlines()
+    except subprocess.CalledProcessError:
+        changed = None
+    if changed is None:
+        tree = subprocess.run(["git", "rev-parse", "HEAD:.github/workflows"], cwd=ROOT, check=True,
+                              capture_output=True).stdout.decode().strip()
+        if tree != WORKFLOW_TREE_PIN:
+            raise AssertionError("prohibited workflow delta without base evidence")
+        status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--",
+                                 ".github/workflows", "database"], cwd=ROOT, check=True,
+                                capture_output=True).stdout.decode().splitlines()
+        changed = [line[3:] for line in status if len(line) > 3]
     if any(path.startswith(".github/workflows/") or path in {
             "database/athena.db", "database/athena_history.db"} for path in changed):
         raise AssertionError("prohibited workflow or legacy database delta")
@@ -150,9 +165,9 @@ def build_receipt():
         "reviewed_blocked_head": REVIEWED_HEAD,
         "reviewed_blocked_receipt_sha256": "41891924ca3b7ca207fe5ba26e6ea1440b7f5937e4ea6e9aef07a92974545388",
         "open_future_dependencies": [{"id": "E2/PACKAGING_AUTHENTICATED_INSTALLED_PRODUCER_PROVENANCE", "status": "OPEN"}],
-        "a2_inventory": {"generation": 71, "path": boundary.inventory_generation_path(71),
+        "a2_inventory": {"generation": 72, "path": boundary.inventory_generation_path(72),
                          "canonical_sha256": inventory["canonical_sha256"]},
-        "a2_predecessor": {"generation": 70, "rewritten": False, "canonical_sha256": V70_A2_SHA256},
+        "a2_predecessor": {"generation": 71, "rewritten": False, "canonical_sha256": V71_A2_SHA256},
         "proof_semantics": {
             "confirmed_requires_retained_same_run_response": True,
             "new_send_requires_running_inside_writer_transaction": True,
@@ -192,7 +207,7 @@ def main():
 def authenticate_successor(latest):
     raw = (ROOT / RECEIPT).read_bytes()
     value = build_receipt()
-    if raw != canonical(value) or latest["generation"] < 71:
+    if raw != canonical(value) or latest["generation"] < 72:
         raise AssertionError("D4 successor source receipt mismatch")
     inventory = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
     for row in value["source_identities"]:
