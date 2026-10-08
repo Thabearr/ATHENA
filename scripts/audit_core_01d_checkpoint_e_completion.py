@@ -133,6 +133,7 @@ UNCHANGED_REPOSITORY_INVENTORY_SHA = "6b407c284a7c2f759e6345f53444478de53427ceae
 def validate_bounded_inventory(raw: bytes) -> None:
     from scripts import audit_data_01a_app_schema_core as data01a
     data01a.historical_build_config()
+    successor_paths = data01a.successor_paths()
     predecessor_blobs = {
         "scripts/audit_app_01a_local_shell.py": "a87d9e5edaeae54f6514bb6efae6874244d32ead",
         "scripts/audit_core_01d_port02c_trigger_authority_b6.py": "cdee96e9a5cca5ee272b47e00cbede9ca96a4d22",
@@ -143,7 +144,7 @@ def validate_bounded_inventory(raw: bytes) -> None:
     for line in raw.splitlines(keepends=True):
         metadata, separator, path_bytes = line.partition(b"\t")
         path = path_bytes.strip().decode()
-        if path in data01a.NEW_PATHS:
+        if path in data01a.NEW_PATHS | successor_paths:
             continue
         if path in predecessor_blobs:
             metadata = metadata.rsplit(b" ", 1)[0] + b" " + predecessor_blobs[path].encode()
