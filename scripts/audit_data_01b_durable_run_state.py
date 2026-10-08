@@ -17,6 +17,7 @@ SOURCES = (
     "scripts/port_02c_build_config.py", "tests/test_data_01a_app_schema.py",
     "tests/test_data_01b_durable_run_state.py", "docs/product/data_01b_run_storage.md",
     "tests/test_app_01a_local_shell.py",
+    "tests/native/test_data_01b_bundle_migrations.py",
     "scripts/audit_data_01a_app_schema_core.py",
     "scripts/audit_app_01a_local_shell.py",
     "tests/test_core_01d_ci_offline_transport_inventory_evolution.py",
@@ -32,6 +33,7 @@ NEW_PATHS = {
     "tests/test_data_01b_durable_run_state.py", "docs/product/data_01b_run_storage.md",
     "scripts/audit_data_01b_durable_run_state.py", RECEIPT,
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v69.json",
+    "tests/native/test_data_01b_bundle_migrations.py",
 }
 
 
