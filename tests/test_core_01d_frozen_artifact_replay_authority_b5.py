@@ -159,10 +159,10 @@ def test_current_a2_inventory_extends_immutable_generations_eight_and_nine_throu
     v46 = boundary.read_generation(boundary.inventory_generation_path(46))
     assert v46["canonical_sha256"] == "dd6dd1c658710933ebc5ff50894b5b4cf61091b2b57dc0694b87c9d2a6ded6d3"
     latest = boundary.authenticate_inventory()
-    assert latest["generation"] == 68
+    assert latest["generation"] == 69
     assert latest["predecessor_inventory"] == {
-        "path": boundary.inventory_generation_path(67),
-        "canonical_sha256": "95adcc41760ca324a3c7818bf31a30ff4183f17173c4cc2a06db2c6b6215219e",
-        "generation": 67,
+        "path": boundary.inventory_generation_path(68),
+        "canonical_sha256": "38766b0fd2e2627bc05bd687ba404ddb2b6b186c034294ed4183150d52ec52dd",
+        "generation": 68,
         "rewritten": False,
     }

@@ -33,7 +33,8 @@ def resources(tmp_path):
     records = []
     for path, role in (("ui/index.html", "UI"), ("ui/app.js", "UI"), ("ui/styles.css", "UI"),
                        ("config/architecture/component-authority-registry-v1.json", "AUTHORITY_REGISTRY"),
-                       ("database/migrations/0001_app_control_core.sql", "MIGRATION")):
+                       ("database/migrations/0001_app_control_core.sql", "MIGRATION"),
+                       ("database/migrations/0002_app_runs_operations.sql", "MIGRATION")):
         payload = (ROOT / path).read_bytes()
         target = root / path
         target.parent.mkdir(parents=True, exist_ok=True)

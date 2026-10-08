@@ -141,7 +141,7 @@ def authenticated_historical_paths():
     document["base_identities"][data01a.BUILD_CONFIG] = {
         "git_blob_sha1": data01a.BUILD_CONFIG_BLOB, "sha256": data01a.BUILD_CONFIG_SHA256,
     }
-    return set(PATHS) | {RECEIPT, INVENTORY, data01a.BUILD_CONFIG} | HISTORICAL_A2_INVENTORY_PATHS | data01a.NEW_PATHS, document
+    return set(PATHS) | {RECEIPT, INVENTORY, data01a.BUILD_CONFIG} | HISTORICAL_A2_INVENTORY_PATHS | data01a.NEW_PATHS | data01a.successor_paths(), document
 
 
 def historical_runtime_payload(path):
