@@ -286,3 +286,17 @@ def test_source_receipt_and_frozen_migration_identity():
     from scripts import audit_data_01b_durable_run_state as audit
     assert (audit.ROOT / audit.RECEIPT).read_bytes() == audit.canonical(audit.build_receipt())
     assert hashlib.sha256(audit.tracked_bytes("database/migrations/0001_app_control_core.sql")).hexdigest() == audit.FROZEN_MIGRATION_SHA
+
+
+def test_historical_successor_needs_no_d3_ancestor_git_blob(monkeypatch):
+    from scripts import audit_data_01a_app_schema_core as d3
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    original = boundary.git
+
+    def bounded(*args, **kwargs):
+        if args and args[0] == "show" and any("7e609e3d2006d2a72d9bf347cb917c0585538322:" in str(arg) for arg in args):
+            raise AssertionError("D3 ancestor blob lookup forbidden in shallow fixture")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(boundary, "git", bounded)
+    assert d3.authenticate()["a2_inventory"]["path"].endswith("v68.json")

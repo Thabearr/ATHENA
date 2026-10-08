@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -10,6 +11,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 RECEIPT = "artifacts/product/data_01b_durable_run_state_v1.json"
+SNAPSHOT = "tests/fixtures/core_01d/data_01b_historical/d3_source_bytes.json"
 FROZEN_MIGRATION_SHA = "6d380b30733f99d3740b8d6dd89810fb31ca568625319b433023f48c9f667b7c"
 SOURCES = (
     "database/app_migrations.py", "database/run_repository.py",
@@ -25,6 +27,7 @@ SOURCES = (
     "tests/test_core_01d_frozen_artifact_replay_authority_b5.py",
     "tests/test_core_01d_owner_one_shot_issue_comment_authority_b3.py",
     "scripts/audit_data_01b_durable_run_state.py",
+    SNAPSHOT,
 )
 TABLES = {"app_runs", "app_run_attempts", "app_run_events",
           "app_external_operations", "app_run_artifacts"}
@@ -34,6 +37,7 @@ NEW_PATHS = {
     "scripts/audit_data_01b_durable_run_state.py", RECEIPT,
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v69.json",
     "tests/native/test_data_01b_bundle_migrations.py",
+    SNAPSHOT,
 }
 
 
@@ -47,7 +51,33 @@ def tracked_bytes(path):
                           check=True, capture_output=True).stdout
 
 
+def historical_sources():
+    d3_raw = (ROOT / "artifacts/product/data_01a_app_schema_core_v1.json").read_bytes()
+    d3 = json.loads(d3_raw)
+    unsealed = {key: value for key, value in d3.items() if key != "canonical_sha256"}
+    expected = "3f1b04be1d97391b87e958eb008910b822567673582b61947f00099b9aa71c59"
+    if (d3["canonical_sha256"] != expected or hashlib.sha256(canonical(unsealed)).hexdigest() != expected
+            or canonical(d3) != d3_raw):
+        raise AssertionError("immutable D3 source receipt drift")
+    raw = (ROOT / SNAPSHOT).read_bytes()
+    snapshot = json.loads(raw)
+    if (raw != canonical(snapshot) or set(snapshot) != {"base_main_sha", "source_bytes"}
+            or snapshot["base_main_sha"] != "7e609e3d2006d2a72d9bf347cb917c0585538322"):
+        raise AssertionError("D3 retained source snapshot identity drift")
+    paths = set(SOURCES) & set(d3["source_identities"])
+    if set(snapshot["source_bytes"]) != paths:
+        raise AssertionError("D3 retained source snapshot scope drift")
+    result = {}
+    for path, encoded in snapshot["source_bytes"].items():
+        payload = base64.b64decode(encoded, validate=True)
+        if hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() != d3["source_identities"][path]:
+            raise AssertionError("D3 retained source bytes drift: " + path)
+        result[path] = payload
+    return result
+
+
 def build_receipt():
+    historical_sources()
     first = tracked_bytes("database/migrations/0001_app_control_core.sql")
     if hashlib.sha256(first).hexdigest() != FROZEN_MIGRATION_SHA:
         raise AssertionError("frozen migration 0001 changed")

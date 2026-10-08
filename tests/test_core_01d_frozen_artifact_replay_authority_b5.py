@@ -118,7 +118,7 @@ def test_receipt_mutations_fail_closed(changed):
 
 def test_current_a2_inventory_extends_immutable_generations_eight_and_nine_through_v67():
     chain = boundary.discover_inventory_generations()
-    assert [generation for generation, _ in chain] == list(range(1, 69))
+    assert [generation for generation, _ in chain] == list(range(1, 70))
     v8 = boundary.read(boundary.inventory_generation_path(8))
     assert v8["generation"] == 8
     assert v8["canonical_sha256"] == "856129ba6eafb0281f10a16639f26fd477b2ba6a2fb00957ee79fa539539412d"

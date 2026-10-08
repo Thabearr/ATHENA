@@ -47,7 +47,7 @@ def authenticate():
                 successor = data01b.authenticate_successor(latest)
             current = {row["path"]: row["lf_sha256"] for row in successor["source_identities"]}
             boundary.require(current.get(path) == actual, "unreviewed D3 source successor: " + path)
-            historical = boundary.git("show", successor["base_main_sha"] + ":" + path)
+            historical = data01b.historical_sources()[path]
             boundary.require(hashlib.sha256(historical.replace(b"\r\n", b"\n")).hexdigest() == expected,
                              "D3 historical source identity drift: " + path)
     boundary.require(receipt["workflow_yaml_delta"] == 0 and all(value == 0 for value in receipt["safety"].values()),

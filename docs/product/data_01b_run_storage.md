@@ -83,3 +83,10 @@ operation uncertainty, receipt-first crash reconciliation, v1 upgrade and
 no-op migration evidence. D3 regression tests remain required. Hosted exact-head
 Tests and PORT-02C CASE 5 plus independent review are separate final gates;
 local success does not establish review readiness. Never merge this D4 PR.
+
+Frozen D3 historical projections authenticate changed source paths through the
+D4 receipt and retained exact D3 source snapshots. Each retained blob must match
+the immutable D3 receipt's source hash. This bounded projection works in shallow
+offline CI without ancestor fetches; it does not relax unrelated source checks
+or rewrite the D3 receipt or A2 V1–V68. A native resource regression requires both
+app migrations in the closed bundle allowlist and triggers native CI naturally.
