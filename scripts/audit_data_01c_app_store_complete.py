@@ -45,7 +45,8 @@ V99_SHA256 = "8ce393324495c09410abedbc94dabd9788ea3bf48e70f4e72358e362adacef9d"
 V100_SHA256 = "30c5749c06e6fedd8c37699f58d6100a263e1fda985c7a7079dd5c39fb8f8ec0"
 V101_SHA256 = "4278e1dd9f965e796b0f7a0e7ee104f9b550e93c9408aab058c3a7fb9d3640c9"
 V102_SHA256 = "dedae150932d0ab15bec84d2665a953a825eccccd7507b65a84eede6870349ba"
-A2_GENERATION = 103
+V103_SHA256 = "354db83a5d3a9ec659bd9de97cc9dccff28bd1351455d144862464159d68b4e3"
+MINIMUM_A2_GENERATION = 103
 D3_SHA256 = "3f1b04be1d97391b87e958eb008910b822567673582b61947f00099b9aa71c59"
 D4_SHA256 = "d0b27962d852c9352306106b78ef26e00b919fc5a3a4070302c05ec667698b84"
 MIGRATION_0001_SHA256 = "6d380b30733f99d3740b8d6dd89810fb31ca568625319b433023f48c9f667b7c"
@@ -103,6 +104,8 @@ SOURCE_PATHS = (
     "docs/product/data_01c_app_store_complete.md",
     "tests/fixtures/core_01d/data_01c_historical/d3_app_repository_source_v1.json",
     "scripts/audit_checkpoint_e_workflows.py",
+    "tests/offline_transport.py",
+    "tests/test_core_01d_ci_offline_transport_boundary.py",
 )
 SUCCESSOR_SOURCE_PATHS = frozenset({
     "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v5.json",
@@ -125,6 +128,9 @@ SUCCESSOR_SOURCE_PATHS = frozenset({
     "tests/fixtures/core_01d/data_01c_historical/d3_app_repository_source_v1.json",
     "tests/native/test_data_01c_bundle_migrations.py",
     "tests/test_data_01c_app_storage.py",
+    "sitecustomize.py",
+    "tests/offline_transport.py",
+    "tests/test_core_01d_ci_offline_transport_boundary.py",
 })
 
 
@@ -180,17 +186,30 @@ def assert_prohibited_scope_unchanged():
         raise AssertionError("prohibited workflow or legacy database delta")
 
 
+def authenticate_d5_a2_lineage(latest):
+    """Retain the sealed D5 V103 checkpoint and authenticate later A2 successors."""
+    chain = boundary.load_inventory_generations()
+    if len(chain) < MINIMUM_A2_GENERATION:
+        raise AssertionError("D5 A2 lineage ends before its authenticated V103 checkpoint")
+    v103 = chain[MINIMUM_A2_GENERATION - 1][1]
+    if (v103.get("canonical_sha256") != V103_SHA256
+            or v103.get("predecessor_inventory") != {
+                "path": boundary.inventory_generation_path(102),
+                "canonical_sha256": V102_SHA256,
+                "generation": 102,
+                "rewritten": False,
+            }
+            or latest != chain[-1][1]):
+        raise AssertionError("D5 A2 successor chain does not retain exact V103 ancestry")
+    return latest
+
+
 def build_receipt(latest=None):
     latest = boundary.authenticate_inventory() if latest is None else latest
-    if latest.get("generation") != A2_GENERATION:
-        raise AssertionError(f"D5 receipt requires canonical A2 V{A2_GENERATION} as latest")
+    authenticate_d5_a2_lineage(latest)
     if not SUCCESSOR_SOURCE_PATHS <= set(SOURCE_PATHS):
         raise AssertionError("D5 successor source set is outside its authenticated source identities")
     predecessor = latest.get("predecessor_inventory")
-    if predecessor != {"path": boundary.inventory_generation_path(102),
-                       "canonical_sha256": V102_SHA256, "generation": 102,
-                       "rewritten": False}:
-        raise AssertionError("A2 V103 predecessor is not exact immutable V102")
     data01b.authenticate_successor(latest)
     d3 = data01a.authenticate()
     if d3["canonical_sha256"] != D3_SHA256:
@@ -241,8 +260,8 @@ def build_receipt(latest=None):
             "backup_index_snapshot_state": "PREPARING_UNTIL_LIVE_ARCHIVE_VERIFICATION_COMMITS",
             "installed_producer_provenance": "E2/PACKAGING_AUTHENTICATED_INSTALLED_PRODUCER_PROVENANCE:OPEN",
         },
-        "a2_inventory": {"generation": A2_GENERATION,
-                         "path": boundary.inventory_generation_path(A2_GENERATION),
+        "a2_inventory": {"generation": latest["generation"],
+                         "path": boundary.inventory_generation_path(latest["generation"]),
                          "canonical_sha256": latest["canonical_sha256"]},
         "a2_predecessor": predecessor,
         "successor_source_paths": sorted(SUCCESSOR_SOURCE_PATHS),
@@ -301,15 +320,15 @@ def authenticate_successor():
             or value.get("successor_source_paths") != sorted(SUCCESSOR_SOURCE_PATHS)
             or value.get("policy_id") != "ATHENA_DATA_01C_STORAGE_READY_PROJECTIONS_SOURCE_BLOCKED_V1"
             or value.get("a2_inventory") != {
-                "generation": A2_GENERATION,
-                "path": boundary.inventory_generation_path(A2_GENERATION),
+                "generation": latest["generation"],
+                "path": boundary.inventory_generation_path(latest["generation"]),
                 "canonical_sha256": latest.get("canonical_sha256")}
             or value.get("projection_source", {}).get("typed_disposition") != "SOURCE_CONTRACT_UNAVAILABLE"
             or value.get("projection_source", {}).get("coverage_disposition") != "COVERAGE_UNAVAILABLE"
             or value.get("projection_source", {}).get("materialized_verified_rows") != 0):
-        raise AssertionError("D5 successor receipt is not the exact source-blocked A2 V103 record")
+        raise AssertionError("D5 successor receipt is not the exact source-blocked A2 successor record")
     a2_paths = {boundary.inventory_generation_path(generation)
-                for generation in range(75, A2_GENERATION + 1)}
+                for generation in range(75, latest["generation"] + 1)}
     return set(SUCCESSOR_SOURCE_PATHS) | {RECEIPT} | a2_paths
 
 

@@ -14,6 +14,13 @@ import pytest
 import offline_transport as boundary
 
 
+def test_windows_durable_local_rename_is_allowlisted_without_network_symbols(monkeypatch):
+    monkeypatch.setattr(boundary, "LINUX_HOST", False)
+    boundary.audit_hook("ctypes.dlsym", (object(), "MoveFileExW"))
+    with pytest.raises(boundary.OfflineTransportDenied):
+        boundary.audit_hook("ctypes.dlsym", (object(), "InternetOpenW"))
+
+
 def test_historical_projection_preserves_modified_existing_campaign_test():
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion

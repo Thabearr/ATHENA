@@ -10,7 +10,7 @@ ROOT_TEST_SOURCE_PINS = {
     "tests/_offline_bootstrap/sitecustomize.py": "1b1968215b72f913e17a840b7b3ac22aa4e8508e5fa529990487c59b2e0c878d",
     "tests/conftest.py": "500e47d9937ddf89f725d41117a84abf207de2e768a861adc5c4a49c7a87e052",
     "tests/offline_linux.py": "565e1698bebfc30d5463a3c3b6ded43e6ff9378af955129a011bf28e1a5b999f",
-    "tests/offline_transport.py": "a35dcca52929598a5f6d97a69274e475f10c2229889599a82d5371886c437ad1",
+    "tests/offline_transport.py": "f78e8bf5cdef9ea56e76efd974c1024e65ddab203e016cf97ee5ad98a6682d31",
 }
 
 _args = getattr(sys, "orig_argv", ())
