@@ -220,10 +220,19 @@ def historical_v1_git_view():
    generation_additions=a2_generation_additions(a2)
    return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|app_successor_paths())
   return raw
+ original_identity=module._source_identity
+ def projected_identity(path,**kwargs):
+  from scripts import audit_data_01c_restore_portability as portability
+  if path==portability.WORKFLOW:
+   portability.authenticate_workflow()
+   return {'path':path,**portability.identity(portability.predecessor_source(path))}
+  return original_identity(path,**kwargs)
  module._git=projected
+ module._source_identity=projected_identity
  try: yield
  finally:
   module._git=original
+  module._source_identity=original_identity
 
 
 def historical_v1_receipt():

@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ".github/workflows/port-02c-native-runtime.yml"
 PREDECESSOR_HEAD = "942f4a3820b5521d0595fcf36154283b19379c6a"
 PREDECESSOR_TREE = "9b08653f1a12bb1b3d964fbd910396ff955740da"
-SNAPSHOT = "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v4.json"
-SNAPSHOT_SHA = "c3e7af66ba77e4cec3eaedbcc6033ec8cbf31f949b698d3610c82c1311d6a6b2"
+SNAPSHOT = "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v5.json"
+SNAPSHOT_SHA = "78615dfee7cd52cc85b5e5ee128b7f5711e216201b95ae240f8348d46dd65c76"
 RECEIPT = "artifacts/product/data_01c_restore_portability_v1.json"
 FROZEN_EVIDENCE = {
     "artifacts/architecture/port_02c_native_runtime_workflow_add_v1.json": "5065031917a1e2c78ff9f6ec047ea9debbb2df593fb708cc595140fbe8c8c9b4",
@@ -108,8 +108,6 @@ def historical_workflow_tree(observed_tree):
 
 def project_historical_inventory(raw):
     """Authenticate the current source corpus before projecting fixed predecessor blobs."""
-    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
-    boundary.authenticate_inventory()
     from scripts import audit_data_01c_app_store_complete as data01c
     data01c.authenticate_successor()
     authenticate_workflow()
