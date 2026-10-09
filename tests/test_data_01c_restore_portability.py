@@ -69,6 +69,23 @@ def test_authenticated_historical_projection_is_idempotent():
     assert audit.project_historical_inventory(projected) == projected
 
 
+def test_a2_historical_source_forward_uses_only_v1_pinned_bytes(tmp_path, monkeypatch):
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    for source, fixture in audit.HISTORICAL_A2_SOURCE_FIXTURES.items():
+        raw = (audit.ROOT / fixture).read_bytes().replace(b"\r\n", b"\n")
+        assert hashlib.sha256(raw).hexdigest() == a2.pinned_historical_identity(source)
+        assert audit.historical_a2_source_blob_identity(source) == audit.identity(raw)["git_blob_sha1"]
+
+    source, fixture = next(iter(audit.HISTORICAL_A2_SOURCE_FIXTURES.items()))
+    forged_root = tmp_path / "forged"
+    forged_path = forged_root / fixture
+    forged_path.parent.mkdir(parents=True)
+    forged_path.write_bytes(b"# substituted historical source\n")
+    monkeypatch.setattr(audit, "ROOT", forged_root)
+    with pytest.raises(ValueError, match="pinned A2 historical source fixture identity mismatch"):
+        audit.historical_a2_source_blob_identity(source)
+
+
 def synthetic_receipt(host='Windows'):
     return {'schema_version': 1, 'policy_id': qualifier.POLICY,
             'host_os': host, 'host_os_version': 'Windows synthetic' if host == 'Windows' else 'Ubuntu 24.04 synthetic',

@@ -608,8 +608,17 @@ def resolve_p43a_historical_workflow_source(
     ]
     if not revisions and path in CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES:
         fixture_path, expected = CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES[path]
-        head_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
-        if not _exact_pr119_historical_source_context(evolution_ledger, head_tree):
+        if (
+            evolution_ledger.get("canonical_sha256") != CORE01D_PR119_LEDGER_SHA256
+            or canonical_sha256(evolution_ledger) != CORE01D_PR119_LEDGER_SHA256
+            or evolution_ledger.get("current_workflow_tree_sha1")
+            != CORE01D_PR119_WORKFLOW_TREE_SHA1
+            or not evolution_ledger.get("transitions")
+            or evolution_ledger["transitions"][-1].get("transition_id")
+            != "CORE01D_FRESH_HOLDOUT_PR119_RELEASE_ONLY_BOOTSTRAP_V1"
+            or _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
+            != CORE01D_PR119_WORKFLOW_TREE_SHA1
+        ):
             raise WorkflowEvolutionError(
                 "P4.3A historical source forward is outside the exact PR119 workflow context"
             )
@@ -654,27 +663,6 @@ def resolve_p43a_historical_workflow_source(
     if source_identity(raw) != expected:
         raise WorkflowEvolutionError(f"P4.3A historical fixture bytes differ from frozen matrix: {fixture_path}")
     return raw
-
-
-def _exact_pr119_historical_source_context(evolution_ledger, head_tree):
-    """Permit the authenticated D5 current-source successor over the P4.3A base."""
-    if (
-        evolution_ledger.get("canonical_sha256") != CORE01D_PR119_LEDGER_SHA256
-        or canonical_sha256(evolution_ledger) != CORE01D_PR119_LEDGER_SHA256
-        or evolution_ledger.get("current_workflow_tree_sha1") != CORE01D_PR119_WORKFLOW_TREE_SHA1
-        or not evolution_ledger.get("transitions")
-        or evolution_ledger["transitions"][-1].get("transition_id")
-        != "CORE01D_FRESH_HOLDOUT_PR119_RELEASE_ONLY_BOOTSTRAP_V1"
-    ):
-        return False
-    if head_tree == CORE01D_PR119_WORKFLOW_TREE_SHA1:
-        return True
-    from scripts import audit_data_01c_restore_portability as d5
-    try:
-        _successor_identity, successor_tree = d5.authenticate_workflow()
-    except (OSError, ValueError):
-        return False
-    return head_tree == successor_tree
 
 
 def _resolve_reviewed_transition_after_source(
@@ -917,21 +905,6 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
     The historical ADD remains pinned. Only this exact later workflow tree and
     file identity are accepted; all other derived workflow identities stay exact.
     """
-    from scripts import audit_data_01c_restore_portability as d5
-    successor_identity, successor_tree = d5.successor_context()
-    if head_tree == successor_tree:
-        if ledger_sha != CORE01D_PR119_LEDGER_SHA256 or observed.get(PORT02C_REPLAY_WORKFLOW_PATH) != successor_identity:
-            raise WorkflowEvolutionError("workflow tree differs without exact PORT-02C D5 successor")
-        try:
-            d5.authenticate_workflow()
-        except ValueError as exc:
-            raise WorkflowEvolutionError("workflow tree differs without exact PORT-02C D5 successor") from exc
-        predecessor_observed = dict(observed)
-        predecessor_observed[PORT02C_REPLAY_WORKFLOW_PATH] = dict(PORT02C_REPLAY_WORKFLOW_AFTER)
-        result = _port02c_current_source_forward(derived, predecessor_observed,
-            head_tree=CORE01D_PR119_WORKFLOW_TREE_SHA1, ledger_sha=ledger_sha)
-        result[PORT02C_REPLAY_WORKFLOW_PATH] = dict(successor_identity)
-        return result
     reviewed_contexts = {
         (PORT02C_REPLAY_WORKFLOW_TREE_SHA1, "d1c8d79ac48bf0521a609e29991014513bd2f7afed2389c5e3a9d6ec8bfba8a2"),
         (CORE01B_WORKFLOW_TREE_SHA1, CORE01B_LEDGER_SHA256),
@@ -964,12 +937,6 @@ def current_workflow_tree_sha1(ledger):
     if (ledger.get("canonical_sha256") == "d1c8d79ac48bf0521a609e29991014513bd2f7afed2389c5e3a9d6ec8bfba8a2"
             and ledger.get("current_workflow_tree_sha1") == "b93f72b5a352b40021d913c299f039c846476f73"):
         return PORT02C_REPLAY_WORKFLOW_TREE_SHA1
-    if (ledger.get("canonical_sha256") == CORE01D_PR119_LEDGER_SHA256
-            and ledger.get("current_workflow_tree_sha1") == CORE01D_PR119_WORKFLOW_TREE_SHA1):
-        head_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
-        if _exact_pr119_historical_source_context(ledger, head_tree):
-            return head_tree
-        raise WorkflowEvolutionError("current workflow tree is outside the exact PR119/D5 source context")
     return ledger.get("current_workflow_tree_sha1")
 
 
@@ -1066,11 +1033,7 @@ def validate_current_state(
         raise WorkflowEvolutionError("workflow worktree contains an unreviewed edit")
     head_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
     if head_tree != tree_sha and head_tree != PORT02C_REPLAY_WORKFLOW_TREE_SHA1:
-        from scripts import audit_data_01c_restore_portability as d5
-        try:
-            d5.historical_workflow_tree(head_tree)
-        except ValueError as exc:
-            raise WorkflowEvolutionError("workflow tree SHA differs from the evolution ledger") from exc
+        raise WorkflowEvolutionError("workflow tree SHA differs from the evolution ledger")
     observed: dict[str, dict[str, str]] = {}
     for path in real_paths:
         try:

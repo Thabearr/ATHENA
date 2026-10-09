@@ -148,7 +148,7 @@ def test_current_workflow_tree_and_protected_paths_match_reviewed_evolution() ->
     ]
     assert ledger["canonical_sha256"] == evolution.CORE01D_PR119_LEDGER_SHA256
     assert ledger["current_workflow_tree_sha1"] == evolution.CORE01D_PR119_WORKFLOW_TREE_SHA1
-    assert evolution.CORE01D_PR119_WORKFLOW_TREE_SHA1 == evolution._git(
+    assert evolution.current_workflow_tree_sha1(ledger) == evolution._git(
         "rev-parse", "HEAD:.github/workflows"
     ).decode("ascii").strip()
     assert p44g_receipt["workflow_tree_sha1_after"] == "d58f71b9ac653c8762f1d9b18eede15755ee1a76"

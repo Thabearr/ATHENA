@@ -457,6 +457,14 @@ def test_depth1_checkout_proves_historical_evidence_from_pinned_identities(monke
     assert pinned == V1_SITECUSTOMIZE_SHA256
     assert pinned != boundary.source("sitecustomize.py")["lf_source_sha256"]
 
+    historical_transport = boundary.historical_text("tests/offline_transport.py")
+    assert hashlib.sha256(historical_transport.encode("utf-8")).hexdigest() == (
+        boundary.pinned_historical_identity("tests/offline_transport.py")
+    )
+    assert hashlib.sha256(historical_transport.encode("utf-8")).hexdigest() != (
+        boundary.source("tests/offline_transport.py")["lf_source_sha256"]
+    )
+
     original = Path.read_bytes
     def altered(path):
         if Path(path) == boundary.ROOT / "tests/conftest.py":

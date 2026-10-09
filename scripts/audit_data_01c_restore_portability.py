@@ -29,6 +29,15 @@ STEP = '''      - name: D5 native restore portability (offline, four cases)
 
 '''
 UPLOAD = "            ${{ runner.temp }}/data01c-restore-portability.json\n"
+HISTORICAL_A2_SOURCE_FIXTURES = {
+    "tests/offline_transport.py": "tests/fixtures/core_01d/a2-v1-offline-transport.txt",
+    "scripts/audit_core_01d_ci_offline_transport_boundary.py":
+        "tests/fixtures/core_01d/a2-v1-ci-offline-transport-boundary.py.txt",
+    "scripts/audit_p4_workflow_evolution_ledger.py":
+        "tests/fixtures/core_01d/a2-v1-p4-workflow-evolution-ledger.py.txt",
+    "tests/native/test_port_02c_audit_source_forward.py":
+        "tests/fixtures/core_01d/a2-v1-port02c-source-forward-test.py.txt",
+}
 
 
 def identity(raw):
@@ -106,6 +115,21 @@ def historical_workflow_tree(observed_tree):
     return PREDECESSOR_TREE
 
 
+def historical_a2_source_blob_identity(path):
+    """Return a Git blob ID only for exact source bytes authenticated by A2 V1."""
+    fixture_path = HISTORICAL_A2_SOURCE_FIXTURES.get(path)
+    if fixture_path is None:
+        return None
+    fixture = ROOT / fixture_path
+    if not fixture.is_file() or fixture.is_symlink():
+        raise ValueError("pinned A2 historical source fixture is unavailable: " + path)
+    raw = fixture.read_bytes().replace(b"\r\n", b"\n")
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    if hashlib.sha256(raw).hexdigest() != a2.pinned_historical_identity(path):
+        raise ValueError("pinned A2 historical source fixture identity mismatch: " + path)
+    return identity(raw)["git_blob_sha1"]
+
+
 def project_historical_inventory(raw):
     """Authenticate the current source corpus before projecting fixed predecessor blobs."""
     from scripts import audit_data_01c_app_store_complete as data01c
@@ -118,8 +142,12 @@ def project_historical_inventory(raw):
         name = path.strip().decode()
         if name in sources:
             current = identity((ROOT / name).read_bytes().replace(b"\r\n", b"\n"))["git_blob_sha1"]
-            if meta.rsplit(b" ", 1)[-1] not in {current.encode(), sources[name]["git_blob_sha1"].encode()}:
-                raise ValueError("portability source inventory identity does not match authenticated current bytes")
+            historical = historical_a2_source_blob_identity(name)
+            allowed = {current.encode(), sources[name]["git_blob_sha1"].encode()}
+            if historical is not None:
+                allowed.add(historical.encode())
+            if meta.rsplit(b" ", 1)[-1] not in allowed:
+                raise ValueError("portability source inventory identity does not match authenticated current bytes: " + name)
             meta = meta.rsplit(b" ", 1)[0] + b" " + sources[name]["git_blob_sha1"].encode()
             line = meta + sep + path
         lines.append(line)
