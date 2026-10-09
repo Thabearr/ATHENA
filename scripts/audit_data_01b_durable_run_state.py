@@ -18,6 +18,7 @@ REVIEWED_A2_SHA = "009185f7e2743b29bd5fa4f7c71815c54ccf1158e759a10aa0c68fdb263d9
 V70_A2_SHA256 = "bc12c07f2d840be6abf77f2ec2bea1ffca8b34256b5c293db67dfbbf5b3909a5"
 V71_A2_SHA256 = "0aaf97fca9ee2870910c63dc9d7aacef2b6caf56a5fb02293b900142d8c6bc11"
 V72_A2_SHA256 = "9b74eccdb1868ed5ad1b71b6f3bdb99d49a6f42a2892656067bc0a885ab2e7ca"
+V73_A2_SHA256 = "dfd1127f090745f40667d3cab52cc40e5df90f48c747be7691233feb80f86b98"
 FROZEN_SECOND_MIGRATION_SHA = "3c0098dcd77e32a9e115dfcd40bd019901309894bb780ad66e90ed3846b60e97"
 WORKFLOW_TREE_PIN = "9b08653f1a12bb1b3d964fbd910396ff955740da"
 FROZEN_MIGRATION_SHA = "6d380b30733f99d3740b8d6dd89810fb31ca568625319b433023f48c9f667b7c"
@@ -51,6 +52,7 @@ NEW_PATHS = {
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v71.json",
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v72.json",
     "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v73.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v74.json",
     "tests/native/test_data_01b_bundle_migrations.py",
     SNAPSHOT,
 }
@@ -120,12 +122,12 @@ def build_receipt():
     if "DURABLE_RUN_STORE_UNAVAILABLE" not in api or "UnavailableAdmissionRepository() if admission_repository is None" not in service:
         raise AssertionError("production unavailable admission boundary changed")
     from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
-    predecessor = boundary.read_generation(boundary.inventory_generation_path(72))
-    inventory = boundary.read_generation(boundary.inventory_generation_path(73))
-    if (predecessor["canonical_sha256"] != V72_A2_SHA256
+    predecessor = boundary.read_generation(boundary.inventory_generation_path(73))
+    inventory = boundary.read_generation(boundary.inventory_generation_path(74))
+    if (predecessor["canonical_sha256"] != V73_A2_SHA256
             or inventory["predecessor_inventory"] != {
-                "path": boundary.inventory_generation_path(72), "canonical_sha256": V72_A2_SHA256,
-                "generation": 72, "rewritten": False}):
+                "path": boundary.inventory_generation_path(73), "canonical_sha256": V73_A2_SHA256,
+                "generation": 73, "rewritten": False}):
         raise AssertionError("review successor A2 ancestry drift")
     regressions = {
         "confirmed_response": "test_confirmed_requires_retained_response_without_mutation",
@@ -140,6 +142,10 @@ def build_receipt():
         "terminal_nonterminal_pointer": "test_nonterminal_run_cannot_silently_carry_projected_receipt_pointer",
         "terminal_crash_gap_reconcile": "test_receipt_first_projection_gap_stays_nonterminal_until_explicit_reconcile",
         "terminal_historical_source_switch": "test_historical_terminal_read_survives_source_switch_without_producer_fabrication",
+        "terminal_nonterminal_resurrection": "test_nonterminal_resurrection_with_residual_terminal_evidence_fails_closed",
+        "terminal_forged_event": "test_nonterminal_run_with_forged_terminal_event_and_no_pointer_fails_closed",
+        "terminal_duplicate_receipt_role": "test_terminal_read_rejects_duplicate_or_cross_run_receipt_role_linkage",
+        "terminal_honest_nonterminal_states": "test_honest_nonterminal_states_remain_readable_without_terminal_evidence",
     }
     definitions = {node.name for node in ast.walk(ast.parse(
         (ROOT / "tests/test_data_01b_durable_run_state.py").read_text(encoding="utf-8")))
@@ -174,9 +180,9 @@ def build_receipt():
         "reviewed_blocked_head": REVIEWED_HEAD,
         "reviewed_blocked_receipt_sha256": "41891924ca3b7ca207fe5ba26e6ea1440b7f5937e4ea6e9aef07a92974545388",
         "open_future_dependencies": [{"id": "E2/PACKAGING_AUTHENTICATED_INSTALLED_PRODUCER_PROVENANCE", "status": "OPEN"}],
-        "a2_inventory": {"generation": 73, "path": boundary.inventory_generation_path(73),
+        "a2_inventory": {"generation": 74, "path": boundary.inventory_generation_path(74),
                          "canonical_sha256": inventory["canonical_sha256"]},
-        "a2_predecessor": {"generation": 72, "rewritten": False, "canonical_sha256": V72_A2_SHA256},
+        "a2_predecessor": {"generation": 73, "rewritten": False, "canonical_sha256": V73_A2_SHA256},
         "proof_semantics": {
             "confirmed_requires_retained_same_run_response": True,
             "new_send_requires_running_inside_writer_transaction": True,
@@ -186,6 +192,9 @@ def build_receipt():
             "admission_reauthenticates_capability_and_current_authority": True,
             "terminal_reads_authenticate_retained_receipt_linkage_bytes_and_projection": True,
             "terminal_reads_fail_closed_typed_without_current_release_eligibility": True,
+            "bidirectional_terminal_nonterminal_integrity_fail_closed": True,
+            "nonterminal_resurrection_never_regains_authenticated_reads_or_mutation_authority": True,
+            "receipt_role_linkage_unique_per_run_rejects_residual_and_forged_terminal_evidence": True,
             "adversarial_regressions": regressions,
         },
         "workflow_yaml_delta": 0, "legacy_database_delta": 0,
@@ -218,7 +227,7 @@ def main():
 def authenticate_successor(latest):
     raw = (ROOT / RECEIPT).read_bytes()
     value = build_receipt()
-    if raw != canonical(value) or latest["generation"] < 73:
+    if raw != canonical(value) or latest["generation"] < 74:
         raise AssertionError("D4 successor source receipt mismatch")
     inventory = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
     for row in value["source_identities"]:

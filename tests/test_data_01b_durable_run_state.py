@@ -924,3 +924,128 @@ def test_historical_terminal_read_survives_source_switch_without_producer_fabric
     with pytest.raises(HistoricalReleaseUnavailable):
         b.heartbeat(run_id, attempt, lease)
     assert repo.run_snapshot(run_id) == snapshot
+
+
+def _assert_residual_terminal_evidence_fails_closed(repo, candidate, roots, run_id,
+                                                  attempt, lease, version, match):
+    before = _evidence_state(repo, roots)
+    with repo._operation() as conn:
+        attempts = conn.execute("SELECT * FROM app_run_attempts ORDER BY attempt_id").fetchall()
+        operations = conn.execute("SELECT * FROM app_external_operations ORDER BY operation_id").fetchall()
+    probes = (
+        lambda: repo.run_snapshot(run_id),
+        lambda: repo.read_events(run_id),
+        # Sequence one contains only genesis, never the residual terminal event.
+        lambda: repo.read_events(run_id, after_sequence=0, limit=1),
+        lambda: repo.lookup(_replay(candidate)),
+        lambda: repo.admit(candidate),
+        lambda: repo.heartbeat(run_id, attempt, lease),
+        lambda: repo.claim_attempt(run_id, worker_instance_id="offline-probe",
+                                  process_locator={"kind": "OFFLINE_TEST", "label": "probe"}),
+        lambda: repo.transition_run(run_id, expected_version=version, state="CANCEL_REQUESTED",
+                                   attempt_id=attempt, lease_token=lease),
+        lambda: repo.request_cancel(run_id, expected_version=version),
+        lambda: repo.append_event(run_id, attempt_id=attempt, lease_token=lease,
+                                 event_type="OFFLINE_OBSERVATION", payload={"probe": True}),
+        lambda: repo.prepare_external_operation(run_id, attempt_id=attempt, lease_token=lease,
+                                               operation_kind="TESTING_SYNTHETIC",
+                                               intent_sha256="0" * 64, authority_sha256="1" * 64),
+        lambda: repo.finish_attempt(run_id, attempt, lease, exit_code=0),
+        lambda: repo.recover_attempt(run_id, attempt, lease),
+    )
+    for probe in probes:
+        with pytest.raises(TerminalEvidenceUnavailable, match=match):
+            probe()
+    assert _evidence_state(repo, roots) == before
+    with repo._operation() as conn:
+        assert conn.execute("SELECT * FROM app_run_attempts ORDER BY attempt_id").fetchall() == attempts
+        assert conn.execute("SELECT * FROM app_external_operations ORDER BY operation_id").fetchall() == operations
+
+
+@pytest.mark.parametrize("residual", ["terminal-event-with-linkage", "receipt-linkage-without-event"])
+def test_nonterminal_resurrection_with_residual_terminal_evidence_fails_closed(development_durable, clock, residual):
+    repo, candidate, resources, roots, run_id, attempt, lease, digest = _terminal(development_durable, clock)
+    assert repo.run_snapshot(run_id)["state"] == "TERMINAL"
+    assert len([row for row in repo.read_events(run_id) if row[2] == "RUN_TERMINAL"]) == 1
+    pristine = _evidence_state(repo, roots)
+    # Explicitly isolated synthetic corruption, not a production transition.
+    with repo._operation(write=True) as conn:
+        conn.execute("UPDATE app_runs SET state='RUNNING',receipt_artifact_id=NULL WHERE run_id=?", (run_id,))
+        if residual == "receipt-linkage-without-event":
+            conn.execute("DELETE FROM app_run_events WHERE run_id=? AND event_type='RUN_TERMINAL'", (run_id,))
+    match = ("carries a terminal projection event" if residual == "terminal-event-with-linkage"
+             else "carries a projected receipt linkage")
+    _assert_residual_terminal_evidence_fails_closed(repo, candidate, roots, run_id, attempt, lease, 2, match)
+    before = _evidence_state(repo, roots)
+    for project in (repo.project_terminal_receipt, repo.reconcile_receipt_projection):
+        with pytest.raises(TerminalEvidenceUnavailable, match=match):
+            project(digest)
+    assert _evidence_state(repo, roots) == before
+    assert before[0] == pristine[0] and before[1] == pristine[1] and before[4] == pristine[4]
+    expected_events = (pristine[3] if residual == "terminal-event-with-linkage"
+                       else [row for row in pristine[3] if row[3] != "RUN_TERMINAL"])
+    assert before[3] == expected_events
+    assert before[2] == [(run_id, "RUNNING", 2, None)]
+
+
+def test_nonterminal_run_with_forged_terminal_event_and_no_pointer_fails_closed(development_durable, clock):
+    repo, candidate, resources, roots = development_durable
+    run_id, attempt, lease = _running(repo, candidate)
+    assert repo.run_snapshot(run_id)["state"] == "RUNNING"
+    payload = canonical_json_bytes({"receipt_sha256": "0" * 64})
+    # append_event forbids RUN_* types; forge only inside this synthetic seam.
+    with repo._operation(write=True) as conn:
+        conn.execute("INSERT INTO app_run_events VALUES(?,?,?,?,?,?,?)",
+                     (run_id, 3, 2, "RUN_TERMINAL", payload, hashlib.sha256(payload).hexdigest(),
+                      clock().strftime("%Y-%m-%dT%H:%M:%S.%fZ")))
+    _assert_residual_terminal_evidence_fails_closed(
+        repo, candidate, roots, run_id, attempt, lease, 1, "carries a terminal projection event")
+    assert _evidence_state(repo, roots)[2] == [(run_id, "RUNNING", 1, None)]
+
+
+@pytest.mark.parametrize("fault", ["duplicate-role", "cross-run"])
+def test_terminal_read_rejects_duplicate_or_cross_run_receipt_role_linkage(development_durable, clock, fault):
+    repo, candidate, resources, roots, run_id, attempt, lease, digest = _terminal(development_durable, clock)
+    pristine = _evidence_state(repo, roots)
+    if fault == "duplicate-role":
+        artifact_id = _record_artifact(repo, resources, roots, clock, run_id, "duplicate-receipt-role")
+        linked_run = run_id
+        match = "additional receipt role linkage"
+    else:
+        other_repo, linked_run = _other_run(resources, roots, clock)
+        artifact_id = "receipt-" + digest
+        match = "missing, wrong-role or cross-run"
+    with repo._operation(write=True) as conn:
+        conn.execute("INSERT INTO app_run_artifacts VALUES(?,?,?,1)", (linked_run, artifact_id, "RUN_RECEIPT"))
+    before = _evidence_state(repo, roots)
+    for read in (lambda: repo.run_snapshot(run_id), lambda: repo.read_events(run_id),
+                 lambda: repo.lookup(_replay(candidate)), lambda: repo.admit(candidate),
+                 lambda: repo.project_terminal_receipt(digest), lambda: repo.reconcile_receipt_projection(digest)):
+        with pytest.raises(TerminalEvidenceUnavailable, match=match):
+            read()
+    assert _evidence_state(repo, roots) == before
+    assert all(row in before[0] for row in pristine[0])
+    assert all(row in before[1] for row in pristine[1])
+    assert all(row in before[2] for row in pristine[2])
+    assert all(row in before[3] for row in pristine[3])
+    assert before[4] == pristine[4]
+
+
+@pytest.mark.parametrize("state", ["QUEUED", "RUNNING", "CANCEL_REQUESTED", "CANCELLED", "INTERRUPTED"])
+def test_honest_nonterminal_states_remain_readable_without_terminal_evidence(development_durable, clock, state):
+    repo, candidate, resources, roots = development_durable
+    if state in {"QUEUED", "CANCELLED"}:
+        run_id = repo.admit(candidate).run_id
+        if state == "CANCELLED":
+            repo.request_cancel(run_id, expected_version=0)
+    else:
+        run_id, attempt, lease = _running(repo, candidate)
+        if state == "CANCEL_REQUESTED":
+            repo.request_cancel(run_id, expected_version=1)
+        elif state == "INTERRUPTED":
+            repo.recover_attempt(run_id, attempt, lease)
+    snapshot = repo.run_snapshot(run_id)
+    assert snapshot["state"] == state and snapshot["receipt_artifact_id"] is None
+    assert all(row[2] != "RUN_TERMINAL" for row in repo.read_events(run_id))
+    assert repo.lookup(_replay(candidate)).run_id == run_id
+    assert repo.admit(candidate).disposition == "idempotent_replay"

@@ -231,19 +231,30 @@ class DurableRunRepository:
     def _verify_terminal_evidence(self, conn, run_id, row, envelope):
         """Bounded historical proof of projected terminal state on every read.
 
-        Authenticates the retained receipt artifact linkage, the retained
-        receipt file bytes and canonical wrapper, the receipt's original
-        producer/release evidence and the RUN_TERMINAL projection event before
-        any surface reports TERMINAL as authenticated state. Historical and
-        current authority stay separate: this never demands current-release
-        eligibility and never invents producer provenance. Honest nonterminal
-        runs (including an unprojected published receipt) are untouched.
+        Bidirectional integrity: TERMINAL requires a deterministic receipt
+        pointer, exactly one same-run RUN_RECEIPT linkage referencing it, the
+        retained receipt artifact metadata and canonical file bytes, the
+        receipt's original producer/release evidence and exactly one verified
+        RUN_TERMINAL projection event, with no post-terminal events. A
+        nonterminal run must carry no receipt pointer, no RUN_TERMINAL event at
+        any sequence and no RUN_RECEIPT linkage, so a resurrected or forged
+        run fails closed before any snapshot, event page, idempotent replay or
+        mutation authority is returned; a published but unprojected receipt
+        stays an honest nonterminal crash gap. Historical and current authority
+        stay separate: this never demands current-release eligibility and never
+        invents producer provenance.
         """
         state, state_version, receipt_artifact_id = row[6], row[7], row[8]
         try:
-            if state != "TERMINAL" and receipt_artifact_id is not None:
-                raise TerminalEvidenceUnavailable("nonterminal run carries a projected receipt pointer")
             if state != "TERMINAL":
+                if receipt_artifact_id is not None:
+                    raise TerminalEvidenceUnavailable("nonterminal run carries a projected receipt pointer")
+                if conn.execute("SELECT 1 FROM app_run_events WHERE run_id=? AND event_type='RUN_TERMINAL'",
+                                (run_id,)).fetchone():
+                    raise TerminalEvidenceUnavailable("nonterminal run carries a terminal projection event")
+                if conn.execute("SELECT 1 FROM app_run_artifacts WHERE run_id=? AND role='RUN_RECEIPT'",
+                                (run_id,)).fetchone():
+                    raise TerminalEvidenceUnavailable("nonterminal run carries a projected receipt linkage")
                 return
             if type(receipt_artifact_id) is not str or not receipt_artifact_id.startswith("receipt-"):
                 raise TerminalEvidenceUnavailable("terminal receipt artifact identity is not deterministic")
@@ -255,6 +266,9 @@ class DurableRunRepository:
                 (receipt_artifact_id,)).fetchall()
             if links != [(run_id, "RUN_RECEIPT", 1)]:
                 raise TerminalEvidenceUnavailable("terminal receipt linkage is missing, wrong-role or cross-run")
+            if conn.execute("SELECT 1 FROM app_run_artifacts WHERE run_id=? AND role='RUN_RECEIPT' AND artifact_id<>?",
+                            (run_id, receipt_artifact_id)).fetchone():
+                raise TerminalEvidenceUnavailable("terminal run carries additional receipt role linkage")
             artifact = conn.execute(
                 "SELECT byte_sha256,canonical_sha256,byte_count,media_type,artifact_kind,logical_path,evidence_class,verification_policy_id "
                 "FROM app_artifacts WHERE artifact_id=?", (receipt_artifact_id,)).fetchone()

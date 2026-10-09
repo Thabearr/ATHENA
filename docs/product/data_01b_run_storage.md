@@ -135,8 +135,7 @@ bound by the append-only V70 successor, with V69 as its exact unrevised predeces
 
 Authoritative reads authenticate projected terminal evidence in full before
 reporting TERMINAL or a RUN_TERMINAL event. The bounded historical terminal
-verifier runs from the common run identity path whenever a run is TERMINAL or
-carries a projected receipt pointer, and proves: the deterministic
+verifier runs from the common run identity path for every run, and proves: the deterministic
 `receipt-<sha256>` artifact identity and `run-receipts/<sha256>.json` locator;
 exactly one same-run retained RUN_RECEIPT linkage with retained_root ownership;
 artifact kind, role, policy, byte count, byte SHA and canonical SHA; canonical
@@ -147,8 +146,17 @@ manifest and the original release-mode producer/release evidence; and exactly
 one canonical RUN_TERMINAL event at the terminal state version carrying the
 exact receipt SHA. The database status can never float free of this evidence.
 
-TERMINAL runs without their retained receipt linkage fail closed, and
-non-TERMINAL runs never carry a projected receipt pointer. Missing, corrupt,
+The invariant is bidirectional. TERMINAL requires exactly one same-run
+RUN_RECEIPT linkage referencing its deterministic pointer; an additional
+same-run receipt-role linkage to another artifact is rejected, as are missing
+or cross-run linkages. No event may follow the terminal event.
+Non-TERMINAL requires a NULL receipt pointer, no RUN_TERMINAL event at any
+sequence, and no RUN_RECEIPT linkage. Bounded SQLite existence queries inside
+the existing verified transaction enforce this before snapshots, paginated
+events, exact replay or mutation authority. Synthetic resurrection and forged
+terminal evidence fail closed without deleting, rewriting or repairing records.
+A standalone published receipt file is not a committed projection.
+Missing, corrupt,
 wrong-run, wrong-role or unverified evidence raises the typed safe
 `TerminalEvidenceUnavailable` error; no read surface ever reports a clean
 TERMINAL projection or authenticated RUN_TERMINAL event when proof fails.
@@ -162,6 +170,6 @@ without independently authenticated producer identity remain fail-closed
 (E2/PACKAGING_AUTHENTICATED_INSTALLED_PRODUCER_PROVENANCE stays OPEN). There
 is no scanning worker and no startup reconciliation.
 
-This correction preserves A2 V1-V72 and app migrations 0001/0002. New proof
-source is bound by the append-only V73 successor, with V72 as its exact
+This correction preserves A2 V1-V73 and app migrations 0001/0002. New proof
+source is bound by the append-only V74 successor, with V73 as its exact
 unrevised predecessor.
