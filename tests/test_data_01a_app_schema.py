@@ -268,7 +268,7 @@ def test_app_schema_fails_closed_on_version_gap(resources, roots):
     conn = connect_app_store(app_store_path(roots), synchronous="FULL")
     try:
         conn.execute("BEGIN")
-        conn.execute("INSERT INTO app_schema_migrations (version, migration_sha256, applied_at, release_id, backup_manifest_sha256) VALUES (3, ?, ?, ?, ?)", ("0" * 64, "2030-01-01T00:00:00.000000Z", "r", "1" * 64))
+        conn.execute("UPDATE app_schema_migrations SET version=4 WHERE version=3")
         conn.execute("COMMIT")
     finally:
         conn.close()
@@ -731,7 +731,8 @@ def test_verified_development_inventory_preserves_legacy_and_warehouse(tmp_path)
     checkout = tmp_path / "development"
     checkout.mkdir()
     for path in ("runtime/source_identity.py", "database/migrations/0001_app_control_core.sql",
-                 "database/migrations/0002_app_runs_operations.sql"):
+                 "database/migrations/0002_app_runs_operations.sql",
+                 "database/migrations/0003_app_projections_exports.sql"):
         target = checkout / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ROOT / path).read_bytes())
@@ -925,14 +926,15 @@ def test_only_pending_version_retains_consistent_backup(resources, roots, monkey
     snapshot = sqlite3.connect((roots.data_root / manifest["backup"]["logical_path"]).resolve().as_uri() + "?mode=ro", uri=True)
     try:
         assert snapshot.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-        assert snapshot.execute("SELECT version FROM app_schema_migrations ORDER BY version").fetchall() == [(1,), (2,)]
+        assert snapshot.execute("SELECT version FROM app_schema_migrations ORDER BY version").fetchall() == [(1,), (2,), (3,)]
     finally:
         snapshot.close()
     conn = connect_app_store(app_store_path(roots), readonly=True)
     try:
-        assert conn.execute("SELECT version FROM app_schema_migrations ORDER BY version").fetchall() == ([(1,), (2,)] if fail else [(1,), (2,), (3,)])
+        expected_versions = [(1,), (2,), (3,)] if fail else [(1,), (2,), (3,), (4,)]
+        assert conn.execute("SELECT version FROM app_schema_migrations ORDER BY version").fetchall() == expected_versions
         if not fail:
-            assert conn.execute("SELECT backup_manifest_sha256 FROM app_schema_migrations WHERE version=3").fetchone() == (digest,)
+            assert conn.execute("SELECT backup_manifest_sha256 FROM app_schema_migrations WHERE version=4").fetchone() == (digest,)
     finally:
         conn.close()
     if not fail:

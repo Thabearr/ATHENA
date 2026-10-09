@@ -56,10 +56,13 @@ def authenticate():
 
 
 def successor_paths():
-    """Bounded D4 additions omitted only from authenticated historical views."""
+    """Bounded D4/D5 additions omitted only after successor authentication."""
+    authenticate()
     from scripts import audit_data_01b_durable_run_state as data01b
-    data01b.authenticate_successor(boundary.authenticate_inventory())
-    return data01b.NEW_PATHS
+    latest = boundary.authenticate_inventory()
+    data01b.authenticate_successor(latest)
+    from scripts import audit_data_01c_app_store_complete as data01c
+    return set(data01b.NEW_PATHS) | data01c.authenticate_successor()
 
 
 def historical_build_config():

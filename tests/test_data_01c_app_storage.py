@@ -27,7 +27,7 @@ from services.app_projection_service import (
 )
 from services.backup_service import (
     BackupError, RestoreError, activate_staged_restore, create_backup,
-    stage_indexed_backup, stage_restore_archive, verify_backup,
+    stage_indexed_backup, stage_restore_archive, verify_backup, _scan_archive,
 )
 from services.export_service import (
     AuditEventError, ExportError, append_audit_event, create_run_export,
@@ -56,6 +56,28 @@ def _terminal_with_untyped_leg(development_durable, clock):
     )
     assert repo.project_terminal_receipt(digest) is True
     return repo, candidate, verified_resources, verified_roots, run_id, attempt, lease, digest
+
+
+def _write_probe_archive(path, members):
+    descriptors = sorted((
+        {"path": name, "byte_sha256": hashlib.sha256(raw).hexdigest(), "byte_count": len(raw)}
+        for name, raw, _attributes in members
+    ), key=lambda row: row["path"])
+    unsigned = {"members": descriptors,
+                "membership": {"member_count": len(descriptors),
+                               "total_byte_count": sum(row["byte_count"] for row in descriptors)}}
+    manifest = dict(unsigned)
+    manifest["canonical_manifest_sha256"] = hashlib.sha256(canonical_json_bytes(unsigned)).hexdigest()
+    with zipfile.ZipFile(path, "w") as archive:
+        header = zipfile.ZipInfo("manifest.json")
+        header.compress_type = zipfile.ZIP_STORED
+        header.external_attr = (0o100600 << 16)
+        archive.writestr(header, canonical_json_bytes(manifest))
+        for name, raw, attributes in members:
+            info = zipfile.ZipInfo(name)
+            info.compress_type = zipfile.ZIP_STORED
+            info.external_attr = attributes
+            archive.writestr(info, raw)
 
 
 def test_v3_schema_is_exact_six_table_delta_with_frozen_v1_v2(resources, roots):
@@ -271,6 +293,7 @@ def test_consistent_backup_contains_terminal_receipt_and_stages_before_activatio
     assert staged.activation_eligible is True
     assert staged.terminal_producer_authentication == "NONE"
     assert hashlib.sha256(app_store_path(verified_roots).read_bytes()).hexdigest() != before_db_sha
+    before_activation_db_sha = hashlib.sha256(app_store_path(verified_roots).read_bytes()).hexdigest()
     history = activate_staged_restore(verified_resources, verified_roots, staged)
     assert history.is_dir()
     with app_store_connection(verified_resources, verified_roots) as conn:
@@ -279,7 +302,7 @@ def test_consistent_backup_contains_terminal_receipt_and_stages_before_activatio
         # that pre-verification image to a false VERIFIED claim.
         assert conn.execute("SELECT state FROM app_backups WHERE backup_id=?",
                             (result.backup_id,)).fetchone() == ("PREPARING",)
-    assert hashlib.sha256((history / "athena-app.sqlite3").read_bytes()).hexdigest() == before_db_sha
+    assert hashlib.sha256((history / "athena-app.sqlite3").read_bytes()).hexdigest() == before_activation_db_sha
 
 
 @pytest.mark.parametrize("attack", ["traversal", "duplicate_casefold", "symlink", "deflated"])
@@ -328,6 +351,101 @@ def test_restore_archive_adversaries_are_rejected_without_active_root_mutation(
     assert not list(verified_roots.data_root.parent.glob(".dev-data.restore.*.staging"))
 
 
+@pytest.mark.parametrize("name", [
+    "/outside.txt", "C:/outside.txt", "//server/share.txt", "\\\\?\\C:\\outside.txt",
+    "data/file:alternate", "data/%2e%2e/escape", "data/sub\\..\\escape",
+    "data/NUL", "data/CON.txt", "data/LPT1.log", "data/name.", "data/name ",
+    "data/e\u0301.txt",
+])
+def test_restore_archive_rejects_posix_windows_and_unicode_path_aliases_before_staging(
+        tmp_path, name):
+    archive = tmp_path / "path-alias.zip"
+    _write_probe_archive(archive, [(name, b"payload", 0o100600 << 16)])
+    stage = tmp_path / "staging"
+    stage.mkdir()
+    with pytest.raises(RestoreError):
+        _scan_archive(archive, stage_root=stage)
+    assert list(stage.iterdir()) == []
+
+
+@pytest.mark.parametrize("attributes", [
+    0o120777 << 16,              # Unix symlink
+    0o020600 << 16,              # Unix character device
+    0o010600 << 16,              # Unix FIFO/special entry
+    (0o100600 << 16) | 0x0400,   # DOS reparse-point/junction marker
+    (0o100600 << 16) | 0x0010,   # DOS directory marker without a slash
+])
+def test_restore_archive_rejects_link_and_special_file_metadata_before_staging(
+        tmp_path, attributes):
+    archive = tmp_path / "special-entry.zip"
+    _write_probe_archive(archive, [("data/payload.bin", b"payload", attributes)])
+    stage = tmp_path / "staging"
+    stage.mkdir()
+    with pytest.raises(RestoreError):
+        _scan_archive(archive, stage_root=stage)
+    assert list(stage.iterdir()) == []
+
+
+def test_restore_archive_rejects_casefold_and_count_aliases_before_staging(tmp_path, monkeypatch):
+    import services.backup_service as backup
+
+    archive = tmp_path / "aliases.zip"
+    _write_probe_archive(archive, [("data/Artifact", b"one", 0o100600 << 16),
+                                   ("data/artifact", b"two", 0o100600 << 16)])
+    stage = tmp_path / "staging"
+    stage.mkdir()
+    with pytest.raises(RestoreError, match="duplicate"):
+        _scan_archive(archive)
+    assert list(stage.iterdir()) == []
+
+    _write_probe_archive(archive, [("data/one", b"1", 0o100600 << 16),
+                                   ("data/two", b"2", 0o100600 << 16)])
+    monkeypatch.setattr(backup, "MAX_BACKUP_MEMBERS", 1)
+    with pytest.raises(RestoreError, match="member count"):
+        _scan_archive(archive, stage_root=stage)
+    assert list(stage.iterdir()) == []
+
+
+@pytest.mark.parametrize("case", ["manifest_digest", "member_hash", "member_length", "missing_member"])
+def test_restore_archive_rejects_digest_length_and_inventory_mismatch_before_staging(
+        tmp_path, case):
+    archive = tmp_path / "integrity.zip"
+    name = "data/payload.bin"
+    raw = b"payload"
+    _write_probe_archive(archive, [(name, raw, 0o100600 << 16)])
+    rewritten = tmp_path / (case + ".zip")
+    with zipfile.ZipFile(archive) as source:
+        entries = [(info.filename, source.read(info), info.external_attr) for info in source.infolist()]
+    if case == "manifest_digest":
+        manifest = json.loads(entries[0][1])
+        manifest["canonical_manifest_sha256"] = "0" * 64
+        entries[0] = (entries[0][0], canonical_json_bytes(manifest), entries[0][2])
+    elif case == "member_hash":
+        altered = b"changed"
+        entries[1] = (name, altered, entries[1][2])
+    elif case == "member_length":
+        manifest = json.loads(entries[0][1])
+        manifest["members"][0]["byte_count"] += 1
+        manifest["membership"]["total_byte_count"] += 1
+        unsigned = dict(manifest)
+        unsigned.pop("canonical_manifest_sha256", None)
+        manifest["canonical_manifest_sha256"] = hashlib.sha256(canonical_json_bytes(unsigned)).hexdigest()
+        entries[0] = (entries[0][0], canonical_json_bytes(manifest), entries[0][2])
+    elif case == "missing_member":
+        entries = entries[:1]
+    with zipfile.ZipFile(rewritten, "w") as target:
+        for entry_name, content, attributes in entries:
+            info = zipfile.ZipInfo(entry_name)
+            info.compress_type = zipfile.ZIP_STORED
+            info.external_attr = attributes
+            target.writestr(info, content)
+    stage = tmp_path / "staging"
+    stage.mkdir()
+    with pytest.raises(RestoreError):
+        _scan_archive(rewritten)
+    assert list(stage.iterdir()) == []
+
+
 def test_export_default_redaction_rejects_credential_like_audit_values(resources, roots, clock):
     app = open_repo(resources, roots)
     record_test_release(app, clock())
@@ -336,3 +454,76 @@ def test_export_default_redaction_rejects_credential_like_audit_values(resources
     with pytest.raises(AuditEventError):
         append_audit_event(resources, roots, event_type="D5_REDACTION_NEGATIVE",
                            payload={"authorization": "Bearer abcdefghijklmnop"}, created_at=clock())
+
+
+def test_d5_successor_authenticates_exact_sources_and_historical_seams():
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    from scripts import audit_data_01a_app_schema_core as data01a
+    from scripts import audit_data_01b_durable_run_state as data01b
+    from scripts import audit_data_01c_app_store_complete as data01c
+
+    latest = boundary.authenticate_inventory()
+    paths = data01c.authenticate_successor()
+    expected = (set(data01c.SUCCESSOR_SOURCE_PATHS) | {data01c.RECEIPT}
+                | {boundary.inventory_generation_path(generation)
+                   for generation in range(75, 94)})
+    assert latest["generation"] == 93
+    assert paths == expected
+    combined_successor_paths = data01a.successor_paths()
+    assert data01b.NEW_PATHS <= combined_successor_paths
+    assert paths <= combined_successor_paths
+    assert "scripts/port_02c_build_config.py" in {
+        row["path"] for row in data01c.audit()["source_identities"]
+    }
+    assert "scripts/port_02c_build_config.py" not in paths
+    assert "runtime/workflows/ledgers/history" not in paths
+    assert "tests/unreviewed-d5-source.json" not in paths
+
+
+def test_d5_successor_rejects_tampered_receipt_and_source_identity(monkeypatch):
+    from scripts import audit_data_01c_app_store_complete as data01c
+
+    original_read_bytes = Path.read_bytes
+    receipt_path = data01c.ROOT / data01c.RECEIPT
+    forged_receipt = b'{"canonical_sha256":"' + b"0" * 64 + b'"}\n'
+
+    def read_tampered_receipt(path):
+        if path == receipt_path:
+            return forged_receipt
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", read_tampered_receipt)
+    with pytest.raises(AssertionError, match="D5 source receipt"):
+        data01c.authenticate_successor()
+
+
+def test_d5_successor_rejects_changed_source_bytes(monkeypatch):
+    from scripts import audit_data_01c_app_store_complete as data01c
+
+    original_read_bytes = Path.read_bytes
+    source_path = data01c.ROOT / "scripts/audit_data_01c_app_store_complete.py"
+
+    def read_changed_source(path):
+        if path == source_path:
+            return original_read_bytes(path) + b"# unreviewed source change\n"
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", read_changed_source)
+    with pytest.raises(AssertionError):
+        data01c.authenticate_successor()
+
+
+def test_d5_successor_rejects_broken_a2_predecessor(monkeypatch):
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    from scripts import audit_data_01c_app_store_complete as data01c
+
+    latest = dict(boundary.authenticate_inventory())
+    latest["predecessor_inventory"] = {
+        "path": boundary.inventory_generation_path(91),
+        "canonical_sha256": data01c.V91_SHA256,
+        "generation": 92,
+        "rewritten": True,
+    }
+    monkeypatch.setattr(boundary, "authenticate_inventory", lambda: latest)
+    with pytest.raises(AssertionError, match="A2 V93 predecessor"):
+        data01c.authenticate_successor()

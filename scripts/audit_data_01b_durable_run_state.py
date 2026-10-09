@@ -13,6 +13,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 RECEIPT = "artifacts/product/data_01b_durable_run_state_v1.json"
 SNAPSHOT = "tests/fixtures/core_01d/data_01b_historical/d3_source_bytes.json"
+D3_EXTENSION = "tests/fixtures/core_01d/data_01c_historical/d3_app_repository_source_v1.json"
 REVIEWED_HEAD = "e5b9793d1c609ad331819c228484e5c088e686d9"
 REVIEWED_A2_SHA = "009185f7e2743b29bd5fa4f7c71815c54ccf1158e759a10aa0c68fdb263d910a"
 V70_A2_SHA256 = "bc12c07f2d840be6abf77f2ec2bea1ffca8b34256b5c293db67dfbbf5b3909a5"
@@ -91,6 +92,48 @@ def historical_sources():
         if hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() != d3["source_identities"][path]:
             raise AssertionError("D3 retained source bytes drift: " + path)
         result[path] = payload
+    # The frozen D4 snapshot intentionally contains only D4 source paths that
+    # overlapped D3. D5 also evolves app_repository.py, so retain that one
+    # missing D3 byte identity in a separate additive record rather than
+    # rewriting either historical receipt or snapshot.
+    extension_raw = (ROOT / D3_EXTENSION).read_bytes()
+    extension = json.loads(extension_raw)
+    if (extension_raw != canonical(extension)
+            or type(extension) is not dict
+            or set(extension) != {"schema_version", "policy_id", "d3_receipt_sha256",
+                                  "source_commit", "a2_inventory", "source_bytes",
+                                  "canonical_sha256"}
+            or extension.get("schema_version") != 1
+            or extension.get("policy_id") != "ATHENA_DATA_01C_D3_HISTORICAL_SOURCE_EXTENSION_V1"
+            or extension.get("d3_receipt_sha256") != expected
+            or extension.get("source_commit") != snapshot["base_main_sha"]):
+        raise AssertionError("D5 additive D3 historical source extension identity drift")
+    extension_seal = dict(extension)
+    seal = extension_seal.pop("canonical_sha256")
+    if hashlib.sha256(canonical(extension_seal)).hexdigest() != seal:
+        raise AssertionError("D5 additive D3 historical source extension seal mismatch")
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    inventory = boundary.read_generation(d3["a2_inventory"]["path"])
+    if (extension["a2_inventory"] != d3["a2_inventory"]
+            or inventory.get("generation") != 68
+            or inventory.get("canonical_sha256") != d3["a2_inventory"]["canonical_sha256"]):
+        raise AssertionError("D5 additive D3 source extension A2 V68 binding drift")
+    added = extension["source_bytes"]
+    if type(added) is not list or len(added) != 1 or added[0].get("path") != "database/app_repository.py":
+        raise AssertionError("D5 additive D3 source extension scope drift")
+    row = added[0]
+    payload = base64.b64decode(row["base64"], validate=True)
+    source_identity = d3["source_identities"].get(row["path"])
+    v68_identity = {item["path"]: item["lf_source_sha256"]
+                    for item in inventory["source_identities"]}.get(row["path"])
+    if (type(row.get("byte_count")) is not int or row["byte_count"] != len(payload)
+            or row.get("byte_sha256") != hashlib.sha256(payload).hexdigest()
+            or row.get("git_blob_sha1") != hashlib.sha1(
+                b"blob " + str(len(payload)).encode() + b"\0" + payload).hexdigest()
+            or hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() != source_identity
+            or source_identity != v68_identity):
+        raise AssertionError("D5 additive D3 historical source bytes fail D3/A2 authentication")
+    result[row["path"]] = payload
     return result
 
 
@@ -245,16 +288,17 @@ def authenticate_successor(latest):
     if value.get("policy_id") != "ATHENA_DATA_01B_DURABLE_RUN_STATE_V1":
         raise AssertionError("D4 immutable receipt policy drift")
     latest_inventory = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
-    v74 = boundary_inventory = None
     from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
     v74 = boundary.read_generation(boundary.inventory_generation_path(74))
+    v75 = boundary.read_generation(boundary.inventory_generation_path(75))
     if (v74.get("generation") != 74
             or v74.get("canonical_sha256") != "8069d2ab272806ce803ed8b955c2227a136d65219408fc7bf87ba050f9f6523b"
-            or latest.get("predecessor_inventory") != {
+            or v75.get("canonical_sha256") != "a4702d82a771bef07858f9399b9ab3821800cc98226df5795551155ca74634a4"
+            or v75.get("predecessor_inventory") != {
                 "path": boundary.inventory_generation_path(74),
                 "canonical_sha256": v74["canonical_sha256"],
                 "generation": 74, "rewritten": False}):
-        raise AssertionError("D4 source receipt is not bound through immutable A2 V74 -> V75")
+        raise AssertionError("D4 source receipt does not retain immutable A2 V74 -> V75 lineage")
     v74_inventory = {row["path"]: row["lf_source_sha256"] for row in v74["source_identities"]}
     frozen_sources = {row["path"]: row["lf_sha256"] for row in value["source_identities"]}
     if (set(frozen_sources) != set(SOURCES)
@@ -266,7 +310,7 @@ def authenticate_successor(latest):
     for path, digest in current.items():
         if path.endswith(".py"):
             if latest_inventory.get(path) != digest:
-                raise AssertionError("D5 successor source is not bound by A2 V75: " + path)
+                raise AssertionError("current successor source is not bound by latest A2 inventory: " + path)
         elif frozen_sources.get(path) != digest:
             raise AssertionError("non-Python D4 source changed outside its immutable receipt: " + path)
     rebuilt = build_receipt()

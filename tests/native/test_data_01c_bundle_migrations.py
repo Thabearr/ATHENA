@@ -102,3 +102,6 @@ def test_native_same_volume_switch_recovers_each_crash_marker(tmp_path, crash_ph
         failed = list(tmp_path.glob(".data.failed.*"))
         assert len(failed) == 1
         assert (failed[0] / "generation.txt").read_text(encoding="utf-8") == "new"
+    else:
+        assert stage.is_dir()
+        assert (stage / "generation.txt").read_text(encoding="utf-8") == "new"

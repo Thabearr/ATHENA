@@ -17,6 +17,25 @@ from scripts import audit_data_01b_durable_run_state as data01b
 ROOT = Path(__file__).resolve().parents[1]
 RECEIPT = "artifacts/product/data_01c_app_store_complete_v1.json"
 V74_SHA256 = "8069d2ab272806ce803ed8b955c2227a136d65219408fc7bf87ba050f9f6523b"
+V75_SHA256 = "a4702d82a771bef07858f9399b9ab3821800cc98226df5795551155ca74634a4"
+V76_SHA256 = "9e003cf42e26c41b3dd83b6ccc77750c94513edd81700d2661757ab81d61c841"
+V77_SHA256 = "52bbbf3a6158b17e90ad220347e4a579530f3777694a8495432ac954592d5993"
+V78_SHA256 = "6c1beaa0929157e1a10e0cf129c77e9c1373a14b6fdc9089e203e4cd4c9928b2"
+V79_SHA256 = "00edfdb3273b78228e868947d705b74486db55ea1406cb9baed6e2cf267a2937"
+V80_SHA256 = "ec4ddf9ccc080123daa1ad761b121d60beb319cca238617dcd3fe8f8257e0015"
+V81_SHA256 = "238c1874e90e24ce3a7229d17ed2b50083f148296976dcc4181695ef65914e0f"
+V82_SHA256 = "5aeae206741fc1712c8395a99c0d2b10a83802035962d81fcd0cb2b830d8b5db"
+V83_SHA256 = "01eec956a8ab5676b8e748128595f3903892b0ce53940acc04dbc20f7c10c32f"
+V84_SHA256 = "63fddfe34573db5bb2f38325ea2104d4daedf93c0138f3c49abb357dac4d0aa4"
+V85_SHA256 = "f61bc64b1353de1c0cfd3642bd8ac33dacbd077e5368ba6773bd2d1f34f0d26b"
+V86_SHA256 = "8fd98c20a7f1df1d3000ecfad019807c2f1193b53a58a4d8792fa581b223c755"
+V87_SHA256 = "4cd47528cba22e318f790ec08c0186a05186bfebdbb44fb046d658cef40a1443"
+V88_SHA256 = "311c0182f65b330b0a19edf1cc69917ea7a08b6a38b2867ad3600c111089a06c"
+V89_SHA256 = "0aa7f77d2ce0af0288704555057d3462fcb512cf894aec9857ac1c44097871d9"
+V90_SHA256 = "343c1b76d6d7bcb7c3f9389be7f4f7404acc010ce1355f3f35d7041769d6586f"
+V91_SHA256 = "1d13e625de57d5311f10adaee8fa87ac145da64d87225c6545cc5219fa4edf17"
+V92_SHA256 = "e342f26cf10ad6d0559c8357d1202bc03ccbe25a23e89bc9e3bb31f7dd8b5440"
+A2_GENERATION = 93
 D3_SHA256 = "3f1b04be1d97391b87e958eb008910b822567673582b61947f00099b9aa71c59"
 D4_SHA256 = "d0b27962d852c9352306106b78ef26e00b919fc5a3a4070302c05ec667698b84"
 MIGRATION_0001_SHA256 = "6d380b30733f99d3740b8d6dd89810fb31ca568625319b433023f48c9f667b7c"
@@ -33,12 +52,32 @@ SOURCE_PATHS = (
     "services/export_service.py", "services/backup_service.py",
     "scripts/port_02c_build_config.py", "scripts/audit_data_01a_app_schema_core.py",
     "scripts/audit_data_01b_durable_run_state.py",
+    "scripts/audit_data_01c_app_store_complete.py",
     "tests/test_data_01a_app_schema.py", "tests/test_data_01b_durable_run_state.py",
     "tests/native/test_data_01b_bundle_migrations.py",
     "tests/test_core_01d_ci_offline_transport_inventory_evolution.py",
+    "tests/test_core_01d_exact_pr_trigger_disposition_b1.py",
+    "tests/test_core_01d_owner_one_shot_issue_comment_authority_b3.py",
+    "tests/test_core_01d_frozen_artifact_replay_authority_b5.py",
+    "tests/test_core_01d_port02c_trigger_authority_b6.py",
     "tests/test_data_01c_app_storage.py", "tests/native/test_data_01c_bundle_migrations.py",
     "docs/product/data_01c_app_store_complete.md",
+    "tests/fixtures/core_01d/data_01c_historical/d3_app_repository_source_v1.json",
+    "scripts/audit_checkpoint_e_workflows.py",
 )
+SUCCESSOR_SOURCE_PATHS = frozenset({
+    "database/app_root_lock.py",
+    "database/app_storage_access.py",
+    "database/migrations/0003_app_projections_exports.sql",
+    "docs/product/data_01c_app_store_complete.md",
+    "scripts/audit_data_01c_app_store_complete.py",
+    "services/app_projection_service.py",
+    "services/backup_service.py",
+    "services/export_service.py",
+    "tests/fixtures/core_01d/data_01c_historical/d3_app_repository_source_v1.json",
+    "tests/native/test_data_01c_bundle_migrations.py",
+    "tests/test_data_01c_app_storage.py",
+})
 
 
 def canonical(value):
@@ -74,15 +113,17 @@ def _schema_evidence():
         conn.close()
 
 
-def build_receipt():
-    latest = boundary.authenticate_inventory()
-    if latest.get("generation") != 75:
-        raise AssertionError("D5 receipt requires canonical A2 V75 as latest")
+def build_receipt(latest=None):
+    latest = boundary.authenticate_inventory() if latest is None else latest
+    if latest.get("generation") != A2_GENERATION:
+        raise AssertionError(f"D5 receipt requires canonical A2 V{A2_GENERATION} as latest")
+    if not SUCCESSOR_SOURCE_PATHS <= set(SOURCE_PATHS):
+        raise AssertionError("D5 successor source set is outside its authenticated source identities")
     predecessor = latest.get("predecessor_inventory")
-    if predecessor != {"path": boundary.inventory_generation_path(74),
-                       "canonical_sha256": V74_SHA256, "generation": 74,
+    if predecessor != {"path": boundary.inventory_generation_path(92),
+                       "canonical_sha256": V92_SHA256, "generation": 92,
                        "rewritten": False}:
-        raise AssertionError("A2 V75 predecessor is not exact immutable V74")
+        raise AssertionError("A2 V93 predecessor is not exact immutable V92")
     data01b.authenticate_successor(latest)
     d3 = data01a.authenticate()
     if d3["canonical_sha256"] != D3_SHA256:
@@ -134,9 +175,11 @@ def build_receipt():
             "backup_index_snapshot_state": "PREPARING_UNTIL_LIVE_ARCHIVE_VERIFICATION_COMMITS",
             "installed_producer_provenance": "E2/PACKAGING_AUTHENTICATED_INSTALLED_PRODUCER_PROVENANCE:OPEN",
         },
-        "a2_inventory": {"generation": 75, "path": boundary.inventory_generation_path(75),
+        "a2_inventory": {"generation": A2_GENERATION,
+                         "path": boundary.inventory_generation_path(A2_GENERATION),
                          "canonical_sha256": latest["canonical_sha256"]},
         "a2_predecessor": predecessor,
+        "successor_source_paths": sorted(SUCCESSOR_SOURCE_PATHS),
         "historical_receipts": {"d3_canonical_sha256": D3_SHA256,
                                 "d4_canonical_sha256": D4_SHA256,
                                 "source_authentication": "IMMUTABLE_HISTORICAL_BYTES_AND_A2_SUCCESSOR_BINDING"},
@@ -166,8 +209,8 @@ def boundary_resource_resolver():
     return ResourceResolver.for_development(identity)
 
 
-def audit():
-    expected = canonical(build_receipt())
+def audit(latest=None):
+    expected = canonical(build_receipt(latest=latest))
     raw = (ROOT / RECEIPT).read_bytes()
     if raw != expected:
         raise AssertionError("D5 source receipt does not match exact current sources")
@@ -176,6 +219,29 @@ def audit():
             canonical({key: row for key, row in value.items() if key != "canonical_sha256"})).hexdigest():
         raise AssertionError("D5 source receipt seal mismatch")
     return value
+
+
+def authenticate_successor():
+    """Authenticate only D5's exact additive sources and A2 successor files."""
+    latest = boundary.authenticate_inventory()
+    value = audit(latest=latest)
+    expected_paths = list(SOURCE_PATHS)
+    identities = value.get("source_identities")
+    if (type(identities) is not list
+            or [row.get("path") for row in identities if type(row) is dict] != expected_paths
+            or value.get("successor_source_paths") != sorted(SUCCESSOR_SOURCE_PATHS)
+            or value.get("policy_id") != "ATHENA_DATA_01C_STORAGE_READY_PROJECTIONS_SOURCE_BLOCKED_V1"
+            or value.get("a2_inventory") != {
+                "generation": A2_GENERATION,
+                "path": boundary.inventory_generation_path(A2_GENERATION),
+                "canonical_sha256": latest.get("canonical_sha256")}
+            or value.get("projection_source", {}).get("typed_disposition") != "SOURCE_CONTRACT_UNAVAILABLE"
+            or value.get("projection_source", {}).get("coverage_disposition") != "COVERAGE_UNAVAILABLE"
+            or value.get("projection_source", {}).get("materialized_verified_rows") != 0):
+        raise AssertionError("D5 successor receipt is not the exact source-blocked A2 V93 record")
+    a2_paths = {boundary.inventory_generation_path(generation)
+                for generation in range(75, A2_GENERATION + 1)}
+    return set(SUCCESSOR_SOURCE_PATHS) | {RECEIPT} | a2_paths
 
 
 def main():

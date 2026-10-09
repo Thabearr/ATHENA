@@ -392,7 +392,12 @@ def verified_additive_artifact_paths():
     from scripts import audit_data_01a_app_schema_core as data01a
     data01a.authenticate()
     from scripts import audit_data_01b_durable_run_state as data01b
-    data01b.authenticate_successor(a2.authenticate_inventory())
+    latest_a2 = a2.authenticate_inventory()
+    data01b.authenticate_successor(latest_a2)
+    from scripts import audit_data_01c_app_store_complete as data01c
+    d5_paths = data01c.authenticate_successor()
+    require(data01c.RECEIPT in d5_paths,
+            "D5 source receipt is absent from its authenticated successor set")
     return (
         MATRIX_PATH,
         RECEIPT_PATH,
@@ -435,6 +440,7 @@ def verified_additive_artifact_paths():
         app01a.RECEIPT,
         data01a.RECEIPT,
         data01b.RECEIPT,
+        data01c.RECEIPT,
     )
 
 

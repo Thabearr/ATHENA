@@ -93,7 +93,7 @@ def _recover_interrupted_switch(root: Path) -> None:
             if root.exists():
                 if failed.exists():
                     raise ValueError("restore rollback destination already exists")
-            _rename_durable(root, failed)
+                _rename_durable(root, failed)
             _rename_durable(history, root)
             _fsync_directory(parent)
         elif not root.exists():

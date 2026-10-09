@@ -51,12 +51,27 @@ def _now_text(value: datetime | None) -> str:
     return instant.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def _sensitive(value) -> bool:
+def _sensitive(value, path: tuple[str, ...] = ()) -> bool:
     if isinstance(value, dict):
-        return any(_SENSITIVE_KEY.search(str(key)) or _sensitive(item)
-                   for key, item in value.items())
+        for key, item in value.items():
+            name = str(key)
+            # These two false flags are capability declarations in the
+            # authenticated receipt authority manifest, not cookie or wallet
+            # material. Keep the receipt byte-faithful while still rejecting
+            # either capability being enabled or any similarly named field
+            # outside this exact reviewed location.
+            safe_disabled_capability = (
+                path == ("authority_manifest", "capabilities")
+                and name in {"cookies", "wallet"}
+                and item is False
+            )
+            if _SENSITIVE_KEY.search(name) and not safe_disabled_capability:
+                return True
+            if _sensitive(item, path + (name,)):
+                return True
+        return False
     if isinstance(value, list):
-        return any(_sensitive(item) for item in value)
+        return any(_sensitive(item, path + (str(index),)) for index, item in enumerate(value))
     if isinstance(value, str):
         return bool(_SENSITIVE_VALUE.search(value))
     return False

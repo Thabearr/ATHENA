@@ -181,6 +181,22 @@ def _retained_migration_files(root: Path, migration_rows) -> dict[str, tuple[Pat
     return files
 
 
+def _remove_validation_sidecars(db_path: Path) -> None:
+    """Remove only regular SQLite sidecars created while validating a staged DB."""
+    for suffix in ("-wal", "-shm", "-journal"):
+        sidecar = Path(str(db_path) + suffix)
+        try:
+            mode = sidecar.lstat().st_mode
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(mode):
+            raise RestoreError("staged SQLite validation produced an unsafe sidecar")
+        try:
+            sidecar.unlink()
+        except OSError as exc:
+            raise RestoreError("staged SQLite validation sidecar could not be removed") from exc
+
+
 def _snapshot_and_inventory(resources, roots, snapshot_path: Path, release_id: str):
     migrations = read_app_migrations(resources)
     identities = [(version, digest) for version, _path, _raw, digest in migrations]
@@ -331,13 +347,24 @@ def _write_archive(path: Path, manifest: bytes, files: dict[str, tuple[Path, str
 
 def _safe_archive_path(name: str) -> bool:
     if (type(name) is not str or not name or name.startswith("/") or "\\" in name
-            or ":" in name or "%" in name or "\x00" in name
+            or any(char in name for char in '<>:"|?*%') or "\x00" in name
             or any(unicodedata.category(char) in {"Cc", "Cf", "Cs"} for char in name)):
         return False
     path = PurePosixPath(name)
     if path.as_posix() != name or unicodedata.normalize("NFC", name) != name:
         return False
-    return all(part not in {"", ".", ".."} for part in name.split("/"))
+    windows_devices = {
+        "con", "prn", "aux", "nul", "conin$", "conout$",
+        *(f"com{number}" for number in "123456789¹²³"),
+        *(f"lpt{number}" for number in "123456789¹²³"),
+    }
+    for part in name.split("/"):
+        if part in {"", ".", ".."} or part.endswith((".", " ")):
+            return False
+        device_stem = part.split(".", 1)[0].casefold()
+        if device_stem in windows_devices:
+            return False
+    return True
 
 
 def _scan_archive(archive_path: Path, *, stage_root: Path | None = None):
@@ -363,8 +390,10 @@ def _scan_archive(archive_path: Path, *, stage_root: Path | None = None):
                 name = info.filename
                 norm = unicodedata.normalize("NFC", name).casefold()
                 mode = (info.external_attr >> 16) & 0o170000
+                dos_attributes = info.external_attr & 0xFFFF
                 if (not _safe_archive_path(name) or norm in folded or info.is_dir()
                         or mode not in {0, stat.S_IFREG} or info.compress_type != zipfile.ZIP_STORED
+                        or dos_attributes & 0x0400 or dos_attributes & 0x0010
                         or info.file_size > MAX_BACKUP_MEMBER_BYTES
                         or (info.compress_size and info.file_size / info.compress_size > MAX_COMPRESSION_RATIO)):
                     raise RestoreError("archive contains a traversal, link, duplicate, bomb or special file")
@@ -580,6 +609,10 @@ def _build_staged_validation(resources, roots, stage: Path, manifest: dict, arch
     db_path = stage / APP_STORE_FILENAME
     if db_path.is_symlink() or not db_path.is_file():
         raise RestoreError("staged SQLite database missing or unsafe")
+    if any(Path(str(db_path) + suffix).exists()
+           or Path(str(db_path) + suffix).is_symlink()
+           for suffix in ("-wal", "-shm", "-journal")):
+        raise RestoreError("archive contains SQLite sidecars outside the online-backup snapshot")
     migration_rows = read_app_migrations(resources)
     identities = [(version, digest) for version, _path, _raw, digest in migration_rows]
     conn = connect_app_store(db_path, readonly=True)
@@ -612,9 +645,6 @@ def _build_staged_validation(resources, roots, stage: Path, manifest: dict, arch
             if actual_sha != digest or actual_size != size:
                 raise RestoreError("staged referenced artifact hash/size mismatch")
         expected_files.update(_retained_migration_files(stage, ledger))
-        actual_files = {path.relative_to(stage).as_posix() for path in stage.rglob("*") if path.is_file()}
-        if actual_files != expected_files:
-            raise RestoreError("staged restore contains absent or unreferenced files")
         manifest_artifacts = manifest.get("artifacts")
         expected_artifacts = [
             {"artifact_id": aid, "logical_path": locator, "byte_sha256": digest,
@@ -663,6 +693,15 @@ def _build_staged_validation(resources, roots, stage: Path, manifest: dict, arch
             diagnostics.append("terminal receipt producer proof remains open; activation blocked")
         except Exception as exc:
             raise RestoreError("staged D3/D4 run identity or receipt verification failed") from exc
+    _remove_validation_sidecars(db_path)
+    actual_files = {path.relative_to(stage).as_posix() for path in stage.rglob("*") if path.is_file()}
+    missing_files = sorted(expected_files - actual_files)
+    unreferenced_files = sorted(actual_files - expected_files)
+    if missing_files or unreferenced_files:
+        raise RestoreError(
+            "staged restore file inventory mismatch; missing=" + repr(missing_files)
+            + "; unreferenced=" + repr(unreferenced_files)
+        )
     return terminal_auth, eligible, tuple(diagnostics)
 
 
@@ -813,6 +852,7 @@ def activate_staged_restore(
                     raise RestoreError("active restored generation failed post-switch verification")
             finally:
                 active.close()
+            _remove_validation_sidecars(app_store_path(roots))
             active_auth, active_eligible, _active_diagnostics = _build_staged_validation(
                 resources, roots, roots.data_root, manifest_value, archive_sha
             )
