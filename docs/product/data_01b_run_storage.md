@@ -130,3 +130,38 @@ reevaluation and does not authorize work.
 
 This correction preserves A2 V1–V69 and app migration 0002. New proof source is
 bound by the append-only V70 successor, with V69 as its exact unrevised predecessor.
+
+## Terminal read provenance integrity
+
+Authoritative reads authenticate projected terminal evidence in full before
+reporting TERMINAL or a RUN_TERMINAL event. The bounded historical terminal
+verifier runs from the common run identity path whenever a run is TERMINAL or
+carries a projected receipt pointer, and proves: the deterministic
+`receipt-<sha256>` artifact identity and `run-receipts/<sha256>.json` locator;
+exactly one same-run retained RUN_RECEIPT linkage with retained_root ownership;
+artifact kind, role, policy, byte count, byte SHA and canonical SHA; canonical
+wrapper serialization with its exact reviewed field set and policy binding run,
+request SHA, envelope SHA, release, expected state version and attempt lease
+identity; canonical RunReceipt parsing with matching request and authority
+manifest and the original release-mode producer/release evidence; and exactly
+one canonical RUN_TERMINAL event at the terminal state version carrying the
+exact receipt SHA. The database status can never float free of this evidence.
+
+TERMINAL runs without their retained receipt linkage fail closed, and
+non-TERMINAL runs never carry a projected receipt pointer. Missing, corrupt,
+wrong-run, wrong-role or unverified evidence raises the typed safe
+`TerminalEvidenceUnavailable` error; no read surface ever reports a clean
+TERMINAL projection or authenticated RUN_TERMINAL event when proof fails.
+Durable original records are never altered and no substitute evidence is
+manufactured. Honest QUEUED, RUNNING, CANCEL_REQUESTED, CANCELLED and
+INTERRUPTED states and honest pre-projection published receipts remain
+readable as nonterminal; explicit idempotent reconciliation keeps its exact
+receipt-first behavior. Historical reads never depend on current-release
+eligibility and never invent producer Git provenance; installed receipts
+without independently authenticated producer identity remain fail-closed
+(E2/PACKAGING_AUTHENTICATED_INSTALLED_PRODUCER_PROVENANCE stays OPEN). There
+is no scanning worker and no startup reconciliation.
+
+This correction preserves A2 V1-V72 and app migrations 0001/0002. New proof
+source is bound by the append-only V73 successor, with V72 as its exact
+unrevised predecessor.

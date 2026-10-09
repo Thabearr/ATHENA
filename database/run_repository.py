@@ -68,6 +68,12 @@ class ReceiptProducerUnavailable(RunRepositoryError):
     code = "RECEIPT_PRODUCER_UNAVAILABLE"
 
 
+class TerminalEvidenceUnavailable(RunRepositoryError):
+    """Retained terminal receipt evidence is missing, inconsistent or unverified."""
+
+    code = "TERMINAL_EVIDENCE_UNAVAILABLE"
+
+
 def _utc(value):
     if type(value) is not datetime or value.tzinfo is None or value.utcoffset().total_seconds() != 0:
         raise RunRepositoryError("clock must return an aware UTC datetime")
@@ -204,7 +210,7 @@ class DurableRunRepository:
             raise RunRepositoryError("current authority differs or preview is blocked")
 
     def _verify_run_identity(self, conn, run_id, *, current=True):
-        row = conn.execute("SELECT request_bytes,request_sha256,envelope_bytes,envelope_sha256,release_id,preview_id FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
+        row = conn.execute("SELECT request_bytes,request_sha256,envelope_bytes,envelope_sha256,release_id,preview_id,state,state_version,receipt_artifact_id FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
         if row is None:
             raise RunRepositoryError("unknown run")
         request = RunRequest.from_json_bytes(row[0])
@@ -214,12 +220,92 @@ class DurableRunRepository:
             raise RunRepositoryError("run source/request/envelope/release identity drift")
         self._verify_release(conn, row[4], envelope.source_identity)
         self._verify_capability(conn, row[5], envelope, row[0], row[4])
+        self._verify_terminal_evidence(conn, run_id, row, envelope)
         if current:
             if (envelope.source_identity != _source_identity(self._resources)
                     or row[4] != release_provenance(self.verified_identity, verified_at=self._clock())["release_id"]):
                 raise RunRepositoryError("active run release differs from current verified source")
             self._require_current_authority(envelope)
         return envelope
+
+    def _verify_terminal_evidence(self, conn, run_id, row, envelope):
+        """Bounded historical proof of projected terminal state on every read.
+
+        Authenticates the retained receipt artifact linkage, the retained
+        receipt file bytes and canonical wrapper, the receipt's original
+        producer/release evidence and the RUN_TERMINAL projection event before
+        any surface reports TERMINAL as authenticated state. Historical and
+        current authority stay separate: this never demands current-release
+        eligibility and never invents producer provenance. Honest nonterminal
+        runs (including an unprojected published receipt) are untouched.
+        """
+        state, state_version, receipt_artifact_id = row[6], row[7], row[8]
+        try:
+            if state != "TERMINAL" and receipt_artifact_id is not None:
+                raise TerminalEvidenceUnavailable("nonterminal run carries a projected receipt pointer")
+            if state != "TERMINAL":
+                return
+            if type(receipt_artifact_id) is not str or not receipt_artifact_id.startswith("receipt-"):
+                raise TerminalEvidenceUnavailable("terminal receipt artifact identity is not deterministic")
+            digest = receipt_artifact_id[len("receipt-"):]
+            _sha(digest)
+            locator = "run-receipts/" + digest + ".json"
+            links = conn.execute(
+                "SELECT run_id,role,retained_root FROM app_run_artifacts WHERE artifact_id=?",
+                (receipt_artifact_id,)).fetchall()
+            if links != [(run_id, "RUN_RECEIPT", 1)]:
+                raise TerminalEvidenceUnavailable("terminal receipt linkage is missing, wrong-role or cross-run")
+            artifact = conn.execute(
+                "SELECT byte_sha256,canonical_sha256,byte_count,media_type,artifact_kind,logical_path,evidence_class,verification_policy_id "
+                "FROM app_artifacts WHERE artifact_id=?", (receipt_artifact_id,)).fetchone()
+            if (artifact is None or artifact[:2] != (digest, digest)
+                    or artifact[3] != "application/json" or artifact[4] != "RUN_RECEIPT"
+                    or artifact[5] != locator or artifact[6] != "RETAINED"
+                    or artifact[7] != "ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1"):
+                raise TerminalEvidenceUnavailable("retained receipt artifact metadata mismatch")
+            raw = contained(self._data_root, logical_locator(artifact[5])).read_bytes()
+            if hashlib.sha256(raw).hexdigest() != digest or len(raw) != artifact[2]:
+                raise TerminalEvidenceUnavailable("retained receipt bytes/digest/count mismatch")
+            value = json.loads(raw)
+            keys = {"policy_id", "run_id", "request_sha256", "envelope_sha256", "release_id",
+                    "expected_version", "attempt_id", "lease_token", "receipt"}
+            if (type(value) is not dict or set(value) != keys or canonical_json_bytes(value) != raw
+                    or value["policy_id"] != "ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1"
+                    or type(value["expected_version"]) is not int or value["expected_version"] < 0):
+                raise TerminalEvidenceUnavailable("retained receipt wrapper is not canonical reviewed policy")
+            if (value["run_id"] != run_id or value["request_sha256"] != row[1]
+                    or value["envelope_sha256"] != row[3] or value["release_id"] != row[4]
+                    or value["expected_version"] != state_version - 1):
+                raise TerminalEvidenceUnavailable("retained receipt wrapper bindings drift")
+            attempt = conn.execute("SELECT lease_token FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
+                                   (run_id, _identity(value["attempt_id"]))).fetchone()
+            if attempt is None or attempt[0] != value["lease_token"]:
+                raise TerminalEvidenceUnavailable("retained receipt attempt lease binding drift")
+            receipt = RunReceipt.from_dict(value["receipt"])
+            if (receipt.request.canonical_sha256 != row[1]
+                    or receipt.authority_manifest != envelope.authority_manifest
+                    or receipt.share_code_result is not None):
+                raise TerminalEvidenceUnavailable("retained receipt contract identity drift")
+            self._verify_receipt_producer(conn, run_id, receipt, envelope, row[4])
+            events = conn.execute(
+                "SELECT sequence,state_version,payload_bytes,payload_sha256 FROM app_run_events "
+                "WHERE run_id=? AND event_type='RUN_TERMINAL'", (run_id,)).fetchall()
+            if len(events) != 1:
+                raise TerminalEvidenceUnavailable("terminal projection event missing or duplicated")
+            sequence, event_version, payload, payload_sha = events[0]
+            if (event_version != state_version or type(payload) is not bytes
+                    or hashlib.sha256(payload).hexdigest() != payload_sha
+                    or canonical_json_bytes(json.loads(payload)) != payload
+                    or json.loads(payload) != {"receipt_sha256": digest}):
+                raise TerminalEvidenceUnavailable("terminal projection event identity drift")
+            if conn.execute("SELECT 1 FROM app_run_events WHERE run_id=? AND sequence>?",
+                            (run_id, sequence)).fetchone():
+                raise TerminalEvidenceUnavailable("events recorded after terminal projection")
+        except (TerminalEvidenceUnavailable, HistoricalReleaseUnavailable,
+                ReceiptProducerUnavailable, RunLeaseFenced):
+            raise
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise TerminalEvidenceUnavailable("retained terminal evidence is unverified") from exc
 
     def lookup(self, identity):
         with self._operation() as conn:
@@ -563,7 +649,10 @@ class DurableRunRepository:
         """Fenced receipt-first projection, also the single offline reconcile seam."""
         digest = _sha(receipt_sha256)
         locator = "run-receipts/" + digest + ".json"
-        raw = contained(self._data_root, locator).read_bytes()
+        try:
+            raw = contained(self._data_root, locator).read_bytes()
+        except (OSError, ValueError) as exc:
+            raise TerminalEvidenceUnavailable("published receipt evidence is missing or unsafe") from exc
         if hashlib.sha256(raw).hexdigest() != digest:
             raise RunRepositoryError("receipt digest mismatch")
         value = json.loads(raw)
