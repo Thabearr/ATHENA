@@ -131,6 +131,8 @@ UNCHANGED_REPOSITORY_INVENTORY_SHA = "6b407c284a7c2f759e6345f53444478de53427ceae
 
 
 def validate_bounded_inventory(raw: bytes) -> None:
+    from scripts.audit_data_01c_restore_portability import project_historical_inventory
+    raw = project_historical_inventory(raw)
     from scripts import audit_data_01a_app_schema_core as data01a
     data01a.historical_build_config()
     successor_paths = data01a.successor_paths()
@@ -225,8 +227,13 @@ def build_receipt() -> dict:
     for row in rows:
         path = row["workflow_path"]
         source = (ROOT / path).read_bytes()
-        doc = yaml.load(source, Loader=yaml.BaseLoader)
         identity = policy.v4.v3._source_identity(path)
+        from scripts import audit_data_01c_restore_portability as d5
+        if path == d5.WORKFLOW:
+            d5.authenticate_workflow()
+            source = d5.predecessor_source(path)
+            identity = {**identity, **d5.identity(source)}
+        doc = yaml.load(source, Loader=yaml.BaseLoader)
         actual = sorted(doc["on"])
         represented = sorted(s["trigger_kind"] for s in row["trigger_surfaces"])
         policy.require(actual == represented, f"current trigger enumeration drift: {path}")

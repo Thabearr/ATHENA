@@ -205,11 +205,17 @@ def build_receipt():
         tree = subprocess.run(["git", "rev-parse", "HEAD:.github/workflows"], cwd=ROOT, check=True,
                               capture_output=True).stdout.decode().strip()
         if tree != WORKFLOW_TREE_PIN:
-            raise AssertionError("prohibited workflow delta without base evidence")
+            from scripts.audit_data_01c_restore_portability import historical_workflow_tree
+            if historical_workflow_tree(tree) != WORKFLOW_TREE_PIN:
+                raise AssertionError("prohibited workflow delta without base evidence")
         status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--",
                                  ".github/workflows", "database"], cwd=ROOT, check=True,
                                 capture_output=True).stdout.decode().splitlines()
         changed = [line[3:] for line in status if len(line) > 3]
+    if ".github/workflows/port-02c-native-runtime.yml" in changed:
+        from scripts import audit_data_01c_restore_portability as d5
+        d5.authenticate_workflow()
+        changed = [path for path in changed if path != d5.WORKFLOW]
     if any(path.startswith(".github/workflows/") or path in {
             "database/athena.db", "database/athena_history.db"} for path in changed):
         raise AssertionError("prohibited workflow or legacy database delta")

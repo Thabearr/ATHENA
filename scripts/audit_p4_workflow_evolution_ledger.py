@@ -905,6 +905,18 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
     The historical ADD remains pinned. Only this exact later workflow tree and
     file identity are accepted; all other derived workflow identities stay exact.
     """
+    from scripts import audit_data_01c_restore_portability as d5
+    successor_identity, successor_tree = d5.successor_context()
+    if head_tree == successor_tree:
+        if ledger_sha != CORE01D_PR119_LEDGER_SHA256 or observed.get(PORT02C_REPLAY_WORKFLOW_PATH) != successor_identity:
+            raise WorkflowEvolutionError("workflow tree differs without exact PORT-02C D5 successor")
+        d5.authenticate_workflow()
+        predecessor_observed = dict(observed)
+        predecessor_observed[PORT02C_REPLAY_WORKFLOW_PATH] = dict(PORT02C_REPLAY_WORKFLOW_AFTER)
+        result = _port02c_current_source_forward(derived, predecessor_observed,
+            head_tree=CORE01D_PR119_WORKFLOW_TREE_SHA1, ledger_sha=ledger_sha)
+        result[PORT02C_REPLAY_WORKFLOW_PATH] = dict(successor_identity)
+        return result
     reviewed_contexts = {
         (PORT02C_REPLAY_WORKFLOW_TREE_SHA1, "d1c8d79ac48bf0521a609e29991014513bd2f7afed2389c5e3a9d6ec8bfba8a2"),
         (CORE01B_WORKFLOW_TREE_SHA1, CORE01B_LEDGER_SHA256),
@@ -1033,7 +1045,11 @@ def validate_current_state(
         raise WorkflowEvolutionError("workflow worktree contains an unreviewed edit")
     head_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
     if head_tree != tree_sha and head_tree != PORT02C_REPLAY_WORKFLOW_TREE_SHA1:
-        raise WorkflowEvolutionError("workflow tree SHA differs from the evolution ledger")
+        from scripts import audit_data_01c_restore_portability as d5
+        try:
+            d5.historical_workflow_tree(head_tree)
+        except ValueError as exc:
+            raise WorkflowEvolutionError("workflow tree SHA differs from the evolution ledger") from exc
     observed: dict[str, dict[str, str]] = {}
     for path in real_paths:
         try:

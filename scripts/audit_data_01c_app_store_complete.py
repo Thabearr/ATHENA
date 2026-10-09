@@ -39,7 +39,8 @@ V93_SHA256 = "7a8991a5fa4d2da54255f3693aa4c32fc0ebebe77013d53ad5ce35608cfb2827"
 V94_SHA256 = "0b42dd92fbaa45c77340d710a884c1eb2730abbd07578c99d537dcab241e39d4"
 V95_SHA256 = "9f7d33309c2cf5d6d1da61b350b4c4276481f30aa87e340f48eeb34d4fbdfc93"
 V96_SHA256 = "3f5ef4013ae6800864045f6cb1286702ad9669d1d569bd0e2e2ed676aed777dd"
-A2_GENERATION = 97
+V97_SHA256 = "e687faa64f3ac5435e9aad29ad9d465c3c1f2c72c1ea514814e00e2f21b3e580"
+A2_GENERATION = 98
 D3_SHA256 = "3f1b04be1d97391b87e958eb008910b822567673582b61947f00099b9aa71c59"
 D4_SHA256 = "d0b27962d852c9352306106b78ef26e00b919fc5a3a4070302c05ec667698b84"
 MIGRATION_0001_SHA256 = "6d380b30733f99d3740b8d6dd89810fb31ca568625319b433023f48c9f667b7c"
@@ -49,6 +50,20 @@ EXPECTED_D5_TABLES = {
     "app_exports", "app_backups", "app_audit_events",
 }
 SOURCE_PATHS = (
+    '.github/workflows/port-02c-native-runtime.yml',
+    'scripts/qualify_data_01c_restore_portability.py',
+    'scripts/audit_data_01c_restore_portability.py',
+    'scripts/audit_p4_workflow_evolution_ledger.py',
+    'scripts/audit_core_01d_scheduled_shadow_ownership.py',
+    'scripts/audit_core_01d_ci_offline_transport_boundary.py',
+    'scripts/audit_core_01d_port02c_trigger_authority_b6.py',
+    'scripts/audit_core_01d_checkpoint_e_completion.py',
+    'scripts/audit_core_01d_retained_workflow_status_v2.py',
+    'tests/native/test_port_02c_audit_source_forward.py',
+    'tests/test_core_01d_cutover_authority.py',
+    'tests/test_data_01c_restore_portability.py',
+    'tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v1.json',
+    'artifacts/product/data_01c_restore_portability_v1.json',
     "database/migrations/0003_app_projections_exports.sql",
     "database/app_migrations.py", "database/app_root_lock.py",
     "database/app_storage_access.py", "database/app_repository.py",
@@ -70,6 +85,11 @@ SOURCE_PATHS = (
     "scripts/audit_checkpoint_e_workflows.py",
 )
 SUCCESSOR_SOURCE_PATHS = frozenset({
+    'scripts/qualify_data_01c_restore_portability.py',
+    'scripts/audit_data_01c_restore_portability.py',
+    'tests/test_data_01c_restore_portability.py',
+    'tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v1.json',
+    'artifacts/product/data_01c_restore_portability_v1.json',
     "database/app_root_lock.py",
     "database/app_storage_access.py",
     "database/migrations/0003_app_projections_exports.sql",
@@ -121,7 +141,13 @@ def assert_prohibited_scope_unchanged():
     """Use pinned source trees, so the guard also works in depth-1 PR CI."""
     workflow_tree = boundary.git("rev-parse", "HEAD:.github/workflows").decode().strip()
     if workflow_tree != boundary.WORKFLOW_TREE:
-        raise AssertionError("prohibited workflow delta without base evidence")
+        from scripts.audit_data_01c_restore_portability import historical_workflow_tree
+        try:
+            projected = historical_workflow_tree(workflow_tree)
+        except ValueError as exc:
+            raise AssertionError("prohibited workflow delta without base evidence") from exc
+        if projected != boundary.WORKFLOW_TREE:
+            raise AssertionError("prohibited workflow delta without base evidence")
     status = boundary.git(
         "status", "--porcelain", "--untracked-files=all", "--",
         ".github/workflows", "database/athena.db", "database/athena_history.db",
@@ -137,10 +163,10 @@ def build_receipt(latest=None):
     if not SUCCESSOR_SOURCE_PATHS <= set(SOURCE_PATHS):
         raise AssertionError("D5 successor source set is outside its authenticated source identities")
     predecessor = latest.get("predecessor_inventory")
-    if predecessor != {"path": boundary.inventory_generation_path(96),
-                       "canonical_sha256": V96_SHA256, "generation": 96,
+    if predecessor != {"path": boundary.inventory_generation_path(97),
+                       "canonical_sha256": V97_SHA256, "generation": 97,
                        "rewritten": False}:
-        raise AssertionError("A2 V97 predecessor is not exact immutable V96")
+        raise AssertionError("A2 V98 predecessor is not exact immutable V97")
     data01b.authenticate_successor(latest)
     d3 = data01a.authenticate()
     if d3["canonical_sha256"] != D3_SHA256:
@@ -206,7 +232,10 @@ def build_receipt(latest=None):
             "provider", "live", "share_code", "login", "cookie", "wallet", "staking",
             "wager", "worker", "manual_workflow", "router", "portfolio", "delivery",
         ), 0),
-        "workflow_yaml_delta": 0,
+        "workflow_yaml_delta": 1,
+        "workflow_source_evolution": "EXACT_PORT02C_D5_NATIVE_RESTORE_QUALIFICATION_ONLY",
+        "restore_portability": {"source_receipt": "artifacts/product/data_01c_restore_portability_v1.json",
+                               "native_receipts": "EXACT_FINAL_HEAD_WINDOWS_NTFS_LINUX_EXT4_REQUIRED_SEPARATELY"},
         "legacy_database_delta": 0,
         "merge_authorized": False,
         "independent_review": "PENDING",
@@ -254,7 +283,7 @@ def authenticate_successor():
             or value.get("projection_source", {}).get("typed_disposition") != "SOURCE_CONTRACT_UNAVAILABLE"
             or value.get("projection_source", {}).get("coverage_disposition") != "COVERAGE_UNAVAILABLE"
             or value.get("projection_source", {}).get("materialized_verified_rows") != 0):
-        raise AssertionError("D5 successor receipt is not the exact source-blocked A2 V97 record")
+        raise AssertionError("D5 successor receipt is not the exact source-blocked A2 V98 record")
     a2_paths = {boundary.inventory_generation_path(generation)
                 for generation in range(75, A2_GENERATION + 1)}
     return set(SUCCESSOR_SOURCE_PATHS) | {RECEIPT} | a2_paths

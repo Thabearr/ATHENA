@@ -56,6 +56,12 @@ def require(value, message):
 
 
 def raw(path):
+    if path == evolution.PORT02C_REPLAY_WORKFLOW_PATH:
+        from scripts import audit_data_01c_restore_portability as d5
+        observed = (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
+        if evolution.source_identity(observed) != evolution.PORT02C_REPLAY_WORKFLOW_AFTER:
+            d5.authenticate_workflow()
+            return d5.predecessor_source(path)
     return (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
 
 

@@ -143,6 +143,12 @@ jobs:
           cd "${{ runner.temp }}"
           "$SHELL_EXE" --port02c-smoke
 
+      - name: D5 native restore portability (offline, four cases)
+        env:
+          D5_PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python scripts/qualify_data_01c_restore_portability.py --runner-temp "${{ runner.temp }}"
+
       - name: Require variant semantic equality
         shell: bash
         run: |
@@ -179,4 +185,5 @@ jobs:
             ${{ runner.temp }}/port02c-out-reverse/
             ${{ runner.temp }}/port02c-out-nocache/
             ${{ runner.temp }}/port02c-out-locked/
+            ${{ runner.temp }}/data01c-restore-portability.json
           retention-days: 14

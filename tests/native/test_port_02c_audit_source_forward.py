@@ -41,3 +41,15 @@ def test_attributes_current_forward_keeps_historical_anchor_exact():
     assert port01.current_anchor_identity(historical)["git_blob_sha1"] == "58e4728b1f6189b5e7aaa277611359ec51f22a91"
     with pytest.raises(port01.PortabilityAuditError):
         port01.current_anchor_identity({**historical, "git_blob_sha1": "0" * 40})
+
+
+def test_d5_second_successor_does_not_replace_original_identity():
+    from scripts import audit_data_01c_restore_portability as d5
+    assert evolution.source_identity(d5.predecessor_source(d5.WORKFLOW)) == evolution.PORT02C_REPLAY_WORKFLOW_AFTER
+    after, tree = d5.successor_context()
+    assert after != evolution.PORT02C_REPLAY_WORKFLOW_AFTER
+    assert tree != evolution.CORE01D_PR119_WORKFLOW_TREE_SHA1
+    assert evolution.PORT02C_REPLAY_WORKFLOW_BEFORE["git_blob_sha1"] == "cb7374cbf4d1d35a39964d123e75367996983d6c"
+    with pytest.raises(evolution.WorkflowEvolutionError):
+        evolution._port02c_current_source_forward({d5.WORKFLOW: after}, {d5.WORKFLOW: after},
+            head_tree=tree, ledger_sha=evolution.CORE01D_PR119_LEDGER_SHA256)

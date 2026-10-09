@@ -15,3 +15,16 @@ Activation requires an existing app root and the same-volume sibling staging gen
 The production run-admission endpoint remains HTTP 503 (`DURABLE_RUN_STORE_UNAVAILABLE`). No providers, workers, Router, Portfolio, share-code generation, login, wallet, staking, wagering, delivery, or manual GitHub workflow actions are invoked by DATA-01C. `E2/PACKAGING_AUTHENTICATED_INSTALLED_PRODUCER_PROVENANCE` remains OPEN. The source review counter remains 2/5 until a separately owner-authorized merge.
 
 The immutable D3 receipt and its original D4 source snapshot are unchanged. D5 adds one separately sealed historical byte record for the D3-era `database/app_repository.py`, whose source hash is present in both D3 and A2 V68 but outside D4's retained snapshot scope. The additive record binds to the D3 receipt, the retained source-tree commit, and the exact V68 source hash so historical audits need no ancestor-object lookup.
+
+## Native restore qualification successor
+
+The owner-approved PORT-02C source-forward successor adds only the four offline
+native lock/crash-marker cases and their filesystem-observed uploaded receipt.
+The historical ADD and pre-D5 workflow successor remain immutable predecessor
+evidence. No new workflow transition, trigger, permission or runtime authority
+is introduced. Windows/NTFS and Ubuntu 24.04/ext4 proof is required from the
+natural PORT-02C run on the final PR head; source presence is not execution proof.
+The uploaded platform receipts and run/job metadata are authenticated separately
+by audit_data_01c_restore_portability to avoid a commit/SHA evidence cycle.
+Projection source/coverage remains unavailable, both named E2 dependencies remain
+OPEN, and production admission remains unavailable. No merge is authorized.

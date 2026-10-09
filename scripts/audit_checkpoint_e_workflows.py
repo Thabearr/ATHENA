@@ -253,6 +253,11 @@ def read(path):
             "pinned Checkpoint E V1 source fixture drift: " + path,
         )
         return raw
+    from scripts import audit_data_01c_restore_portability as d5
+    from scripts.core_01d_historical_source import identities
+    if path not in identities() and path in d5.snapshot()["sources"]:
+        d5.authenticate_workflow()
+        return d5.predecessor_source(path)
     return historical_bytes(path)
 
 
@@ -272,6 +277,11 @@ def git_inventory():
             mode, kind, identity = metadata.decode().split()
             require(kind == "blob", "unexpected non-blob tracked entry")
             result[path.decode()] = {"mode": mode, "git_blob_sha1": identity}
+    from scripts import audit_data_01c_restore_portability as d5
+    d5.authenticate_workflow()
+    for path, row in d5.snapshot()["sources"].items():
+        require(path in result, "D5 portability predecessor source missing: " + path)
+        result[path]["git_blob_sha1"] = row["git_blob_sha1"]
     from scripts import audit_app_01a_local_shell as app01a
     paths, successor = app01a.authenticated_historical_paths()
     for path in paths:
@@ -396,6 +406,8 @@ def verified_additive_artifact_paths():
     data01b.authenticate_successor(latest_a2)
     from scripts import audit_data_01c_app_store_complete as data01c
     d5_paths = data01c.authenticate_successor()
+    from scripts import audit_data_01c_restore_portability as portability
+    portability.audit()
     require(data01c.RECEIPT in d5_paths,
             "D5 source receipt is absent from its authenticated successor set")
     return (
@@ -441,6 +453,7 @@ def verified_additive_artifact_paths():
         data01a.RECEIPT,
         data01b.RECEIPT,
         data01c.RECEIPT,
+        "artifacts/product/data_01c_restore_portability_v1.json",
     )
 
 
@@ -567,7 +580,8 @@ def base_input():
         if path in a2.HISTORICAL_TEST_BLOBS:
             actual = a2.HISTORICAL_TEST_BLOBS[path]
         from scripts.core_01d_historical_source import identities
-        if path in identities():
+        from scripts import audit_data_01c_restore_portability as d5
+        if path in identities() or path in d5.snapshot()["sources"]:
             inspected = read(path)
             actual = hashlib.sha1(b"blob " + str(len(inspected)).encode() + b"\0" + inspected).hexdigest()
         expected_blob = (

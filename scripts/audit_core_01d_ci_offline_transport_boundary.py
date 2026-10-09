@@ -581,7 +581,10 @@ def authenticate_predecessors():
     values = {path: read(path) for path in PREDECESSORS}
     for path, expected in PREDECESSORS.items():
         require(values[path]["canonical_sha256"] == expected, "immutable predecessor identity drift: " + path)
-    require(git("rev-parse", "HEAD:.github/workflows").decode().strip() == WORKFLOW_TREE, "workflow tree drift")
+    workflow_tree = git("rev-parse", "HEAD:.github/workflows").decode().strip()
+    if workflow_tree != WORKFLOW_TREE:
+        from scripts.audit_data_01c_restore_portability import historical_workflow_tree
+        require(historical_workflow_tree(workflow_tree) == WORKFLOW_TREE, "workflow tree drift")
     require(not git("diff", "--name-only", "HEAD", "--", ".github/workflows").strip(), "dirty workflow source")
     return values
 

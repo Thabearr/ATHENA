@@ -279,6 +279,10 @@ def _reviewed_source(path: str, historical: dict[str, Any]) -> bytes:
         return data01a.historical_build_config()
     if path in app01a.HISTORICAL_RUNTIME_PATHS:
         return app01a._decode_historical_runtime_payload(historical, path)
+    if path == PORT_WORKFLOW:
+        from scripts import audit_data_01c_restore_portability as d5
+        d5.authenticate_workflow()
+        return d5.predecessor_source(path)
     return (ROOT / path).read_bytes()
 
 
@@ -293,6 +297,12 @@ def _reviewed_git_source(path: str, blob: str, historical: dict[str, Any]) -> by
         raw = app01a._decode_historical_runtime_payload(historical, path)
         require(hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() == blob,
                 "APP historical runtime differs from immutable B6 blob: " + path)
+        return raw
+    if path == PORT_WORKFLOW:
+        from scripts import audit_data_01c_restore_portability as d5
+        d5.authenticate_workflow()
+        raw = d5.predecessor_source(path)
+        require(d5.identity(raw)["git_blob_sha1"] == blob, "B6 predecessor workflow identity drift")
         return raw
     return _git("cat-file", "blob", blob)
 
@@ -355,7 +365,7 @@ def _base_tree_entries() -> dict[str, tuple[str, str, str]]:
                     and mode_kind_blob[0] in {"100644", "100755"},
                     "required B6 source is not a checked-out regular Git blob: " + path)
             mode, _kind, blob = mode_kind_blob
-            if path in app01a.HISTORICAL_RUNTIME_PATHS or path == "scripts/port_02c_build_config.py":
+            if path in app01a.HISTORICAL_RUNTIME_PATHS or path in {"scripts/port_02c_build_config.py", PORT_WORKFLOW}:
                 blob = row.get("git_blob_sha1")
             require(blob == row.get("git_blob_sha1"),
                     "checked-out B6 source differs from authenticated base blob: " + path)
@@ -513,7 +523,9 @@ def validate_source_inventory(value: dict[str, Any] | None = None) -> dict[str, 
 
 
 def _workflow() -> dict[str, Any]:
-    raw = (ROOT / PORT_WORKFLOW).read_text(encoding="utf-8")
+    from scripts import audit_data_01c_restore_portability as d5
+    d5.authenticate_workflow()
+    raw = d5.predecessor_source(PORT_WORKFLOW).decode("utf-8")
     value = yaml.load(raw, Loader=yaml.BaseLoader)
     require(type(value) is dict, "PORT-02C workflow YAML is not a mapping")
     return value
@@ -793,6 +805,9 @@ def _validate_architecture_ledgers() -> dict[str, Any]:
     # In depth-one PR CI the base commit object is absent, so authenticate the
     # checked-out merge snapshot's workflow subtree against that pin directly.
     workflow_tree = _git("rev-parse", "HEAD:.github/workflows").decode().strip()
+    if workflow_tree != WORKFLOW_TREE:
+        from scripts.audit_data_01c_restore_portability import historical_workflow_tree
+        workflow_tree = historical_workflow_tree(workflow_tree)
     require(workflow_tree == WORKFLOW_TREE, "checked-out workflow tree identity drift")
     evolution = _read_json("artifacts/architecture/p4_workflow_evolution_ledger_v1.json")
     retirement = _read_json("artifacts/architecture/p4_3_workflow_retirement_ledger_v1.json")

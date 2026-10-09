@@ -147,6 +147,9 @@ def _read_v1() -> dict:
 def _current_workflows() -> tuple[list[str], dict[str, bytes], int]:
     paths = _head_workflow_paths()
     sources = {path: _head_blob(path) for path in paths}
+    from scripts import audit_data_01c_restore_portability as d5
+    d5.authenticate_workflow()
+    sources[d5.WORKFLOW] = d5.predecessor_source(d5.WORKFLOW)
     trigger_count = 0
     for path, raw in sources.items():
         document = yaml.load(raw, Loader=yaml.BaseLoader)
@@ -335,7 +338,8 @@ def _evolution_context() -> tuple[dict, str]:
                 and transition.get("canonical_family") == "PROTECTED_RESEARCH",
                 "transition 14 is not the exact PR119 bootstrap workflow revision")
     tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
-    return ledger, tree
+    from scripts.audit_data_01c_restore_portability import historical_workflow_tree
+    return ledger, historical_workflow_tree(tree)
 
 
 def build_receipt() -> dict:
