@@ -466,8 +466,8 @@ def test_d5_successor_authenticates_exact_sources_and_historical_seams():
     paths = data01c.authenticate_successor()
     expected = (set(data01c.SUCCESSOR_SOURCE_PATHS) | {data01c.RECEIPT}
                 | {boundary.inventory_generation_path(generation)
-                   for generation in range(75, 101)})
-    assert latest["generation"] == 100
+                   for generation in range(75, 102)})
+    assert latest["generation"] == 101
     assert paths == expected
     combined_successor_paths = data01a.successor_paths()
     assert data01b.NEW_PATHS <= combined_successor_paths
@@ -571,5 +571,5 @@ def test_d5_successor_rejects_broken_a2_predecessor(monkeypatch):
         "rewritten": True,
     }
     monkeypatch.setattr(boundary, "authenticate_inventory", lambda: latest)
-    with pytest.raises(AssertionError, match="A2 V100 predecessor"):
+    with pytest.raises(AssertionError, match="A2 V101 predecessor"):
         data01c.authenticate_successor()

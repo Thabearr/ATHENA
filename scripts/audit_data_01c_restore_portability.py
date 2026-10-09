@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ".github/workflows/port-02c-native-runtime.yml"
 PREDECESSOR_HEAD = "942f4a3820b5521d0595fcf36154283b19379c6a"
 PREDECESSOR_TREE = "9b08653f1a12bb1b3d964fbd910396ff955740da"
-SNAPSHOT = "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v2.json"
-SNAPSHOT_SHA = "3f0f4448003a7fcf3f85974297107eca4a7149c500205f1d8bad6c99ac05b89c"
+SNAPSHOT = "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v3.json"
+SNAPSHOT_SHA = "507c0d8fffb828c6b9ebd79899eae33d7d0284f28d62e5db2b7049636d922b20"
 RECEIPT = "artifacts/product/data_01c_restore_portability_v1.json"
 FROZEN_EVIDENCE = {
     "artifacts/architecture/port_02c_native_runtime_workflow_add_v1.json": "5065031917a1e2c78ff9f6ec047ea9debbb2df593fb708cc595140fbe8c8c9b4",
