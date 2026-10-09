@@ -13,6 +13,8 @@ import sys
 
 import yaml
 
+from scripts.audit_data_01c_restore_portability import historical_workflow_tree
+
 from scripts import audit_core_01d_retained_workflow_status_v3 as v3
 from scripts import audit_core_01d_retained_workflow_status as v1
 from services import athena_artifact_role_resolver as roles
@@ -133,7 +135,7 @@ def authenticate_sources() -> dict:
     require(uploads == ["athena-canonical-manifest"] +
             [f"athena-canonical-part-{i:03d}" for i in range(23)],
             "23-part upload contract drift")
-    require(v3._git("rev-parse", "HEAD:.github/workflows").decode().strip()
+    require(historical_workflow_tree(v3._git("rev-parse", "HEAD:.github/workflows").decode().strip())
             == v3.WORKFLOW_TREE_SHA1, "workflow tree changed")
     # V3 authenticates the evolution ledger, retirement ledger, all source
     # artifact identities and current source-derived relationship inventory.

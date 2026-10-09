@@ -19,6 +19,8 @@ from typing import Any
 
 import yaml
 
+from scripts.audit_data_01c_restore_portability import historical_workflow_tree
+
 from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
 from scripts import audit_core_01d_checkpoint_e_completion_v9 as completion_v9
 from scripts import audit_core_01d_port02c_trigger_authority_b6 as b6
@@ -483,7 +485,7 @@ def _domain_authority_contract() -> dict[str, Any]:
 
 
 def _architecture_invariants() -> dict[str, Any]:
-    require(_git("rev-parse", "HEAD:.github/workflows").decode().strip() == WORKFLOW_TREE,
+    require(historical_workflow_tree(_git("rev-parse", "HEAD:.github/workflows").decode().strip()) == WORKFLOW_TREE,
             "B7 changed the workflow tree")
     evolution = boundary.read("artifacts/architecture/p4_workflow_evolution_ledger_v1.json")
     retirement = boundary.read("artifacts/architecture/p4_3_workflow_retirement_ledger_v1.json")

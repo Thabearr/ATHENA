@@ -40,7 +40,9 @@ V94_SHA256 = "0b42dd92fbaa45c77340d710a884c1eb2730abbd07578c99d537dcab241e39d4"
 V95_SHA256 = "9f7d33309c2cf5d6d1da61b350b4c4276481f30aa87e340f48eeb34d4fbdfc93"
 V96_SHA256 = "3f5ef4013ae6800864045f6cb1286702ad9669d1d569bd0e2e2ed676aed777dd"
 V97_SHA256 = "e687faa64f3ac5435e9aad29ad9d465c3c1f2c72c1ea514814e00e2f21b3e580"
-A2_GENERATION = 98
+V98_SHA256 = "a10af1e6a74693dab08363de8d70f329bac9b4126a90e5005a26f33faff35ce5"
+V99_SHA256 = "8ce393324495c09410abedbc94dabd9788ea3bf48e70f4e72358e362adacef9d"
+A2_GENERATION = 100
 D3_SHA256 = "3f1b04be1d97391b87e958eb008910b822567673582b61947f00099b9aa71c59"
 D4_SHA256 = "d0b27962d852c9352306106b78ef26e00b919fc5a3a4070302c05ec667698b84"
 MIGRATION_0001_SHA256 = "6d380b30733f99d3740b8d6dd89810fb31ca568625319b433023f48c9f667b7c"
@@ -50,6 +52,15 @@ EXPECTED_D5_TABLES = {
     "app_exports", "app_backups", "app_audit_events",
 }
 SOURCE_PATHS = (
+    'scripts/audit_core_01d_exact_pr_trigger_disposition_b1.py',
+    'scripts/audit_core_01d_owner_one_shot_issue_comment_authority_b3.py',
+    'scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py',
+    'scripts/audit_core_01d_frozen_artifact_replay_authority_b5.py',
+    'scripts/audit_core_01d_win_either_half_trigger_authority_b7.py',
+    'scripts/audit_core_01d_retained_workflow_status.py',
+    'scripts/audit_core_01d_retained_workflow_status_v3.py',
+    'scripts/audit_core_01d_retained_workflow_status_v4.py',
+    'tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v2.json',
     '.github/workflows/port-02c-native-runtime.yml',
     'scripts/qualify_data_01c_restore_portability.py',
     'scripts/audit_data_01c_restore_portability.py',
@@ -85,6 +96,7 @@ SOURCE_PATHS = (
     "scripts/audit_checkpoint_e_workflows.py",
 )
 SUCCESSOR_SOURCE_PATHS = frozenset({
+    'tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v2.json',
     'scripts/qualify_data_01c_restore_portability.py',
     'scripts/audit_data_01c_restore_portability.py',
     'tests/test_data_01c_restore_portability.py',
@@ -163,10 +175,10 @@ def build_receipt(latest=None):
     if not SUCCESSOR_SOURCE_PATHS <= set(SOURCE_PATHS):
         raise AssertionError("D5 successor source set is outside its authenticated source identities")
     predecessor = latest.get("predecessor_inventory")
-    if predecessor != {"path": boundary.inventory_generation_path(97),
-                       "canonical_sha256": V97_SHA256, "generation": 97,
+    if predecessor != {"path": boundary.inventory_generation_path(99),
+                       "canonical_sha256": V99_SHA256, "generation": 99,
                        "rewritten": False}:
-        raise AssertionError("A2 V98 predecessor is not exact immutable V97")
+        raise AssertionError("A2 V100 predecessor is not exact immutable V99")
     data01b.authenticate_successor(latest)
     d3 = data01a.authenticate()
     if d3["canonical_sha256"] != D3_SHA256:
@@ -283,7 +295,7 @@ def authenticate_successor():
             or value.get("projection_source", {}).get("typed_disposition") != "SOURCE_CONTRACT_UNAVAILABLE"
             or value.get("projection_source", {}).get("coverage_disposition") != "COVERAGE_UNAVAILABLE"
             or value.get("projection_source", {}).get("materialized_verified_rows") != 0):
-        raise AssertionError("D5 successor receipt is not the exact source-blocked A2 V98 record")
+        raise AssertionError("D5 successor receipt is not the exact source-blocked A2 V100 record")
     a2_paths = {boundary.inventory_generation_path(generation)
                 for generation in range(75, A2_GENERATION + 1)}
     return set(SUCCESSOR_SOURCE_PATHS) | {RECEIPT} | a2_paths

@@ -15,6 +15,8 @@ from typing import Any
 
 import yaml
 
+from scripts.audit_data_01c_restore_portability import historical_workflow_tree
+
 from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -263,7 +265,7 @@ def _validate_source_semantics() -> None:
     require(parent.get("canonical_sha256") == COMPLETION_V7_SHA, "immutable Completion V7 identity drift")
     parent_keys = {(row["workflow_path"], row["trigger_kind"]) for row in parent["unreviewed_authority_surfaces"]}
     require(len(parent_keys) == 7 and set(TARGETS) <= parent_keys, "B5 target set is not inherited from Completion V7")
-    require(_git("rev-parse", "HEAD:.github/workflows").decode().strip() == WORKFLOW_TREE,
+    require(historical_workflow_tree(_git("rev-parse", "HEAD:.github/workflows").decode().strip()) == WORKFLOW_TREE,
             "B5 workflow subtree differs from handoff tree")
     evolution = boundary.read("artifacts/architecture/p4_workflow_evolution_ledger_v1.json")
     retirement = boundary.read("artifacts/architecture/p4_3_workflow_retirement_ledger_v1.json")

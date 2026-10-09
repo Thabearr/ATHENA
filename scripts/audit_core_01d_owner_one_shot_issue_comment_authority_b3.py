@@ -15,6 +15,8 @@ import subprocess
 
 import yaml
 
+from scripts.audit_data_01c_restore_portability import historical_workflow_tree
+
 from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
 from scripts import audit_core_01d_checkpoint_e_completion_v5 as completion_v5
 
@@ -260,7 +262,7 @@ def require(value: bool, message: str) -> None:
 
 
 def verify_workflow_ledgers() -> None:
-    workflow_tree = subprocess.check_output(["git", "rev-parse", "HEAD:.github/workflows"], cwd=ROOT).decode().strip()
+    workflow_tree = historical_workflow_tree(subprocess.check_output(["git", "rev-parse", "HEAD:.github/workflows"], cwd=ROOT).decode().strip())
     require(workflow_tree == WORKFLOW_TREE, "workflow tree identity drift")
     evolution = boundary.read("artifacts/architecture/p4_workflow_evolution_ledger_v1.json")
     require(evolution["canonical_sha256"] == EVOLUTION_SHA and len(evolution["transitions"]) == 14,

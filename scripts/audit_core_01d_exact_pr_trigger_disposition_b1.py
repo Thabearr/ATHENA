@@ -15,6 +15,8 @@ from pathlib import Path
 
 import yaml
 
+from scripts.audit_data_01c_restore_portability import historical_workflow_tree
+
 from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -594,7 +596,7 @@ def _read_predecessors() -> dict[str, object]:
         value = _strict_json(path)
         boundary.require(value.get("canonical_sha256") == sha, "immutable predecessor drift: " + path)
         values[path] = value
-    boundary.require(_git("rev-parse", "HEAD:.github/workflows").decode().strip() == WORKFLOW_TREE,
+    boundary.require(historical_workflow_tree(_git("rev-parse", "HEAD:.github/workflows").decode().strip()) == WORKFLOW_TREE,
                      "workflow tree changed in B1")
     boundary.require(not _git("diff", "--name-only", "HEAD", "--", ".github/workflows").strip(),
                      "workflow diff must remain empty")

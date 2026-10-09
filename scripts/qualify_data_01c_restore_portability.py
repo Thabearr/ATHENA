@@ -66,7 +66,15 @@ def observe_volume(path):
             "filesystem_type": filesystem, "filesystem_observation": observation}
 
 
-def validate_receipt(value, expected_head):
+def validate_receipt(value, expected_head, *, require_natural=True):
+    keys = {"schema_version", "policy_id", "host_os", "host_os_version", "filesystem_type",
+            "filesystem_observation", "python_version", "final_pr_head", "checkout_sha",
+            "event_name", "run_id", "run_attempt", "pytest_nodeids", "passed_nodeids",
+            "crash_phases", "pytest_exit_code", "cross_process_lock_tested",
+            "same_volume_switch_tested", "network_calls", "provider_calls", "delivery_calls",
+            "wager_actions", "canonical_sha256"}
+    if type(value) is not dict or set(value) != keys:
+        raise ValueError("qualification receipt has unexpected or missing fields")
     body = {k: v for k, v in value.items() if k != "canonical_sha256"}
     if value.get("canonical_sha256") != hashlib.sha256(canonical(body)).hexdigest():
         raise ValueError("qualification receipt seal mismatch")
@@ -74,7 +82,7 @@ def validate_receipt(value, expected_head):
     expected_observation = {"Windows": "WIN32_GET_VOLUME_PATH_NAME_AND_GET_VOLUME_INFORMATION",
                             "Linux": "FINDMNT_TARGET_TEST_BASETEMP"}
     host = value.get("host_os")
-    if (value.get("policy_id") != POLICY or value.get("schema_version") != 1
+    if (value.get("policy_id") != POLICY or type(value.get("schema_version")) is not int or value["schema_version"] != 1
             or value.get("final_pr_head") != expected_head
             or host not in expected_fs or value.get("filesystem_type") != expected_fs[host]
             or value.get("filesystem_observation") != expected_observation[host]
@@ -82,9 +90,11 @@ def validate_receipt(value, expected_head):
             or value.get("crash_phases") != PHASES or value.get("pytest_exit_code") != 0
             or value.get("cross_process_lock_tested") is not True
             or value.get("same_volume_switch_tested") is not True
-            or value.get("event_name") != "pull_request"
+            or value.get("event_name") not in ("pull_request", "workflow_dispatch")
+            or (require_natural and value.get("event_name") != "pull_request")
             or type(value.get("run_id")) is not int or value["run_id"] < 1
-            or type(value.get("run_attempt")) is not int or value["run_attempt"] != 1
+            or type(value.get("run_attempt")) is not int or value["run_attempt"] < 1
+            or (require_natural and value["run_attempt"] != 1)
             or not value.get("host_os_version") or not value.get("python_version")
             or type(value.get("pytest_exit_code")) is not int
             or any(type(value.get(k)) is not int or value[k] != 0 for k in
@@ -131,7 +141,7 @@ def main():
              "same_volume_switch_tested": True,
              "network_calls": 0, "provider_calls": 0, "delivery_calls": 0, "wager_actions": 0}
     value["canonical_sha256"] = hashlib.sha256(canonical(value)).hexdigest()
-    validate_receipt(value, head)
+    validate_receipt(value, head, require_natural=False)
     with output.open("xb") as stream:
         stream.write(canonical(value))
     print(canonical(value).decode(), end="")

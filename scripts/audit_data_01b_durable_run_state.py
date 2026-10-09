@@ -134,6 +134,14 @@ def historical_sources():
             or source_identity != v68_identity):
         raise AssertionError("D5 additive D3 historical source bytes fail D3/A2 authentication")
     result[row["path"]] = payload
+    # D5's native qualification evolves B6's current workflow view. Retain
+    # its exact D3 source identity without changing either frozen snapshot.
+    from scripts import audit_data_01c_restore_portability as portability
+    path = "scripts/audit_core_01d_port02c_trigger_authority_b6.py"
+    payload = portability.predecessor_source(path)
+    if hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() != d3["source_identities"][path]:
+        raise AssertionError("D5 B6 predecessor does not authenticate the frozen D3 source")
+    result[path] = payload
     return result
 
 

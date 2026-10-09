@@ -910,7 +910,10 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
     if head_tree == successor_tree:
         if ledger_sha != CORE01D_PR119_LEDGER_SHA256 or observed.get(PORT02C_REPLAY_WORKFLOW_PATH) != successor_identity:
             raise WorkflowEvolutionError("workflow tree differs without exact PORT-02C D5 successor")
-        d5.authenticate_workflow()
+        try:
+            d5.authenticate_workflow()
+        except ValueError as exc:
+            raise WorkflowEvolutionError("workflow tree differs without exact PORT-02C D5 successor") from exc
         predecessor_observed = dict(observed)
         predecessor_observed[PORT02C_REPLAY_WORKFLOW_PATH] = dict(PORT02C_REPLAY_WORKFLOW_AFTER)
         result = _port02c_current_source_forward(derived, predecessor_observed,

@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ".github/workflows/port-02c-native-runtime.yml"
 PREDECESSOR_HEAD = "942f4a3820b5521d0595fcf36154283b19379c6a"
 PREDECESSOR_TREE = "9b08653f1a12bb1b3d964fbd910396ff955740da"
-SNAPSHOT = "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v1.json"
-SNAPSHOT_SHA = "662d6a14efe1154f0caa52e918706938063ac036017fc2408003dbad54ceba82"
+SNAPSHOT = "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v2.json"
+SNAPSHOT_SHA = "3f0f4448003a7fcf3f85974297107eca4a7149c500205f1d8bad6c99ac05b89c"
 RECEIPT = "artifacts/product/data_01c_restore_portability_v1.json"
 FROZEN_EVIDENCE = {
     "artifacts/architecture/port_02c_native_runtime_workflow_add_v1.json": "5065031917a1e2c78ff9f6ec047ea9debbb2df593fb708cc595140fbe8c8c9b4",
@@ -119,6 +119,9 @@ def project_historical_inventory(raw):
         meta, sep, path = line.partition(b"\t")
         name = path.strip().decode()
         if name in sources:
+            current = identity((ROOT / name).read_bytes().replace(b"\r\n", b"\n"))["git_blob_sha1"]
+            if meta.rsplit(b" ", 1)[-1] != current.encode():
+                raise ValueError("portability source inventory identity does not match authenticated current bytes")
             meta = meta.rsplit(b" ", 1)[0] + b" " + sources[name]["git_blob_sha1"].encode()
             line = meta + sep + path
         lines.append(line)
@@ -133,6 +136,7 @@ def build_receipt():
              "base_main_sha": "57e632f1e150cd1429ce00005a3cdf9ef3673ff2",
              "predecessor_head": PREDECESSOR_HEAD,
              "mechanism": "EXACT_EXISTING_SUCCESSOR_CONTEXT_EXTENSION_NO_NEW_WORKFLOW_TRANSITION",
+             "retained_predecessor_snapshot": {"path": SNAPSHOT, "sha256": SNAPSHOT_SHA},
              "historical_add": {"git_blob_sha1": "cb7374cbf4d1d35a39964d123e75367996983d6c",
                                 "source_sha256": "d4630d7904b464f83ddee4ea9f935da84e81a073d9d20565d79df4247918989e"},
              "predecessor_source": identity(predecessor_source(WORKFLOW)),
@@ -153,7 +157,13 @@ def audit():
 
 
 def audit_native_pair(windows, linux, head, jobs_metadata):
-    values = [validate_receipt(json.loads(Path(path).read_bytes()), head) for path in (windows, linux)]
+    values = []
+    for path in (windows, linux):
+        raw = Path(path).read_bytes()
+        value = json.loads(raw)
+        if raw != canonical(value):
+            raise ValueError("native qualification receipt is not canonical")
+        values.append(validate_receipt(value, head))
     if [v["host_os"] for v in values] != ["Windows", "Linux"] or values[0]["run_id"] != values[1]["run_id"]:
         raise ValueError("native receipts do not share the exact final PR run")
     metadata = json.loads(Path(jobs_metadata).read_bytes())

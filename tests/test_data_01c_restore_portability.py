@@ -53,6 +53,13 @@ def test_nodeids_and_crash_parametrizations_are_exact():
     assert 'pytest", "tests/native"' not in source
 
 
+def test_historical_projection_rejects_forged_listed_source_metadata():
+    path = audit.WORKFLOW
+    forged = b"100644 blob " + b"0" * 40 + b"\t" + path.encode() + b"\n"
+    with pytest.raises(ValueError, match='source inventory identity'):
+        audit.project_historical_inventory(forged)
+
+
 def synthetic_receipt(host='Windows'):
     return {'schema_version': 1, 'policy_id': qualifier.POLICY,
             'host_os': host, 'host_os_version': 'Windows synthetic' if host == 'Windows' else 'Ubuntu 24.04 synthetic',
