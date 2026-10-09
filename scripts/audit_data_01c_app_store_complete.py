@@ -35,7 +35,11 @@ V89_SHA256 = "0aa7f77d2ce0af0288704555057d3462fcb512cf894aec9857ac1c44097871d9"
 V90_SHA256 = "343c1b76d6d7bcb7c3f9389be7f4f7404acc010ce1355f3f35d7041769d6586f"
 V91_SHA256 = "1d13e625de57d5311f10adaee8fa87ac145da64d87225c6545cc5219fa4edf17"
 V92_SHA256 = "e342f26cf10ad6d0559c8357d1202bc03ccbe25a23e89bc9e3bb31f7dd8b5440"
-A2_GENERATION = 93
+V93_SHA256 = "7a8991a5fa4d2da54255f3693aa4c32fc0ebebe77013d53ad5ce35608cfb2827"
+V94_SHA256 = "0b42dd92fbaa45c77340d710a884c1eb2730abbd07578c99d537dcab241e39d4"
+V95_SHA256 = "9f7d33309c2cf5d6d1da61b350b4c4276481f30aa87e340f48eeb34d4fbdfc93"
+V96_SHA256 = "3f5ef4013ae6800864045f6cb1286702ad9669d1d569bd0e2e2ed676aed777dd"
+A2_GENERATION = 97
 D3_SHA256 = "3f1b04be1d97391b87e958eb008910b822567673582b61947f00099b9aa71c59"
 D4_SHA256 = "d0b27962d852c9352306106b78ef26e00b919fc5a3a4070302c05ec667698b84"
 MIGRATION_0001_SHA256 = "6d380b30733f99d3740b8d6dd89810fb31ca568625319b433023f48c9f667b7c"
@@ -113,6 +117,19 @@ def _schema_evidence():
         conn.close()
 
 
+def assert_prohibited_scope_unchanged():
+    """Use pinned source trees, so the guard also works in depth-1 PR CI."""
+    workflow_tree = boundary.git("rev-parse", "HEAD:.github/workflows").decode().strip()
+    if workflow_tree != boundary.WORKFLOW_TREE:
+        raise AssertionError("prohibited workflow delta without base evidence")
+    status = boundary.git(
+        "status", "--porcelain", "--untracked-files=all", "--",
+        ".github/workflows", "database/athena.db", "database/athena_history.db",
+    ).decode().splitlines()
+    if status:
+        raise AssertionError("prohibited workflow or legacy database delta")
+
+
 def build_receipt(latest=None):
     latest = boundary.authenticate_inventory() if latest is None else latest
     if latest.get("generation") != A2_GENERATION:
@@ -120,10 +137,10 @@ def build_receipt(latest=None):
     if not SUCCESSOR_SOURCE_PATHS <= set(SOURCE_PATHS):
         raise AssertionError("D5 successor source set is outside its authenticated source identities")
     predecessor = latest.get("predecessor_inventory")
-    if predecessor != {"path": boundary.inventory_generation_path(92),
-                       "canonical_sha256": V92_SHA256, "generation": 92,
+    if predecessor != {"path": boundary.inventory_generation_path(96),
+                       "canonical_sha256": V96_SHA256, "generation": 96,
                        "rewritten": False}:
-        raise AssertionError("A2 V93 predecessor is not exact immutable V92")
+        raise AssertionError("A2 V97 predecessor is not exact immutable V96")
     data01b.authenticate_successor(latest)
     d3 = data01a.authenticate()
     if d3["canonical_sha256"] != D3_SHA256:
@@ -139,8 +156,7 @@ def build_receipt(latest=None):
         raise AssertionError("frozen D3/D4 migration bytes changed")
     if [version for version, _ in __import__("database.app_migrations", fromlist=["APP_MIGRATIONS"]).APP_MIGRATIONS] != [1, 2, 3]:
         raise AssertionError("app migration registry is not explicit contiguous [1,2,3]")
-    if ".github/workflows" in "\n".join(boundary.git("diff", "--name-only", "origin/main").decode().splitlines()):
-        raise AssertionError("workflow YAML changed in D5 scope")
+    assert_prohibited_scope_unchanged()
     schema = _schema_evidence()
     value = {
         "schema_version": 1,
@@ -238,7 +254,7 @@ def authenticate_successor():
             or value.get("projection_source", {}).get("typed_disposition") != "SOURCE_CONTRACT_UNAVAILABLE"
             or value.get("projection_source", {}).get("coverage_disposition") != "COVERAGE_UNAVAILABLE"
             or value.get("projection_source", {}).get("materialized_verified_rows") != 0):
-        raise AssertionError("D5 successor receipt is not the exact source-blocked A2 V93 record")
+        raise AssertionError("D5 successor receipt is not the exact source-blocked A2 V97 record")
     a2_paths = {boundary.inventory_generation_path(generation)
                 for generation in range(75, A2_GENERATION + 1)}
     return set(SUCCESSOR_SOURCE_PATHS) | {RECEIPT} | a2_paths

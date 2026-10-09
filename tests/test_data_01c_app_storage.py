@@ -466,8 +466,8 @@ def test_d5_successor_authenticates_exact_sources_and_historical_seams():
     paths = data01c.authenticate_successor()
     expected = (set(data01c.SUCCESSOR_SOURCE_PATHS) | {data01c.RECEIPT}
                 | {boundary.inventory_generation_path(generation)
-                   for generation in range(75, 94)})
-    assert latest["generation"] == 93
+                   for generation in range(75, 98)})
+    assert latest["generation"] == 97
     assert paths == expected
     combined_successor_paths = data01a.successor_paths()
     assert data01b.NEW_PATHS <= combined_successor_paths
@@ -478,6 +478,52 @@ def test_d5_successor_authenticates_exact_sources_and_historical_seams():
     assert "scripts/port_02c_build_config.py" not in paths
     assert "runtime/workflows/ledgers/history" not in paths
     assert "tests/unreviewed-d5-source.json" not in paths
+
+
+def test_d5_prohibited_scope_guard_is_base_independent_for_shallow_ci(monkeypatch):
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    from scripts import audit_data_01c_app_store_complete as data01c
+
+    calls = []
+
+    def shallow_git(*args, data=None):
+        calls.append(args)
+        if args == ("rev-parse", "HEAD:.github/workflows"):
+            return (boundary.WORKFLOW_TREE + "\n").encode()
+        if args == ("status", "--porcelain", "--untracked-files=all", "--",
+                    ".github/workflows", "database/athena.db", "database/athena_history.db"):
+            return b""
+        raise AssertionError("unexpected Git query in base-independent guard: " + repr(args))
+
+    monkeypatch.setattr(boundary, "git", shallow_git)
+    data01c.assert_prohibited_scope_unchanged()
+    assert calls == [
+        ("rev-parse", "HEAD:.github/workflows"),
+        ("status", "--porcelain", "--untracked-files=all", "--",
+         ".github/workflows", "database/athena.db", "database/athena_history.db"),
+    ]
+
+
+@pytest.mark.parametrize("changed_tree,changed_status,match", [
+    ("changed", b"", "workflow delta"),
+    ("pinned", b" M database/athena.db\n", "legacy database delta"),
+])
+def test_d5_prohibited_scope_guard_rejects_workflow_or_legacy_db_drift(
+        monkeypatch, changed_tree, changed_status, match):
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    from scripts import audit_data_01c_app_store_complete as data01c
+
+    def git(*args, data=None):
+        if args == ("rev-parse", "HEAD:.github/workflows"):
+            value = boundary.WORKFLOW_TREE if changed_tree == "pinned" else changed_tree
+            return (value + "\n").encode()
+        if args[0] == "status":
+            return changed_status
+        raise AssertionError("unexpected Git query in prohibited-scope guard: " + repr(args))
+
+    monkeypatch.setattr(boundary, "git", git)
+    with pytest.raises(AssertionError, match=match):
+        data01c.assert_prohibited_scope_unchanged()
 
 
 def test_d5_successor_rejects_tampered_receipt_and_source_identity(monkeypatch):
@@ -525,5 +571,5 @@ def test_d5_successor_rejects_broken_a2_predecessor(monkeypatch):
         "rewritten": True,
     }
     monkeypatch.setattr(boundary, "authenticate_inventory", lambda: latest)
-    with pytest.raises(AssertionError, match="A2 V93 predecessor"):
+    with pytest.raises(AssertionError, match="A2 V97 predecessor"):
         data01c.authenticate_successor()
