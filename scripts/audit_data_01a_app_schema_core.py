@@ -45,7 +45,7 @@ def authenticate():
             from scripts import audit_data_01b_durable_run_state as data01b
             if successor is None:
                 successor = data01b.authenticate_successor(latest)
-            current = {row["path"]: row["lf_sha256"] for row in successor["source_identities"]}
+            current = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
             boundary.require(current.get(path) == actual, "unreviewed D3 source successor: " + path)
             historical = data01b.historical_sources()[path]
             boundary.require(hashlib.sha256(historical.replace(b"\r\n", b"\n")).hexdigest() == expected,

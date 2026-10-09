@@ -232,8 +232,8 @@ def test_v1_upgrade_and_noop_restart_evidence(resources, roots, monkeypatch):
         migrations.apply_app_migrations(resources, roots, release_id="test-release")
     migrations.apply_app_migrations(resources, roots, release_id="test-release")
     with migrations.connect_app_store(migrations.app_store_path(roots), readonly=True) as conn:
-        assert migrations.current_schema_version(conn) == 2
-        assert len(conn.execute("SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE 'app_%'").fetchall()) == 14
+        assert migrations.current_schema_version(conn) == 3
+        assert len(conn.execute("SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE 'app_%'").fetchall()) == 20
     before = {path.relative_to(roots.data_root): path.read_bytes()
               for path in (roots.data_root / "migration-evidence").rglob("*") if path.is_file()}
     migrations.apply_app_migrations(resources, roots, release_id="test-release")
@@ -322,7 +322,9 @@ def test_sent_operation_recovery_fences_attempt(durable):
 
 def test_source_receipt_and_frozen_migration_identity():
     from scripts import audit_data_01b_durable_run_state as audit
-    assert (audit.ROOT / audit.RECEIPT).read_bytes() == audit.canonical(audit.build_receipt())
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    receipt = audit.authenticate_successor(boundary.authenticate_inventory())
+    assert receipt["canonical_sha256"] == audit.FROZEN_RECEIPT_SHA256
     assert hashlib.sha256(audit.tracked_bytes("database/migrations/0001_app_control_core.sql")).hexdigest() == audit.FROZEN_MIGRATION_SHA
 
 

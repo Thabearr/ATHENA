@@ -43,6 +43,7 @@ from database.app_migrations import (
     expected_schema_structure,
 )
 from database.app_migration_evidence import contained
+from database.app_root_lock import app_root_lock
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _UTC_TEXT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3,6}Z")
@@ -68,17 +69,18 @@ def _operation(*, write=False):
             conn = None
             token = None
             try:
-                contained(self._store_path.parent, self._store_path.name)
-                for suffix in ("-wal", "-shm", "-journal"):
-                    contained(self._store_path.parent, self._store_path.name + suffix)
-                conn = connect_app_store(self._store_path, readonly=not write,
-                                         synchronous="FULL" if write else "NORMAL")
-                verify_app_schema(conn, expected_structure=self._expected_structure)
-                recorded = conn.execute("SELECT version, migration_sha256 FROM app_schema_migrations ORDER BY version").fetchall()
-                if recorded != self._migration_identities:
-                    raise AppValidationError("migration identity drift")
-                token = _OPERATION_CONNECTION.set(conn)
-                return method(self, *args, **kwargs)
+                with app_root_lock(self._store_path.parent):
+                    contained(self._store_path.parent, self._store_path.name)
+                    for suffix in ("-wal", "-shm", "-journal"):
+                        contained(self._store_path.parent, self._store_path.name + suffix)
+                    conn = connect_app_store(self._store_path, readonly=not write,
+                                             synchronous="FULL" if write else "NORMAL")
+                    verify_app_schema(conn, expected_structure=self._expected_structure)
+                    recorded = conn.execute("SELECT version, migration_sha256 FROM app_schema_migrations ORDER BY version").fetchall()
+                    if recorded != self._migration_identities:
+                        raise AppValidationError("migration identity drift")
+                    token = _OPERATION_CONNECTION.set(conn)
+                    return method(self, *args, **kwargs)
             finally:
                 if token is not None:
                     _OPERATION_CONNECTION.reset(token)

@@ -14,6 +14,7 @@ import subprocess
 import uuid
 
 from database.app_migration_evidence import contained, publish
+from database.app_root_lock import app_root_lock
 from database.app_repository import release_provenance, logical_locator
 from database.app_migrations import (
     app_store_path, connect_app_store, expected_schema_structure,
@@ -107,27 +108,28 @@ class DurableRunRepository:
 
     @contextmanager
     def _operation(self, *, write=False):
-        migrations = read_app_migrations(self._resources)
-        if [(version, digest) for version, _, _, digest in migrations] != self._identities:
-            raise RunRepositoryError("runtime migration source identity drift")
-        contained(self._path.parent, self._path.name)
-        for suffix in ("-wal", "-shm", "-journal"):
-            contained(self._path.parent, self._path.name + suffix)
-        conn = connect_app_store(self._path, readonly=not write,
-                                 synchronous="FULL" if write else "NORMAL")
-        try:
-            conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
-            verify_app_schema(conn, expected_structure=self._structure)
-            rows = conn.execute("SELECT version, migration_sha256 FROM app_schema_migrations ORDER BY version").fetchall()
-            if rows != self._identities:
-                raise RunRepositoryError("migration identity drift")
-            yield conn
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        with app_root_lock(self._data_root):
+            migrations = read_app_migrations(self._resources)
+            if [(version, digest) for version, _, _, digest in migrations] != self._identities:
+                raise RunRepositoryError("runtime migration source identity drift")
+            contained(self._path.parent, self._path.name)
+            for suffix in ("-wal", "-shm", "-journal"):
+                contained(self._path.parent, self._path.name + suffix)
+            conn = connect_app_store(self._path, readonly=not write,
+                                     synchronous="FULL" if write else "NORMAL")
+            try:
+                conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+                verify_app_schema(conn, expected_structure=self._structure)
+                rows = conn.execute("SELECT version, migration_sha256 FROM app_schema_migrations ORDER BY version").fetchall()
+                if rows != self._identities:
+                    raise RunRepositoryError("migration identity drift")
+                yield conn
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
 
     def _lookup(self, conn, identity):
         row = conn.execute(

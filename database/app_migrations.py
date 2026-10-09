@@ -30,16 +30,18 @@ from domain.run_contracts import canonical_sha256
 from runtime.resources import ResourceResolver, WritableRoots
 from runtime.release_identity import InstalledReleaseIdentity
 from database.app_migration_evidence import contained, retain_pre_migration_evidence, verify_retained_manifest
+from database.app_root_lock import app_root_lock
 
 APP_STORE_FILENAME = "athena-app.sqlite3"
 
-# The single additive R1 application migration. Exact version -> tracked
+# The additive R1 application migrations. Exact version -> tracked
 # migration resource path. Legacy ``002_add_elo_columns.sql`` is intentionally
 # absent: it is a football-history migration and must never run as an app
 # migration.
 APP_MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, "database/migrations/0001_app_control_core.sql"),
     (2, "database/migrations/0002_app_runs_operations.sql"),
+    (3, "database/migrations/0003_app_projections_exports.sql"),
 )
 
 APP_MIGRATION_ROLE = "MIGRATION"
@@ -148,15 +150,20 @@ def read_app_migrations(resources: ResourceResolver) -> list[tuple[int, str, byt
 def _statements(sql: str) -> list[str]:
     """Split reviewed migration SQL into executable statements.
 
-    The app migration carries no triggers and no semicolons inside literals, so
-    stripping ``--`` line comments and splitting on ``;`` is exact.
+    ``sqlite3.complete_statement`` keeps trigger bodies together while still
+    allowing the reviewed scripts to omit semicolons inside string literals.
     """
-    buffer: list[str] = []
+    statements: list[str] = []
+    buffer = ""
     for line in sql.splitlines():
-        cut = line.split("--", 1)[0]
-        buffer.append(cut)
-    text = "\n".join(buffer)
-    return [piece.strip() for piece in text.split(";") if piece.strip()]
+        buffer += line + "\n"
+        if sqlite3.complete_statement(buffer):
+            if buffer.strip():
+                statements.append(buffer.strip())
+            buffer = ""
+    if buffer.strip():
+        raise AppSchemaMismatchError("migration ends with an incomplete SQL statement")
+    return statements
 
 
 def pre_migration_backup_manifest(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -339,13 +346,45 @@ _EXPECTED_APP_TABLES_V2: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# Explicit reviewed v3 schema. Migration bytes are still independently
+# authenticated through ResourceResolver; this inventory makes the expected
+# six-table delta and exact columns visible to D1/D4/D5 audits.
+_EXPECTED_APP_TABLES_V3: dict[str, tuple[str, ...]] = {
+    **_EXPECTED_APP_TABLES_V2,
+    "app_fixture_projections": (
+        "run_id", "fixture_identity", "provider_event_id", "kickoff_utc",
+        "home_label", "away_label", "competition_identity", "scope",
+        "evidence_artifact_id", "projection_policy_id",
+    ),
+    "app_opportunity_projections": (
+        "run_id", "opportunity_id", "fixture_identity", "market_family", "period",
+        "outcome_identity", "line_text", "decimal_odds_text", "confidence_value",
+        "confidence_method", "router_disposition", "reason_json", "decision_artifact_id",
+    ),
+    "app_portfolio_members": (
+        "run_id", "opportunity_id", "role", "rank", "portfolio_artifact_id",
+    ),
+    "app_exports": (
+        "export_id", "profile_id", "run_id", "export_kind", "redaction_policy_id",
+        "state", "manifest_artifact_id", "logical_path", "created_at", "error_code",
+    ),
+    "app_backups": (
+        "backup_id", "profile_id", "schema_version", "release_id",
+        "manifest_byte_sha256", "local_locator", "state", "created_at",
+        "verified_at", "error_code",
+    ),
+    "app_audit_events": (
+        "audit_id", "run_id", "event_type", "payload_bytes", "payload_sha256", "created_at",
+    ),
+}
 
-# Static review dicts exist only for the reviewed migration versions. Schema
-# versions beyond the reviewed set (offline test successors) authenticate solely
-# against structure derived from the verified migration bytes themselves.
+
+# Static review dicts exist for every reviewed schema version. Any future
+# version beyond this set authenticates only against verified migration bytes.
 _EXPECTED_APP_TABLES_BY_VERSION: dict[int, dict[str, tuple[str, ...]]] = {
     1: _EXPECTED_APP_TABLES_V1,
     2: _EXPECTED_APP_TABLES_V2,
+    3: _EXPECTED_APP_TABLES_V3,
 }
 
 
@@ -460,7 +499,7 @@ def _verify_pre_state(conn: sqlite3.Connection, migrations) -> None:
         raise AppSchemaMismatchError("unowned tables in app migration target")
 
 
-def apply_app_migrations(
+def _apply_app_migrations_locked(
     resources: ResourceResolver,
     writable_roots: WritableRoots,
     *,
@@ -551,7 +590,7 @@ def apply_app_migrations(
                     conn.execute(statement)
                 # Validate the migration created the exact expected table set for
                 # the schema version it produces. Static review dicts cover
-                # versions 1-2; offline test successors beyond the reviewed set
+                # reviewed versions 1-3; offline successors beyond the reviewed set
                 # authenticate against structure derived from the verified
                 # migration bytes themselves.
                 expected_at_version = expected_schema_structure(migrations[:version])
@@ -597,3 +636,20 @@ def apply_app_migrations(
     finally:
         fresh.close()
     return store
+
+
+def apply_app_migrations(
+    resources: ResourceResolver,
+    writable_roots: WritableRoots,
+    *,
+    release_id: str,
+    now: datetime | None = None,
+) -> Path:
+    """Apply app migrations under the cross-process root generation lock."""
+    if type(writable_roots) is not WritableRoots:
+        raise AppSchemaMismatchError("verified writable roots are required")
+    writable_roots.ensure_created()
+    with app_root_lock(writable_roots.data_root):
+        return _apply_app_migrations_locked(
+            resources, writable_roots, release_id=release_id, now=now
+        )
