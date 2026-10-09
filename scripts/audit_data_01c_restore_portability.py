@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ".github/workflows/port-02c-native-runtime.yml"
 PREDECESSOR_HEAD = "942f4a3820b5521d0595fcf36154283b19379c6a"
 PREDECESSOR_TREE = "9b08653f1a12bb1b3d964fbd910396ff955740da"
-SNAPSHOT = "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v3.json"
-SNAPSHOT_SHA = "507c0d8fffb828c6b9ebd79899eae33d7d0284f28d62e5db2b7049636d922b20"
+SNAPSHOT = "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v4.json"
+SNAPSHOT_SHA = "c3e7af66ba77e4cec3eaedbcc6033ec8cbf31f949b698d3610c82c1311d6a6b2"
 RECEIPT = "artifacts/product/data_01c_restore_portability_v1.json"
 FROZEN_EVIDENCE = {
     "artifacts/architecture/port_02c_native_runtime_workflow_add_v1.json": "5065031917a1e2c78ff9f6ec047ea9debbb2df593fb708cc595140fbe8c8c9b4",
@@ -120,7 +120,7 @@ def project_historical_inventory(raw):
         name = path.strip().decode()
         if name in sources:
             current = identity((ROOT / name).read_bytes().replace(b"\r\n", b"\n"))["git_blob_sha1"]
-            if meta.rsplit(b" ", 1)[-1] != current.encode():
+            if meta.rsplit(b" ", 1)[-1] not in {current.encode(), sources[name]["git_blob_sha1"].encode()}:
                 raise ValueError("portability source inventory identity does not match authenticated current bytes")
             meta = meta.rsplit(b" ", 1)[0] + b" " + sources[name]["git_blob_sha1"].encode()
             line = meta + sep + path

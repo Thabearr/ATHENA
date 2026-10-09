@@ -60,6 +60,15 @@ def test_historical_projection_rejects_forged_listed_source_metadata():
         audit.project_historical_inventory(forged)
 
 
+def test_authenticated_historical_projection_is_idempotent():
+    path = audit.WORKFLOW
+    blob = audit.identity(audit.expected_workflow())["git_blob_sha1"]
+    raw = b"100644 blob " + blob.encode() + b"\t" + path.encode() + b"\n"
+    projected = audit.project_historical_inventory(raw)
+    assert projected != raw
+    assert audit.project_historical_inventory(projected) == projected
+
+
 def synthetic_receipt(host='Windows'):
     return {'schema_version': 1, 'policy_id': qualifier.POLICY,
             'host_os': host, 'host_os_version': 'Windows synthetic' if host == 'Windows' else 'Ubuntu 24.04 synthetic',
