@@ -39,6 +39,7 @@ APP_STORE_FILENAME = "athena-app.sqlite3"
 # migration.
 APP_MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, "database/migrations/0001_app_control_core.sql"),
+    (2, "database/migrations/0002_app_runs_operations.sql"),
 )
 
 APP_MIGRATION_ROLE = "MIGRATION"
@@ -270,8 +271,91 @@ _EXPECTED_APP_TABLES_V1: dict[str, tuple[str, ...]] = {
 }
 
 
-def expected_app_tables() -> dict[str, tuple[str, ...]]:
-    return dict(_EXPECTED_APP_TABLES_V1)
+# Expected schema for migration version 2: the v1 control core plus exactly the
+# five D4 run control-plane tables. D5 projection/export/backup/audit tables are
+# deliberately absent. A v1 database is a valid upgrade candidate; a v2 database
+# must match this set exactly.
+_EXPECTED_APP_TABLES_V2: dict[str, tuple[str, ...]] = {
+    **_EXPECTED_APP_TABLES_V1,
+    "app_runs": (
+        "run_id",
+        "profile_id",
+        "preview_id",
+        "idempotency_key",
+        "request_bytes",
+        "request_sha256",
+        "envelope_bytes",
+        "envelope_sha256",
+        "release_id",
+        "state",
+        "state_version",
+        "created_at",
+        "updated_at",
+        "receipt_artifact_id",
+    ),
+    "app_run_attempts": (
+        "attempt_id",
+        "run_id",
+        "attempt_number",
+        "lease_token",
+        "worker_instance_id",
+        "process_locator_json",
+        "heartbeat_at",
+        "started_at",
+        "finished_at",
+        "exit_code",
+        "recovery_disposition",
+    ),
+    "app_run_events": (
+        "run_id",
+        "sequence",
+        "state_version",
+        "event_type",
+        "payload_bytes",
+        "payload_sha256",
+        "observed_at",
+    ),
+    "app_external_operations": (
+        "operation_id",
+        "run_id",
+        "attempt_id",
+        "operation_kind",
+        "intent_sha256",
+        "authority_sha256",
+        "input_artifact_id",
+        "idempotency_key",
+        "state",
+        "prepared_at",
+        "sent_at",
+        "completed_at",
+        "response_artifact_id",
+        "error_code",
+    ),
+    "app_run_artifacts": (
+        "run_id",
+        "artifact_id",
+        "role",
+        "retained_root",
+    ),
+}
+
+
+# Static review dicts exist only for the reviewed migration versions. Schema
+# versions beyond the reviewed set (offline test successors) authenticate solely
+# against structure derived from the verified migration bytes themselves.
+_EXPECTED_APP_TABLES_BY_VERSION: dict[int, dict[str, tuple[str, ...]]] = {
+    1: _EXPECTED_APP_TABLES_V1,
+    2: _EXPECTED_APP_TABLES_V2,
+}
+
+
+def expected_app_tables(version: int | None = None) -> dict[str, tuple[str, ...]]:
+    if version is None:
+        version = APP_MIGRATIONS[-1][0]
+    try:
+        return dict(_EXPECTED_APP_TABLES_BY_VERSION[version])
+    except KeyError:
+        raise AppSchemaMismatchError("no expected schema for migration version") from None
 
 
 def schema_structure(conn):
@@ -322,7 +406,12 @@ def verify_app_schema(conn: sqlite3.Connection, *, expected_structure=None) -> N
     if versions[-1] < max_binary:
         raise AppSchemaMismatchError("app schema is older than the current binary")
 
-    expected = expected_app_tables()
+    if expected_structure is None:
+        raise AppSchemaMismatchError("verified expected schema structure is required")
+    expected = {
+        entry[1]: tuple(column[1] for column in entry[2])
+        for entry in expected_structure if entry[0] == "columns"
+    }
     actual_tables = _table_names(conn)
     expected_names = set(expected)
     missing = expected_names - actual_tables
@@ -351,14 +440,12 @@ def verify_app_schema(conn: sqlite3.Connection, *, expected_structure=None) -> N
         raise AppSchemaMismatchError("app schema constraint/structure drift")
 
 
-def _verify_pre_state(conn: sqlite3.Connection) -> None:
+def _verify_pre_state(conn: sqlite3.Connection, migrations) -> None:
     """Fail-closed ownership / version state before applying a migration."""
     versions = applied_versions(conn)
     app_tables = _app_tables(conn)
     if not versions and app_tables:
         raise AppSchemaMismatchError("app tables present without a ledger (partial state)")
-    if _table_names(conn) - set(expected_app_tables()):
-        raise AppSchemaMismatchError("unowned tables in app migration target")
     if versions and not app_tables:
         raise AppSchemaMismatchError("app ledger present without app tables (partial state)")
     if versions != list(range(1, len(versions) + 1)):
@@ -366,6 +453,11 @@ def _verify_pre_state(conn: sqlite3.Connection) -> None:
     max_binary = APP_MIGRATIONS[-1][0]
     if versions and versions[-1] > max_binary:
         raise AppSchemaMismatchError("app schema is newer than the current binary")
+    version = versions[-1] if versions else 1
+    structure = expected_schema_structure(migrations[:version])
+    names = {entry[1] for entry in structure if entry[0] == "columns"}
+    if _table_names(conn) - names:
+        raise AppSchemaMismatchError("unowned tables in app migration target")
 
 
 def apply_app_migrations(
@@ -397,31 +489,41 @@ def apply_app_migrations(
     migrations = read_app_migrations(resources)
     expected_structure = expected_schema_structure(migrations)
     existed = store.exists()
+    recorded_versions: list[int] = []
     if existed:
         probe = sqlite3.connect(store.resolve().as_uri() + "?mode=ro", uri=True)
         try:
             probe.execute("PRAGMA foreign_keys=ON")
-            _verify_pre_state(probe)
-            versions = applied_versions(probe)
-            for version, _, _, digest in migrations[:len(versions)]:
+            _verify_pre_state(probe, migrations)
+            recorded_versions = applied_versions(probe)
+            for version, _, _, digest in migrations[:len(recorded_versions)]:
                 row = probe.execute("SELECT migration_sha256, backup_manifest_sha256 FROM app_schema_migrations WHERE version=?", (version,)).fetchone()
                 if row is None or row[0] != digest:
                     raise AppSchemaMismatchError("recorded migration identity drift")
                 verify_retained_manifest(writable_roots.data_root, row[1])
-            if versions:
-                prior_structure = expected_schema_structure(migrations[:len(versions)])
+            if recorded_versions:
+                prior_structure = expected_schema_structure(migrations[:len(recorded_versions)])
                 if schema_structure(probe) != prior_structure:
                     raise AppSchemaMismatchError("app schema constraint/structure drift before migration")
-            if len(versions) == len(migrations):
+            if len(recorded_versions) == len(migrations):
                 verify_app_schema(probe, expected_structure=expected_structure)
                 return store
         finally:
             probe.close()
-    backup_sha = retain_pre_migration_evidence(resources, writable_roots, store, existed)
+    # Per-migration pre-state evidence. The first pending migration records the
+    # exact pre-invocation store state before the write connection mutates
+    # anything; each later pending migration snapshots the committed state its
+    # predecessor left behind. No-op startups retain nothing at all.
+    pending_versions = [
+        version for version, _, _, _ in migrations if version not in set(recorded_versions)
+    ]
+    backup_sha = None
+    if pending_versions:
+        backup_sha = retain_pre_migration_evidence(resources, writable_roots, store, existed)
 
     conn = connect_app_store(store, synchronous="FULL")
     try:
-        _verify_pre_state(conn)
+        _verify_pre_state(conn, migrations)
         for version, logical_path, raw, byte_sha in migrations:
             recorded = applied_versions(conn)
             if version in recorded:
@@ -438,24 +540,35 @@ def apply_app_migrations(
             if version != len(recorded) + 1:
                 raise AppSchemaMismatchError(f"migration {version} would introduce a version gap")
 
+            if version != pending_versions[0]:
+                backup_sha = retain_pre_migration_evidence(resources, writable_roots, store, True)
+
             sql_text = raw.decode("utf-8")
 
             conn.execute("BEGIN")
             try:
                 for statement in _statements(sql_text):
                     conn.execute(statement)
-                # Validate the migration created the full expected table set.
-                for table in expected_app_tables():
+                # Validate the migration created the exact expected table set for
+                # the schema version it produces. Static review dicts cover
+                # versions 1-2; offline test successors beyond the reviewed set
+                # authenticate against structure derived from the verified
+                # migration bytes themselves.
+                expected_at_version = expected_schema_structure(migrations[:version])
+                version_tables = {
+                    name for kind, name, *_ in expected_at_version if kind == "columns"
+                }
+                for table in version_tables:
                     if table not in _table_names(conn):
                         raise AppSchemaMismatchError(
                             f"migration {logical_path} did not create table {table}"
                         )
-                if _table_names(conn) != set(expected_app_tables()):
+                if _table_names(conn) != version_tables:
                     raise AppSchemaMismatchError("migration created an unexpected table set")
-                for table, columns in expected_app_tables().items():
+                for table, columns in _EXPECTED_APP_TABLES_BY_VERSION.get(version, {}).items():
                     if _table_columns(conn, table) != list(columns):
                         raise AppSchemaMismatchError("migration column identity drift")
-                if schema_structure(conn) != expected_schema_structure(migrations[:version]):
+                if schema_structure(conn) != expected_at_version:
                     raise AppSchemaMismatchError("migration constraint/structure drift")
                 violations = conn.execute("PRAGMA foreign_key_check").fetchall()
                 if violations:

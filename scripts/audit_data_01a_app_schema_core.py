@@ -36,13 +36,30 @@ def authenticate():
                      and inventory["canonical_sha256"] == receipt["a2_inventory"]["canonical_sha256"],
                      "D3 A2 binding drift")
     identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
+    successor = None
     for path, expected in receipt["source_identities"].items():
         actual = hashlib.sha256((ROOT / path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
-        boundary.require(actual == expected and (not path.endswith(".py") or identities.get(path) == expected),
-                         "D3 source identity drift: " + path)
+        boundary.require(not path.endswith(".py") or identities.get(path) == expected,
+                         "D3 frozen V68 source identity drift: " + path)
+        if actual != expected:
+            from scripts import audit_data_01b_durable_run_state as data01b
+            if successor is None:
+                successor = data01b.authenticate_successor(latest)
+            current = {row["path"]: row["lf_sha256"] for row in successor["source_identities"]}
+            boundary.require(current.get(path) == actual, "unreviewed D3 source successor: " + path)
+            historical = data01b.historical_sources()[path]
+            boundary.require(hashlib.sha256(historical.replace(b"\r\n", b"\n")).hexdigest() == expected,
+                             "D3 historical source identity drift: " + path)
     boundary.require(receipt["workflow_yaml_delta"] == 0 and all(value == 0 for value in receipt["safety"].values()),
                      "D3 safety evidence drift")
     return receipt
+
+
+def successor_paths():
+    """Bounded D4 additions omitted only from authenticated historical views."""
+    from scripts import audit_data_01b_durable_run_state as data01b
+    data01b.authenticate_successor(boundary.authenticate_inventory())
+    return data01b.NEW_PATHS
 
 
 def historical_build_config():

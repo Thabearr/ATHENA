@@ -391,6 +391,8 @@ def verified_additive_artifact_paths():
     app01a.authenticated_historical_paths()
     from scripts import audit_data_01a_app_schema_core as data01a
     data01a.authenticate()
+    from scripts import audit_data_01b_durable_run_state as data01b
+    data01b.authenticate_successor(a2.authenticate_inventory())
     return (
         MATRIX_PATH,
         RECEIPT_PATH,
@@ -432,6 +434,7 @@ def verified_additive_artifact_paths():
         a2.inventory_generation_path(9),
         app01a.RECEIPT,
         data01a.RECEIPT,
+        data01b.RECEIPT,
     )
 
 

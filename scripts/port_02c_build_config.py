@@ -39,6 +39,7 @@ SLICE_RESOURCES: tuple[tuple[str, str], ...] = (
     ("config/release_manifest.schema.json", "SCHEMA"),
     ("config/model_weights.json", "CONFIG"),
     ("database/migrations/0001_app_control_core.sql", "MIGRATION"),
+    ("database/migrations/0002_app_runs_operations.sql", "MIGRATION"),
     ("database/migrations/002_add_elo_columns.sql", "MIGRATION"),
     ("ui/index.html", "UI"),
     ("ui/app.js", "UI"),

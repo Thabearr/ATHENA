@@ -198,6 +198,10 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
     latest_paths = {row["path"] for row in latest["source_identities"]}
     added = latest_paths - v2_paths
     assert added == {
+        "database/run_repository.py",
+        "scripts/audit_data_01b_durable_run_state.py",
+        "tests/test_data_01b_durable_run_state.py",
+        "tests/native/test_data_01b_bundle_migrations.py",
         "database/app_migrations.py",
         "database/app_migration_evidence.py",
         "database/app_repository.py",

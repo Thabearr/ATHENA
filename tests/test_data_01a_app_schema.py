@@ -65,6 +65,7 @@ def resources(tmp_path):
         ("ui/styles.css", "UI"),
         ("config/architecture/component-authority-registry-v1.json", "AUTHORITY_REGISTRY"),
         ("database/migrations/0001_app_control_core.sql", "MIGRATION"),
+        ("database/migrations/0002_app_runs_operations.sql", "MIGRATION"),
     ):
         payload = (ROOT / path).read_bytes()
         target = root / path
@@ -142,23 +143,34 @@ def make_stored_preview(resources, clock):
 
 # --- migration framework ---------------------------------------------------
 
-def test_app_migration_creates_exact_nine_tables(resources, roots):
+def test_app_migration_creates_exact_versioned_tables(resources, roots):
     store = apply_app_migrations(resources, roots, release_id="test-release")
     assert store == app_store_path(roots)
     assert store.exists()
     conn = connect_app_store(store, synchronous="FULL")
     try:
-        assert current_schema_version(conn) == 1
+        assert current_schema_version(conn) == 2
         verify_app_schema(conn, expected_structure=expected_schema_structure(read_app_migrations(resources)))
-        tables = expected_app_tables()
-        assert len(tables) == 9
+        # v1 keeps its exact nine-table set; v2 adds exactly five run tables.
+        v1_tables = expected_app_tables(1)
+        v2_tables = expected_app_tables()
+        assert expected_app_tables(2) == v2_tables
+        assert len(v1_tables) == 9
+        assert len(v2_tables) == 14
+        assert set(v2_tables) - set(v1_tables) == {
+            "app_runs",
+            "app_run_attempts",
+            "app_run_events",
+            "app_external_operations",
+            "app_run_artifacts",
+        }
         names = {
             row[0]
             for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
         }
-        assert names == set(tables)
+        assert names == set(v2_tables)
         assert "app_schema_migrations" in names
         assert "app_run_previews" in names
     finally:
@@ -189,9 +201,9 @@ def test_app_migration_is_idempotent_across_reopen(resources, roots):
     apply_app_migrations(resources, roots, release_id="test-release")
     conn = connect_app_store(app_store_path(roots), synchronous="FULL")
     try:
-        assert current_schema_version(conn) == 1
+        assert current_schema_version(conn) == 2
         count = conn.execute("SELECT COUNT(*) FROM app_schema_migrations").fetchone()[0]
-        assert count == 1
+        assert count == 2
     finally:
         conn.close()
 
@@ -232,7 +244,7 @@ def test_app_schema_fails_closed_on_unknown_app_table(resources, roots):
     conn = connect_app_store(app_store_path(roots), synchronous="FULL")
     try:
         conn.execute("BEGIN")
-        conn.execute("CREATE TABLE app_runs (x INTEGER)")
+        conn.execute("CREATE TABLE app_unreviewed_table (x INTEGER)")
         conn.execute("COMMIT")
     finally:
         conn.close()
@@ -518,23 +530,39 @@ def test_process_local_preview_store_remains_default(resources, clock):
 
 
 def test_release_provenance_and_preview_tables_do_not_grant_run_authority(resources, roots, clock):
-    # The app schema has no run/attempt/event/external-operation tables (D4/D5 absent).
+    # D4 run tables exist in the v2 schema but no row grants execution or
+    # provider authority; D5 projection/export/backup/audit tables stay absent.
     names = set(expected_app_tables())
-    assert "app_runs" not in names
-    assert "app_run_attempts" not in names
-    assert "app_run_events" not in names
-    assert "app_external_operations" not in names
-    assert "app_exports" not in names
+    assert "app_runs" in names
+    assert "app_run_attempts" in names
+    assert "app_run_events" in names
+    assert "app_external_operations" in names
+    assert "app_run_artifacts" in names
+    for d5_table in (
+        "app_fixture_projections",
+        "app_opportunity_projections",
+        "app_portfolio_members",
+        "app_exports",
+        "app_backups",
+        "app_audit_events",
+    ):
+        assert d5_table not in names
     # app_profiles carries no authority column.
     cols = expected_app_tables()["app_profiles"]
     assert "authority_profile" not in cols
     assert cols == ("profile_id", "display_name", "created_at")
+    # app_runs binds authority only through the exact envelope bytes and digest.
+    run_cols = expected_app_tables()["app_runs"]
+    assert "authority_profile" not in run_cols
+    assert "envelope_sha256" in run_cols
+    assert "envelope_bytes" in run_cols
 
 
 def test_port_02c_allowlist_stages_app_migration():
     from scripts.port_02c_build_config import SLICE_RESOURCES, SLICE_CLOSED_WORLD_ROOTS
     entries = dict(SLICE_RESOURCES)
     assert entries.get("database/migrations/0001_app_control_core.sql") == "MIGRATION"
+    assert entries.get("database/migrations/0002_app_runs_operations.sql") == "MIGRATION"
     assert "database/migrations" in SLICE_CLOSED_WORLD_ROOTS
 
 
@@ -609,15 +637,23 @@ def test_migration_evidence_absent_then_existing_backup(resources, roots):
     store = apply_app_migrations(resources, roots, release_id="test-release")
     conn = connect_app_store(store, readonly=True)
     try:
-        digest = conn.execute("SELECT backup_manifest_sha256 FROM app_schema_migrations").fetchone()[0]
+        rows = conn.execute(
+            "SELECT version, backup_manifest_sha256 FROM app_schema_migrations ORDER BY version"
+        ).fetchall()
     finally:
         conn.close()
+    assert [row[0] for row in rows] == [1, 2]
+    digest = rows[0][1]
     absent = verify_retained_manifest(roots.data_root, digest)
     assert absent["app_store_state"] == "ABSENT" and absent["backup"] is None
     assert absent["ownership_inventory"]["roots"][0]["exists"] is False
+    # Migration 2 keeps a truthful pre-state manifest of the v1 database.
+    second = verify_retained_manifest(roots.data_root, rows[1][1])
+    assert second["app_store_state"] == "EXISTING" and second["backup"] is not None
+    assert set(second["app_tables_before"]) == set(expected_app_tables(1))
     apply_app_migrations(resources, roots, release_id="test-release")
     manifests = list((roots.data_root / "migration-evidence").glob("*.json"))
-    assert len(manifests) == 1
+    assert len(manifests) == 2
     assert str(roots.data_root) not in (roots.data_root / "migration-evidence" / (digest + ".json")).read_text()
     with pytest.raises(ValueError):
         publish(roots.data_root, "migration-evidence/" + digest + ".json", b"overwrite")
@@ -684,7 +720,8 @@ def test_verified_development_inventory_preserves_legacy_and_warehouse(tmp_path)
     from database.app_migration_evidence import verify_retained_manifest
     checkout = tmp_path / "development"
     checkout.mkdir()
-    for path in ("runtime/source_identity.py", "database/migrations/0001_app_control_core.sql"):
+    for path in ("runtime/source_identity.py", "database/migrations/0001_app_control_core.sql",
+                 "database/migrations/0002_app_runs_operations.sql"):
         target = checkout / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ROOT / path).read_bytes())
@@ -851,7 +888,7 @@ def test_only_pending_version_retains_consistent_backup(resources, roots, monkey
             return future
         return original_read(self, path, **kwargs)
     monkeypatch.setattr(ResourceResolver, "read_bytes", read)
-    monkeypatch.setattr(migrations, "APP_MIGRATIONS", migrations.APP_MIGRATIONS + ((2, logical),))
+    monkeypatch.setattr(migrations, "APP_MIGRATIONS", migrations.APP_MIGRATIONS + ((3, logical),))
     if fail:
         original_connect = migrations.connect_app_store
         original_statements = migrations._statements
@@ -878,14 +915,14 @@ def test_only_pending_version_retains_consistent_backup(resources, roots, monkey
     snapshot = sqlite3.connect((roots.data_root / manifest["backup"]["logical_path"]).resolve().as_uri() + "?mode=ro", uri=True)
     try:
         assert snapshot.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-        assert snapshot.execute("SELECT version FROM app_schema_migrations").fetchall() == [(1,)]
+        assert snapshot.execute("SELECT version FROM app_schema_migrations ORDER BY version").fetchall() == [(1,), (2,)]
     finally:
         snapshot.close()
     conn = connect_app_store(app_store_path(roots), readonly=True)
     try:
-        assert conn.execute("SELECT version FROM app_schema_migrations ORDER BY version").fetchall() == ([(1,)] if fail else [(1,), (2,)])
+        assert conn.execute("SELECT version FROM app_schema_migrations ORDER BY version").fetchall() == ([(1,), (2,)] if fail else [(1,), (2,), (3,)])
         if not fail:
-            assert conn.execute("SELECT backup_manifest_sha256 FROM app_schema_migrations WHERE version=2").fetchone() == (digest,)
+            assert conn.execute("SELECT backup_manifest_sha256 FROM app_schema_migrations WHERE version=3").fetchone() == (digest,)
     finally:
         conn.close()
     if not fail:
