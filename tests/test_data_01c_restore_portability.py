@@ -61,8 +61,8 @@ def test_historical_projection_rejects_forged_listed_source_metadata():
 
 
 def test_authenticated_historical_projection_is_idempotent():
-    path = audit.WORKFLOW
-    blob = audit.identity(audit.expected_workflow())["git_blob_sha1"]
+    path = "scripts/audit_p4_workflow_evolution_ledger.py"
+    blob = audit.identity((audit.ROOT / path).read_bytes().replace(b"\r\n", b"\n"))["git_blob_sha1"]
     raw = b"100644 blob " + blob.encode() + b"\t" + path.encode() + b"\n"
     projected = audit.project_historical_inventory(raw)
     assert projected != raw
@@ -75,6 +75,22 @@ def test_a2_historical_source_forward_uses_only_v1_pinned_bytes(tmp_path, monkey
         raw = (audit.ROOT / fixture).read_bytes().replace(b"\r\n", b"\n")
         assert hashlib.sha256(raw).hexdigest() == a2.pinned_historical_identity(source)
         assert audit.historical_a2_source_blob_identity(source) == audit.identity(raw)["git_blob_sha1"]
+
+    source = "tests/test_p4_4a_workflow_evolution_guard.py"
+    historical_blob = audit.historical_a2_source_blob_identity(source)
+    current_blob = audit.identity((audit.ROOT / source).read_bytes().replace(b"\r\n", b"\n"))["git_blob_sha1"]
+    raw_current = b"100644 blob " + current_blob.encode() + b"\t" + source.encode() + b"\n"
+    projected = audit.project_historical_inventory(raw_current)
+    assert projected == b"100644 blob " + historical_blob.encode() + b"\t" + source.encode() + b"\n"
+
+    from scripts import audit_data_01c_app_store_complete as store
+    existing_p4_sources = {
+        "scripts/audit_p4_workflow_evolution_ledger.py",
+        "tests/native/test_port_02c_audit_source_forward.py",
+        source,
+    }
+    assert existing_p4_sources <= set(store.SOURCE_PATHS)
+    assert not existing_p4_sources & store.SUCCESSOR_SOURCE_PATHS
 
     source, fixture = next(iter(audit.HISTORICAL_A2_SOURCE_FIXTURES.items()))
     forged_root = tmp_path / "forged"

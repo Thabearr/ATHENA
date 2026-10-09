@@ -37,6 +37,8 @@ HISTORICAL_A2_SOURCE_FIXTURES = {
         "tests/fixtures/core_01d/a2-v1-p4-workflow-evolution-ledger.py.txt",
     "tests/native/test_port_02c_audit_source_forward.py":
         "tests/fixtures/core_01d/a2-v1-port02c-source-forward-test.py.txt",
+    "tests/test_p4_4a_workflow_evolution_guard.py":
+        "tests/fixtures/core_01d/a2-v1-p4-workflow-evolution-guard-test.py.txt",
 }
 
 
@@ -140,16 +142,21 @@ def project_historical_inventory(raw):
     for line in raw.splitlines(keepends=True):
         meta, sep, path = line.partition(b"\t")
         name = path.strip().decode()
+        historical = historical_a2_source_blob_identity(name)
         if name in sources:
             current = identity((ROOT / name).read_bytes().replace(b"\r\n", b"\n"))["git_blob_sha1"]
-            historical = historical_a2_source_blob_identity(name)
             allowed = {current.encode(), sources[name]["git_blob_sha1"].encode()}
             if historical is not None:
                 allowed.add(historical.encode())
             if meta.rsplit(b" ", 1)[-1] not in allowed:
                 raise ValueError("portability source inventory identity does not match authenticated current bytes: " + name)
             meta = meta.rsplit(b" ", 1)[0] + b" " + sources[name]["git_blob_sha1"].encode()
-            line = meta + sep + path
+        elif historical is not None:
+            current = identity((ROOT / name).read_bytes().replace(b"\r\n", b"\n"))["git_blob_sha1"]
+            if meta.rsplit(b" ", 1)[-1] not in {current.encode(), historical.encode()}:
+                raise ValueError("portability historical source identity is not pinned: " + name)
+            meta = meta.rsplit(b" ", 1)[0] + b" " + historical.encode()
+        line = meta + sep + path
         lines.append(line)
     return b"".join(lines)
 
