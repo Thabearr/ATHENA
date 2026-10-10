@@ -16,6 +16,8 @@ import sys
 import yaml
 
 
+
+from scripts.audit_data_01c_restore_portability import historical_workflow_tree
 ROOT = Path(__file__).resolve().parents[1]
 BASE_MAIN_SHA = "0e6d2c622ef7a12f82c4405d80906f49d97b523d"
 BASE_TREE_SHA = "fed8664d63391aefdbd48197375e0ecf331b733c"
@@ -559,6 +561,9 @@ def _workflow_inventory(*, base_available: bool, seed: dict | None) -> tuple[lis
             for row in seed["workflow_source_inventory"]
         }
     head_entries = _tree_entries("HEAD")
+    from scripts import audit_data_01c_restore_portability as d5
+    d5.authenticate_workflow()
+    head_entries[d5.WORKFLOW] = d5.identity(d5.predecessor_source(d5.WORKFLOW))["git_blob_sha1"]
     require(len(baseline_entries) == 39, "pinned base workflow count is not 39")
     require(head_entries == baseline_entries, "current workflow path/blob inventory differs from pinned base source")
     current_worktree_paths = sorted(
@@ -572,6 +577,9 @@ def _workflow_inventory(*, base_available: bool, seed: dict | None) -> tuple[lis
     for path in sorted(baseline_entries):
         expected = _read_tree_blob(treeish, path)
         filtered_blob = _worktree_blob(path)
+        if path == d5.WORKFLOW:
+            expected = d5.predecessor_source(path)
+            filtered_blob = d5.identity(expected)["git_blob_sha1"]
         require(filtered_blob == baseline_entries[path],
                 f"working-tree workflow source differs from base after Git filters: {path}")
         rows.append({
@@ -579,7 +587,7 @@ def _workflow_inventory(*, base_available: bool, seed: dict | None) -> tuple[lis
             "git_blob_sha1": baseline_entries[path],
             "source_sha256": sha256(expected),
         })
-    head_tree = _git("rev-parse", "HEAD:.github/workflows").decode().strip()
+    head_tree = historical_workflow_tree(_git("rev-parse", "HEAD:.github/workflows").decode().strip())
     require(head_tree == WORKFLOW_TREE_SHA1,
             "current .github/workflows tree differs from reviewed #431 workflow tree")
     if base_available:

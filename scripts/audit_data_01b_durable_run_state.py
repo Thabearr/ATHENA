@@ -13,6 +13,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 RECEIPT = "artifacts/product/data_01b_durable_run_state_v1.json"
 SNAPSHOT = "tests/fixtures/core_01d/data_01b_historical/d3_source_bytes.json"
+D3_EXTENSION = "tests/fixtures/core_01d/data_01c_historical/d3_app_repository_source_v1.json"
 REVIEWED_HEAD = "e5b9793d1c609ad331819c228484e5c088e686d9"
 REVIEWED_A2_SHA = "009185f7e2743b29bd5fa4f7c71815c54ccf1158e759a10aa0c68fdb263d910a"
 V70_A2_SHA256 = "bc12c07f2d840be6abf77f2ec2bea1ffca8b34256b5c293db67dfbbf5b3909a5"
@@ -20,6 +21,7 @@ V71_A2_SHA256 = "0aaf97fca9ee2870910c63dc9d7aacef2b6caf56a5fb02293b900142d8c6bc1
 V72_A2_SHA256 = "9b74eccdb1868ed5ad1b71b6f3bdb99d49a6f42a2892656067bc0a885ab2e7ca"
 V73_A2_SHA256 = "dfd1127f090745f40667d3cab52cc40e5df90f48c747be7691233feb80f86b98"
 FROZEN_SECOND_MIGRATION_SHA = "3c0098dcd77e32a9e115dfcd40bd019901309894bb780ad66e90ed3846b60e97"
+FROZEN_RECEIPT_SHA256 = "d0b27962d852c9352306106b78ef26e00b919fc5a3a4070302c05ec667698b84"
 WORKFLOW_TREE_PIN = "9b08653f1a12bb1b3d964fbd910396ff955740da"
 FROZEN_MIGRATION_SHA = "6d380b30733f99d3740b8d6dd89810fb31ca568625319b433023f48c9f667b7c"
 SOURCES = (
@@ -90,6 +92,56 @@ def historical_sources():
         if hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() != d3["source_identities"][path]:
             raise AssertionError("D3 retained source bytes drift: " + path)
         result[path] = payload
+    # The frozen D4 snapshot intentionally contains only D4 source paths that
+    # overlapped D3. D5 also evolves app_repository.py, so retain that one
+    # missing D3 byte identity in a separate additive record rather than
+    # rewriting either historical receipt or snapshot.
+    extension_raw = (ROOT / D3_EXTENSION).read_bytes()
+    extension = json.loads(extension_raw)
+    if (extension_raw != canonical(extension)
+            or type(extension) is not dict
+            or set(extension) != {"schema_version", "policy_id", "d3_receipt_sha256",
+                                  "source_commit", "a2_inventory", "source_bytes",
+                                  "canonical_sha256"}
+            or extension.get("schema_version") != 1
+            or extension.get("policy_id") != "ATHENA_DATA_01C_D3_HISTORICAL_SOURCE_EXTENSION_V1"
+            or extension.get("d3_receipt_sha256") != expected
+            or extension.get("source_commit") != snapshot["base_main_sha"]):
+        raise AssertionError("D5 additive D3 historical source extension identity drift")
+    extension_seal = dict(extension)
+    seal = extension_seal.pop("canonical_sha256")
+    if hashlib.sha256(canonical(extension_seal)).hexdigest() != seal:
+        raise AssertionError("D5 additive D3 historical source extension seal mismatch")
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    inventory = boundary.read_generation(d3["a2_inventory"]["path"])
+    if (extension["a2_inventory"] != d3["a2_inventory"]
+            or inventory.get("generation") != 68
+            or inventory.get("canonical_sha256") != d3["a2_inventory"]["canonical_sha256"]):
+        raise AssertionError("D5 additive D3 source extension A2 V68 binding drift")
+    added = extension["source_bytes"]
+    if type(added) is not list or len(added) != 1 or added[0].get("path") != "database/app_repository.py":
+        raise AssertionError("D5 additive D3 source extension scope drift")
+    row = added[0]
+    payload = base64.b64decode(row["base64"], validate=True)
+    source_identity = d3["source_identities"].get(row["path"])
+    v68_identity = {item["path"]: item["lf_source_sha256"]
+                    for item in inventory["source_identities"]}.get(row["path"])
+    if (type(row.get("byte_count")) is not int or row["byte_count"] != len(payload)
+            or row.get("byte_sha256") != hashlib.sha256(payload).hexdigest()
+            or row.get("git_blob_sha1") != hashlib.sha1(
+                b"blob " + str(len(payload)).encode() + b"\0" + payload).hexdigest()
+            or hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() != source_identity
+            or source_identity != v68_identity):
+        raise AssertionError("D5 additive D3 historical source bytes fail D3/A2 authentication")
+    result[row["path"]] = payload
+    # D5's native qualification evolves B6's current workflow view. Retain
+    # its exact D3 source identity without changing either frozen snapshot.
+    from scripts import audit_data_01c_restore_portability as portability
+    path = "scripts/audit_core_01d_port02c_trigger_authority_b6.py"
+    payload = portability.predecessor_source(path)
+    if hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() != d3["source_identities"][path]:
+        raise AssertionError("D5 B6 predecessor does not authenticate the frozen D3 source")
+    result[path] = payload
     return result
 
 
@@ -161,11 +213,17 @@ def build_receipt():
         tree = subprocess.run(["git", "rev-parse", "HEAD:.github/workflows"], cwd=ROOT, check=True,
                               capture_output=True).stdout.decode().strip()
         if tree != WORKFLOW_TREE_PIN:
-            raise AssertionError("prohibited workflow delta without base evidence")
+            from scripts.audit_data_01c_restore_portability import historical_workflow_tree
+            if historical_workflow_tree(tree) != WORKFLOW_TREE_PIN:
+                raise AssertionError("prohibited workflow delta without base evidence")
         status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--",
                                  ".github/workflows", "database"], cwd=ROOT, check=True,
                                 capture_output=True).stdout.decode().splitlines()
         changed = [line[3:] for line in status if len(line) > 3]
+    if ".github/workflows/port-02c-native-runtime.yml" in changed:
+        from scripts import audit_data_01c_restore_portability as d5
+        d5.authenticate_workflow()
+        changed = [path for path in changed if path != d5.WORKFLOW]
     if any(path.startswith(".github/workflows/") or path in {
             "database/athena.db", "database/athena_history.db"} for path in changed):
         raise AssertionError("prohibited workflow or legacy database delta")
@@ -215,6 +273,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
+    latest = None
+    if not args.write:
+        from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+        latest = boundary.authenticate_inventory()
+    if latest is not None and latest["generation"] >= 75:
+        authenticate_successor(latest)
+        print("DATA_01B_SOURCE_RECEIPT_HISTORICAL_SUCCESSOR_OK")
+        return
     raw = canonical(build_receipt())
     path = ROOT / RECEIPT
     if args.write:
@@ -226,13 +292,45 @@ def main():
 
 def authenticate_successor(latest):
     raw = (ROOT / RECEIPT).read_bytes()
-    value = build_receipt()
-    if raw != canonical(value) or latest["generation"] < 74:
+    value = json.loads(raw)
+    if (type(value) is not dict or raw != canonical(value)
+            or value.get("canonical_sha256") != FROZEN_RECEIPT_SHA256
+            or hashlib.sha256(canonical({key: row for key, row in value.items()
+                                         if key != "canonical_sha256"})).hexdigest() != FROZEN_RECEIPT_SHA256
+            or latest["generation"] < 75):
         raise AssertionError("D4 successor source receipt mismatch")
-    inventory = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
-    for row in value["source_identities"]:
-        if row["path"].endswith(".py") and inventory.get(row["path"]) != row["lf_sha256"]:
-            raise AssertionError("D4 successor inventory binding mismatch: " + row["path"])
+    if value.get("policy_id") != "ATHENA_DATA_01B_DURABLE_RUN_STATE_V1":
+        raise AssertionError("D4 immutable receipt policy drift")
+    latest_inventory = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    v74 = boundary.read_generation(boundary.inventory_generation_path(74))
+    v75 = boundary.read_generation(boundary.inventory_generation_path(75))
+    if (v74.get("generation") != 74
+            or v74.get("canonical_sha256") != "8069d2ab272806ce803ed8b955c2227a136d65219408fc7bf87ba050f9f6523b"
+            or v75.get("canonical_sha256") != "a4702d82a771bef07858f9399b9ab3821800cc98226df5795551155ca74634a4"
+            or v75.get("predecessor_inventory") != {
+                "path": boundary.inventory_generation_path(74),
+                "canonical_sha256": v74["canonical_sha256"],
+                "generation": 74, "rewritten": False}):
+        raise AssertionError("D4 source receipt does not retain immutable A2 V74 -> V75 lineage")
+    v74_inventory = {row["path"]: row["lf_source_sha256"] for row in v74["source_identities"]}
+    frozen_sources = {row["path"]: row["lf_sha256"] for row in value["source_identities"]}
+    if (set(frozen_sources) != set(SOURCES)
+            or any(v74_inventory.get(path) != digest for path, digest in frozen_sources.items()
+                   if path.endswith(".py"))):
+        raise AssertionError("D4 frozen source identities differ from authenticated A2 V74")
+    current = {path: hashlib.sha256((ROOT / path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+               for path in SOURCES}
+    for path, digest in current.items():
+        if path.endswith(".py"):
+            if latest_inventory.get(path) != digest:
+                raise AssertionError("current successor source is not bound by latest A2 inventory: " + path)
+        elif frozen_sources.get(path) != digest:
+            raise AssertionError("non-Python D4 source changed outside its immutable receipt: " + path)
+    rebuilt = build_receipt()
+    for key in set(value) - {"source_identities", "canonical_sha256"}:
+        if rebuilt.get(key) != value.get(key):
+            raise AssertionError("D4 immutable semantics changed in successor view: " + key)
     return value
 
 

@@ -250,8 +250,19 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
         "api/v1/exports.py",
         "api/v1/fixtures.py",
         "api/v1/runs.py",
+        "database/app_root_lock.py",
+        "database/app_storage_access.py",
+        "services/app_projection_service.py",
+        "services/backup_service.py",
+        "services/export_service.py",
+        "scripts/audit_data_01c_app_store_complete.py",
+        "tests/native/test_data_01c_bundle_migrations.py",
+        "tests/test_data_01c_app_storage.py",
         "services/athena_read_service.py",
         "tests/test_app_01c_versioned_read_api.py",
+        "scripts/qualify_data_01c_restore_portability.py",
+        "scripts/audit_data_01c_restore_portability.py",
+        "tests/test_data_01c_restore_portability.py",
     }
     original_tree = boundary.git("ls-tree", "-r", "HEAD")
     projected = completion_v2.a2_historical_projection(original_tree)

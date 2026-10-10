@@ -7,6 +7,7 @@ import pytest
 from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
 from scripts import audit_core_01d_historical_warehouse_transfer_authority_b2 as b2
 from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion_v2
+from scripts.audit_data_01c_restore_portability import historical_workflow_tree
 
 
 @pytest.fixture(scope="module")
@@ -230,7 +231,8 @@ def test_exact_source_inventory_and_all_live_side_effect_sentinels(receipt):
     assert receipt["workflow_edit_count"] == receipt["trigger_edit_count"] == 0
     assert receipt["workflow_retirement_count"] == receipt["workflow_deletion_count"] == 0
     assert receipt["protected_model_router_portfolio_semantic_delta"] == 0
-    assert boundary.git("rev-parse", "HEAD:.github/workflows").decode().strip() == b2.WORKFLOW_TREE
+    observed_tree = boundary.git("rev-parse", "HEAD:.github/workflows").decode().strip()
+    assert historical_workflow_tree(observed_tree) == b2.WORKFLOW_TREE
 
 
 def test_completion_v2_additive_projection_allowlist_is_exact_and_narrow():

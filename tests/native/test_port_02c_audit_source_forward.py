@@ -41,3 +41,44 @@ def test_attributes_current_forward_keeps_historical_anchor_exact():
     assert port01.current_anchor_identity(historical)["git_blob_sha1"] == "58e4728b1f6189b5e7aaa277611359ec51f22a91"
     with pytest.raises(port01.PortabilityAuditError):
         port01.current_anchor_identity({**historical, "git_blob_sha1": "0" * 40})
+
+
+def test_d5_second_successor_does_not_replace_original_identity():
+    from scripts import audit_data_01c_restore_portability as d5
+    assert evolution.source_identity(d5.predecessor_source(d5.WORKFLOW)) == evolution.PORT02C_REPLAY_WORKFLOW_AFTER
+    after, tree = d5.successor_context()
+    assert after != evolution.PORT02C_REPLAY_WORKFLOW_AFTER
+    assert tree != evolution.CORE01D_PR119_WORKFLOW_TREE_SHA1
+    assert evolution.PORT02C_REPLAY_WORKFLOW_BEFORE["git_blob_sha1"] == "cb7374cbf4d1d35a39964d123e75367996983d6c"
+    derived = {d5.WORKFLOW: deepcopy(evolution.PORT02C_REPLAY_WORKFLOW_BEFORE)}
+    observed = {d5.WORKFLOW: after}
+    for path, (before, current) in evolution.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD.items():
+        derived[path] = deepcopy(before)
+        observed[path] = deepcopy(current)
+    forwarded = evolution._port02c_current_source_forward(
+        derived,
+        observed,
+        head_tree=tree,
+        ledger_sha=evolution.CORE01D_PR119_LEDGER_SHA256,
+    )
+    assert forwarded[d5.WORKFLOW] == after
+    with pytest.raises(evolution.WorkflowEvolutionError):
+        evolution._port02c_current_source_forward(
+            derived,
+            observed,
+            head_tree="0" * 40,
+            ledger_sha=evolution.CORE01D_PR119_LEDGER_SHA256,
+        )
+    with pytest.raises(evolution.WorkflowEvolutionError):
+        evolution._port02c_current_source_forward({d5.WORKFLOW: after}, {d5.WORKFLOW: after},
+            head_tree=tree, ledger_sha=evolution.CORE01D_PR119_LEDGER_SHA256)
+
+
+def test_d5_p43a_historical_forward_rejects_arbitrary_future_tree():
+    import json
+    from pathlib import Path
+    from scripts import audit_data_01c_restore_portability as d5
+    ledger = json.loads(Path(evolution.LEDGER_PATH).read_text(encoding="utf-8"))
+    _identity, tree = d5.successor_context()
+    assert evolution._exact_pr119_historical_source_context(ledger, tree)
+    assert not evolution._exact_pr119_historical_source_context(ledger, "0" * 40)

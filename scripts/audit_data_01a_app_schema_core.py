@@ -45,7 +45,7 @@ def authenticate():
             from scripts import audit_data_01b_durable_run_state as data01b
             if successor is None:
                 successor = data01b.authenticate_successor(latest)
-            current = {row["path"]: row["lf_sha256"] for row in successor["source_identities"]}
+            current = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
             boundary.require(current.get(path) == actual, "unreviewed D3 source successor: " + path)
             historical = data01b.historical_sources()[path]
             boundary.require(hashlib.sha256(historical.replace(b"\r\n", b"\n")).hexdigest() == expected,
@@ -56,10 +56,13 @@ def authenticate():
 
 
 def successor_paths():
-    """Bounded D4 additions omitted only from authenticated historical views."""
+    """Omit only additions; retain existing V74 paths at their authenticated predecessor bytes."""
+    authenticate()
     from scripts import audit_data_01b_durable_run_state as data01b
-    data01b.authenticate_successor(boundary.authenticate_inventory())
-    return data01b.NEW_PATHS
+    latest = boundary.authenticate_inventory()
+    data01b.authenticate_successor(latest)
+    from scripts import audit_data_01c_app_store_complete as data01c
+    return set(data01b.NEW_PATHS) | data01c.authenticate_successor()
 
 
 def historical_build_config():

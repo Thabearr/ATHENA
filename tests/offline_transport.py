@@ -45,6 +45,9 @@ GIT_PREFIX = ("--no-pager", "-c", "core.hooksPath=" + str(BOOTSTRAP),
 SAFE_GIT_CONFIG = frozenset({"core.autocrlf", "core.eol", "core.safecrlf", "core.ignorecase", "core.filemode", "core.symlinks", "user.name", "user.email"})
 NATIVE_LOCAL_SYMBOLS = frozenset({
     "CreateFileW", "FlushFileBuffers", "CloseHandle", "GetLastError",
+    # D5 exercises its same-volume durable generation switch through this
+    # exact Win32 filesystem primitive on native Windows runners.
+    "MoveFileExW",
     "GetNativeSystemInfo", "GetSystemInfo", "dl_iterate_phdr",
     "GetStdHandle", "GetConsoleScreenBufferInfo", "SetConsoleTextAttribute",
     "SetConsoleCursorPosition", "FillConsoleOutputCharacterA",

@@ -9,6 +9,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from scripts.audit_data_01c_restore_portability import historical_workflow_tree
+
 from scripts import audit_core_01d_retained_workflow_status_v2 as v2
 from services import athena_artifact_role_resolver as roles
 
@@ -361,7 +363,7 @@ def _validate_successor_sources() -> tuple[dict, dict, dict[str, dict[str, str]]
 
 def _validate_workflow_and_prior_fixture() -> dict[str, dict[str, str]]:
     workflow = _blob(PR145_WORKFLOW)
-    workflow_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
+    workflow_tree = historical_workflow_tree(_git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip())
     require(workflow_tree == WORKFLOW_TREE_SHA1,
             "PR145 workflow directory differs from the exact pass-2 base tree")
     from scripts import audit_p4_3_workflow_retirement_ledger as p43

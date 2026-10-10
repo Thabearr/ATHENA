@@ -162,6 +162,8 @@ def _decode_historical_runtime_payload(document, path):
 
 
 def historical_tree_projection(raw):
+    from scripts.audit_data_01c_restore_portability import project_historical_inventory
+    raw = project_historical_inventory(raw)
     paths, document = authenticated_historical_paths()
     paths |= HISTORICAL_A2_INVENTORY_PATHS
     rows = []
