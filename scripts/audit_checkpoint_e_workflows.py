@@ -209,8 +209,26 @@ INCIDENT_20261010_PREDECESSOR_BLOBS = {
 INCIDENT_20261010_PREDECESSOR_FIXTURES = {
     "domain/current_shadow_sportybet_pc_upcoming_reconciliation.py":
         "tests/fixtures/core_01d/inc_20261010/pc-upcoming-reconciliation-predecessor.py.txt",
+    "scripts/audit_p4_4q_pc_upcoming_simple_tournament_identity.py":
+        "tests/fixtures/core_01d/inc_20261010/audit-p44q-simple-tournament-identity-predecessor.py.txt",
+    "scripts/audit_p4_4r_shadow_runtime_composition_stabilization.py":
+        "tests/fixtures/core_01d/inc_20261010/audit-p44r-runtime-composition-predecessor.py.txt",
     "scripts/verify_p3_0_e1_live_readiness.py":
         "tests/fixtures/core_01d/inc_20261010/verify-p3-live-readiness-predecessor.py.txt",
+    "tests/test_current_shadow_sportybet_pc_upcoming_reconciliation.py":
+        "tests/fixtures/core_01d/inc_20261010/test-current-shadow-pc-upcoming-reconciliation-predecessor.py.txt",
+    "tests/test_p3_0_e1_source_diagnostics_auditor.py":
+        "tests/fixtures/core_01d/inc_20261010/test-p3-e1-source-diagnostics-predecessor.py.txt",
+    "tests/test_p4_4n_sportybet_team_label_shape_compatibility.py":
+        "tests/fixtures/core_01d/inc_20261010/test-p44n-team-label-shape-predecessor.py.txt",
+    "tests/test_p4_4o_pc_upcoming_stable_epoch_recovery.py":
+        "tests/fixtures/core_01d/inc_20261010/test-p44o-stable-epoch-recovery-predecessor.py.txt",
+    "tests/test_p4_4o_pc_upcoming_stable_epoch_recovery_audit.py":
+        "tests/fixtures/core_01d/inc_20261010/test-p44o-stable-epoch-recovery-audit-predecessor.py.txt",
+    "tests/test_p4_4p_pc_upcoming_preparse_response_evidence.py":
+        "tests/fixtures/core_01d/inc_20261010/test-p44p-preparse-response-evidence-predecessor.py.txt",
+    "tests/test_p4_4q_pc_upcoming_simple_tournament_identity.py":
+        "tests/fixtures/core_01d/inc_20261010/test-p44q-simple-tournament-identity-predecessor.py.txt",
 }
 _INCIDENT_20261010_CURRENT_AUTHENTICATED = False
 
