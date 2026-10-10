@@ -467,7 +467,13 @@ def test_d5_successor_authenticates_exact_sources_and_historical_seams():
     expected = (set(data01c.SUCCESSOR_SOURCE_PATHS) | {data01c.RECEIPT}
                 | {boundary.inventory_generation_path(generation)
                    for generation in range(75, latest["generation"] + 1)})
-    assert latest["generation"] == data01c.audit()["a2_inventory"]["generation"]
+    if latest["generation"] >= 116:
+        from scripts import audit_run_01a_durable_admission as e1
+        expected |= e1.authenticate_successor()
+        assert data01c.audit()["a2_inventory"]["generation"] == 115
+        assert data01c.audit()["canonical_sha256"] == "c9be3cc4c74fea16c9f97c0db3fe7b54d9e12373fc5787d46677f36276f7441d"
+    else:
+        assert latest["generation"] == data01c.audit()["a2_inventory"]["generation"]
     assert paths == expected
     combined_successor_paths = data01a.successor_paths()
     assert data01b.NEW_PATHS <= combined_successor_paths

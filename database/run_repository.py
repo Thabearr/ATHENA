@@ -621,6 +621,70 @@ class DurableRunRepository:
                     raise RunRepositoryError("run immutable identity digest mismatch")
         return result
 
+    def read_receipt_bytes(self, run_id):
+        """Return proven terminal receipt wrapper bytes, or None when absent.
+
+        E1 durable-read port over already-verified terminal evidence. Unknown
+        runs return None; nonterminal runs return None (no receipt produced).
+        Any inconsistency fails closed; this never invents provenance.
+        """
+        _identity(run_id)
+        with self._operation() as conn:
+            row = conn.execute(
+                "SELECT state,receipt_artifact_id FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
+            if row is None:
+                return None
+            if row[0] != "TERMINAL":
+                return None
+            self._verify_run_identity(conn, run_id, current=False)
+            artifact_id = row[1]
+            if type(artifact_id) is not str or not artifact_id.startswith("receipt-"):
+                raise RunRepositoryError("terminal receipt artifact identity drift")
+            digest = artifact_id[len("receipt-"):]
+            _sha(digest)
+            artifact = conn.execute(
+                "SELECT logical_path,byte_sha256,byte_count FROM app_artifacts WHERE artifact_id=?",
+                (artifact_id,)).fetchone()
+            if artifact is None or artifact[1] != digest:
+                raise RunRepositoryError("retained receipt artifact mismatch")
+            raw = contained(self._data_root, logical_locator(artifact[0])).read_bytes()
+            if hashlib.sha256(raw).hexdigest() != digest or len(raw) != artifact[2]:
+                raise RunRepositoryError("retained receipt bytes mismatch")
+            value = json.loads(raw)
+            if (canonical_json_bytes(value) != raw
+                    or value.get("run_id") != run_id
+                    or value.get("policy_id") != "ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1"):
+                raise RunRepositoryError("terminal receipt wrapper mismatch")
+            return canonical_json_bytes(RunReceipt.from_dict(value["receipt"]))
+
+    def list_run_history(self):
+        """Return ordered durable run rows for the E1 history projection.
+
+        Ordered by creation time then run identity for stable pagination. Each
+        row carries the exact bytes needed to derive the presentation profile
+        (MAIN/SHADOW) without trusting a stored label. No worker, provider, or
+        delivery work is performed here.
+        """
+        with self._operation() as conn:
+            cursor = conn.execute(
+                "SELECT run_id,state,state_version,created_at,updated_at,request_bytes "
+                "FROM app_runs ORDER BY created_at,run_id")
+            rows = cursor.fetchall()
+            history = []
+            for run_id, state, version, created, updated, request_bytes in rows:
+                self._verify_run_identity(conn, run_id, current=False)
+                if type(request_bytes) is not bytes:
+                    raise RunRepositoryError("run request bytes drift")
+                history.append({
+                    "run_id": _identity(run_id),
+                    "state": state,
+                    "state_version": version,
+                    "created_at": created,
+                    "updated_at": updated,
+                    "request_bytes": request_bytes,
+                })
+            return history
+
     def _verify_receipt_producer(self, conn, run_id, receipt, envelope, release_id):
         provenance = self._verify_release(conn, release_id, envelope.source_identity)
         if envelope.source_identity.kind != "GIT_COMMIT" or provenance[1] is None:
