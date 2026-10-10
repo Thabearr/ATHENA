@@ -126,6 +126,8 @@ APP01C_PREDECESSOR_SOURCE_BLOBS = {
 }
 
 INCIDENT_20261010_PREDECESSOR_BLOBS = {
+    "artifacts/product/data_01c_app_store_complete_v1.json":
+        "6727c011ead7da533a8af00ef4c4b352ea35492b",
     "domain/current_shadow_sportybet_pc_upcoming_reconciliation.py":
         "1aa242e6db460c66b388b1acfd43859d382c82f9",
     "scripts/audit_p4_4q_pc_upcoming_simple_tournament_identity.py":
@@ -155,6 +157,15 @@ INCIDENT_20261010_NEW_PATHS = {
     "tests/test_inc_20261010_pc_upcoming_bounded_epoch_stabilization.py",
     "tests/fixtures/core_01d/inc_20261010/pc-upcoming-reconciliation-predecessor.py.txt",
     "tests/fixtures/core_01d/inc_20261010/verify-p3-live-readiness-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/audit-p44q-simple-tournament-identity-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/audit-p44r-runtime-composition-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-current-shadow-pc-upcoming-reconciliation-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p3-e1-source-diagnostics-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p44n-team-label-shape-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p44o-stable-epoch-recovery-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p44o-stable-epoch-recovery-audit-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p44p-preparse-response-evidence-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p44q-simple-tournament-identity-predecessor.py.txt",
 }
 ALLOWED_PASS4_PATHS |= APP01C_BOUNDED_PATHS | APP01C_CURRENT_SOURCE_PATHS
 # Exact handoff ls-tree inventory excluding only the twelve bounded evidence
