@@ -52,6 +52,9 @@ MAX_CAPTURE_EPOCHS = 4
 MAX_PAGES_PER_EPOCH = MAX_PAGES
 MAX_SUCCESSFUL_PAGE_RESPONSES = MAX_CAPTURE_EPOCHS * MAX_PAGES_PER_EPOCH
 INTER_EPOCH_BACKOFF_SECONDS = 3
+LEGACY_RUNTIME_POLICY_SHA256 = "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
+LEGACY_MAX_CAPTURE_EPOCHS = 2
+LEGACY_MAX_SUCCESSFUL_PAGE_RESPONSES = 40
 TOTALNUM_DRIFT_ERROR = source.TOTALNUM_DRIFT_ERROR
 EVIDENCE_ROOT = source.EVIDENCE_ROOT
 ALLOWED_OUTPUT_RELATIVE = EVIDENCE_ROOT
@@ -228,7 +231,7 @@ def validate_contract() -> Mapping[str, Any]:
             raise PcUpcomingRuntimeReconciliationError(f"authority value {key} is not boolean")
     return MappingProxyType({
         "runtime_policy_id": POLICY_ID,
-        "runtime_policy_sha256": PINNED_POLICY_SHA256,
+        "runtime_policy_sha256": runtime_policy_sha256,
         "source_policy_id": UPSTREAM_SOURCE_POLICY_ID,
         "source_policy_sha256": UPSTREAM_SOURCE_POLICY_SHA256,
         "bridge_policy_id": BRIDGE_POLICY_ID,
@@ -432,7 +435,7 @@ def _write_raw_response_exclusive(path: Path, raw: bytes) -> None:
 
 def _parse_failure_receipt(
     *, attempt_index: int, response: Mapping[str, Any], exception_type: str,
-    exception_message: str,
+    exception_message: str, runtime_policy_sha256: str = PINNED_POLICY_SHA256,
 ) -> dict[str, Any]:
     payload = {
         "schema_version": 1,
@@ -675,23 +678,33 @@ def verify_runtime_capture_stabilization(
     semantic.pop("canonical_sha256", None)
     if embedded != hashlib.sha256(_canonical(semantic)).hexdigest():
         raise PcUpcomingRuntimeReconciliationError("runtime stabilization receipt SHA mismatch")
+    receipt_policy_sha256 = receipt.get("runtime_policy_sha256")
+    legacy_receipt = receipt_policy_sha256 == LEGACY_RUNTIME_POLICY_SHA256
+    if receipt_policy_sha256 not in {PINNED_POLICY_SHA256, LEGACY_RUNTIME_POLICY_SHA256}:
+        raise PcUpcomingRuntimeReconciliationError("runtime stabilization policy identity is not reviewed")
+    receipt_max_epochs = LEGACY_MAX_CAPTURE_EPOCHS if legacy_receipt else MAX_CAPTURE_EPOCHS
+    receipt_max_successful_pages = (
+        LEGACY_MAX_SUCCESSFUL_PAGE_RESPONSES if legacy_receipt
+        else MAX_SUCCESSFUL_PAGE_RESPONSES
+    )
+    current_only_fields = {
+        "inter_epoch_backoff_seconds",
+        "backoff_only_after_exact_totalnum_drift",
+        "no_capture_epoch_beyond_bound",
+        "provider_request_upper_bound",
+    }
     expected_base = _stabilization_base()
     for key, value in expected_base.items():
+        if legacy_receipt and key in current_only_fields:
+            continue
         if key not in receipt and key not in {"attempt_count", "accepted_attempt_index", "failed_attempt_indices", "attempt_receipts", "final_state"}:
             raise PcUpcomingRuntimeReconciliationError(f"runtime stabilization field is missing: {key}")
-    if (
+    common_policy_drift = (
         receipt.get("schema_version") != 1
         or receipt.get("runtime_policy_id") != POLICY_ID
-        or receipt.get("runtime_policy_sha256") != PINNED_POLICY_SHA256
         or receipt.get("source_v1_policy_id") != UPSTREAM_SOURCE_POLICY_ID
         or receipt.get("source_v1_policy_sha256") != UPSTREAM_SOURCE_POLICY_SHA256
-        or receipt.get("max_capture_epochs") != MAX_CAPTURE_EPOCHS
         or receipt.get("max_pages_per_epoch") != MAX_PAGES_PER_EPOCH
-        or receipt.get("max_successful_page_responses") != MAX_SUCCESSFUL_PAGE_RESPONSES
-        or receipt.get("inter_epoch_backoff_seconds") != INTER_EPOCH_BACKOFF_SECONDS
-        or receipt.get("backoff_only_after_exact_totalnum_drift") is not True
-        or receipt.get("no_capture_epoch_beyond_bound") is not True
-        or receipt.get("provider_request_upper_bound") != MAX_SUCCESSFUL_PAGE_RESPONSES
         or receipt.get("workflow_retry") is not False
         or receipt.get("per_page_transport_retry") is not False
         or receipt.get("pre_parse_raw_response_preservation") is not True
@@ -708,12 +721,28 @@ def verify_runtime_capture_stabilization(
         or receipt.get("portfolio_from_failed_attempt") is not False
         or receipt.get("delivery_from_failed_attempt") is not False
         or receipt.get("cross_epoch_event_merge") is not False
-    ):
+    )
+    if legacy_receipt:
+        generation_policy_drift = (
+            receipt.get("max_capture_epochs") != LEGACY_MAX_CAPTURE_EPOCHS
+            or receipt.get("max_successful_page_responses") != LEGACY_MAX_SUCCESSFUL_PAGE_RESPONSES
+            or any(key in receipt for key in current_only_fields)
+        )
+    else:
+        generation_policy_drift = (
+            receipt.get("max_capture_epochs") != MAX_CAPTURE_EPOCHS
+            or receipt.get("max_successful_page_responses") != MAX_SUCCESSFUL_PAGE_RESPONSES
+            or receipt.get("inter_epoch_backoff_seconds") != INTER_EPOCH_BACKOFF_SECONDS
+            or receipt.get("backoff_only_after_exact_totalnum_drift") is not True
+            or receipt.get("no_capture_epoch_beyond_bound") is not True
+            or receipt.get("provider_request_upper_bound") != MAX_SUCCESSFUL_PAGE_RESPONSES
+        )
+    if common_policy_drift or generation_policy_drift:
         raise PcUpcomingRuntimeReconciliationError("runtime stabilization policy or authority fields drifted")
     attempts = receipt.get("attempt_receipts")
     count = receipt.get("attempt_count")
-    if type(attempts) is not list or type(count) is not int or not 1 <= count <= MAX_CAPTURE_EPOCHS or len(attempts) != count:
-        raise PcUpcomingRuntimeReconciliationError("runtime capture epoch count is outside the pinned bound")
+    if type(attempts) is not list or type(count) is not int or not 1 <= count <= receipt_max_epochs or len(attempts) != count:
+        raise PcUpcomingRuntimeReconciliationError("runtime capture epoch count is outside the reviewed receipt bound")
     attempts_root = root / RUNTIME_ATTEMPTS_DIRECTORY
     if root.is_symlink() or attempts_root.is_symlink():
         raise PcUpcomingRuntimeReconciliationError("runtime evidence root must not contain symlinks")
@@ -883,6 +912,7 @@ def verify_runtime_capture_stabilization(
                         response=item,
                         exception_type=item["exception_type"],
                         exception_message=item["exception_message"],
+                        runtime_policy_sha256=receipt_policy_sha256,
                     )
                     if parse_failure_doc != expected_failure:
                         raise PcUpcomingRuntimeReconciliationError("parse-failure receipt fields differ from exact raw ancestry")
@@ -957,8 +987,8 @@ def verify_runtime_capture_stabilization(
         elif attempt_doc.get("manifest_canonical_sha256") is not None:
             raise PcUpcomingRuntimeReconciliationError("attempt receipt claims an absent manifest hash")
         attempt_documents[expected_index] = attempt_doc
-    if total_successful_pages > MAX_SUCCESSFUL_PAGE_RESPONSES:
-        raise PcUpcomingRuntimeReconciliationError("runtime successful page responses exceed the pinned request bound")
+    if total_successful_pages > receipt_max_successful_pages:
+        raise PcUpcomingRuntimeReconciliationError("runtime successful page responses exceed the reviewed receipt request bound")
     accepted_index = receipt.get("accepted_attempt_index")
     if accepted_index is None:
         if (root / "manifest.json").exists() or (root / "pages").exists():
@@ -969,11 +999,11 @@ def verify_runtime_capture_stabilization(
             raise PcUpcomingRuntimeReconciliationError("failed capture attempt unexpectedly has runtime authority")
         if receipt.get("final_state") == "FAILED_AFTER_EXACT_TOTALNUM_DRIFT":
             if (
-                count != MAX_CAPTURE_EPOCHS
+                count != receipt_max_epochs
                 or any(
                     attempt_documents[index].get("failure_message") != TOTALNUM_DRIFT_ERROR
                     or attempt_documents[index].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT"
-                    for index in range(1, MAX_CAPTURE_EPOCHS + 1)
+                    for index in range(1, receipt_max_epochs + 1)
                 )
             ):
                 raise PcUpcomingRuntimeReconciliationError(
@@ -993,7 +1023,7 @@ def verify_runtime_capture_stabilization(
         if receipt.get("failed_attempt_indices") != list(range(1, count + 1)):
             raise PcUpcomingRuntimeReconciliationError("failed terminal state does not identify every failed epoch")
     else:
-        if type(accepted_index) is not int or accepted_index != count or not 1 <= accepted_index <= MAX_CAPTURE_EPOCHS:
+        if type(accepted_index) is not int or accepted_index != count or not 1 <= accepted_index <= receipt_max_epochs:
             raise PcUpcomingRuntimeReconciliationError("accepted epoch index is outside the attempt sequence")
         if any(attempt_documents[index].get("accepted_by_runtime") for index in attempt_documents if index != accepted_index):
             raise PcUpcomingRuntimeReconciliationError("more than one capture epoch has runtime authority")
