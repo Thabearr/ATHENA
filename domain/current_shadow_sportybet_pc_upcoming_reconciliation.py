@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 from types import MappingProxyType, SimpleNamespace
 from typing import Any, Callable, Mapping, Sequence
 
@@ -47,9 +48,10 @@ MAX_SOURCE_AGE_SECONDS = legacy.MAX_SOURCE_AGE_SECONDS
 MINIMUM_LEAD_SECONDS = legacy.MINIMUM_LEAD_SECONDS
 MAX_PAGES = source.MAX_PAGES
 PAGE_SIZE = source.PAGE_SIZE
-MAX_CAPTURE_EPOCHS = 2
+MAX_CAPTURE_EPOCHS = 4
 MAX_PAGES_PER_EPOCH = MAX_PAGES
 MAX_SUCCESSFUL_PAGE_RESPONSES = MAX_CAPTURE_EPOCHS * MAX_PAGES_PER_EPOCH
+INTER_EPOCH_BACKOFF_SECONDS = 3
 TOTALNUM_DRIFT_ERROR = source.TOTALNUM_DRIFT_ERROR
 EVIDENCE_ROOT = source.EVIDENCE_ROOT
 ALLOWED_OUTPUT_RELATIVE = EVIDENCE_ROOT
@@ -136,8 +138,10 @@ def _policy_payload() -> dict[str, Any]:
             "max_pages_per_epoch": MAX_PAGES_PER_EPOCH,
             "max_successful_page_responses": MAX_SUCCESSFUL_PAGE_RESPONSES,
             "each_epoch_starts_at_page": 1,
+            "inter_epoch_backoff_seconds": INTER_EPOCH_BACKOFF_SECONDS,
+            "backoff_only_after_exact_totalnum_drift": True,
             "no_per_page_http_retry": True,
-            "no_third_capture_epoch": True,
+            "no_capture_epoch_beyond_bound": True,
             "failed_epoch_provider_absence_authority": False,
             "failed_epoch_identity_learning_authority": False,
             "failed_epoch_reconciliation_authority": False,
@@ -153,6 +157,7 @@ def _policy_payload() -> dict[str, Any]:
             "all_attempt_evidence_retained_under_source_evidence_root": True,
             "workflow_retry": False,
             "per_page_transport_retry": False,
+            "provider_request_upper_bound": MAX_SUCCESSFUL_PAGE_RESPONSES,
             "provider_request_upper_bound_is_finite": True,
         },
         "preparse_response_evidence": {
@@ -202,7 +207,7 @@ def calculate_policy_sha256() -> str:
     return hashlib.sha256(_canonical(_policy_payload())).hexdigest()
 
 
-PINNED_POLICY_SHA256 = "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
+PINNED_POLICY_SHA256 = "9dc0cfb362cf7008d28bcf029755b7361481b683e41155528f9607047773ceba"
 EXPECTED_CONTRACT_SHA256 = PINNED_POLICY_SHA256
 CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 = PINNED_POLICY_SHA256
 
@@ -956,20 +961,27 @@ def verify_runtime_capture_stabilization(
             raise PcUpcomingRuntimeReconciliationError("failed capture attempt unexpectedly has runtime authority")
         if receipt.get("final_state") == "FAILED_AFTER_EXACT_TOTALNUM_DRIFT":
             if (
-                count != 2
-                or attempt_documents[1].get("failure_message") != TOTALNUM_DRIFT_ERROR
-                or attempt_documents[2].get("failure_message") != TOTALNUM_DRIFT_ERROR
-                or attempt_documents[1].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT"
-                or attempt_documents[2].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT"
+                count != MAX_CAPTURE_EPOCHS
+                or any(
+                    attempt_documents[index].get("failure_message") != TOTALNUM_DRIFT_ERROR
+                    or attempt_documents[index].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT"
+                    for index in range(1, MAX_CAPTURE_EPOCHS + 1)
+                )
             ):
-                raise PcUpcomingRuntimeReconciliationError("two-epoch drift exhaustion does not match exact trigger semantics")
+                raise PcUpcomingRuntimeReconciliationError(
+                    "bounded drift exhaustion does not match exact trigger semantics"
+                )
         else:
             if receipt.get("final_state") not in {"FAILED_RUNTIME_INCOMPLETE", "FAILED_SOURCE_OR_EVIDENCE_ERROR"}:
                 raise PcUpcomingRuntimeReconciliationError("failed capture final state is not a reviewed terminal state")
-            if count == 2 and attempt_documents[1].get("failure_message") != TOTALNUM_DRIFT_ERROR:
-                raise PcUpcomingRuntimeReconciliationError("a second epoch exists without exact first-epoch total drift")
-            if any(item.get("failure_message") == TOTALNUM_DRIFT_ERROR for index, item in attempt_documents.items() if index > 1):
-                raise PcUpcomingRuntimeReconciliationError("second epoch drift was not classified as exhausted exact drift")
+            if count > 1 and any(
+                attempt_documents[index].get("failure_message") != TOTALNUM_DRIFT_ERROR
+                or attempt_documents[index].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT"
+                for index in range(1, count)
+            ):
+                raise PcUpcomingRuntimeReconciliationError(
+                    "fresh epoch exists without exact prior-epoch totalNum drift ancestry"
+                )
         if receipt.get("failed_attempt_indices") != list(range(1, count + 1)):
             raise PcUpcomingRuntimeReconciliationError("failed terminal state does not identify every failed epoch")
     else:
@@ -1005,10 +1017,14 @@ def verify_runtime_capture_stabilization(
             raise PcUpcomingRuntimeReconciliationError("top-level provider manifest is not the accepted epoch")
         if canonical_manifest_bytes != accepted_manifest_bytes:
             raise PcUpcomingRuntimeReconciliationError("top-level manifest bytes differ from the exact accepted epoch bytes")
-        if accepted_index == 2 and attempt_documents[1].get("failure_message") != TOTALNUM_DRIFT_ERROR:
-            raise PcUpcomingRuntimeReconciliationError("epoch 2 lacks exact epoch-1 drift trigger ancestry")
-        if accepted_index == 2 and attempt_documents[1].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT":
-            raise PcUpcomingRuntimeReconciliationError("epoch 2 prior attempt did not fail the exact reviewed drift state")
+        if accepted_index > 1 and any(
+            attempt_documents[index].get("failure_message") != TOTALNUM_DRIFT_ERROR
+            or attempt_documents[index].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT"
+            for index in range(1, accepted_index)
+        ):
+            raise PcUpcomingRuntimeReconciliationError(
+                "accepted fresh epoch lacks exact prior-epoch drift trigger ancestry"
+            )
         for page in manifest.pages:
             canonical_raw = (root / page.raw_relative_path).read_bytes()
             accepted_raw = (attempts_root / f"attempt-{accepted_index:03d}" / page.raw_relative_path).read_bytes()
@@ -1026,7 +1042,7 @@ def verify_runtime_capture_stabilization(
 def capture_current_pc_upcoming_discovery(
     *, repository_root: str | Path, execute_live_network: bool
 ) -> tuple[Path, source.PcUpcomingDiscoveryManifest]:
-    """Orchestrate at most two independent V1 epochs; accept only one complete epoch."""
+    """Orchestrate at most four independent V1 epochs; accept only one complete epoch."""
     validate_contract()
     if execute_live_network is not True:
         raise PcUpcomingRuntimeReconciliationError(
@@ -1200,7 +1216,7 @@ def capture_current_pc_upcoming_discovery(
                 accepted=False,
             )
             attempt_receipts[attempt_index] = receipt
-            should_start_fresh_epoch = exact_drift and attempt_index == 1
+            should_start_fresh_epoch = exact_drift and attempt_index < MAX_CAPTURE_EPOCHS
             final_state = (
                 "WAITING_FOR_ONE_FRESH_EPOCH_AFTER_EXACT_TOTALNUM_DRIFT"
                 if should_start_fresh_epoch
@@ -1218,10 +1234,11 @@ def capture_current_pc_upcoming_discovery(
                 final_state=final_state,
             )
             if should_start_fresh_epoch:
+                time.sleep(INTER_EPOCH_BACKOFF_SECONDS)
                 continue
             if exact_drift and attempt_index == MAX_CAPTURE_EPOCHS:
                 raise PcUpcomingRuntimeReconciliationError(
-                    f"{INCOMPLETE_PAGINATION_STATE}: both allowed capture epochs failed to produce one internally stable complete V1 manifest; epoch 1 and epoch 2 each ended with exact cross-page totalNum drift"
+                    f"{INCOMPLETE_PAGINATION_STATE}: all {MAX_CAPTURE_EPOCHS} allowed capture epochs failed to produce one internally stable complete V1 manifest; every epoch ended with exact cross-page totalNum drift"
                 ) from exc
             if incomplete:
                 raise PcUpcomingRuntimeReconciliationError(
