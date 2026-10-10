@@ -78,7 +78,37 @@ sha256 = lambda raw: hashlib.sha256(raw).hexdigest()
 seal, canonical_bytes = retention.seal, retention.canonical_bytes
 require = retention.require
 
+INCIDENT_20261010_PREDECESSOR_SOURCES = {
+ 'domain/current_shadow_sportybet_pc_upcoming_reconciliation.py': (
+  'tests/fixtures/core_01d/inc_20261010/pc-upcoming-reconciliation-predecessor.py.txt',
+  '1aa242e6db460c66b388b1acfd43859d382c82f9',
+ ),
+ 'scripts/verify_p3_0_e1_live_readiness.py': (
+  'tests/fixtures/core_01d/inc_20261010/verify-p3-live-readiness-predecessor.py.txt',
+  '968781d51a3d2b2a7ebb6aa85d998ba888aa47dc',
+ ),
+}
+
+def _incident_predecessor_source(path):
+ fixture, expected_blob = INCIDENT_20261010_PREDECESSOR_SOURCES[path]
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ latest = a2.authenticate_inventory()
+ current = (ROOT / path).read_bytes()
+ current_rows = {row['path']: row for row in latest['source_identities']}
+ row = current_rows.get(path)
+ require(row is not None, 'incident successor source is absent from current A2 inventory: ' + path)
+ require(
+  sha256(current.replace(b'\r\n', b'\n')) == row['lf_source_sha256'],
+  'incident successor current source differs from authenticated A2 bytes: ' + path,
+ )
+ raw = (ROOT / fixture).read_bytes()
+ actual_blob = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+ require(actual_blob == expected_blob, 'incident predecessor fixture identity drift: ' + path)
+ return raw
+
 def source_bytes(path):
+ if path in INCIDENT_20261010_PREDECESSOR_SOURCES:
+  return _incident_predecessor_source(path)
  if path=='tests/conftest.py':
   from scripts import audit_core_01d_ci_offline_transport_boundary as a2
   a2.authenticate_inventory()
