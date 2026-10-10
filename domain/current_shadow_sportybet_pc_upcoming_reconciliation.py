@@ -1367,9 +1367,19 @@ class CurrentShadowPcUpcomingReconciliationBundle:
     def matched_rows(self):
         return self._legacy_bundle.matched_rows
 
+    def _runtime_policy_identity(self) -> str:
+        value = self.__dict__.get("runtime_policy_sha256")
+        if value is None:
+            value = getattr(self._legacy_bundle, "contract_sha256", PINNED_POLICY_SHA256)
+        if value not in {PINNED_POLICY_SHA256, LEGACY_RUNTIME_POLICY_SHA256}:
+            raise PcUpcomingRuntimeReconciliationError(
+                "reconciliation bundle runtime policy identity is not reviewed"
+            )
+        return value
+
     @property
     def contract_sha256(self) -> str:
-        return self.runtime_policy_sha256
+        return self._runtime_policy_identity()
 
     @property
     def canonical_sha256(self) -> str:
@@ -1381,7 +1391,7 @@ class CurrentShadowPcUpcomingReconciliationBundle:
             "dataset_name": "athena-current-shadow-pc-upcoming-runtime-reconciliation-v1",
             "status": STATUS,
             "runtime_policy_id": POLICY_ID,
-            "runtime_policy_sha256": self.runtime_policy_sha256,
+            "runtime_policy_sha256": self._runtime_policy_identity(),
             "source_policy_id": UPSTREAM_SOURCE_POLICY_ID,
             "source_policy_sha256": UPSTREAM_SOURCE_POLICY_SHA256,
             "manifest_sha256": self.manifest.canonical_sha256,
