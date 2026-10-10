@@ -1312,6 +1312,16 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
                 get_run_by_id=get_run_by_id,
                 get_run_jobs=cached_jobs,
             )
+            if run.get("status") != "completed":
+                # A continuity dispatch that has not completed has no canonical
+                # artifact yet, so the frozen engine can only emit
+                # INCOMPLETE_NOT_EVIDENCE with nominal_slot_utc=None.  Defer it
+                # here (after the fail-closed provenance replay above) so the
+                # post-audit nominal-slot check below never compares None
+                # against the authenticated target.  Returning True leaves the
+                # run visible to the frozen audit as an incomplete candidate.
+                projected_continuities.pop(run_id, None)
+                return True
             if run.get("status") == "completed" and run.get("conclusion") == "success":
                 continuity_artifacts = cached_artifacts(run_id)
                 try:
