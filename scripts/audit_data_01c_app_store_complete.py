@@ -324,14 +324,16 @@ def audit(latest=None):
                 or value.get("canonical_sha256") != "c9be3cc4c74fea16c9f97c0db3fe7b54d9e12373fc5787d46677f36276f7441d"
                 or hashlib.sha256(canonical({key: row for key, row in value.items()
                                              if key != "canonical_sha256"})).hexdigest() != value["canonical_sha256"]):
-            raise AssertionError("immutable D5 predecessor receipt mismatch")
+            raise AssertionError("D5 source receipt immutable predecessor mismatch")
         for key in set(value) - {"canonical_sha256", "source_identities", "a2_inventory", "a2_predecessor"}:
             if rebuilt.get(key) != value[key]:
                 raise AssertionError("D5 predecessor semantics changed: " + key)
         frozen = {row["path"]: row["lf_sha256"] for row in value["source_identities"]}
         current = {row["path"]: row["lf_sha256"] for row in rebuilt["source_identities"]}
         evolved = {"database/run_repository.py", "scripts/audit_data_01b_durable_run_state.py",
-                   "scripts/audit_data_01c_app_store_complete.py", "tests/test_data_01c_app_storage.py"}
+                   "scripts/audit_data_01c_app_store_complete.py", "tests/test_data_01c_app_storage.py",
+                   "scripts/audit_checkpoint_e_workflows.py", "scripts/audit_data_01c_restore_portability.py",
+                   "tests/test_core_01d_exact_pr_trigger_disposition_b1.py"}
         inventory = boundary.authenticate_inventory()
         identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
         if (set(current) != set(frozen)

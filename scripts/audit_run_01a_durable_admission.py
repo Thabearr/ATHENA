@@ -3,6 +3,7 @@ from pathlib import Path
 import argparse
 import hashlib
 import json
+import base64
 
 ROOT = Path(__file__).resolve().parents[1]
 RECEIPT = "artifacts/product/run_01a_durable_admission_v1.json"
@@ -16,6 +17,10 @@ SOURCES = (
     "scripts/audit_run_01a_durable_admission.py",
     "tests/test_run_01a_durable_admission.py",
     "tests/test_data_01c_app_storage.py",
+    "tests/test_core_01d_exact_pr_trigger_disposition_b1.py",
+    "scripts/audit_checkpoint_e_workflows.py",
+    "scripts/audit_data_01c_restore_portability.py",
+    "tests/fixtures/core_01d/run_01a_historical/d5_run_previews.py.b64",
     "tests/fixtures/core_01d/run_01a_historical/d3_run_desktop.py.b64",
 )
 
@@ -39,7 +44,7 @@ def build_receipt():
         "base_main_sha": "74b07c74a946fd19a63f5695055b09668268aef2",
         "post_d5_tests_run": 38013673204,
         "predecessors": predecessors,
-        "a2_successor_generation": 116,
+        "a2_successor_generation": 117,
         "ordering": "ATOMIC_ADMISSION_COMMIT_BEFORE_ATTEMPT_STAGING_OR_LAUNCH",
         "replay": "SAME_COMMITTED_IDENTITY_NO_SECOND_LAUNCH_INCLUDING_AFTER_EXPIRY_AND_RESTART",
         "launch_failure": "COMMIT_RETAINED_OWNED_ATTEMPT_BEST_EFFORT_INTERRUPTED_NO_RETRY",
@@ -65,7 +70,23 @@ def authenticate_successor():
         raise AssertionError("E1 requires A2 V116 successor")
     if (ROOT / RECEIPT).read_bytes() != canonical(build_receipt()):
         raise AssertionError("E1 source evidence drift")
-    return set(SOURCES) | {RECEIPT, "docs/product/run_01a_durable_admission.md"}
+    return {RECEIPT, "docs/product/run_01a_durable_admission.md",
+            "services/athena_job_service.py", "scripts/audit_run_01a_durable_admission.py",
+            "tests/test_run_01a_durable_admission.py",
+            "tests/fixtures/core_01d/run_01a_historical/d3_run_desktop.py.b64",
+            "tests/fixtures/core_01d/run_01a_historical/d5_run_previews.py.b64"}
+
+def predecessor_admission_source():
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    payload = base64.b64decode((ROOT / "tests/fixtures/core_01d/run_01a_historical/d5_run_previews.py.b64").read_bytes(), validate=True)
+    inventory = boundary.read_generation(boundary.inventory_generation_path(115))
+    if inventory["canonical_sha256"] != "aace476979f237523997ab8761ddcf6d27bf24b83be861d2d8ba4927116e30c8":
+        raise AssertionError("E1 admission predecessor inventory mismatch")
+    expected = next(row["lf_source_sha256"] for row in inventory["source_identities"]
+                    if row["path"] == "api/v1/run_previews.py")
+    if hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() != expected:
+        raise AssertionError("E1 admission predecessor bytes mismatch")
+    return payload
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

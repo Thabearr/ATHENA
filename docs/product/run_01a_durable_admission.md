@@ -23,6 +23,6 @@ durable projections. Cancel intent does not control a process. Existing D5
 fixture/export ports and all historical receipts remain unchanged.
 
 Evidence: `artifacts/product/run_01a_durable_admission_v1.json`, append-only
-A2 V116 candidate, and focused offline tests. Hosted exact-head Tests and
+A2 V116 plus its append-only V117 integration-guard successor, and focused offline tests. Hosted exact-head Tests and
 automatic PORT-02C results (if triggered) are separate required review gates.
 Source review counter remains 0/5 until owner-authorized merge.
