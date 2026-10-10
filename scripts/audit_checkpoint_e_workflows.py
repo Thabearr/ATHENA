@@ -185,14 +185,59 @@ PASS_A_HISTORICAL_SOURCE_FIXTURES = {
 INCIDENT_20261010_PREDECESSOR_BLOBS = {
     "domain/current_shadow_sportybet_pc_upcoming_reconciliation.py":
         "1aa242e6db460c66b388b1acfd43859d382c82f9",
+    "scripts/audit_p4_4q_pc_upcoming_simple_tournament_identity.py":
+        "45b046ad0e6f44823561fe39ab43d03b80c2eab5",
+    "scripts/audit_p4_4r_shadow_runtime_composition_stabilization.py":
+        "ac9c320157b4230288203e67c3e31df9914ad5b8",
     "scripts/verify_p3_0_e1_live_readiness.py":
         "968781d51a3d2b2a7ebb6aa85d998ba888aa47dc",
+    "tests/test_current_shadow_sportybet_pc_upcoming_reconciliation.py":
+        "81d71a20f0dcca8204eeb7b8d8a9c6b268f09ef5",
+    "tests/test_p3_0_e1_source_diagnostics_auditor.py":
+        "ddf261c7bbda34331dc5590ba68fbbf4d6a3ee81",
+    "tests/test_p4_4n_sportybet_team_label_shape_compatibility.py":
+        "5bef37d4a8f25b9c693441c089ca723b7ee0bdd2",
+    "tests/test_p4_4o_pc_upcoming_stable_epoch_recovery.py":
+        "3e16c2df91f4fab539bca51b5bd9d077b15d1fec",
+    "tests/test_p4_4o_pc_upcoming_stable_epoch_recovery_audit.py":
+        "6725e92b83c55bc8d510f3177d0fc6f8e50df051",
+    "tests/test_p4_4p_pc_upcoming_preparse_response_evidence.py":
+        "1355855d4427d401307f9d02ff60e5439eb7424f",
+    "tests/test_p4_4q_pc_upcoming_simple_tournament_identity.py":
+        "7bb5659ee6020c0c9f36ff105297c5048c9f83d7",
 }
+INCIDENT_20261010_PREDECESSOR_FIXTURES = {
+    "domain/current_shadow_sportybet_pc_upcoming_reconciliation.py":
+        "tests/fixtures/core_01d/inc_20261010/pc-upcoming-reconciliation-predecessor.py.txt",
+    "scripts/verify_p3_0_e1_live_readiness.py":
+        "tests/fixtures/core_01d/inc_20261010/verify-p3-live-readiness-predecessor.py.txt",
+}
+_INCIDENT_20261010_CURRENT_AUTHENTICATED = False
+
+
+def _authenticate_incident_20261010_current_sources():
+    global _INCIDENT_20261010_CURRENT_AUTHENTICATED
+    if _INCIDENT_20261010_CURRENT_AUTHENTICATED:
+        return
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    latest = a2.authenticate_inventory()
+    rows = {row["path"]: row for row in latest["source_identities"]}
+    for path in INCIDENT_20261010_PREDECESSOR_BLOBS:
+        row = rows.get(path)
+        require(row is not None, "incident successor source is absent from current A2 inventory: " + path)
+        raw = (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
+        require(
+            sha(raw) == row["lf_source_sha256"],
+            "incident successor source differs from authenticated A2 bytes: " + path,
+        )
+    _INCIDENT_20261010_CURRENT_AUTHENTICATED = True
 
 
 def _incident_20261010_predecessor_source(path):
-    from scripts import audit_core_01d_authority_reachability_review_a as pass_a
-    raw = pass_a.source_bytes(path)
+    _authenticate_incident_20261010_current_sources()
+    fixture = INCIDENT_20261010_PREDECESSOR_FIXTURES.get(path)
+    require(fixture is not None, "incident predecessor bytes are not retained for: " + path)
+    raw = (ROOT / fixture).read_bytes().replace(b"\r\n", b"\n")
     expected = INCIDENT_20261010_PREDECESSOR_BLOBS[path]
     actual = hashlib.sha1(
         b"blob " + str(len(raw)).encode() + b"\0" + raw
@@ -225,7 +270,7 @@ def seal(value):
 
 
 def read(path):
-    if path in INCIDENT_20261010_PREDECESSOR_BLOBS:
+    if path in INCIDENT_20261010_PREDECESSOR_FIXTURES:
         return _incident_20261010_predecessor_source(path)
     if path in PASS_A_HISTORICAL_SOURCE_FIXTURES:
         fixture = PASS_A_HISTORICAL_SOURCE_FIXTURES[path]
@@ -323,13 +368,9 @@ def git_inventory():
     for path, blob in a2.HISTORICAL_TEST_BLOBS.items():
         require(path in result, "historical test source missing: " + path)
         result[path]["git_blob_sha1"] = blob
+    _authenticate_incident_20261010_current_sources()
     for path, blob in INCIDENT_20261010_PREDECESSOR_BLOBS.items():
-        raw = _incident_20261010_predecessor_source(path)
         require(path in result, "incident predecessor source missing: " + path)
-        require(
-            hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() == blob,
-            "incident predecessor source projection drift: " + path,
-        )
         result[path]["git_blob_sha1"] = blob
     return result
 
@@ -608,7 +649,7 @@ def base_input():
         if path in a2.HISTORICAL_TEST_BLOBS:
             actual = a2.HISTORICAL_TEST_BLOBS[path]
         if path in INCIDENT_20261010_PREDECESSOR_BLOBS:
-            _incident_20261010_predecessor_source(path)
+            _authenticate_incident_20261010_current_sources()
             actual = INCIDENT_20261010_PREDECESSOR_BLOBS[path]
         from scripts.core_01d_historical_source import identities
         from scripts import audit_data_01c_restore_portability as d5
