@@ -542,7 +542,7 @@ def test_all_pinned_policy_hashes_and_receipts_are_validated() -> None:
     assert source.calculate_policy_sha256() == source.PINNED_POLICY_SHA256 == "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5"
 
     runtime_payload = runtime._policy_payload()
-    assert runtime.calculate_policy_sha256() == runtime.PINNED_POLICY_SHA256 == "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
+    assert runtime.calculate_policy_sha256() == runtime.PINNED_POLICY_SHA256 == "9dc0cfb362cf7008d28bcf029755b7361481b683e41155528f9607047773ceba"
 
     assert bridge.calculate_policy_sha256() == bridge.PINNED_POLICY_SHA256 == "c3f05e5ea6ce08c392ec13d1b39d40dd8dd177e5a73f3660605c359705719858"
     assert identity_v2.REGISTRY_SHA256 == identity_v2.registry_sha256() == "149b7b61213e33ee85f030d3e567966e5f79df6bea4e138d54d638c76d5e8156"
