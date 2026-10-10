@@ -99,6 +99,15 @@ INCIDENT_20261010_NEW_PATHS={
  'tests/test_inc_20261010_pc_upcoming_bounded_epoch_stabilization.py',
  'tests/fixtures/core_01d/inc_20261010/pc-upcoming-reconciliation-predecessor.py.txt',
  'tests/fixtures/core_01d/inc_20261010/verify-p3-live-readiness-predecessor.py.txt',
+ 'tests/fixtures/core_01d/inc_20261010/audit-p44q-simple-tournament-identity-predecessor.py.txt',
+ 'tests/fixtures/core_01d/inc_20261010/audit-p44r-runtime-composition-predecessor.py.txt',
+ 'tests/fixtures/core_01d/inc_20261010/test-current-shadow-pc-upcoming-reconciliation-predecessor.py.txt',
+ 'tests/fixtures/core_01d/inc_20261010/test-p3-e1-source-diagnostics-predecessor.py.txt',
+ 'tests/fixtures/core_01d/inc_20261010/test-p44n-team-label-shape-predecessor.py.txt',
+ 'tests/fixtures/core_01d/inc_20261010/test-p44o-stable-epoch-recovery-predecessor.py.txt',
+ 'tests/fixtures/core_01d/inc_20261010/test-p44o-stable-epoch-recovery-audit-predecessor.py.txt',
+ 'tests/fixtures/core_01d/inc_20261010/test-p44p-preparse-response-evidence-predecessor.py.txt',
+ 'tests/fixtures/core_01d/inc_20261010/test-p44q-simple-tournament-identity-predecessor.py.txt',
 }
 INCIDENT_20261010_CURRENT_PATHS=set(INCIDENT_20261010_PREDECESSOR_BLOBS)|INCIDENT_20261010_NEW_PATHS
 
