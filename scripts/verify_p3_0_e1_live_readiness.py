@@ -239,19 +239,21 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
     ):
         raise P30LiveReadinessError("Check F failed: international bridge ancestry drifted")
     if identities["runtime_policy_id"] != upcoming.POLICY_ID or identities["runtime_policy_sha256"] != (
-        "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
+        "9dc0cfb362cf7008d28bcf029755b7361481b683e41155528f9607047773ceba"
     ) or identities["pagination_complete_required"] is not True:
         raise P30LiveReadinessError("Check F failed: runtime wrapper or completeness rule drifted")
     stabilization = upcoming._policy_payload().get("capture_stabilization", {})
     if stabilization != {
         "recovery_semantics": "FRESH_CAPTURE_EPOCH_AFTER_EXACT_CROSS_PAGE_TOTALNUM_DRIFT",
         "exact_first_epoch_trigger": upcoming.TOTALNUM_DRIFT_ERROR,
-        "max_capture_epochs": 2,
+        "max_capture_epochs": 4,
         "max_pages_per_epoch": 20,
-        "max_successful_page_responses": 40,
+        "max_successful_page_responses": 80,
         "each_epoch_starts_at_page": 1,
+        "inter_epoch_backoff_seconds": 3,
+        "backoff_only_after_exact_totalnum_drift": True,
         "no_per_page_http_retry": True,
-        "no_third_capture_epoch": True,
+        "no_capture_epoch_beyond_bound": True,
         "failed_epoch_provider_absence_authority": False,
         "failed_epoch_identity_learning_authority": False,
         "failed_epoch_reconciliation_authority": False,
@@ -267,6 +269,7 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
         "all_attempt_evidence_retained_under_source_evidence_root": True,
         "workflow_retry": False,
         "per_page_transport_retry": False,
+        "provider_request_upper_bound": 80,
         "provider_request_upper_bound_is_finite": True,
     }:
         raise P30LiveReadinessError("Check F failed: stable-epoch recovery bounds drifted")
