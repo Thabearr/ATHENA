@@ -265,7 +265,10 @@ CONTRACTS = {
 
 
 def edge_classification(name, trigger, edge):
- text=(ROOT/edge['path']).read_text().splitlines()[edge['line']-1].strip()
+ # Classify the same authenticated source bytes that produced the historical
+ # edge inventory. Current incident-successor bytes are authenticated first by
+ # source_bytes(), then projected to their immutable predecessor for Pass-A.
+ text=source_bytes(edge['path']).decode('utf-8').splitlines()[edge['line']-1].strip()
  if edge['discovery_kind']=='REPOSITORY_CALLEE_BINDING': return 'CALLEE_IMPORT_CAPABILITY_ONLY_NOT_AUTHORITY_OR_EXECUTION'
  if text.startswith('#') or re.search(r'[\"\'](?:wager_placed|wallet|staking|share_code_generation)[\"\']\s*:\s*False',text): return 'SOURCE_GUARD_OR_DECLARATIVE_DENIAL_NOT_SIDE_EFFECT'
  if edge['step'] in ('upload_receipt','reviewed_upload'): return 'EXACT_VERIFIED_EXISTING_RELEASE_RECEIPT_WRITE'
