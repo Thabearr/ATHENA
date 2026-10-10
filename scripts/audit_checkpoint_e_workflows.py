@@ -182,6 +182,24 @@ PASS_A_HISTORICAL_SOURCE_FIXTURES = {
     "tests/test_product_baseline_v1.py": "tests/fixtures/core_01d/app_01c_historical/test_product_baseline_v1.py.txt",
 }
 
+INCIDENT_20261010_PREDECESSOR_BLOBS = {
+    "domain/current_shadow_sportybet_pc_upcoming_reconciliation.py":
+        "1aa242e6db460c66b388b1acfd43859d382c82f9",
+    "scripts/verify_p3_0_e1_live_readiness.py":
+        "968781d51a3d2b2a7ebb6aa85d998ba888aa47dc",
+}
+
+
+def _incident_20261010_predecessor_source(path):
+    from scripts import audit_core_01d_authority_reachability_review_a as pass_a
+    raw = pass_a.source_bytes(path)
+    expected = INCIDENT_20261010_PREDECESSOR_BLOBS[path]
+    actual = hashlib.sha1(
+        b"blob " + str(len(raw)).encode() + b"\0" + raw
+    ).hexdigest()
+    require(actual == expected, "incident predecessor source identity drift: " + path)
+    return raw
+
 
 def require(value, message):
     if not value:
@@ -207,6 +225,8 @@ def seal(value):
 
 
 def read(path):
+    if path in INCIDENT_20261010_PREDECESSOR_BLOBS:
+        return _incident_20261010_predecessor_source(path)
     if path in PASS_A_HISTORICAL_SOURCE_FIXTURES:
         fixture = PASS_A_HISTORICAL_SOURCE_FIXTURES[path]
         raw = (ROOT / fixture).read_bytes()
@@ -302,6 +322,14 @@ def git_inventory():
     a2.authenticate_inventory()
     for path, blob in a2.HISTORICAL_TEST_BLOBS.items():
         require(path in result, "historical test source missing: " + path)
+        result[path]["git_blob_sha1"] = blob
+    for path, blob in INCIDENT_20261010_PREDECESSOR_BLOBS.items():
+        raw = _incident_20261010_predecessor_source(path)
+        require(path in result, "incident predecessor source missing: " + path)
+        require(
+            hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() == blob,
+            "incident predecessor source projection drift: " + path,
+        )
         result[path]["git_blob_sha1"] = blob
     return result
 
@@ -579,6 +607,9 @@ def base_input():
             actual = PASS_A_HISTORICAL_SOURCE_BLOBS[path]
         if path in a2.HISTORICAL_TEST_BLOBS:
             actual = a2.HISTORICAL_TEST_BLOBS[path]
+        if path in INCIDENT_20261010_PREDECESSOR_BLOBS:
+            _incident_20261010_predecessor_source(path)
+            actual = INCIDENT_20261010_PREDECESSOR_BLOBS[path]
         from scripts.core_01d_historical_source import identities
         from scripts import audit_data_01c_restore_portability as d5
         if path in identities() or path in d5.snapshot()["sources"]:
@@ -589,6 +620,7 @@ def base_input():
             else fresh_workflow_after_blob if path == fresh_workflow_path and fresh_workflow_after_blob
             else supporting_source_blobs[path] if path in supporting_source_blobs
             else PASS_A_HISTORICAL_SOURCE_BLOBS[path] if path in PASS_A_HISTORICAL_SOURCE_FIXTURES
+            else INCIDENT_20261010_PREDECESSOR_BLOBS[path] if path in INCIDENT_20261010_PREDECESSOR_BLOBS
             else value["files"][path]["git_blob_sha1"]
         )
         require(actual == expected_blob, f"worktree source differs: {path}")
