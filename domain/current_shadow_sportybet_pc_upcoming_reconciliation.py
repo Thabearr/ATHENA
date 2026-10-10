@@ -1354,6 +1354,7 @@ class CurrentShadowPcUpcomingReconciliationBundle:
     manifest: source.PcUpcomingDiscoveryManifest
     repository_root: Path
     stabilization_sha256: str
+    runtime_policy_sha256: str
 
     def __init__(self, *_args: Any, **_kwargs: Any) -> None:
         raise PcUpcomingRuntimeReconciliationError("runtime reconciliation bundles are builder-only")
@@ -1368,7 +1369,7 @@ class CurrentShadowPcUpcomingReconciliationBundle:
 
     @property
     def contract_sha256(self) -> str:
-        return PINNED_POLICY_SHA256
+        return self.runtime_policy_sha256
 
     @property
     def canonical_sha256(self) -> str:
@@ -1380,7 +1381,7 @@ class CurrentShadowPcUpcomingReconciliationBundle:
             "dataset_name": "athena-current-shadow-pc-upcoming-runtime-reconciliation-v1",
             "status": STATUS,
             "runtime_policy_id": POLICY_ID,
-            "runtime_policy_sha256": PINNED_POLICY_SHA256,
+            "runtime_policy_sha256": self.runtime_policy_sha256,
             "source_policy_id": UPSTREAM_SOURCE_POLICY_ID,
             "source_policy_sha256": UPSTREAM_SOURCE_POLICY_SHA256,
             "manifest_sha256": self.manifest.canonical_sha256,
@@ -1579,7 +1580,8 @@ def _build(
     snapshot = legacy._identity_state_snapshot()
     object.__setattr__(rebuilt, "_fixture_stable_identity_state_sha256", legacy._identity_state_sha256(snapshot))
     object.__setattr__(rebuilt, "_fixture_stable_identity_state_snapshot", snapshot)
-    object.__setattr__(rebuilt, "contract_sha256", PINNED_POLICY_SHA256)
+    effective_runtime_policy_sha256 = stabilization["runtime_policy_sha256"]
+    object.__setattr__(rebuilt, "contract_sha256", effective_runtime_policy_sha256)
     object.__setattr__(rebuilt, "dataset_name", "athena-current-shadow-pc-upcoming-runtime-reconciliation-v1")
     object.__setattr__(rebuilt, "status", STATUS)
     bundle = object.__new__(CurrentShadowPcUpcomingReconciliationBundle)
@@ -1587,6 +1589,7 @@ def _build(
     object.__setattr__(bundle, "manifest", manifest)
     object.__setattr__(bundle, "repository_root", repository_root)
     object.__setattr__(bundle, "stabilization_sha256", stabilization["canonical_sha256"])
+    object.__setattr__(bundle, "runtime_policy_sha256", effective_runtime_policy_sha256)
     return bundle
 
 
