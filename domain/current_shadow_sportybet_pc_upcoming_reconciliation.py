@@ -558,6 +558,10 @@ def _stabilization_base() -> dict[str, Any]:
         "max_capture_epochs": MAX_CAPTURE_EPOCHS,
         "max_pages_per_epoch": MAX_PAGES_PER_EPOCH,
         "max_successful_page_responses": MAX_SUCCESSFUL_PAGE_RESPONSES,
+        "inter_epoch_backoff_seconds": INTER_EPOCH_BACKOFF_SECONDS,
+        "backoff_only_after_exact_totalnum_drift": True,
+        "no_capture_epoch_beyond_bound": True,
+        "provider_request_upper_bound": MAX_SUCCESSFUL_PAGE_RESPONSES,
         "attempt_count": 0,
         "accepted_attempt_index": None,
         "failed_attempt_indices": [],
@@ -684,6 +688,10 @@ def verify_runtime_capture_stabilization(
         or receipt.get("max_capture_epochs") != MAX_CAPTURE_EPOCHS
         or receipt.get("max_pages_per_epoch") != MAX_PAGES_PER_EPOCH
         or receipt.get("max_successful_page_responses") != MAX_SUCCESSFUL_PAGE_RESPONSES
+        or receipt.get("inter_epoch_backoff_seconds") != INTER_EPOCH_BACKOFF_SECONDS
+        or receipt.get("backoff_only_after_exact_totalnum_drift") is not True
+        or receipt.get("no_capture_epoch_beyond_bound") is not True
+        or receipt.get("provider_request_upper_bound") != MAX_SUCCESSFUL_PAGE_RESPONSES
         or receipt.get("workflow_retry") is not False
         or receipt.get("per_page_transport_retry") is not False
         or receipt.get("pre_parse_raw_response_preservation") is not True
@@ -1218,7 +1226,7 @@ def capture_current_pc_upcoming_discovery(
             attempt_receipts[attempt_index] = receipt
             should_start_fresh_epoch = exact_drift and attempt_index < MAX_CAPTURE_EPOCHS
             final_state = (
-                "WAITING_FOR_ONE_FRESH_EPOCH_AFTER_EXACT_TOTALNUM_DRIFT"
+                "WAITING_FOR_FRESH_EPOCH_AFTER_EXACT_TOTALNUM_DRIFT"
                 if should_start_fresh_epoch
                 else "FAILED_AFTER_EXACT_TOTALNUM_DRIFT"
                 if exact_drift
