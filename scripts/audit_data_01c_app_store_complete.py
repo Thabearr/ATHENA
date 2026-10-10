@@ -315,8 +315,32 @@ def boundary_resource_resolver():
 
 
 def audit(latest=None):
-    expected = canonical(build_receipt(latest=latest))
+    rebuilt = build_receipt(latest=latest)
+    expected = canonical(rebuilt)
     raw = (ROOT / RECEIPT).read_bytes()
+    if rebuilt["a2_inventory"]["generation"] >= 116:
+        value = json.loads(raw)
+        if (raw != canonical(value)
+                or value.get("canonical_sha256") != "c9be3cc4c74fea16c9f97c0db3fe7b54d9e12373fc5787d46677f36276f7441d"
+                or hashlib.sha256(canonical({key: row for key, row in value.items()
+                                             if key != "canonical_sha256"})).hexdigest() != value["canonical_sha256"]):
+            raise AssertionError("D5 source receipt immutable predecessor mismatch")
+        for key in set(value) - {"canonical_sha256", "source_identities", "a2_inventory", "a2_predecessor"}:
+            if rebuilt.get(key) != value[key]:
+                raise AssertionError("D5 predecessor semantics changed: " + key)
+        frozen = {row["path"]: row["lf_sha256"] for row in value["source_identities"]}
+        current = {row["path"]: row["lf_sha256"] for row in rebuilt["source_identities"]}
+        evolved = {"database/run_repository.py", "scripts/audit_data_01b_durable_run_state.py",
+                   "scripts/audit_data_01c_app_store_complete.py", "tests/test_data_01c_app_storage.py",
+                   "scripts/audit_checkpoint_e_workflows.py", "scripts/audit_data_01c_restore_portability.py",
+                   "tests/test_core_01d_exact_pr_trigger_disposition_b1.py"}
+        inventory = boundary.authenticate_inventory()
+        identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
+        if (set(current) != set(frozen)
+                or any(digest != frozen[path] and (path not in evolved or identities.get(path) != digest)
+                       for path, digest in current.items())):
+            raise AssertionError("unreviewed D5 source evolution")
+        return value
     if raw != expected:
         raise AssertionError("D5 source receipt does not match exact current sources")
     value = json.loads(raw)
@@ -337,16 +361,20 @@ def authenticate_successor():
             or value.get("successor_source_paths") != sorted(SUCCESSOR_SOURCE_PATHS)
             or value.get("policy_id") != "ATHENA_DATA_01C_STORAGE_READY_PROJECTIONS_SOURCE_BLOCKED_V1"
             or value.get("a2_inventory") != {
-                "generation": latest["generation"],
-                "path": boundary.inventory_generation_path(latest["generation"]),
-                "canonical_sha256": latest.get("canonical_sha256")}
+                "generation": min(latest["generation"], 115),
+                "path": boundary.inventory_generation_path(min(latest["generation"], 115)),
+                "canonical_sha256": boundary.read_generation(boundary.inventory_generation_path(min(latest["generation"], 115)))["canonical_sha256"]}
             or value.get("projection_source", {}).get("typed_disposition") != "SOURCE_CONTRACT_UNAVAILABLE"
             or value.get("projection_source", {}).get("coverage_disposition") != "COVERAGE_UNAVAILABLE"
             or value.get("projection_source", {}).get("materialized_verified_rows") != 0):
         raise AssertionError("D5 successor receipt is not the exact source-blocked A2 successor record")
     a2_paths = {boundary.inventory_generation_path(generation)
                 for generation in range(75, latest["generation"] + 1)}
-    return set(SUCCESSOR_SOURCE_PATHS) | {RECEIPT} | a2_paths
+    paths = set(SUCCESSOR_SOURCE_PATHS) | {RECEIPT} | a2_paths
+    if latest["generation"] >= 116:
+        from scripts import audit_run_01a_durable_admission as e1
+        paths |= e1.authenticate_successor()
+    return paths
 
 
 def main():

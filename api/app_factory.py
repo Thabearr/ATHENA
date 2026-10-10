@@ -61,7 +61,8 @@ def _validate_writable_roots(value, identity):
 
 
 def create_app(*, release_identity, resource_resolver, writable_roots: WritableRoots,
-               local_session, capability_service, preview_admission_service, read_service, origin):
+               local_session, capability_service, preview_admission_service, read_service, origin,
+               job_service=None):
     validated_roots = _validate_writable_roots(writable_roots, release_identity)
     if (type(resource_resolver) is not ResourceResolver
             or resource_resolver.identity is not release_identity
@@ -75,6 +76,14 @@ def create_app(*, release_identity, resource_resolver, writable_roots: WritableR
             or type(origin) is not str
             or not re.fullmatch(r"http://127\.0\.0\.1:[1-9][0-9]{0,4}", origin)):
         raise AppFactoryError("invalid trusted application dependencies")
+    if job_service is not None:
+        from services.athena_job_service import AthenaJobService
+        if (type(job_service) is not AthenaJobService
+                or job_service.preview_service is not preview_admission_service
+                or job_service._roots != writable_roots):
+            raise AppFactoryError("invalid trusted application dependencies")
+    if capability_service.job_service is not job_service:
+        raise AppFactoryError("capability and application job dependencies differ")
     if not 1 <= int(origin.rsplit(":", 1)[1]) <= 65535:
         raise AppFactoryError("invalid loopback endpoint")
     if sys.platform != "win32" and not sys.platform.startswith("linux"):
@@ -96,6 +105,8 @@ def create_app(*, release_identity, resource_resolver, writable_roots: WritableR
     app.state.writable_roots = validated_roots
     app.state.preview_admission_service = preview_admission_service
     app.state.read_service = read_service
+    if job_service is not None:
+        app.state.job_service = job_service
     host = origin.removeprefix("http://")
 
     @app.middleware("http")

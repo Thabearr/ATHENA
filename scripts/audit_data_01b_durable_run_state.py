@@ -142,6 +142,13 @@ def historical_sources():
     if hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() != d3["source_identities"][path]:
         raise AssertionError("D5 B6 predecessor does not authenticate the frozen D3 source")
     result[path] = payload
+    # E1 evolves desktop composition; authenticate the retained D3 bytes
+    # against its immutable receipt and inventory, without ancestor fetches.
+    path = "run_desktop.py"
+    payload = base64.b64decode((ROOT / "tests/fixtures/core_01d/run_01a_historical/d3_run_desktop.py.b64").read_bytes(), validate=True)
+    if hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() != d3["source_identities"][path]:
+        raise AssertionError("E1 D3 desktop historical source mismatch")
+    result[path] = payload
     return result
 
 

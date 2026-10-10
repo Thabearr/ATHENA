@@ -206,6 +206,9 @@ def project_historical_inventory(raw):
     """Authenticate the current source corpus before projecting fixed predecessor blobs."""
     from scripts import audit_data_01c_app_store_complete as data01c
     data01c.authenticate_successor()
+    from scripts import audit_run_01a_durable_admission as e1
+    e1_payload = e1.predecessor_admission_source()
+    e1_blob = identity(e1_payload)["git_blob_sha1"]
     authenticate_workflow()
     sources = snapshot()["sources"]
     d4_sources = historical_d4_sources()
@@ -213,6 +216,13 @@ def project_historical_inventory(raw):
     for line in raw.splitlines(keepends=True):
         meta, sep, path = line.partition(b"\t")
         name = path.strip().decode()
+        if name == "api/v1/run_previews.py":
+            current = identity((ROOT / name).read_bytes().replace(b"\r\n", b"\n"))["git_blob_sha1"]
+            if meta.rsplit(b" ", 1)[-1] not in {current.encode(), e1_blob.encode()}:
+                raise ValueError("E1 admission source inventory identity is not pinned")
+            meta = meta.rsplit(b" ", 1)[0] + b" " + e1_blob.encode()
+            lines.append(meta + sep + path)
+            continue
         if name in d4_sources:
             current = identity((ROOT / name).read_bytes().replace(b"\r\n", b"\n"))["git_blob_sha1"]
             allowed = {current, d4_sources[name]["git_blob_sha1"]}

@@ -263,6 +263,9 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
         "scripts/qualify_data_01c_restore_portability.py",
         "scripts/audit_data_01c_restore_portability.py",
         "tests/test_data_01c_restore_portability.py",
+        "services/athena_job_service.py",
+        "scripts/audit_run_01a_durable_admission.py",
+        "tests/test_run_01a_durable_admission.py",
     }
     original_tree = boundary.git("ls-tree", "-r", "HEAD")
     projected = completion_v2.a2_historical_projection(original_tree)

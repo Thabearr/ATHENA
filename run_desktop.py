@@ -31,9 +31,12 @@ from runtime.resources import (
     default_writable_roots,
 )
 from services.athena_capability_service import AthenaCapabilityService, release_summary
+from services.athena_job_service import AthenaJobService
 from services.athena_preview_service import AthenaPreviewAdmissionService
 from services.athena_read_service import AthenaReadService
 from services.app_preview_store import DurablePreviewStore
+from database.run_repository import DurableRunRepository
+from runtime.worker_launcher import WorkerLauncher
 
 
 class DesktopLaunchError(ValueError):
@@ -120,16 +123,45 @@ class LocalBackend:
             self.app_repository.record_release_manifest(**provenance)
             preview_store = DurablePreviewStore(
                 self.app_repository, release_id=provenance["release_id"])
-            preview_admission_service = AthenaPreviewAdmissionService(
-                resources, preview_store=preview_store)
-            app = create_app(release_identity=resources.identity, resource_resolver=resources,
-                             writable_roots=self.writable_roots,
-                             local_session=self.session,
-                             capability_service=AthenaCapabilityService(
-                                 resources, preview_admission_service=preview_admission_service),
-                             preview_admission_service=preview_admission_service,
-                             read_service=AthenaReadService.unavailable(),
-                             origin=self.origin)
+            identity = resources.identity
+            if type(identity).__name__ == "InstalledReleaseIdentity":
+                # E1 worker launch is reviewed for development checkouts only.
+                # Installed mode keeps the pre-E1 fail-closed wiring (no
+                # durable admission authority) until a pinned installed worker
+                # executable is reviewed; startup must not regress.
+                preview_admission_service = AthenaPreviewAdmissionService(
+                    resources, preview_store=preview_store)
+                read_service = AthenaReadService.unavailable()
+                app = create_app(release_identity=resources.identity, resource_resolver=resources,
+                                 writable_roots=self.writable_roots,
+                                 local_session=self.session,
+                                 capability_service=AthenaCapabilityService(
+                                     resources, preview_admission_service=preview_admission_service),
+                                 preview_admission_service=preview_admission_service,
+                                 read_service=read_service,
+                                 origin=self.origin)
+                self.job_service = None
+                self.run_repository = None
+            else:
+                run_repository = DurableRunRepository(resources, self.writable_roots)
+                preview_admission_service = AthenaPreviewAdmissionService(
+                    resources, preview_store=preview_store, admission_repository=run_repository)
+                launcher = WorkerLauncher.for_development(identity)
+                job_service = AthenaJobService(
+                    preview_admission_service, run_repository, launcher, self.writable_roots)
+                read_service = job_service.durable_read_service()
+                app = create_app(release_identity=resources.identity, resource_resolver=resources,
+                                 writable_roots=self.writable_roots,
+                                 local_session=self.session,
+                                 capability_service=AthenaCapabilityService(
+                                     resources, preview_admission_service=preview_admission_service,
+                                     read_service=read_service, job_service=job_service),
+                                 preview_admission_service=preview_admission_service,
+                                 read_service=read_service,
+                                 job_service=job_service,
+                                 origin=self.origin)
+                self.job_service = job_service
+                self.run_repository = run_repository
             self.server = uvicorn.Server(uvicorn.Config(app, log_level="critical", access_log=False))
             self.thread = threading.Thread(target=self.server.run, kwargs={"sockets": [self.listener]})
         except Exception:
