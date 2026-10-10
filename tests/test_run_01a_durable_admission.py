@@ -293,6 +293,13 @@ def test_launch_failure_keeps_commit_and_marks_interrupted(resources, roots, clo
     rows = repository.read_events(result.run_id)
     assert [row[2] for row in rows] == [
         "RUN_QUEUED", "RUN_RUNNING", "WORKER_LAUNCH_FAILED", "RUN_INTERRUPTED"]
+    assert [row[1] for row in rows] == [0, 1, 1, 2]
+    assert rows[2][5] == rows[3][5]
+    with repository._operation() as conn:
+        finished, disposition = conn.execute(
+            "SELECT finished_at,recovery_disposition FROM app_run_attempts WHERE run_id=?",
+            (result.run_id,)).fetchone()
+    assert finished == rows[3][5] and disposition == "OFFLINE_LAUNCH_FAILED"
     assert b"e1 fake launch failure" not in b"".join(row[3] for row in rows)
     events = job.durable_read_service().list_run_events(result.run_id, after_sequence=0, limit=50)
     assert [event.kind for event in events.events] == [
@@ -455,3 +462,74 @@ def test_launch_diagnostic_projection_fails_closed(payload):
     with pytest.raises(ReadBackendError):
         _event_record((3, 1, "WORKER_LAUNCH_FAILED", payload,
                        hashlib.sha256(payload).hexdigest(), "2030-01-01T23:00:00.000000Z"))
+
+
+@pytest.mark.parametrize("failed_event", ["WORKER_LAUNCH_FAILED", "RUN_INTERRUPTED"])
+def test_atomic_launch_failure_rolls_back_all_writes(resources, roots, clock, monkeypatch, failed_event):
+    job, repository, item, digest, calls = _durable_job(resources, roots, clock, monkeypatch)
+    result = job.admit(preview_id=item.preview_id, execution_envelope_sha256=digest,
+                       idempotency_key="e1-atomic-rollback")
+    before = repository.run_snapshot(result.run_id)
+    events = repository.read_events(result.run_id)
+    with repository._operation() as conn:
+        attempt = conn.execute("SELECT * FROM app_run_attempts WHERE run_id=?", (result.run_id,)).fetchone()
+        attempt_id, lease = conn.execute("SELECT attempt_id,lease_token FROM app_run_attempts WHERE run_id=?",
+                                        (result.run_id,)).fetchone()
+    original = DurableRunRepository._event
+    def fail_event(conn, run_id, version, event_type, payload, stamp):
+        original(conn, run_id, version, event_type, payload, stamp)
+        if event_type == failed_event:
+            raise RuntimeError("synthetic evidence persistence failure")
+    monkeypatch.setattr(DurableRunRepository, "_event", staticmethod(fail_event))
+    with pytest.raises(RuntimeError):
+        repository.record_launch_failure_and_interrupt(result.run_id, attempt_id, lease)
+    independent = DurableRunRepository(resources, roots, clock=clock)
+    assert independent.run_snapshot(result.run_id) == before
+    assert independent.read_events(result.run_id) == events
+    with independent._operation() as conn:
+        assert conn.execute("SELECT * FROM app_run_attempts WHERE run_id=?", (result.run_id,)).fetchone() == attempt
+    assert before["state"] == "RUNNING" and before["state_version"] == 1
+    assert len(calls) == 1
+
+
+def test_atomic_launch_failure_fences_wrong_lease(resources, roots, clock, monkeypatch):
+    from database.run_repository import RunLeaseFenced
+    job, repository, item, digest, calls = _durable_job(resources, roots, clock, monkeypatch)
+    result = job.admit(preview_id=item.preview_id, execution_envelope_sha256=digest,
+                       idempotency_key="e1-atomic-fence")
+    with repository._operation() as conn:
+        attempt_id, lease = conn.execute("SELECT attempt_id,lease_token FROM app_run_attempts WHERE run_id=?",
+                                        (result.run_id,)).fetchone()
+    before = repository.run_snapshot(result.run_id)
+    events = repository.read_events(result.run_id)
+    with pytest.raises(RunLeaseFenced):
+        repository.record_launch_failure_and_interrupt(result.run_id, attempt_id, "wrong-lease")
+    assert repository.run_snapshot(result.run_id) == before
+    assert repository.read_events(result.run_id) == events
+    repository.record_launch_failure_and_interrupt(result.run_id, attempt_id, lease)
+    with pytest.raises(RunLeaseFenced):
+        repository.record_launch_failure_and_interrupt(result.run_id, attempt_id, lease)
+    assert len(repository.read_events(result.run_id)) == 4 and len(calls) == 1
+
+
+def test_job_atomic_evidence_failure_never_recovers_or_retries(resources, roots, clock, monkeypatch):
+    job, repository, item, digest, calls = _durable_job(
+        resources, roots, clock, monkeypatch, launch_effect=WorkerLaunchError("secret fake failure"))
+    original = DurableRunRepository._event
+    def fail_diagnostic(conn, run_id, version, event_type, payload, stamp):
+        if event_type == "WORKER_LAUNCH_FAILED":
+            raise RuntimeError("synthetic diagnostic write failure")
+        return original(conn, run_id, version, event_type, payload, stamp)
+    recovery_calls = []
+    monkeypatch.setattr(DurableRunRepository, "_event", staticmethod(fail_diagnostic))
+    monkeypatch.setattr(repository, "recover_attempt", lambda *args: recovery_calls.append(args))
+    args = dict(preview_id=item.preview_id, execution_envelope_sha256=digest,
+                idempotency_key="e1-atomic-store-failure")
+    result = job.admit(**args)
+    assert result.disposition == "admitted"
+    assert repository.run_snapshot(result.run_id)["state"] == "RUNNING"
+    assert [row[2] for row in repository.read_events(result.run_id)] == ["RUN_QUEUED", "RUN_RUNNING"]
+    with repository._operation() as conn:
+        assert conn.execute("SELECT finished_at FROM app_run_attempts WHERE run_id=?", (result.run_id,)).fetchone() == (None,)
+    assert job.admit(**args).run_id == result.run_id
+    assert len(calls) == 1 and recovery_calls == []

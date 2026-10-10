@@ -593,6 +593,31 @@ class DurableRunRepository:
             conn.execute("UPDATE app_external_operations SET state=?,sent_at=CASE WHEN ?='SENT' THEN ? ELSE sent_at END,completed_at=CASE WHEN ? IN ('CONFIRMED','FAILED','OUTCOME_UNKNOWN') THEN ? ELSE completed_at END,response_artifact_id=?,error_code=? WHERE operation_id=?",
                          (state, state, stamp, state, stamp, response_artifact_id, error_code, operation_id))
 
+    def record_launch_failure_and_interrupt(self, run_id, attempt_id, lease_token):
+        """E1 initial handoff failure: diagnostic and interruption commit together."""
+        with self._operation(write=True) as conn:
+            self._fence(conn, run_id, attempt_id, lease_token)
+            row = conn.execute(
+                "SELECT state,state_version,receipt_artifact_id FROM app_runs WHERE run_id=?",
+                (run_id,)).fetchone()
+            number = conn.execute(
+                "SELECT attempt_number FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
+                (run_id, attempt_id)).fetchone()[0]
+            if (row != ("RUNNING", 1, None) or number != 1
+                    or conn.execute("SELECT 1 FROM app_run_events WHERE run_id=? AND event_type='WORKER_LAUNCH_FAILED'",
+                                    (run_id,)).fetchone()
+                    or conn.execute("SELECT 1 FROM app_external_operations WHERE run_id=?",
+                                    (run_id,)).fetchone()):
+                raise RunStateConflict("launch failure requires initial running handoff")
+            stamp = _utc(self._clock())
+            self._event(conn, run_id, row[1], "WORKER_LAUNCH_FAILED",
+                        {"diagnostic_id": "WORKER_LAUNCH_FAILED"}, stamp)
+            conn.execute("UPDATE app_run_attempts SET finished_at=?,recovery_disposition='OFFLINE_LAUNCH_FAILED' WHERE attempt_id=?",
+                         (stamp, attempt_id))
+            conn.execute("UPDATE app_runs SET state='INTERRUPTED',state_version=state_version+1,updated_at=? WHERE run_id=? AND state_version=1",
+                         (stamp, run_id))
+            self._event(conn, run_id, row[1] + 1, "RUN_INTERRUPTED", {}, stamp)
+
     def recover_attempt(self, run_id, attempt_id, lease_token):
         """Offline explicit recovery, never retries operations or launches work."""
         with self._operation(write=True) as conn:

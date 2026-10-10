@@ -17,8 +17,9 @@ Ordering contract (commit-first, never dispatch-before-commit):
    launch. A crash between commit and launch therefore stays an honest
    nonterminal crash gap (``QUEUED`` with no attempt), observable through the
    durable reads, exactly like the D4 receipt-projection crash gap.
-4. A launch-phase failure never revokes the commit. The service best-effort
-   recovers the owned attempt to ``INTERRUPTED`` and still returns the
+4. A launch failure never revokes the commit. The repository atomically
+    records its diagnostic and projects ``INTERRUPTED``, or rolls both back.
+    The service still returns the
    original ``admitted`` identity, so the caller always learns the committed
    run. Worker failure is observable via the run snapshot, never via a
    revoked admission.
@@ -220,15 +221,12 @@ class AthenaJobService:
             self._launcher.launch(command)
         except Exception:
             try:
-                self._repository.append_event(
-                    run_id, attempt_id=attempt_id, lease_token=lease_token,
-                    event_type="WORKER_LAUNCH_FAILED",
-                    payload={"diagnostic_id": "WORKER_LAUNCH_FAILED"})
+                self._repository.record_launch_failure_and_interrupt(
+                    run_id, attempt_id, lease_token)
             except Exception:
-                # Recovery must still preserve the committed identity if the
-                # fenced diagnostic store itself is unavailable.
+                # The transaction failed: retain the committed admission,
+                # never invent interruption or retry the launch.
                 pass
-            self._best_effort_recover(run_id, attempt_id, lease_token)
             return
 
     def _claim_and_start(self, run_id: str) -> tuple[str, str]:

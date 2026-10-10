@@ -44,13 +44,15 @@ def build_receipt():
         "base_main_sha": "74b07c74a946fd19a63f5695055b09668268aef2",
         "post_d5_tests_run": 38013673204,
         "predecessors": predecessors,
-        "a2_successor_generation": 118,
+        "a2_successor_generation": 119,
         "cancellation": "E3_DEFERRED_CANCEL_STORE_UNAVAILABLE_NON_MUTATING",
-        "launch_failure_diagnostic": "WORKER_LAUNCH_FAILED_STATIC_FENCED_EVENT_NO_EXCEPTION_TEXT",
+        "launch_failure_diagnostic": "WORKER_LAUNCH_FAILED_ATOMIC_WITH_INTERRUPTED",
+        "launch_failure_atomicity": "DIAGNOSTIC_AND_INTERRUPTED_COMMIT_TOGETHER_OR_ROLL_BACK",
+        "launch_failure_retry": "NO_RETRY",
         "later_missions": "E2_E3_E4_UNSTARTED",
         "ordering": "ATOMIC_ADMISSION_COMMIT_BEFORE_ATTEMPT_STAGING_OR_LAUNCH",
         "replay": "SAME_COMMITTED_IDENTITY_NO_SECOND_LAUNCH_INCLUDING_AFTER_EXPIRY_AND_RESTART",
-        "launch_failure": "COMMIT_RETAINED_OWNED_ATTEMPT_BEST_EFFORT_INTERRUPTED_NO_RETRY",
+        "launch_failure": "COMMIT_RETAINED_ATOMIC_DIAGNOSTIC_INTERRUPTION_OR_RUNNING_ON_STORE_FAILURE",
         "crash_gap": "QUEUED_OR_NONTERMINAL_NO_AUTOMATIC_REDISPATCH",
         "worker_operation": "OFFLINE_IDENTITY_PROBE",
         "installed_desktop": "FAIL_CLOSED_ADMISSION_UNTIL_PINNED_WORKER_INTEGRATION",
@@ -69,8 +71,8 @@ def build_receipt():
 def authenticate_successor():
     from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
     latest = boundary.authenticate_inventory()
-    if latest["generation"] < 118:
-        raise AssertionError("corrected E1 requires A2 V118 successor")
+    if latest["generation"] < 119:
+        raise AssertionError("atomic E1 requires A2 V119 successor")
     if (ROOT / RECEIPT).read_bytes() != canonical(build_receipt()):
         raise AssertionError("E1 source evidence drift")
     return {RECEIPT, "docs/product/run_01a_durable_admission.md",

@@ -13,10 +13,13 @@ requested business operation. Current Shadow, provider, share-code, delivery,
 and account/wager actions are not enabled. Installed desktop admission remains
 fail-closed until a separately pinned installed worker integration is reviewed.
 
-A committed run is never revoked by launch failure. Owned launch failures are
-best-effort fenced to `INTERRUPTED`.
-Launch exceptions first append a fenced `WORKER_LAUNCH_FAILED` diagnostic with
-only that static diagnostic ID, never exception text, paths, argv or secrets.
+A committed run is never revoked by launch failure. One fenced repository
+transaction appends `WORKER_LAUNCH_FAILED`, finishes the initial attempt, and
+projects `INTERRUPTED` with one state-version increment and the same timestamp.
+Diagnostic and interruption commit together or roll back together. Store failure
+leaves RUNNING and the active attempt unchanged; no fallback recovery is called.
+The payload contains only the static diagnostic ID, never exception text,
+paths, argv or secrets.
 The committed run identity is retained and launch is never retried.
 A commit-to-launch crash gap remains nonterminal and observable, with no
 automatic redispatch. Worker completion,
@@ -29,6 +32,6 @@ The pre-existing D4 cancellation storage primitive is unchanged. Existing D5
 fixture/export ports and all historical receipts remain unchanged.
 
 Evidence: `artifacts/product/run_01a_durable_admission_v1.json`, append-only
-A2 V116/V117 plus append-only V118 from V117, and focused offline tests. Hosted exact-head Tests and
+A2 V116/V117/V118 plus append-only V119 from V118, and focused offline tests. Hosted exact-head Tests and
 automatic PORT-02C results (if triggered) are separate required review gates.
 Source review counter remains 0/5 until owner-authorized merge.
