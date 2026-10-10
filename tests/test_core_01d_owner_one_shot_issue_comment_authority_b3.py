@@ -8,6 +8,7 @@ import pytest
 
 from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
 from scripts import audit_core_01d_owner_one_shot_issue_comment_authority_b3 as b3
+from scripts.audit_data_01c_restore_portability import historical_workflow_tree
 
 
 EXPECTED_KEYS = {
@@ -187,5 +188,8 @@ def test_workflow_tree_is_unchanged_and_the_a2_generation_chain_is_contiguous():
         "rewritten": False,
     }
     assert boundary.authenticate_inventory() == latest
-    assert subprocess.check_output(["git", "rev-parse", "HEAD:.github/workflows"], cwd=b3.ROOT).decode().strip() == b3.WORKFLOW_TREE
+    observed_tree = subprocess.check_output(
+        ["git", "rev-parse", "HEAD:.github/workflows"], cwd=b3.ROOT
+    ).decode().strip()
+    assert historical_workflow_tree(observed_tree) == b3.WORKFLOW_TREE
     assert subprocess.run(["git", "diff", "--quiet", "HEAD", "--", ".github/workflows"], cwd=b3.ROOT).returncode == 0

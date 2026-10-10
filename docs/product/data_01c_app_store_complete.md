@@ -26,5 +26,10 @@ is introduced. Windows/NTFS and Ubuntu 24.04/ext4 proof is required from the
 natural PORT-02C run on the final PR head; source presence is not execution proof.
 The uploaded platform receipts and run/job metadata are authenticated separately
 by audit_data_01c_restore_portability to avoid a commit/SHA evidence cycle.
+Natural PORT-02C run `38002210555` passed the D5 lock and three recovery phases on
+Windows/NTFS and Ubuntu 24.04/ext4 at candidate head `ab355b9a27f8ea8e7521014ba7c0770000f60641`.
+That candidate is no longer the final head after historical source-test fixes, so
+the exact-final-head Tests and PORT-02C gates remain required before review-ready
+status is claimed.
 Projection source/coverage remains unavailable, both named E2 dependencies remain
 OPEN, and production admission remains unavailable. No merge is authorized.

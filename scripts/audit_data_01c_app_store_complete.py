@@ -57,6 +57,7 @@ EXPECTED_D5_TABLES = {
 }
 SOURCE_PATHS = (
     "scripts/audit_core_01d_checkpoint_e_completion_v2.py",
+    "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v6.json",
     "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v5.json",
     "scripts/audit_app_01a_local_shell.py",
     "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v4.json",
@@ -64,6 +65,7 @@ SOURCE_PATHS = (
     "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v3.json",
     'scripts/audit_core_01d_exact_pr_trigger_disposition_b1.py',
     'scripts/audit_core_01d_owner_one_shot_issue_comment_authority_b3.py',
+    'tests/test_core_01d_historical_warehouse_transfer_authority_b2.py',
     'scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py',
     'scripts/audit_core_01d_frozen_artifact_replay_authority_b5.py',
     'scripts/audit_core_01d_win_either_half_trigger_authority_b7.py',
@@ -114,6 +116,7 @@ SOURCE_PATHS = (
     "tests/test_p4_4a_workflow_evolution_guard.py",
 )
 SUCCESSOR_SOURCE_PATHS = frozenset({
+    "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v6.json",
     "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v5.json",
     "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v4.json",
     "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v3.json",
@@ -122,6 +125,7 @@ SUCCESSOR_SOURCE_PATHS = frozenset({
     'scripts/audit_data_01c_restore_portability.py',
     'tests/test_data_01c_restore_portability.py',
     'tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v1.json',
+    'tests/test_core_01d_historical_warehouse_transfer_authority_b2.py',
     'artifacts/product/data_01c_restore_portability_v1.json',
     "database/app_root_lock.py",
     "database/app_storage_access.py",

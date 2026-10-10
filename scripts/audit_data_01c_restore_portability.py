@@ -40,11 +40,81 @@ HISTORICAL_A2_SOURCE_FIXTURES = {
     "tests/test_p4_4a_workflow_evolution_guard.py":
         "tests/fixtures/core_01d/a2-v1-p4-workflow-evolution-guard-test.py.txt",
 }
+D4_BASE_SOURCE_FIXTURE = "tests/fixtures/core_01d/data_01c_portability/predecessor_sources_v6.json"
+D4_BASE_SOURCE_FIXTURE_SHA256 = "c43908e2052c360d1343a32d22c3f602aec5a4c4e9f093fc5fed263d3c6653ca"
+D4_BASE_SOURCE_PATHS = (
+    "scripts/audit_core_01d_ci_offline_transport_boundary.py",
+    "sitecustomize.py",
+    "tests/offline_transport.py",
+    "tests/test_core_01d_ci_offline_transport_boundary.py",
+    "tests/test_core_01d_ci_offline_transport_inventory_evolution.py",
+    "tests/test_core_01d_historical_warehouse_transfer_authority_b2.py",
+)
+D4_BASE_MAIN_SHA = "57e632f1e150cd1429ce00005a3cdf9ef3673ff2"
+D4_BASE_A2_SHA256 = "8069d2ab272806ce803ed8b955c2227a136d65219408fc7bf87ba050f9f6523b"
 
 
 def identity(raw):
     return {"git_blob_sha1": hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest(),
             "source_sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def parse_historical_d4_sources(raw, v74):
+    """Authenticate exact pre-D5 bytes for existing sources changed by D5."""
+    if hashlib.sha256(raw).hexdigest() != D4_BASE_SOURCE_FIXTURE_SHA256:
+        raise ValueError("D4 baseline source fixture digest drift")
+    value = json.loads(raw)
+    if raw != canonical(value):
+        raise ValueError("D4 baseline source fixture is not canonical")
+    if (type(value) is not dict
+            or set(value) != {"schema_version", "policy_id", "source_commit", "a2_inventory",
+                              "source_paths", "sources"}
+            or value.get("schema_version") != 1
+            or value.get("policy_id") != "ATHENA_DATA_01C_D4_BASELINE_SOURCE_BYTES_V1"
+            or value.get("source_commit") != D4_BASE_MAIN_SHA
+            or value.get("source_paths") != list(D4_BASE_SOURCE_PATHS)
+            or value.get("a2_inventory") != {
+                "generation": 74,
+                "path": "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v74.json",
+                "canonical_sha256": D4_BASE_A2_SHA256}
+            or v74.get("generation") != 74
+            or v74.get("canonical_sha256") != D4_BASE_A2_SHA256):
+        raise ValueError("D4 baseline source fixture lineage drift")
+    v74_sources = {row["path"]: row["lf_source_sha256"] for row in v74["source_identities"]}
+    sources = value.get("sources")
+    if type(sources) is not dict or sorted(sources) != list(D4_BASE_SOURCE_PATHS):
+        raise ValueError("D4 baseline source fixture path set drift")
+    verified = {}
+    for path in D4_BASE_SOURCE_PATHS:
+        row = sources[path]
+        if type(row) is not dict or set(row) != {
+                "base64", "byte_count", "byte_sha256", "lf_source_sha256", "git_blob_sha1"}:
+            raise ValueError("D4 baseline source fixture row shape drift: " + path)
+        payload = base64.b64decode(row["base64"], validate=True)
+        lf_payload = payload.replace(b"\r\n", b"\n")
+        if (type(row["byte_count"]) is not int or row["byte_count"] != len(payload)
+                or len(payload) > 1_000_000
+                or row["byte_sha256"] != hashlib.sha256(payload).hexdigest()
+                or row["lf_source_sha256"] != hashlib.sha256(lf_payload).hexdigest()
+                or row["git_blob_sha1"] != identity(payload)["git_blob_sha1"]
+                or v74_sources.get(path) != row["lf_source_sha256"]):
+            raise ValueError("D4 baseline source fixture fails exact V74/source-byte identity: " + path)
+        verified[path] = row
+    return verified
+
+
+def historical_d4_sources():
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+
+    fixture = ROOT / D4_BASE_SOURCE_FIXTURE
+    if not fixture.is_file() or fixture.is_symlink():
+        raise ValueError("D4 baseline source fixture is missing or linked")
+    v74 = a2.read_generation(a2.inventory_generation_path(74))
+    return parse_historical_d4_sources(fixture.read_bytes(), v74)
+
+
+def historical_d4_source_paths():
+    return set(historical_d4_sources())
 
 
 def snapshot():
@@ -138,10 +208,24 @@ def project_historical_inventory(raw):
     data01c.authenticate_successor()
     authenticate_workflow()
     sources = snapshot()["sources"]
+    d4_sources = historical_d4_sources()
     lines = []
     for line in raw.splitlines(keepends=True):
         meta, sep, path = line.partition(b"\t")
         name = path.strip().decode()
+        if name in d4_sources:
+            current = identity((ROOT / name).read_bytes().replace(b"\r\n", b"\n"))["git_blob_sha1"]
+            allowed = {current, d4_sources[name]["git_blob_sha1"]}
+            if name in sources:
+                allowed.add(sources[name]["git_blob_sha1"])
+            historical = historical_a2_source_blob_identity(name)
+            if historical is not None:
+                allowed.add(historical)
+            if meta.rsplit(b" ", 1)[-1] not in {blob.encode() for blob in allowed}:
+                raise ValueError("D4 baseline source inventory identity is not pinned: " + name)
+            meta = meta.rsplit(b" ", 1)[0] + b" " + d4_sources[name]["git_blob_sha1"].encode()
+            lines.append(meta + sep + path)
+            continue
         historical = historical_a2_source_blob_identity(name)
         if name in sources:
             current = identity((ROOT / name).read_bytes().replace(b"\r\n", b"\n"))["git_blob_sha1"]
@@ -163,6 +247,7 @@ def project_historical_inventory(raw):
 
 def build_receipt():
     after, tree = authenticate_workflow()
+    baseline_sources = historical_d4_sources()
     paths = list(FROZEN_EVIDENCE)
     frozen = {path: identity((ROOT / path).read_bytes()) for path in paths}
     value = {"schema_version": 1, "policy_id": "ATHENA_DATA_01C_PORT02C_EXACT_SOURCE_FORWARD_V1",
@@ -175,6 +260,15 @@ def build_receipt():
              "predecessor_source": identity(predecessor_source(WORKFLOW)),
              "successor_source": after, "predecessor_workflow_tree": PREDECESSOR_TREE,
              "successor_workflow_tree": tree, "historical_evidence": frozen,
+             "historical_inventory_projection": {
+                 "policy_id": "ATHENA_DATA_01C_D4_BASELINE_SOURCE_BYTES_V1",
+                 "source_commit": D4_BASE_MAIN_SHA,
+                 "fixture_path": D4_BASE_SOURCE_FIXTURE,
+                 "fixture_sha256": D4_BASE_SOURCE_FIXTURE_SHA256,
+                 "a2_inventory": {"generation": 74,
+                                   "path": "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v74.json",
+                                   "canonical_sha256": D4_BASE_A2_SHA256},
+                 "source_paths": sorted(baseline_sources)},
              "pytest_nodeids": NODEIDS, "crash_phases": PHASES,
              "hosted_proof": "SEPARATE_EXACT_FINAL_HEAD_UPLOADED_NATIVE_RECEIPTS_REQUIRED",
              "source_review_counter": "2/5", "merge_authorized": False}

@@ -56,7 +56,7 @@ def authenticate():
 
 
 def successor_paths():
-    """Bounded D4/D5 additions omitted only after successor authentication."""
+    """Omit only additions; retain existing V74 paths at their authenticated predecessor bytes."""
     authenticate()
     from scripts import audit_data_01b_durable_run_state as data01b
     latest = boundary.authenticate_inventory()

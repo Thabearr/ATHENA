@@ -69,6 +69,41 @@ def test_authenticated_historical_projection_is_idempotent():
     assert audit.project_historical_inventory(projected) == projected
 
 
+def test_checkpoint_e_projection_keeps_only_exact_v74_predecessor_paths():
+    from scripts import audit_core_01d_checkpoint_e_completion as checkpoint
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_core_01d_historical_retention_acceptance as retention
+    from scripts import audit_data_01c_app_store_complete as app_store
+
+    historical = audit.historical_d4_sources()
+    v74 = a2.read_generation(a2.inventory_generation_path(74))
+    v74_paths = {row["path"] for row in v74["source_identities"]}
+    assert set(historical) == set(audit.D4_BASE_SOURCE_PATHS)
+    assert set(app_store.SUCCESSOR_SOURCE_PATHS) & v74_paths == set(historical)
+    raw_sources = []
+    expected_sources = []
+    for path in audit.D4_BASE_SOURCE_PATHS:
+        row = historical[path]
+        current = audit.identity((audit.ROOT / path).read_bytes().replace(b"\r\n", b"\n"))
+        raw_sources.append(b"100644 blob " + current["git_blob_sha1"].encode() + b"\t" + path.encode() + b"\n")
+        expected_sources.append(b"100644 blob " + row["git_blob_sha1"].encode() + b"\t" + path.encode() + b"\n")
+    assert audit.project_historical_inventory(b"".join(raw_sources)) == b"".join(expected_sources)
+
+    raw = retention.v4.v3._git("ls-tree", "-r", "HEAD")
+    assert checkpoint.validate_bounded_inventory(raw) is None
+
+
+def test_v74_predecessor_source_fixture_rejects_tampering():
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+
+    raw = (audit.ROOT / audit.D4_BASE_SOURCE_FIXTURE).read_bytes()
+    value = json.loads(raw)
+    value["sources"][audit.D4_BASE_SOURCE_PATHS[0]]["git_blob_sha1"] = "0" * 40
+    with pytest.raises(ValueError, match="fixture digest drift"):
+        audit.parse_historical_d4_sources(qualifier.canonical(value),
+                                          a2.read_generation(a2.inventory_generation_path(74)))
+
+
 def test_a2_historical_source_forward_uses_only_v1_pinned_bytes(tmp_path, monkeypatch):
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     for source, fixture in audit.HISTORICAL_A2_SOURCE_FIXTURES.items():
