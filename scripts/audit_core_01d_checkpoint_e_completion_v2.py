@@ -79,6 +79,29 @@ APP01C_PREDECESSOR_BLOBS={
  'tests/test_core_01d_port02c_trigger_authority_b6.py':'594a7b4f8c5a9d798d13af2f4c7e35635371bbb6',
  'tests/test_product_baseline_v1.py':'2d552f49cf84462bd1b32e86eea2a96ee0570b64',
 }
+INCIDENT_20261010_PREDECESSOR_BLOBS={
+ 'artifacts/product/data_01c_app_store_complete_v1.json':'6727c011ead7da533a8af00ef4c4b352ea35492b',
+ 'domain/current_shadow_sportybet_pc_upcoming_reconciliation.py':'1aa242e6db460c66b388b1acfd43859d382c82f9',
+ 'scripts/audit_p4_4q_pc_upcoming_simple_tournament_identity.py':'45b046ad0e6f44823561fe39ab43d03b80c2eab5',
+ 'scripts/audit_p4_4r_shadow_runtime_composition_stabilization.py':'ac9c320157b4230288203e67c3e31df9914ad5b8',
+ 'scripts/verify_p3_0_e1_live_readiness.py':'968781d51a3d2b2a7ebb6aa85d998ba888aa47dc',
+ 'tests/test_current_shadow_sportybet_pc_upcoming_reconciliation.py':'81d71a20f0dcca8204eeb7b8d8a9c6b268f09ef5',
+ 'tests/test_p3_0_e1_source_diagnostics_auditor.py':'ddf261c7bbda34331dc5590ba68fbbf4d6a3ee81',
+ 'tests/test_p4_4n_sportybet_team_label_shape_compatibility.py':'5bef37d4a8f25b9c693441c089ca723b7ee0bdd2',
+ 'tests/test_p4_4o_pc_upcoming_stable_epoch_recovery.py':'3e16c2df91f4fab539bca51b5bd9d077b15d1fec',
+ 'tests/test_p4_4o_pc_upcoming_stable_epoch_recovery_audit.py':'6725e92b83c55bc8d510f3177d0fc6f8e50df051',
+ 'tests/test_p4_4p_pc_upcoming_preparse_response_evidence.py':'1355855d4427d401307f9d02ff60e5439eb7424f',
+ 'tests/test_p4_4q_pc_upcoming_simple_tournament_identity.py':'7bb5659ee6020c0c9f36ff105297c5048c9f83d7',
+}
+INCIDENT_20261010_NEW_PATHS={
+ 'artifacts/architecture/inc_20261010_pc_upcoming_bounded_epoch_stabilization_v1.json',
+ 'scripts/audit_inc_20261010_pc_upcoming_bounded_epoch_stabilization.py',
+ 'tests/test_inc_20261010_pc_upcoming_bounded_epoch_stabilization.py',
+ 'tests/fixtures/core_01d/inc_20261010/pc-upcoming-reconciliation-predecessor.py.txt',
+ 'tests/fixtures/core_01d/inc_20261010/verify-p3-live-readiness-predecessor.py.txt',
+}
+INCIDENT_20261010_CURRENT_PATHS=set(INCIDENT_20261010_PREDECESSOR_BLOBS)|INCIDENT_20261010_NEW_PATHS
+
 APP01C_NEW_PATHS={
  'api/v1/common.py','api/v1/exports.py','api/v1/fixtures.py','api/v1/runs.py',
  'docs/product/app_01c_versioned_api.md','services/athena_read_service.py',
@@ -172,12 +195,14 @@ def a2_historical_projection(raw):
  # part of the immutable Pass-A historical tree. Discover their contiguous
  # chain from V3 onward after authenticate_inventory has verified it.
  successor_inventory_paths=current_successor_inventory_paths(a2)
- new_paths=(a2.A2_PATHS-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|successor_inventory_paths|B1_ADDITIVE_EVIDENCE_PATHS|APP01B_ADDITIVE_PATHS|APP01C_NEW_PATHS
+ new_paths=(a2.A2_PATHS-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|successor_inventory_paths|B1_ADDITIVE_EVIDENCE_PATHS|APP01B_ADDITIVE_PATHS|APP01C_NEW_PATHS|INCIDENT_20261010_NEW_PATHS
  rows=[]
  for line in raw.splitlines(keepends=True):
   path=line.split(b'\t',1)[1].strip().decode()
   if path in new_paths:continue
-  if path in PASS_A_HISTORICAL_BLOBS:
+  if path in INCIDENT_20261010_PREDECESSOR_BLOBS:
+   line=('100644 blob '+INCIDENT_20261010_PREDECESSOR_BLOBS[path]+'\t'+path+'\n').encode()
+  elif path in PASS_A_HISTORICAL_BLOBS:
    line=('100644 blob '+PASS_A_HISTORICAL_BLOBS[path]+'\t'+path+'\n').encode()
   elif path in a2.HISTORICAL_TEST_BLOBS:
    line=('100644 blob '+a2.HISTORICAL_TEST_BLOBS[path]+'\t'+path+'\n').encode()
@@ -190,7 +215,7 @@ def authenticate_current_scope():
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  generation_additions=a2_generation_additions(a2)
  successor_inventory_paths=current_successor_inventory_paths(a2)
- allowed=ALLOWED_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|successor_inventory_paths|app_successor_paths()
+ allowed=ALLOWED_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|successor_inventory_paths|app_successor_paths()|INCIDENT_20261010_CURRENT_PATHS
  git=review.retention.v4.v3._git
  review.require(review.sha256(unchanged_inventory(a2_historical_projection(git('ls-tree','-r','HEAD'))))==UNCHANGED_SCOPE_SHA,'Pass-A runtime/workflow/ledger/historical source change outside bounded evidence scope')
  review.require(set(git('diff','--name-only','HEAD').decode().splitlines())<=allowed,'unapproved dirty source in Pass A or its exact A2-generation/evidence seam')
@@ -218,7 +243,7 @@ def historical_v1_git_view():
   if args==('diff','--name-only','HEAD'):
    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
    generation_additions=a2_generation_additions(a2)
-   return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|app_successor_paths())
+   return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|app_successor_paths()|INCIDENT_20261010_CURRENT_PATHS)
   return raw
  original_identity=module._source_identity
  def projected_identity(path,**kwargs):
