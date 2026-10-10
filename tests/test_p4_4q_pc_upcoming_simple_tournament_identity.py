@@ -520,9 +520,12 @@ def test_acceptance_item_7_recovery_and_negative_evidence_interaction() -> None:
     runtime_payload = runtime._policy_payload()
     stabilization = runtime_payload["capture_stabilization"]
     assert stabilization["recovery_semantics"] == "FRESH_CAPTURE_EPOCH_AFTER_EXACT_CROSS_PAGE_TOTALNUM_DRIFT"
-    assert stabilization["max_capture_epochs"] == 2
-    assert stabilization["no_third_capture_epoch"] is True
+    assert stabilization["max_capture_epochs"] == 4
+    assert stabilization["inter_epoch_backoff_seconds"] == 3
+    assert stabilization["backoff_only_after_exact_totalnum_drift"] is True
+    assert stabilization["no_capture_epoch_beyond_bound"] is True
     assert stabilization["no_per_page_http_retry"] is True
+    assert stabilization["provider_request_upper_bound"] == 80
 
     preparse = runtime_payload["preparse_response_evidence"]
     assert preparse["every_successful_runtime_http_response_persisted_before_semantic_parse"] is True
