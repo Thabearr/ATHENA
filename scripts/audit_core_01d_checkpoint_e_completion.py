@@ -184,9 +184,12 @@ def validate_bounded_inventory(raw: bytes) -> None:
     successor_paths = data01a.successor_paths()
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     a2.authenticate_inventory()
+    # Preserve every pre-incident A2 inventory row exactly. Only generations
+    # appended by this bounded incident successor are additive scope and may be
+    # removed from the historical Checkpoint-E projection.
     a2_successor_inventory_paths = {
         path for generation, path in a2.discover_inventory_generations()
-        if generation >= 3
+        if generation >= 116
     }
     # These six D5-authenticated paths already existed at V74; project their
     # exact D4 bytes above, then retain them in this historical inventory.
