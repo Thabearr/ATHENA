@@ -231,7 +231,7 @@ def validate_contract() -> Mapping[str, Any]:
             raise PcUpcomingRuntimeReconciliationError(f"authority value {key} is not boolean")
     return MappingProxyType({
         "runtime_policy_id": POLICY_ID,
-        "runtime_policy_sha256": runtime_policy_sha256,
+        "runtime_policy_sha256": PINNED_POLICY_SHA256,
         "source_policy_id": UPSTREAM_SOURCE_POLICY_ID,
         "source_policy_sha256": UPSTREAM_SOURCE_POLICY_SHA256,
         "bridge_policy_id": BRIDGE_POLICY_ID,
@@ -440,7 +440,7 @@ def _parse_failure_receipt(
     payload = {
         "schema_version": 1,
         "runtime_policy_id": POLICY_ID,
-        "runtime_policy_sha256": PINNED_POLICY_SHA256,
+        "runtime_policy_sha256": runtime_policy_sha256,
         "source_policy_id": UPSTREAM_SOURCE_POLICY_ID,
         "source_policy_sha256": UPSTREAM_SOURCE_POLICY_SHA256,
         "attempt_index": attempt_index,
