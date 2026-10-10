@@ -435,16 +435,8 @@ def audit(root: Path | None = None) -> dict[str, Any]:
     _verify_runtime_composition(root)
 
     source_sha = pc_source.calculate_policy_sha256()
-    current_runtime_sha = pc_runtime.calculate_policy_sha256()
-    if current_runtime_sha != PC_RUNTIME_SHA256:
-        from scripts import audit_inc_20261010_pc_upcoming_bounded_epoch_stabilization as pc_successor
-        successor = pc_successor.audit_current(root)
-        _require(
-            successor.get("runtime_policy_sha256") == current_runtime_sha,
-            "P4.4R current pcUpcoming runtime lacks reviewed successor ancestry",
-        )
     _require(source_sha == PC_SOURCE_SHA256
-             and current_runtime_sha in {PC_RUNTIME_SHA256, pc_runtime.PINNED_POLICY_SHA256}
+             and pc_runtime.calculate_policy_sha256() == PC_RUNTIME_SHA256
              and team_labels.EXPECTED_POLICY_SHA256 == TEAM_LABEL_SHA256
              and identity_compatibility.EXPECTED_POLICY_SHA256 == IDENTITY_SHA256
              and bridge.PINNED_POLICY_SHA256 == BRIDGE_SHA256

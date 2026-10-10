@@ -182,6 +182,87 @@ PASS_A_HISTORICAL_SOURCE_FIXTURES = {
     "tests/test_product_baseline_v1.py": "tests/fixtures/core_01d/app_01c_historical/test_product_baseline_v1.py.txt",
 }
 
+INCIDENT_20261010_PREDECESSOR_BLOBS = {
+    "domain/current_shadow_sportybet_pc_upcoming_reconciliation.py":
+        "1aa242e6db460c66b388b1acfd43859d382c82f9",
+    "scripts/audit_p4_4q_pc_upcoming_simple_tournament_identity.py":
+        "45b046ad0e6f44823561fe39ab43d03b80c2eab5",
+    "scripts/audit_p4_4r_shadow_runtime_composition_stabilization.py":
+        "ac9c320157b4230288203e67c3e31df9914ad5b8",
+    "scripts/verify_p3_0_e1_live_readiness.py":
+        "968781d51a3d2b2a7ebb6aa85d998ba888aa47dc",
+    "tests/test_current_shadow_sportybet_pc_upcoming_reconciliation.py":
+        "81d71a20f0dcca8204eeb7b8d8a9c6b268f09ef5",
+    "tests/test_p3_0_e1_source_diagnostics_auditor.py":
+        "ddf261c7bbda34331dc5590ba68fbbf4d6a3ee81",
+    "tests/test_p4_4n_sportybet_team_label_shape_compatibility.py":
+        "5bef37d4a8f25b9c693441c089ca723b7ee0bdd2",
+    "tests/test_p4_4o_pc_upcoming_stable_epoch_recovery.py":
+        "3e16c2df91f4fab539bca51b5bd9d077b15d1fec",
+    "tests/test_p4_4o_pc_upcoming_stable_epoch_recovery_audit.py":
+        "6725e92b83c55bc8d510f3177d0fc6f8e50df051",
+    "tests/test_p4_4p_pc_upcoming_preparse_response_evidence.py":
+        "1355855d4427d401307f9d02ff60e5439eb7424f",
+    "tests/test_p4_4q_pc_upcoming_simple_tournament_identity.py":
+        "7bb5659ee6020c0c9f36ff105297c5048c9f83d7",
+}
+INCIDENT_20261010_PREDECESSOR_FIXTURES = {
+    "domain/current_shadow_sportybet_pc_upcoming_reconciliation.py":
+        "tests/fixtures/core_01d/inc_20261010/pc-upcoming-reconciliation-predecessor.py.txt",
+    "scripts/audit_p4_4q_pc_upcoming_simple_tournament_identity.py":
+        "tests/fixtures/core_01d/inc_20261010/audit-p44q-simple-tournament-identity-predecessor.py.txt",
+    "scripts/audit_p4_4r_shadow_runtime_composition_stabilization.py":
+        "tests/fixtures/core_01d/inc_20261010/audit-p44r-runtime-composition-predecessor.py.txt",
+    "scripts/verify_p3_0_e1_live_readiness.py":
+        "tests/fixtures/core_01d/inc_20261010/verify-p3-live-readiness-predecessor.py.txt",
+    "tests/test_current_shadow_sportybet_pc_upcoming_reconciliation.py":
+        "tests/fixtures/core_01d/inc_20261010/test-current-shadow-pc-upcoming-reconciliation-predecessor.py.txt",
+    "tests/test_p3_0_e1_source_diagnostics_auditor.py":
+        "tests/fixtures/core_01d/inc_20261010/test-p3-e1-source-diagnostics-predecessor.py.txt",
+    "tests/test_p4_4n_sportybet_team_label_shape_compatibility.py":
+        "tests/fixtures/core_01d/inc_20261010/test-p44n-team-label-shape-predecessor.py.txt",
+    "tests/test_p4_4o_pc_upcoming_stable_epoch_recovery.py":
+        "tests/fixtures/core_01d/inc_20261010/test-p44o-stable-epoch-recovery-predecessor.py.txt",
+    "tests/test_p4_4o_pc_upcoming_stable_epoch_recovery_audit.py":
+        "tests/fixtures/core_01d/inc_20261010/test-p44o-stable-epoch-recovery-audit-predecessor.py.txt",
+    "tests/test_p4_4p_pc_upcoming_preparse_response_evidence.py":
+        "tests/fixtures/core_01d/inc_20261010/test-p44p-preparse-response-evidence-predecessor.py.txt",
+    "tests/test_p4_4q_pc_upcoming_simple_tournament_identity.py":
+        "tests/fixtures/core_01d/inc_20261010/test-p44q-simple-tournament-identity-predecessor.py.txt",
+}
+_INCIDENT_20261010_CURRENT_AUTHENTICATED = False
+
+
+def _authenticate_incident_20261010_current_sources():
+    global _INCIDENT_20261010_CURRENT_AUTHENTICATED
+    if _INCIDENT_20261010_CURRENT_AUTHENTICATED:
+        return
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    latest = a2.authenticate_inventory()
+    rows = {row["path"]: row for row in latest["source_identities"]}
+    for path in INCIDENT_20261010_PREDECESSOR_BLOBS:
+        row = rows.get(path)
+        require(row is not None, "incident successor source is absent from current A2 inventory: " + path)
+        raw = (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
+        require(
+            sha(raw) == row["lf_source_sha256"],
+            "incident successor source differs from authenticated A2 bytes: " + path,
+        )
+    _INCIDENT_20261010_CURRENT_AUTHENTICATED = True
+
+
+def _incident_20261010_predecessor_source(path):
+    _authenticate_incident_20261010_current_sources()
+    fixture = INCIDENT_20261010_PREDECESSOR_FIXTURES.get(path)
+    require(fixture is not None, "incident predecessor bytes are not retained for: " + path)
+    raw = (ROOT / fixture).read_bytes().replace(b"\r\n", b"\n")
+    expected = INCIDENT_20261010_PREDECESSOR_BLOBS[path]
+    actual = hashlib.sha1(
+        b"blob " + str(len(raw)).encode() + b"\0" + raw
+    ).hexdigest()
+    require(actual == expected, "incident predecessor source identity drift: " + path)
+    return raw
+
 
 def require(value, message):
     if not value:
@@ -207,6 +288,8 @@ def seal(value):
 
 
 def read(path):
+    if path in INCIDENT_20261010_PREDECESSOR_FIXTURES:
+        return _incident_20261010_predecessor_source(path)
     if path in PASS_A_HISTORICAL_SOURCE_FIXTURES:
         fixture = PASS_A_HISTORICAL_SOURCE_FIXTURES[path]
         raw = (ROOT / fixture).read_bytes()
@@ -302,6 +385,10 @@ def git_inventory():
     a2.authenticate_inventory()
     for path, blob in a2.HISTORICAL_TEST_BLOBS.items():
         require(path in result, "historical test source missing: " + path)
+        result[path]["git_blob_sha1"] = blob
+    _authenticate_incident_20261010_current_sources()
+    for path, blob in INCIDENT_20261010_PREDECESSOR_BLOBS.items():
+        require(path in result, "incident predecessor source missing: " + path)
         result[path]["git_blob_sha1"] = blob
     return result
 
@@ -579,6 +666,9 @@ def base_input():
             actual = PASS_A_HISTORICAL_SOURCE_BLOBS[path]
         if path in a2.HISTORICAL_TEST_BLOBS:
             actual = a2.HISTORICAL_TEST_BLOBS[path]
+        if path in INCIDENT_20261010_PREDECESSOR_BLOBS:
+            _authenticate_incident_20261010_current_sources()
+            actual = INCIDENT_20261010_PREDECESSOR_BLOBS[path]
         from scripts.core_01d_historical_source import identities
         from scripts import audit_data_01c_restore_portability as d5
         if path in identities() or path in d5.snapshot()["sources"]:
@@ -589,6 +679,7 @@ def base_input():
             else fresh_workflow_after_blob if path == fresh_workflow_path and fresh_workflow_after_blob
             else supporting_source_blobs[path] if path in supporting_source_blobs
             else PASS_A_HISTORICAL_SOURCE_BLOBS[path] if path in PASS_A_HISTORICAL_SOURCE_FIXTURES
+            else INCIDENT_20261010_PREDECESSOR_BLOBS[path] if path in INCIDENT_20261010_PREDECESSOR_BLOBS
             else value["files"][path]["git_blob_sha1"]
         )
         require(actual == expected_blob, f"worktree source differs: {path}")

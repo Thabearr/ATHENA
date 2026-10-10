@@ -112,7 +112,6 @@ def test_exact_drift_then_stable_epoch_restarts_at_page_one_and_isolates_failed_
         *_stable_101_pages(1000),
     ]
     requested = _install_pages(monkeypatch, pages)
-    monkeypatch.setattr(runtime.time, "sleep", lambda _seconds: None)
     root, manifest = runtime.capture_current_pc_upcoming_discovery(
         repository_root=tmp_path, execute_live_network=True
     )
@@ -183,29 +182,24 @@ def test_same_page_count_bucket_does_not_make_drifted_epoch_valid(monkeypatch, t
     assert not (root / "manifest.json").exists()
 
 
-def test_four_exact_drift_epochs_fail_closed_without_fifth_epoch_or_manifest(monkeypatch, tmp_path):
+def test_two_exact_drift_epochs_fail_closed_without_third_epoch_or_manifest(monkeypatch, tmp_path):
     requested = _install_pages(monkeypatch, [
         (1, 1053, range(1, 101)), (2, 1052, range(101, 201)),
         (1, 1053, range(1001, 1101)), (2, 1052, range(1101, 1201)),
-        (1, 1053, range(2001, 2101)), (2, 1052, range(2101, 2201)),
-        (1, 1053, range(3001, 3101)), (2, 1052, range(3101, 3201)),
     ])
-    sleeps: list[int] = []
-    monkeypatch.setattr(runtime.time, "sleep", sleeps.append)
-    with pytest.raises(runtime.PcUpcomingRuntimeReconciliationError, match="PC_UPCOMING_RUNTIME_PAGINATION_INCOMPLETE.*all 4 allowed capture epochs"):
+    with pytest.raises(runtime.PcUpcomingRuntimeReconciliationError, match="PC_UPCOMING_RUNTIME_PAGINATION_INCOMPLETE.*both allowed capture epochs"):
         runtime.capture_current_pc_upcoming_discovery(
             repository_root=tmp_path, execute_live_network=True
         )
-    assert requested == [1, 2, 1, 2, 1, 2, 1, 2]
-    assert sleeps == [3, 3, 3]
+    assert requested == [1, 2, 1, 2]
     root = tmp_path / source.EVIDENCE_ROOT
     assert not (root / "manifest.json").exists()
     assert not (root / "pages").exists()
     assert all((_attempt(root, attempt) / f"pages/page-{page:03d}.raw.json").is_file()
-               for attempt in (1, 2, 3, 4) for page in (1, 2))
+               for attempt in (1, 2) for page in (1, 2))
     state = runtime.verify_runtime_capture_stabilization(repository_root=tmp_path)
     assert state["accepted_attempt_index"] is None
-    assert state["failed_attempt_indices"] == [1, 2, 3, 4]
+    assert state["failed_attempt_indices"] == [1, 2]
     assert state["final_state"] == "FAILED_AFTER_EXACT_TOTALNUM_DRIFT"
 
 
@@ -215,7 +209,6 @@ def test_drift_then_http_failure_stops_without_third_epoch(monkeypatch, tmp_path
         (2, 1052, range(101, 201)),
         source.PcUpcomingDiscoveryError("provider returned HTTP 503"),
     ])
-    monkeypatch.setattr(runtime.time, "sleep", lambda _seconds: None)
     with pytest.raises(runtime.PcUpcomingRuntimeReconciliationError, match="HTTP 503"):
         runtime.capture_current_pc_upcoming_discovery(
             repository_root=tmp_path, execute_live_network=True
@@ -279,7 +272,7 @@ def test_maximum_page_bound_is_still_twenty_without_hidden_extension(monkeypatch
         )
     assert requested == list(range(1, 21))
     assert len(requested) == runtime.MAX_PAGES_PER_EPOCH
-    assert runtime.MAX_CAPTURE_EPOCHS * runtime.MAX_PAGES_PER_EPOCH == 80
+    assert runtime.MAX_CAPTURE_EPOCHS * runtime.MAX_PAGES_PER_EPOCH == 40
 
 
 def test_runtime_stabilization_verifier_rejects_raw_metadata_and_receipt_tampering(monkeypatch, tmp_path):
@@ -327,7 +320,6 @@ def test_failed_epoch_does_not_write_identity_state(monkeypatch, tmp_path):
         (1, 101, range(1000, 1100)),
         (2, 101, range(1100, 1101)),
     ])
-    monkeypatch.setattr(runtime.time, "sleep", lambda _seconds: None)
     _root, _manifest = runtime.capture_current_pc_upcoming_discovery(
         repository_root=tmp_path, execute_live_network=True
     )

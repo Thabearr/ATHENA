@@ -520,12 +520,9 @@ def test_acceptance_item_7_recovery_and_negative_evidence_interaction() -> None:
     runtime_payload = runtime._policy_payload()
     stabilization = runtime_payload["capture_stabilization"]
     assert stabilization["recovery_semantics"] == "FRESH_CAPTURE_EPOCH_AFTER_EXACT_CROSS_PAGE_TOTALNUM_DRIFT"
-    assert stabilization["max_capture_epochs"] == 4
-    assert stabilization["inter_epoch_backoff_seconds"] == 3
-    assert stabilization["backoff_only_after_exact_totalnum_drift"] is True
-    assert stabilization["no_capture_epoch_beyond_bound"] is True
+    assert stabilization["max_capture_epochs"] == 2
+    assert stabilization["no_third_capture_epoch"] is True
     assert stabilization["no_per_page_http_retry"] is True
-    assert stabilization["provider_request_upper_bound"] == 80
 
     preparse = runtime_payload["preparse_response_evidence"]
     assert preparse["every_successful_runtime_http_response_persisted_before_semantic_parse"] is True
@@ -545,7 +542,7 @@ def test_all_pinned_policy_hashes_and_receipts_are_validated() -> None:
     assert source.calculate_policy_sha256() == source.PINNED_POLICY_SHA256 == "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5"
 
     runtime_payload = runtime._policy_payload()
-    assert runtime.calculate_policy_sha256() == runtime.PINNED_POLICY_SHA256 == "9dc0cfb362cf7008d28bcf029755b7361481b683e41155528f9607047773ceba"
+    assert runtime.calculate_policy_sha256() == runtime.PINNED_POLICY_SHA256 == "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
 
     assert bridge.calculate_policy_sha256() == bridge.PINNED_POLICY_SHA256 == "c3f05e5ea6ce08c392ec13d1b39d40dd8dd177e5a73f3660605c359705719858"
     assert identity_v2.REGISTRY_SHA256 == identity_v2.registry_sha256() == "149b7b61213e33ee85f030d3e567966e5f79df6bea4e138d54d638c76d5e8156"

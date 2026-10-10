@@ -63,7 +63,6 @@ NEW_FANOUT_SHA256 = "5da02588ea5ec0fcdb43345af60594a2a22ea2c99886cc7c1b3da1d13d1
 
 OLD_RUNTIME_SHA256 = "a5c42439e894d33950b5cba608dcd5a031896e7a8e75c6bf613b2314497b1c24"
 NEW_RUNTIME_SHA256 = "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
-INCIDENT_SUCCESSOR_RUNTIME_SHA256 = "9dc0cfb362cf7008d28bcf029755b7361481b683e41155528f9607047773ceba"
 
 P44M_WORKFLOW_SHA256 = "45f7fe3556f892320a12b15c210637782edca60792ccbf030a714414a32f005a"
 
@@ -283,8 +282,8 @@ def _verify_historical_receipts(root: Path) -> None:
 def _verify_current_contract(receipt: dict[str, Any], root: Path) -> dict[str, Any]:
     runtime.validate_contract()
     _require(runtime.POLICY_ID == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
-             and runtime.calculate_policy_sha256() == INCIDENT_SUCCESSOR_RUNTIME_SHA256
-             and runtime.PINNED_POLICY_SHA256 == INCIDENT_SUCCESSOR_RUNTIME_SHA256,
+             and runtime.calculate_policy_sha256() == NEW_RUNTIME_SHA256
+             and runtime.PINNED_POLICY_SHA256 == NEW_RUNTIME_SHA256,
              "runtime wrapper policy SHA drifted")
     preparse = runtime._policy_payload().get("preparse_response_evidence", {})
     _require("source_v1_acceptance_unchanged" not in preparse
@@ -334,7 +333,7 @@ def _verify_current_contract(receipt: dict[str, Any], root: Path) -> dict[str, A
 
     p3_contract = p3.check_f_upcoming_discovery_contract()
     _require(p3_contract.get("runtime_policy_id") == runtime.POLICY_ID
-             and p3_contract.get("runtime_policy_sha256") == INCIDENT_SUCCESSOR_RUNTIME_SHA256,
+             and p3_contract.get("runtime_policy_sha256") == NEW_RUNTIME_SHA256,
              "P3 readiness does not pin the exact current runtime")
 
     _require(runtime.AUTHORITY["model"] is False and runtime.AUTHORITY["pricing"] is False

@@ -124,6 +124,49 @@ APP01C_PREDECESSOR_SOURCE_BLOBS = {
     "scripts/audit_core_01d_authority_reachability_review_a.py":
         "036e483000ce07b2dab5fb7136e4992820026262",
 }
+
+INCIDENT_20261010_PREDECESSOR_BLOBS = {
+    "artifacts/product/data_01c_app_store_complete_v1.json":
+        "6727c011ead7da533a8af00ef4c4b352ea35492b",
+    "domain/current_shadow_sportybet_pc_upcoming_reconciliation.py":
+        "1aa242e6db460c66b388b1acfd43859d382c82f9",
+    "scripts/audit_p4_4q_pc_upcoming_simple_tournament_identity.py":
+        "45b046ad0e6f44823561fe39ab43d03b80c2eab5",
+    "scripts/audit_p4_4r_shadow_runtime_composition_stabilization.py":
+        "ac9c320157b4230288203e67c3e31df9914ad5b8",
+    "scripts/verify_p3_0_e1_live_readiness.py":
+        "968781d51a3d2b2a7ebb6aa85d998ba888aa47dc",
+    "tests/test_current_shadow_sportybet_pc_upcoming_reconciliation.py":
+        "81d71a20f0dcca8204eeb7b8d8a9c6b268f09ef5",
+    "tests/test_p3_0_e1_source_diagnostics_auditor.py":
+        "ddf261c7bbda34331dc5590ba68fbbf4d6a3ee81",
+    "tests/test_p4_4n_sportybet_team_label_shape_compatibility.py":
+        "5bef37d4a8f25b9c693441c089ca723b7ee0bdd2",
+    "tests/test_p4_4o_pc_upcoming_stable_epoch_recovery.py":
+        "3e16c2df91f4fab539bca51b5bd9d077b15d1fec",
+    "tests/test_p4_4o_pc_upcoming_stable_epoch_recovery_audit.py":
+        "6725e92b83c55bc8d510f3177d0fc6f8e50df051",
+    "tests/test_p4_4p_pc_upcoming_preparse_response_evidence.py":
+        "1355855d4427d401307f9d02ff60e5439eb7424f",
+    "tests/test_p4_4q_pc_upcoming_simple_tournament_identity.py":
+        "7bb5659ee6020c0c9f36ff105297c5048c9f83d7",
+}
+INCIDENT_20261010_NEW_PATHS = {
+    "artifacts/architecture/inc_20261010_pc_upcoming_bounded_epoch_stabilization_v1.json",
+    "scripts/audit_inc_20261010_pc_upcoming_bounded_epoch_stabilization.py",
+    "tests/test_inc_20261010_pc_upcoming_bounded_epoch_stabilization.py",
+    "tests/fixtures/core_01d/inc_20261010/pc-upcoming-reconciliation-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/verify-p3-live-readiness-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/audit-p44q-simple-tournament-identity-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/audit-p44r-runtime-composition-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-current-shadow-pc-upcoming-reconciliation-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p3-e1-source-diagnostics-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p44n-team-label-shape-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p44o-stable-epoch-recovery-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p44o-stable-epoch-recovery-audit-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p44p-preparse-response-evidence-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p44q-simple-tournament-identity-predecessor.py.txt",
+}
 ALLOWED_PASS4_PATHS |= APP01C_BOUNDED_PATHS | APP01C_CURRENT_SOURCE_PATHS
 # Exact handoff ls-tree inventory excluding only the twelve bounded evidence
 # paths. Available in shallow CI without requiring the handoff commit object.
@@ -139,6 +182,15 @@ def validate_bounded_inventory(raw: bytes) -> None:
     from scripts import audit_data_01a_app_schema_core as data01a
     data01a.historical_build_config()
     successor_paths = data01a.successor_paths()
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    a2.authenticate_inventory()
+    # Preserve every pre-incident A2 inventory row exactly. Only generations
+    # appended by this bounded incident successor are additive scope and may be
+    # removed from the historical Checkpoint-E projection.
+    a2_successor_inventory_paths = {
+        path for generation, path in a2.discover_inventory_generations()
+        if generation >= 116
+    }
     # These six D5-authenticated paths already existed at V74; project their
     # exact D4 bytes above, then retain them in this historical inventory.
     successor_paths -= historical_d4_source_paths()
@@ -152,8 +204,15 @@ def validate_bounded_inventory(raw: bytes) -> None:
     for line in raw.splitlines(keepends=True):
         metadata, separator, path_bytes = line.partition(b"\t")
         path = path_bytes.strip().decode()
-        if path in data01a.NEW_PATHS | successor_paths:
+        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths:
             continue
+        if path in INCIDENT_20261010_PREDECESSOR_BLOBS:
+            metadata = (
+                metadata.rsplit(b" ", 1)[0]
+                + b" "
+                + INCIDENT_20261010_PREDECESSOR_BLOBS[path].encode()
+            )
+            line = metadata + separator + path_bytes
         if path in predecessor_blobs:
             metadata = metadata.rsplit(b" ", 1)[0] + b" " + predecessor_blobs[path].encode()
             line = metadata + separator + path_bytes

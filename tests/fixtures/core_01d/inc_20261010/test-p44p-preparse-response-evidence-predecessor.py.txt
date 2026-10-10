@@ -76,7 +76,7 @@ def test_runtime_contract_binds_evidence_mechanics_and_bound_source_v1_identity(
     identities = runtime.validate_contract()
     assert runtime.POLICY_ID == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
     assert runtime.calculate_policy_sha256() == runtime.PINNED_POLICY_SHA256 == (
-        "9dc0cfb362cf7008d28bcf029755b7361481b683e41155528f9607047773ceba"
+        "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
     )
     assert identities["preparse_response_evidence"]["every_successful_runtime_http_response_persisted_before_semantic_parse"] is True
     assert identities["preparse_response_evidence"]["parse_failure_semantic_acceptance"] is False
