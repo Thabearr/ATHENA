@@ -198,6 +198,8 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
     latest_paths = {row["path"] for row in latest["source_identities"]}
     added = latest_paths - v2_paths
     assert added == {
+        "scripts/audit_inc_20261010_pc_upcoming_bounded_epoch_stabilization.py",
+        "tests/test_inc_20261010_pc_upcoming_bounded_epoch_stabilization.py",
         "database/run_repository.py",
         "scripts/audit_data_01b_durable_run_state.py",
         "tests/test_data_01b_durable_run_state.py",
