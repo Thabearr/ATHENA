@@ -290,6 +290,20 @@ def test_launch_failure_keeps_commit_and_marks_interrupted(resources, roots, clo
     assert result.disposition == "admitted"
     assert len(calls) == 1
     assert repository.run_snapshot(result.run_id)["state"] == "INTERRUPTED"
+    rows = repository.read_events(result.run_id)
+    assert [row[2] for row in rows] == [
+        "RUN_QUEUED", "RUN_RUNNING", "WORKER_LAUNCH_FAILED", "RUN_INTERRUPTED"]
+    assert b"e1 fake launch failure" not in b"".join(row[3] for row in rows)
+    events = job.durable_read_service().list_run_events(result.run_id, after_sequence=0, limit=50)
+    assert [event.kind for event in events.events] == [
+        "STATE_CHANGED", "STATE_CHANGED", "DIAGNOSTIC", "STATE_CHANGED"]
+    assert events.events[2].payload.diagnostic_id == "WORKER_LAUNCH_FAILED"
+    client, headers = _http_client(job, resources, roots)
+    with client:
+        response = client.get("/api/v1/runs/" + result.run_id + "/events", headers=headers)
+        assert response.status_code == 200
+        assert response.json()["events"][2]["payload"]["diagnostic_id"] == "WORKER_LAUNCH_FAILED"
+        assert "e1 fake launch failure" not in response.text
     replay = job.admit(
         preview_id=item.preview_id,
         execution_envelope_sha256=envelope_sha,
@@ -320,9 +334,13 @@ def test_durable_reads_snapshot_events_history_and_cancel(resources, roots, cloc
     assert any(entry.run_id == run_id and entry.profile == "MAIN" for entry in history.items)
     main_only = reads.list_runs(cursor=None, limit=50, state=None, profile="MAIN")
     assert all(entry.profile == "MAIN" for entry in main_only.items)
-    cancel = reads.request_cancel(run_id)
-    assert cancel.disposition == "requested" and cancel.state == "CANCEL_REQUESTED"
-    assert reads.cancel_repository.request_cancel("run-missing-1") is None
+    from services.athena_read_service import ReadServiceError
+    before = repository.run_snapshot(run_id)
+    with pytest.raises(ReadServiceError) as blocked:
+        reads.request_cancel(run_id)
+    assert blocked.value.code == "CANCEL_STORE_UNAVAILABLE"
+    assert repository.run_snapshot(run_id) == before
+    assert reads.list_run_events(run_id, after_sequence=0, limit=50) == page
 
 
 def test_capability_truth_follows_durable_wiring(resources, roots, clock, monkeypatch):
@@ -339,7 +357,7 @@ def test_capability_truth_follows_durable_wiring(resources, roots, clock, monkey
     durable_states = {row["capability_id"]: row["state"] for row in durable_caps["capabilities"]}
     assert durable_states["run_admission"] == "available"
     assert durable_states["run_history"] == "available"
-    assert durable_states["cancel_intent"] == "available"
+    assert durable_states["cancel_intent"] == "blocked_implementation"
     assert durable_caps["run_admission_authority"] is True
 
 
@@ -385,11 +403,10 @@ def test_restart_replay_does_not_launch_again(resources, roots, clock, monkeypat
     assert len(calls) == 1
 
 
-def test_http_job_admission_and_durable_reads(resources, roots, clock, monkeypatch):
+def _http_client(job, resources, roots):
     from api.app_factory import create_app
     from runtime.local_session import LocalSession
     from fastapi.testclient import TestClient
-    job, repository, item, digest, calls = _durable_job(resources, roots, clock, monkeypatch)
     session = LocalSession()
     reads = job.durable_read_service()
     capabilities = AthenaCapabilityService(
@@ -401,9 +418,15 @@ def test_http_job_admission_and_durable_reads(resources, roots, clock, monkeypat
                      preview_admission_service=job.preview_service,
                      read_service=reads, job_service=job, origin=origin)
     headers = {"X-Athena-Session": session.credential(), "Origin": origin}
+    return TestClient(app, base_url=origin), headers
+
+
+def test_http_job_admission_and_durable_reads(resources, roots, clock, monkeypatch):
+    job, repository, item, digest, calls = _durable_job(resources, roots, clock, monkeypatch)
+    client, headers = _http_client(job, resources, roots)
     body = dict(preview_id=item.preview_id, execution_envelope_sha256=digest,
                 idempotency_key="e1-http")
-    with TestClient(app, base_url=origin) as client:
+    with client:
         accepted = client.post("/api/v1/runs", headers=headers, json=body)
         assert accepted.status_code == 202
         replay = client.post("/api/v1/runs", headers=headers, json=body)
@@ -413,4 +436,22 @@ def test_http_job_admission_and_durable_reads(resources, roots, clock, monkeypat
         assert client.get("/api/v1/runs/" + run_id, headers=headers).status_code == 200
         assert client.get("/api/v1/runs/" + run_id + "/events", headers=headers).status_code == 200
         assert client.get("/api/v1/runs", headers=headers).status_code == 200
+        before = repository.run_snapshot(run_id)
+        events = repository.read_events(run_id)
+        blocked = client.post("/api/v1/runs/" + run_id + "/cancel", headers=headers)
+        assert blocked.status_code == 503
+        assert "CANCEL_STORE_UNAVAILABLE" in blocked.text
+        assert repository.run_snapshot(run_id) == before
+        assert repository.read_events(run_id) == events
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("payload", [b'{}\n', b'{"diagnostic_id":"secret"}\n',
+    b'{"diagnostic_id":"WORKER_LAUNCH_FAILED","path":"secret"}\n',
+    b'{ "diagnostic_id":"WORKER_LAUNCH_FAILED" }\n'])
+def test_launch_diagnostic_projection_fails_closed(payload):
+    from services.athena_job_service import _event_record
+    from services.athena_read_service import ReadBackendError
+    with pytest.raises(ReadBackendError):
+        _event_record((3, 1, "WORKER_LAUNCH_FAILED", payload,
+                       hashlib.sha256(payload).hexdigest(), "2030-01-01T23:00:00.000000Z"))

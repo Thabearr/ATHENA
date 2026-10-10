@@ -44,7 +44,10 @@ def build_receipt():
         "base_main_sha": "74b07c74a946fd19a63f5695055b09668268aef2",
         "post_d5_tests_run": 38013673204,
         "predecessors": predecessors,
-        "a2_successor_generation": 117,
+        "a2_successor_generation": 118,
+        "cancellation": "E3_DEFERRED_CANCEL_STORE_UNAVAILABLE_NON_MUTATING",
+        "launch_failure_diagnostic": "WORKER_LAUNCH_FAILED_STATIC_FENCED_EVENT_NO_EXCEPTION_TEXT",
+        "later_missions": "E2_E3_E4_UNSTARTED",
         "ordering": "ATOMIC_ADMISSION_COMMIT_BEFORE_ATTEMPT_STAGING_OR_LAUNCH",
         "replay": "SAME_COMMITTED_IDENTITY_NO_SECOND_LAUNCH_INCLUDING_AFTER_EXPIRY_AND_RESTART",
         "launch_failure": "COMMIT_RETAINED_OWNED_ATTEMPT_BEST_EFFORT_INTERRUPTED_NO_RETRY",
@@ -66,8 +69,8 @@ def build_receipt():
 def authenticate_successor():
     from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
     latest = boundary.authenticate_inventory()
-    if latest["generation"] < 116:
-        raise AssertionError("E1 requires A2 V116 successor")
+    if latest["generation"] < 118:
+        raise AssertionError("corrected E1 requires A2 V118 successor")
     if (ROOT / RECEIPT).read_bytes() != canonical(build_receipt()):
         raise AssertionError("E1 source evidence drift")
     return {RECEIPT, "docs/product/run_01a_durable_admission.md",

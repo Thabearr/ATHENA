@@ -44,6 +44,8 @@ state. They return ``None`` for unknown runs and raise ``ReadBackendError``
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import json
 from database.app_migration_evidence import contained
 
 from database.run_repository import (
@@ -52,7 +54,7 @@ from database.run_repository import (
     RunRepositoryError,
     RunStateConflict,
 )
-from domain.run_contracts import RunRequest
+from domain.run_contracts import RunRequest, canonical_json_bytes
 from runtime.release_identity import (
     DevelopmentCheckoutIdentity,
     InstalledReleaseIdentity,
@@ -73,7 +75,6 @@ from services.athena_preview_service import (
 )
 from services.athena_read_service import (
     AthenaReadService,
-    CancelIntentResult,
     ReadBackendError,
     ReceiptObservation,
     RunEventPage,
@@ -218,6 +219,15 @@ class AthenaJobService:
             # Exactly one launch per admitted run, by the admitting thread.
             self._launcher.launch(command)
         except Exception:
+            try:
+                self._repository.append_event(
+                    run_id, attempt_id=attempt_id, lease_token=lease_token,
+                    event_type="WORKER_LAUNCH_FAILED",
+                    payload={"diagnostic_id": "WORKER_LAUNCH_FAILED"})
+            except Exception:
+                # Recovery must still preserve the committed identity if the
+                # fenced diagnostic store itself is unavailable.
+                pass
             self._best_effort_recover(run_id, attempt_id, lease_token)
             return
 
@@ -287,7 +297,7 @@ class AthenaJobService:
         unavailable = AthenaReadService.unavailable()
         return AthenaReadService(
             run_repository=DurableRunReadAdapter(self._repository),
-            cancel_repository=DurableCancelAdapter(self._repository),
+            cancel_repository=unavailable.cancel_repository,
             fixture_index=unavailable.fixture_index,
             export_repository=unavailable.export_repository,
         )
@@ -338,6 +348,14 @@ def _event_record(row: tuple) -> RunEventRecord:
             suffix = event_type[len("RUN_"):]
             states = {"QUEUED", "RUNNING", "CANCEL_REQUESTED", "TERMINAL", "CANCELLED", "INTERRUPTED"}
             payload = RunEventPayload(state=suffix if suffix in states else None)
+        elif event_type == "WORKER_LAUNCH_FAILED":
+            retained = json.loads(_payload)
+            expected = {"diagnostic_id": "WORKER_LAUNCH_FAILED"}
+            if (retained != expected or canonical_json_bytes(retained) != _payload
+                    or hashlib.sha256(_payload).hexdigest() != _digest):
+                raise ValueError("invalid launch diagnostic")
+            kind = "DIAGNOSTIC"
+            payload = RunEventPayload(diagnostic_id="WORKER_LAUNCH_FAILED")
         else:
             kind = "DIAGNOSTIC"
             payload = RunEventPayload()
@@ -448,43 +466,7 @@ class DurableRunReadAdapter:
         return RunHistoryPage(tuple(page), next_cursor)
 
 
-class DurableCancelAdapter:
-    """Cooperative cancel intent over the durable store; never controls a process."""
-
-    def __init__(self, repository: DurableRunRepository) -> None:
-        if type(repository) is not DurableRunRepository:
-            raise ValueError("exact durable run repository is required")
-        self._repository = repository
-
-    def request_cancel(self, run_id: str) -> CancelIntentResult | None:
-        try:
-            snapshot = self._repository.run_snapshot(run_id)
-        except (RunRepositoryError, OSError, ValueError):
-            raise ReadBackendError("CANCEL_STORE_UNAVAILABLE") from None
-        if snapshot is None:
-            return None
-        state = snapshot["state"]
-        version = snapshot["state_version"]
-        if state in {"CANCEL_REQUESTED", "CANCELLED", "TERMINAL", "INTERRUPTED"}:
-            disposition = "already_terminal" if state in {"TERMINAL", "CANCELLED", "INTERRUPTED"} else "already_requested"
-            return CancelIntentResult(run_id, disposition, state, version)  # type: ignore[arg-type]
-        try:
-            new_version = self._repository.request_cancel(run_id, expected_version=version)
-        except RunStateConflict as exc:
-            raise ReadBackendError("CANCEL_STORE_UNAVAILABLE") from None
-        except (RunRepositoryError, OSError, ValueError):
-            raise ReadBackendError("CANCEL_STORE_UNAVAILABLE") from None
-        try:
-            updated = self._repository.run_snapshot(run_id)
-        except (RunRepositoryError, OSError, ValueError):
-            raise ReadBackendError("CANCEL_STORE_UNAVAILABLE") from None
-        if updated is None:
-            raise ReadBackendError("CANCEL_STORE_UNAVAILABLE")
-        return CancelIntentResult(run_id, "requested", updated["state"], updated["state_version"])  # type: ignore[arg-type]
-
-
 __all__ = [
     "AthenaJobService",
-    "DurableCancelAdapter",
     "DurableRunReadAdapter",
 ]
