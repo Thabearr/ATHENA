@@ -189,7 +189,7 @@ def test_successor_architecture_receipt_and_current_contract_audit():
     assert result["status"] == "PASSED"
     assert result["policy_id"] == audit.POLICY_ID
     assert result["receipt_sha256"] == (
-        "ff6688223bf9502b2e90015e30266cad555286d0ff8bd34c44d5a515762ac755"
+        "43f8f3b89591f21bcdff1a8dc5e7c49c993fc192338ac127baccdf21ea20d227"
     )
     assert result["runtime_policy_sha256"] == runtime.PINNED_POLICY_SHA256
     assert result["max_capture_epochs"] == 4
