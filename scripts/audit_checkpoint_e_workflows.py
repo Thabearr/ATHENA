@@ -410,6 +410,8 @@ def verified_additive_artifact_paths():
     portability.audit()
     require(data01c.RECEIPT in d5_paths,
             "D5 source receipt is absent from its authenticated successor set")
+    from scripts import audit_run_01a_durable_admission as e1
+    e1_paths = e1.authenticate_successor() if latest_a2["generation"] >= 116 else set()
     return (
         MATRIX_PATH,
         RECEIPT_PATH,
@@ -454,6 +456,7 @@ def verified_additive_artifact_paths():
         data01b.RECEIPT,
         data01c.RECEIPT,
         "artifacts/product/data_01c_restore_portability_v1.json",
+        *(path for path in sorted(e1_paths) if path.startswith("artifacts/")),
     )
 
 

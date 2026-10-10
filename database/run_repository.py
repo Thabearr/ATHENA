@@ -593,6 +593,31 @@ class DurableRunRepository:
             conn.execute("UPDATE app_external_operations SET state=?,sent_at=CASE WHEN ?='SENT' THEN ? ELSE sent_at END,completed_at=CASE WHEN ? IN ('CONFIRMED','FAILED','OUTCOME_UNKNOWN') THEN ? ELSE completed_at END,response_artifact_id=?,error_code=? WHERE operation_id=?",
                          (state, state, stamp, state, stamp, response_artifact_id, error_code, operation_id))
 
+    def record_launch_failure_and_interrupt(self, run_id, attempt_id, lease_token):
+        """E1 initial handoff failure: diagnostic and interruption commit together."""
+        with self._operation(write=True) as conn:
+            self._fence(conn, run_id, attempt_id, lease_token)
+            row = conn.execute(
+                "SELECT state,state_version,receipt_artifact_id FROM app_runs WHERE run_id=?",
+                (run_id,)).fetchone()
+            number = conn.execute(
+                "SELECT attempt_number FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
+                (run_id, attempt_id)).fetchone()[0]
+            if (row != ("RUNNING", 1, None) or number != 1
+                    or conn.execute("SELECT 1 FROM app_run_events WHERE run_id=? AND event_type='WORKER_LAUNCH_FAILED'",
+                                    (run_id,)).fetchone()
+                    or conn.execute("SELECT 1 FROM app_external_operations WHERE run_id=?",
+                                    (run_id,)).fetchone()):
+                raise RunStateConflict("launch failure requires initial running handoff")
+            stamp = _utc(self._clock())
+            self._event(conn, run_id, row[1], "WORKER_LAUNCH_FAILED",
+                        {"diagnostic_id": "WORKER_LAUNCH_FAILED"}, stamp)
+            conn.execute("UPDATE app_run_attempts SET finished_at=?,recovery_disposition='OFFLINE_LAUNCH_FAILED' WHERE attempt_id=?",
+                         (stamp, attempt_id))
+            conn.execute("UPDATE app_runs SET state='INTERRUPTED',state_version=state_version+1,updated_at=? WHERE run_id=? AND state_version=1",
+                         (stamp, run_id))
+            self._event(conn, run_id, row[1] + 1, "RUN_INTERRUPTED", {}, stamp)
+
     def recover_attempt(self, run_id, attempt_id, lease_token):
         """Offline explicit recovery, never retries operations or launches work."""
         with self._operation(write=True) as conn:
@@ -620,6 +645,70 @@ class DurableRunRepository:
                 if hashlib.sha256(result[raw_key]).hexdigest() != result[digest_key]:
                     raise RunRepositoryError("run immutable identity digest mismatch")
         return result
+
+    def read_receipt_bytes(self, run_id):
+        """Return proven terminal receipt wrapper bytes, or None when absent.
+
+        E1 durable-read port over already-verified terminal evidence. Unknown
+        runs return None; nonterminal runs return None (no receipt produced).
+        Any inconsistency fails closed; this never invents provenance.
+        """
+        _identity(run_id)
+        with self._operation() as conn:
+            row = conn.execute(
+                "SELECT state,receipt_artifact_id FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
+            if row is None:
+                return None
+            if row[0] != "TERMINAL":
+                return None
+            self._verify_run_identity(conn, run_id, current=False)
+            artifact_id = row[1]
+            if type(artifact_id) is not str or not artifact_id.startswith("receipt-"):
+                raise RunRepositoryError("terminal receipt artifact identity drift")
+            digest = artifact_id[len("receipt-"):]
+            _sha(digest)
+            artifact = conn.execute(
+                "SELECT logical_path,byte_sha256,byte_count FROM app_artifacts WHERE artifact_id=?",
+                (artifact_id,)).fetchone()
+            if artifact is None or artifact[1] != digest:
+                raise RunRepositoryError("retained receipt artifact mismatch")
+            raw = contained(self._data_root, logical_locator(artifact[0])).read_bytes()
+            if hashlib.sha256(raw).hexdigest() != digest or len(raw) != artifact[2]:
+                raise RunRepositoryError("retained receipt bytes mismatch")
+            value = json.loads(raw)
+            if (canonical_json_bytes(value) != raw
+                    or value.get("run_id") != run_id
+                    or value.get("policy_id") != "ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1"):
+                raise RunRepositoryError("terminal receipt wrapper mismatch")
+            return canonical_json_bytes(RunReceipt.from_dict(value["receipt"]))
+
+    def list_run_history(self):
+        """Return ordered durable run rows for the E1 history projection.
+
+        Ordered by creation time then run identity for stable pagination. Each
+        row carries the exact bytes needed to derive the presentation profile
+        (MAIN/SHADOW) without trusting a stored label. No worker, provider, or
+        delivery work is performed here.
+        """
+        with self._operation() as conn:
+            cursor = conn.execute(
+                "SELECT run_id,state,state_version,created_at,updated_at,request_bytes "
+                "FROM app_runs ORDER BY created_at,run_id")
+            rows = cursor.fetchall()
+            history = []
+            for run_id, state, version, created, updated, request_bytes in rows:
+                self._verify_run_identity(conn, run_id, current=False)
+                if type(request_bytes) is not bytes:
+                    raise RunRepositoryError("run request bytes drift")
+                history.append({
+                    "run_id": _identity(run_id),
+                    "state": state,
+                    "state_version": version,
+                    "created_at": created,
+                    "updated_at": updated,
+                    "request_bytes": request_bytes,
+                })
+            return history
 
     def _verify_receipt_producer(self, conn, run_id, receipt, envelope, release_id):
         provenance = self._verify_release(conn, release_id, envelope.source_identity)

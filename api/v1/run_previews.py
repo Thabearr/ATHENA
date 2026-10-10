@@ -91,6 +91,22 @@ def _service(request: Request) -> AthenaPreviewAdmissionService:
     return service
 
 
+def _admission_service(request: Request):
+    """E1 job service when wired, else the preview admission boundary.
+
+    The job service exposes the same ``admit`` signature with commit-first
+    ordering plus exactly one offline-probe launch per admitted run. Older
+    harnesses without a job service keep the direct preview-admission path.
+    """
+    job_service = getattr(request.app.state, "job_service", None)
+    if job_service is not None:
+        from services.athena_job_service import AthenaJobService
+        if type(job_service) is not AthenaJobService:
+            raise _error("CURRENT_AUTHORITY_UNAVAILABLE")
+        return job_service
+    return _service(request)
+
+
 def _error_response(exc: PreviewAdmissionError) -> JSONResponse:
     payload = ErrorDTO(
         code=exc.code,
@@ -128,7 +144,7 @@ async def admit_run(request: Request):
         dto = await _parse_dto(request, RunAdmissionDTO)
         assert type(dto) is RunAdmissionDTO
         result: AdmissionResult = await run_in_threadpool(
-            _service(request).admit,
+            _admission_service(request).admit,
             preview_id=dto.preview_id,
             execution_envelope_sha256=dto.execution_envelope_sha256,
             idempotency_key=dto.idempotency_key,
