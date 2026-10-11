@@ -236,6 +236,8 @@ SOURCE_ROLES: dict[str, str] = {
     "artifacts/architecture/p4_3_workflow_retirement_ledger_v1.json": "immutable_workflow_retirement_invariant",
 }
 
+INCIDENT_20261010_PC_RUNTIME = "domain/current_shadow_sportybet_pc_upcoming_reconciliation.py"
+
 ZERO_ACTIONS = {
     "manual_port02c_dispatches": 0,
     "port02c_reruns": 0,
@@ -283,6 +285,9 @@ def _reviewed_source(path: str, historical: dict[str, Any]) -> bytes:
         from scripts import audit_data_01c_restore_portability as d5
         d5.authenticate_workflow()
         return d5.predecessor_source(path)
+    if path == INCIDENT_20261010_PC_RUNTIME:
+        from scripts import audit_core_01d_authority_reachability_review_a as pass_a
+        return pass_a.source_bytes(path)
     return (ROOT / path).read_bytes()
 
 
@@ -303,6 +308,14 @@ def _reviewed_git_source(path: str, blob: str, historical: dict[str, Any]) -> by
         d5.authenticate_workflow()
         raw = d5.predecessor_source(path)
         require(d5.identity(raw)["git_blob_sha1"] == blob, "B6 predecessor workflow identity drift")
+        return raw
+    if path == INCIDENT_20261010_PC_RUNTIME:
+        from scripts import audit_core_01d_authority_reachability_review_a as pass_a
+        raw = pass_a.source_bytes(path)
+        require(
+            hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() == blob,
+            "incident predecessor runtime differs from immutable B6 blob",
+        )
         return raw
     return _git("cat-file", "blob", blob)
 
@@ -365,7 +378,10 @@ def _base_tree_entries() -> dict[str, tuple[str, str, str]]:
                     and mode_kind_blob[0] in {"100644", "100755"},
                     "required B6 source is not a checked-out regular Git blob: " + path)
             mode, _kind, blob = mode_kind_blob
-            if path in app01a.HISTORICAL_RUNTIME_PATHS or path in {"scripts/port_02c_build_config.py", PORT_WORKFLOW}:
+            if (
+                path in app01a.HISTORICAL_RUNTIME_PATHS
+                or path in {"scripts/port_02c_build_config.py", PORT_WORKFLOW, INCIDENT_20261010_PC_RUNTIME}
+            ):
                 blob = row.get("git_blob_sha1")
             require(blob == row.get("git_blob_sha1"),
                     "checked-out B6 source differs from authenticated base blob: " + path)
