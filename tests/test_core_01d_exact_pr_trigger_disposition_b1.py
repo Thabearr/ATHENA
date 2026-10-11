@@ -198,6 +198,7 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
     latest_paths = {row["path"] for row in latest["source_identities"]}
     added = latest_paths - v2_paths
     assert added == {
+        "tests/test_run_01a_forward_successor_pr457.py",
         "scripts/audit_inc_20261010_pc_upcoming_bounded_epoch_stabilization.py",
         "tests/test_inc_20261010_pc_upcoming_bounded_epoch_stabilization.py",
         "database/run_repository.py",

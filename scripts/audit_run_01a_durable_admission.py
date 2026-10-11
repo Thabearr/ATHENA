@@ -23,9 +23,137 @@ SOURCES = (
     "tests/fixtures/core_01d/run_01a_historical/d5_run_previews.py.b64",
     "tests/fixtures/core_01d/run_01a_historical/d3_run_desktop.py.b64",
 )
+E1_RECEIPT_SHA256 = "de2222e7f1c472d7a336f8a4c9c7bec84c2e6ed533b8f568689a3857adaf4f71"
+FORWARD_EVOLVED_SOURCE_PATHS = frozenset({
+    "scripts/audit_checkpoint_e_workflows.py",
+    "scripts/audit_data_01c_app_store_complete.py",
+    "tests/test_core_01d_exact_pr_trigger_disposition_b1.py",
+    "scripts/audit_run_01a_durable_admission.py",
+})
+FORWARD_EVOLVED_SOURCES = {
+    "scripts/audit_checkpoint_e_workflows.py": {
+        "predecessor_lf_sha256": "15f9e170d830358839a1d1ef5b500b28c8fa141dba6cf338bfe3af0656c4b794",
+        "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr457/audit-checkpoint-e-workflows-predecessor.py.txt",
+    },
+    "scripts/audit_data_01c_app_store_complete.py": {
+        "predecessor_lf_sha256": "d14a742672454455ac82f9fc5a2a46e7b2124e7997986e6aa756ec0ddbe12369",
+        "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr457/audit-data-01c-app-store-complete-predecessor.py.txt",
+    },
+    "tests/test_core_01d_exact_pr_trigger_disposition_b1.py": {
+        "predecessor_lf_sha256": "2dcbb770fec81944b3a1b504ec8041f6e87c915f16bb87ba616fd7966463d483",
+        "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr457/test-core-01d-exact-pr-trigger-disposition-b1-predecessor.py.txt",
+    },
+    "scripts/audit_run_01a_durable_admission.py": {
+        "predecessor_lf_sha256": "97f62ebc4bd67932fe8b8acbe08d75b28c81acc5f99a0a2fb1f504e42a30ba4c",
+        "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr457/audit-run-01a-durable-admission-predecessor.py.txt",
+    },
+}
+FORWARD_SUCCESSOR_PATHS = frozenset({
+    "tests/fixtures/core_01d/run_01a_historical/pr457/audit-checkpoint-e-workflows-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr457/audit-data-01c-app-store-complete-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr457/test-core-01d-exact-pr-trigger-disposition-b1-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr457/audit-run-01a-durable-admission-predecessor.py.txt",
+    "tests/test_run_01a_forward_successor_pr457.py",
+})
 
 def canonical(value):
     return (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
+
+def _lf(raw):
+    return raw.replace(b"\r\n", b"\n")
+
+
+def _sha(raw):
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _validate_forward_evolved_sources():
+    if set(FORWARD_EVOLVED_SOURCES) != set(FORWARD_EVOLVED_SOURCE_PATHS):
+        raise AssertionError("E1 forward source allowlist drift")
+    if not FORWARD_EVOLVED_SOURCE_PATHS <= set(SOURCES):
+        raise AssertionError("E1 forward source is outside the frozen source set")
+    for path, entry in FORWARD_EVOLVED_SOURCES.items():
+        if set(entry) != {"predecessor_lf_sha256", "predecessor_fixture"}:
+            raise AssertionError("E1 forward predecessor descriptor drift: " + path)
+
+
+def _predecessor_bytes(path, *, root=ROOT):
+    _validate_forward_evolved_sources()
+    entry = FORWARD_EVOLVED_SOURCES.get(path)
+    if entry is None:
+        raise AssertionError("E1 predecessor fixture is not authorized: " + path)
+    raw = _lf((root / entry["predecessor_fixture"]).read_bytes())
+    if _sha(raw) != entry["predecessor_lf_sha256"]:
+        raise AssertionError("E1 predecessor fixture identity drift: " + path)
+    return raw
+
+
+def _historical_source_bytes(path, *, root=ROOT):
+    if path in FORWARD_EVOLVED_SOURCE_PATHS:
+        return _predecessor_bytes(path, root=root)
+    return _lf((root / path).read_bytes())
+
+
+def _source_identity_map(rows, *, label, digest_key="lf_source_sha256"):
+    if not isinstance(rows, list):
+        raise AssertionError(label + " source identities are missing")
+    result = {}
+    for row in rows:
+        if (not isinstance(row, dict) or not isinstance(row.get("path"), str)
+                or not isinstance(row.get(digest_key), str)
+                or row["path"] in result):
+            raise AssertionError(label + " source identity shape drift")
+        result[row["path"]] = row[digest_key]
+    return result
+
+
+def _verify_immutable_receipt():
+    raw = (ROOT / RECEIPT).read_bytes()
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise AssertionError("E1 immutable receipt is not valid JSON") from error
+    digest = value.get("canonical_sha256") if isinstance(value, dict) else None
+    body = {key: child for key, child in value.items() if key != "canonical_sha256"} if isinstance(value, dict) else {}
+    if (raw != canonical(value) or digest != E1_RECEIPT_SHA256
+            or _sha(canonical(body)) != E1_RECEIPT_SHA256):
+        raise AssertionError("E1 immutable receipt identity drift")
+    rebuilt = canonical(build_receipt())
+    if raw != rebuilt:
+        raise AssertionError("E1 immutable receipt source identity drift")
+    return value
+
+
+def _authenticate_current_sources(historical_identities, a2_rows, *, root=ROOT, tracked_paths=None):
+    _validate_forward_evolved_sources()
+    if set(historical_identities) != set(SOURCES):
+        raise AssertionError("E1 frozen source identity set drift")
+    current_a2 = _source_identity_map(a2_rows, label="A2")
+    if tracked_paths is None:
+        from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+        tracked_paths = set(boundary.git(
+            "ls-files", "--", *sorted(FORWARD_EVOLVED_SOURCE_PATHS)
+        ).decode().splitlines())
+    for path in SOURCES:
+        current = _sha(_lf((root / path).read_bytes()))
+        frozen = historical_identities[path]
+        if path not in FORWARD_EVOLVED_SOURCE_PATHS:
+            if current != frozen:
+                raise AssertionError("E1 unlisted source evidence drift: " + path)
+            continue
+        entry = FORWARD_EVOLVED_SOURCES[path]
+        predecessor = _predecessor_bytes(path, root=root)
+        if _sha(predecessor) != frozen or frozen != entry["predecessor_lf_sha256"]:
+            raise AssertionError("E1 predecessor does not match frozen receipt: " + path)
+        if path not in tracked_paths:
+            raise AssertionError("E1 current successor source is not tracked: " + path)
+        a2_identity = current_a2.get(path)
+        if a2_identity is None:
+            raise AssertionError("E1 current source is absent from A2 inventory: " + path)
+        if current != a2_identity:
+            raise AssertionError("E1 current source differs from authenticated A2 bytes: " + path)
+    return current_a2
+
 
 def build_receipt():
     predecessors = {}
@@ -62,24 +190,36 @@ def build_receipt():
         "hosted_ci": "NATURAL_EXACT_HEAD_REQUIRED_SEPARATELY",
         "prohibited_runtime_actions": dict.fromkeys(("provider", "live_shadow", "share_code",
             "login", "cookie", "wallet", "stake", "wager", "delivery", "manual_workflow"), 0),
-        "source_identities": [{"path": path, "lf_sha256": hashlib.sha256(
-            (ROOT / path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()} for path in SOURCES],
+        "source_identities": [{"path": path, "lf_sha256": _sha(
+            _historical_source_bytes(path))} for path in SOURCES],
     }
-    value["canonical_sha256"] = hashlib.sha256(canonical(value)).hexdigest()
+    value["canonical_sha256"] = _sha(canonical(value))
+    if value["canonical_sha256"] != E1_RECEIPT_SHA256:
+        raise AssertionError("E1 immutable receipt reconstruction identity drift")
     return value
 
 def authenticate_successor():
     from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
     latest = boundary.authenticate_inventory()
-    if latest["generation"] < 119:
+    if type(latest.get("generation")) is not int or latest["generation"] < 119:
         raise AssertionError("atomic E1 requires A2 V119 successor")
-    if (ROOT / RECEIPT).read_bytes() != canonical(build_receipt()):
-        raise AssertionError("E1 source evidence drift")
+    receipt = _verify_immutable_receipt()
+    historical = _source_identity_map(
+        receipt.get("source_identities"), label="E1", digest_key="lf_sha256"
+    )
+    _authenticate_current_sources(
+        historical,
+        latest.get("source_identities"),
+        tracked_paths=set(boundary.git(
+            "ls-files", "--", *sorted(FORWARD_EVOLVED_SOURCE_PATHS)
+        ).decode().splitlines()),
+    )
     return {RECEIPT, "docs/product/run_01a_durable_admission.md",
             "services/athena_job_service.py", "scripts/audit_run_01a_durable_admission.py",
             "tests/test_run_01a_durable_admission.py",
             "tests/fixtures/core_01d/run_01a_historical/d3_run_desktop.py.b64",
-            "tests/fixtures/core_01d/run_01a_historical/d5_run_previews.py.b64"}
+            "tests/fixtures/core_01d/run_01a_historical/d5_run_previews.py.b64",
+            *FORWARD_SUCCESSOR_PATHS}
 
 def predecessor_admission_source():
     from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
