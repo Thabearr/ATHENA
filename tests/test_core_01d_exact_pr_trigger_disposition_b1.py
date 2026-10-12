@@ -273,6 +273,10 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
         "services/worker_coordinator.py",
         "tests/test_run_01b_worker_lifecycle.py",
         "tests/native/test_run_01b_worker_coordinator_native.py",
+        "services/durable_share_code_transport.py",
+        "scripts/audit_run_02a_pre_durable_share_send.py",
+        "tests/test_run_02a_pre_durable_share_send.py",
+        "tests/native/test_run_02a_pre_share_send_publication.py",
     }
     original_tree = boundary.git("ls-tree", "-r", "HEAD")
     projected = completion_v2.a2_historical_projection(original_tree)

@@ -503,6 +503,9 @@ def verified_additive_artifact_paths():
     run01b_status = run01b.audit()
     require(run01b_status.get("result") == "PASS",
             "RUN-01B additive worker lifecycle receipt failed authentication")
+    from scripts import audit_run_02a_pre_durable_share_send as share_pre
+    require(share_pre.audit().get("result") == "PASS",
+            "RUN-02A prerequisite additive evidence failed authentication")
     return (
         MATRIX_PATH,
         RECEIPT_PATH,
@@ -548,6 +551,7 @@ def verified_additive_artifact_paths():
         data01c.RECEIPT,
         "artifacts/product/data_01c_restore_portability_v1.json",
         run01b.RECEIPT_PATH,
+        share_pre.RECEIPT_PATH,
         *(path for path in sorted(e1_paths) if path.startswith("artifacts/")),
     )
 

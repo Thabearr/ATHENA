@@ -240,6 +240,10 @@ class AthenaJobService:
             and envelope.requested_operations.acquire_sources is True
             and envelope.authority_manifest.provider_acquisition is True
         )
+        if request.create_share_code is True:
+            raise WorkerLaunchError(
+                "product delivery is blocked until reviewed durable transport context is integrated"
+            )
         if requests_shadow_acquisition and type(identity) is not DevelopmentCheckoutIdentity:
             raise WorkerLaunchError(
                 "installed Current Shadow execution is blocked without authenticated producer provenance"

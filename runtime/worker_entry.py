@@ -121,6 +121,8 @@ def _run_offline_probe(command: WorkerCommand, identity: Any) -> int:
 
 
 def _run_current_shadow(command: WorkerCommand, request: Any) -> int:
+    if request.create_share_code is True:
+        raise WorkerEntryError("product delivery requires reviewed durable transport context")
     if command.operation != "CURRENT_SHADOW_REQUEST":
         raise WorkerEntryError("Current Shadow dispatcher received another operation")
     if (
