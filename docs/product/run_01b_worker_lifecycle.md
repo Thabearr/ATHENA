@@ -12,6 +12,11 @@ exact platform process-group locator, and owns heartbeats, typed progress,
 receipt verification, and finalization. A capacity loser remains durably
 queued; RUN-01B does not drain it automatically.
 
+Heartbeat authenticates terminal evidence and current source for a matching
+current lease before the finished-attempt fence. This preserves the specific
+fail-closed diagnosis while a completed attempt still cannot renew its lease;
+stale and cross-run leases fail at the fence without that preflight.
+
 The native locator helper accepts only a positive exact integer PID and emits
 only `WINDOWS_PROCESS_GROUP` or `POSIX_PROCESS_GROUP` with that PID. The
 cross-platform schema and invalid-PID cases are covered by
@@ -44,8 +49,8 @@ PR #457's four-epoch successor runtime policy remains
 `9dc0cfb362cf7008d28bcf029755b7361481b683e41155528f9607047773ceba`, and its
 legacy two-epoch policy remains
 `3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a`.
-A2 V116–V136 remain immutable; RUN-01B appends V137 from exact V136
-`daa5e71f17e9aedadabd4919022620f7625d8bef7e6133f98b487e1d372e2c78` with
+A2 V116–V137 remain immutable; RUN-01B appends V138 from exact V137
+`3eeb4869444ca4728fa763ccd79d9bb756693286f01624248c80942e417f6989` with
 `predecessor_rewritten=false`.
 
 The canonical source/evidence receipt is

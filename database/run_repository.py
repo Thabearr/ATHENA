@@ -389,15 +389,25 @@ class DurableRunRepository:
                       hashlib.sha256(raw).hexdigest(), stamp))
         return sequence
 
-    def _fence(self, conn, run_id, attempt_id, lease_token):
+    def _fence(self, conn, run_id, attempt_id, lease_token, *, verify_current_attempt_first=False):
         row = conn.execute(
             "SELECT lease_token,finished_at,attempt_number FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
             (run_id, attempt_id),
         ).fetchone()
         current = conn.execute("SELECT MAX(attempt_number) FROM app_run_attempts WHERE run_id=?", (run_id,)).fetchone()[0]
+        identity_verified = False
+        if (verify_current_attempt_first and row is not None and row[0] == lease_token
+                and row[2] == current):
+            # A matching current lease can observe terminal evidence/source
+            # failures before the finished-attempt fence. This does not grant
+            # heartbeat authority: the fence below still rejects completed
+            # attempts, and stale/cross-run leases never reach this check.
+            self._verify_run_identity(conn, run_id)
+            identity_verified = True
         if row is None or row[0] != lease_token or row[1] is not None or row[2] != current:
             raise RunLeaseFenced("stale or cross-run attempt")
-        self._verify_run_identity(conn, run_id)
+        if not identity_verified:
+            self._verify_run_identity(conn, run_id)
         state = conn.execute("SELECT state FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
         if state is None or state[0] not in {"QUEUED", "RUNNING", "CANCEL_REQUESTED"}:
             raise RunLeaseFenced("run no longer accepts attempt writes")
@@ -598,7 +608,7 @@ class DurableRunRepository:
 
     def heartbeat(self, run_id, attempt_id, lease_token):
         with self._operation(write=True) as conn:
-            self._fence(conn, run_id, attempt_id, lease_token)
+            self._fence(conn, run_id, attempt_id, lease_token, verify_current_attempt_first=True)
             conn.execute("UPDATE app_run_attempts SET heartbeat_at=? WHERE attempt_id=?",
                          (_utc(self._clock()), attempt_id))
 
