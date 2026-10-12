@@ -126,6 +126,7 @@ RUN_02A_PRE_ADDITIVE_PATHS={
 }
 RUN_02A_PRE_PREDECESSOR_BLOBS={
  'scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py':'07ce59ed824d40ef1be12686537c4e355e565c30',
+ 'scripts/audit_lg_a_worker_launch_failure_remediation.py':'0e8a349d49ad2cb9a41a709ad134e48e6c766069',
  'runtime/worker_entry.py':'77d8888a4b007f9bb0967409a23e826f97338c90',
  'scripts/sportybet_direct_share_bridge.py':'681ce2a043a334dcb8523c81d092369d6540e6d5',
 }

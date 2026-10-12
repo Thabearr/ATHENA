@@ -24,7 +24,7 @@ SOURCES = (
     "scripts/audit_data_01c_app_store_complete.py",
     "scripts/audit_lg_a_worker_launch_failure_remediation.py",
     "scripts/audit_run_02a_pre_durable_share_send.py", "tests/test_core_01d_exact_pr_trigger_disposition_b1.py",
-    "tests/test_lg_a_worker_launch_failure_remediation.py",
+    "tests/test_lg_a_worker_entry_historical_projection.py",
     "tests/test_run_02a_pre_durable_share_send.py", "tests/native/test_run_02a_pre_share_send_publication.py",
 )
 HISTORY = {
