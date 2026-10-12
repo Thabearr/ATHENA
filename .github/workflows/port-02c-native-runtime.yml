@@ -11,9 +11,6 @@ on:
       - scripts/audit_port_02_native_runtime.py
       - scripts/port_02c_offline_composed_replay.py
       - scripts/port_02c_git_free_launch.py
-      - services/worker_coordinator.py
-      - services/athena_job_service.py
-      - database/run_repository.py
       - tests/fixtures/port_02c_run_36345657852/**
       - tests/native/**
       - run_desktop.py

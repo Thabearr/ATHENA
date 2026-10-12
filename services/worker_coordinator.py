@@ -202,12 +202,11 @@ class WorkerCoordinator:
         with self._owned_lock:
             self._owned[attempt_id] = handle
         locator_bound = False
-        pid = handle.pid
-        if type(pid) is int and pid > 0:
-            kind = "WINDOWS_PROCESS_GROUP" if os.name == "nt" else "POSIX_PROCESS_GROUP"
+        locator = self._native_process_locator(handle.pid)
+        if locator is not None:
             try:
                 self._repository.bind_process_locator(
-                    run_id, attempt_id, lease_token, {"kind": kind, "pid": pid},
+                    run_id, attempt_id, lease_token, locator,
                 )
                 locator_bound = True
             except Exception:
@@ -236,6 +235,14 @@ class WorkerCoordinator:
             # root or attempt a second launch; E3 owns restart reconciliation.
             return True
         return True
+
+    @staticmethod
+    def _native_process_locator(pid: object) -> dict[str, int | str] | None:
+        """Return only the exact bounded native process-group locator."""
+        if type(pid) is not int or pid <= 0:
+            return None
+        kind = "WINDOWS_PROCESS_GROUP" if os.name == "nt" else "POSIX_PROCESS_GROUP"
+        return {"kind": kind, "pid": pid}
 
     @staticmethod
     def _drain_output(stream) -> None:

@@ -12,6 +12,11 @@ exact platform process-group locator, and owns heartbeats, typed progress,
 receipt verification, and finalization. A capacity loser remains durably
 queued; RUN-01B does not drain it automatically.
 
+The native locator helper accepts only a positive exact integer PID and emits
+only `WINDOWS_PROCESS_GROUP` or `POSIX_PROCESS_GROUP` with that PID. The
+cross-platform schema and invalid-PID cases are covered by
+`tests/native/test_run_01b_worker_coordinator_native.py`.
+
 Progress comes only from canonical `current-shadow-all-market-stage.json` and
 `current-shadow-all-market-progress.json` files. Events preserve the exact
 source-summary, source, model/history, Router, and Portfolio digest references.
@@ -39,8 +44,9 @@ PR #457's four-epoch successor runtime policy remains
 `9dc0cfb362cf7008d28bcf029755b7361481b683e41155528f9607047773ceba`, and its
 legacy two-epoch policy remains
 `3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a`.
-A2 V116–V133 remain immutable; RUN-01B appends V134 from exact V133
-`e01f9b23074076846522056a45514d2a34f78a85c3bc6c89383c33e1b81e69e7`.
+A2 V116–V134 remain immutable; RUN-01B appends V135 with canonical SHA-256
+`be33b12c9149c6c8b645adadbe5770484ac25814269a2fb93c78b2666d37f91e` from exact
+V134 `85107818034b50495157e36bde9bc277a4b181136b9bfeced846e7a6de2eb289`.
 
 The canonical source/evidence receipt is
 `artifacts/product/run_01b_worker_lifecycle_v1.json`; the non-writing audit is
