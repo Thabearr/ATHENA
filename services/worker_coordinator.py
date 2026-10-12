@@ -121,6 +121,7 @@ class WorkerCoordinator:
         self._owned: dict[str, WorkerProcessHandle] = {}
         self._owned_lock = threading.Lock()
         self._pending_projection: dict[str, str] = {}
+        self._output_drainers: list[threading.Thread] = []
 
     def handoff(
         self,
@@ -213,7 +214,7 @@ class WorkerCoordinator:
                 locator_bound = False
 
         try:
-            handle.discard_output()
+            self._discard_output(handle)
         except Exception:
             # Output is never evidence. A failure to drain is not permission
             # to parse or retain logs; the coordinator still owns the handle.
@@ -235,6 +236,33 @@ class WorkerCoordinator:
             # root or attempt a second launch; E3 owns restart reconciliation.
             return True
         return True
+
+    @staticmethod
+    def _drain_output(stream) -> None:
+        try:
+            while stream.read(65536):
+                pass
+        except (OSError, ValueError):
+            return
+
+    def _discard_output(self, handle: WorkerProcessHandle) -> None:
+        """Drain pipes asynchronously without interpreting or retaining logs."""
+        process = getattr(handle, "_process", None)
+        if process is None:
+            return
+        for name in ("stdout", "stderr"):
+            stream = getattr(process, name, None)
+            if stream is None or not callable(getattr(stream, "read", None)):
+                continue
+            thread = self._thread_factory(
+                target=self._drain_output,
+                args=(stream,),
+                daemon=True,
+                name="athena-worker-output-drain",
+            )
+            thread.start()
+            with self._owned_lock:
+                self._output_drainers.append(thread)
 
     def _safe_file(self, command: WorkerCommand, relative: str) -> tuple[Path, bytes]:
         run_directory = command.run_directory
