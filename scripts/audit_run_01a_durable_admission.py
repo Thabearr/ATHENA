@@ -29,6 +29,8 @@ FORWARD_EVOLVED_SOURCE_PATHS = frozenset({
     "scripts/audit_data_01c_app_store_complete.py",
     "tests/test_core_01d_exact_pr_trigger_disposition_b1.py",
     "scripts/audit_run_01a_durable_admission.py",
+    "services/athena_job_service.py",
+    "database/run_repository.py",
 })
 FORWARD_EVOLVED_SOURCES = {
     "scripts/audit_checkpoint_e_workflows.py": {
@@ -47,12 +49,22 @@ FORWARD_EVOLVED_SOURCES = {
         "predecessor_lf_sha256": "97f62ebc4bd67932fe8b8acbe08d75b28c81acc5f99a0a2fb1f504e42a30ba4c",
         "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr457/audit-run-01a-durable-admission-predecessor.py.txt",
     },
+    "services/athena_job_service.py": {
+        "predecessor_lf_sha256": "66e6b47836e9751d8791f7b70d93e723174dcf2257d90db8d3b8d981c92714c3",
+        "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr458/athena-job-service-predecessor.py.txt",
+    },
+    "database/run_repository.py": {
+        "predecessor_lf_sha256": "b394a7013d3926f52af36223187eea8c44bb9b8424d21e6cfce6d5c0f6283e9f",
+        "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr458/run-repository-predecessor.py.txt",
+    },
 }
 FORWARD_SUCCESSOR_PATHS = frozenset({
     "tests/fixtures/core_01d/run_01a_historical/pr457/audit-checkpoint-e-workflows-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr457/audit-data-01c-app-store-complete-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr457/test-core-01d-exact-pr-trigger-disposition-b1-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr457/audit-run-01a-durable-admission-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr458/athena-job-service-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr458/run-repository-predecessor.py.txt",
     "tests/test_run_01a_forward_successor_pr457.py",
 })
 

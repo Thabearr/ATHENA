@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 import re
 import subprocess
 import uuid
@@ -417,6 +418,11 @@ class DurableRunRepository:
             self._verify_run_identity(conn, run_id)
             if conn.execute("SELECT 1 FROM app_run_attempts WHERE run_id=? AND finished_at IS NULL", (run_id,)).fetchone():
                 raise RunLeaseFenced("unfinished attempt already owns run")
+            # One app store belongs to one local data root. BEGIN IMMEDIATE
+            # serializes this check with every competing admission, so the
+            # invariant survives multiple service objects and processes.
+            if conn.execute("SELECT 1 FROM app_run_attempts WHERE finished_at IS NULL LIMIT 1").fetchone():
+                raise RunLeaseFenced("local data root already has an unfinished worker attempt")
             number = conn.execute("SELECT COALESCE(MAX(attempt_number),0)+1 FROM app_run_attempts WHERE run_id=?", (run_id,)).fetchone()[0]
             attempt_id, lease = "attempt-" + uuid.uuid4().hex, uuid.uuid4().hex
             stamp = _utc(self._clock())
@@ -424,6 +430,171 @@ class DurableRunRepository:
                          (attempt_id, run_id, number, lease, worker_instance_id,
                           canonical_json_bytes(process_locator).decode("utf-8"), stamp, stamp))
             return attempt_id, lease, number
+
+    def bind_process_locator(self, run_id, attempt_id, lease_token, locator):
+        """Bind the one exact OS process-group identity after launch returns."""
+        expected_kind = "WINDOWS_PROCESS_GROUP" if os.name == "nt" else "POSIX_PROCESS_GROUP"
+        if (type(locator) is not dict or set(locator) != {"kind", "pid"}
+                or locator.get("kind") != expected_kind
+                or type(locator.get("pid")) is not int or locator["pid"] <= 0):
+            raise RunRepositoryError("process locator is outside the exact platform schema")
+        raw = canonical_json_bytes(locator).decode("utf-8")
+        with self._operation(write=True) as conn:
+            self._fence(conn, run_id, attempt_id, lease_token)
+            row = conn.execute(
+                "SELECT process_locator_json FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
+                (run_id, attempt_id),
+            ).fetchone()
+            if row is None:
+                raise RunLeaseFenced("attempt locator owner is missing")
+            try:
+                pending = json.loads(row[0])
+            except (TypeError, json.JSONDecodeError):
+                raise RunRepositoryError("pending process locator is invalid") from None
+            if (type(pending) is not dict or set(pending) != {"kind", "label"}
+                    or pending.get("kind") != "OFFLINE_TEST"
+                    or pending.get("label") != "offline-probe"):
+                raise RunStateConflict("process locator was already bound or was not pending")
+            conn.execute(
+                "UPDATE app_run_attempts SET process_locator_json=? WHERE run_id=? AND attempt_id=?",
+                (raw, run_id, attempt_id),
+            )
+
+    @staticmethod
+    def _validate_worker_progress(payload):
+        from domain.current_shadow_run_contract_adapter import CURRENT_STAGE_SEQUENCE
+
+        keys = {"stage", "stage_index", "counts", "evidence_sha256", "identity_refs", "observed_at"}
+        if type(payload) is not dict or set(payload) != keys:
+            raise RunRepositoryError("worker progress schema drift")
+        stage = payload["stage"]
+        stage_index = payload["stage_index"]
+        if (type(stage) is not str or stage not in CURRENT_STAGE_SEQUENCE
+                or type(stage_index) is not int
+                or stage_index != CURRENT_STAGE_SEQUENCE.index(stage)):
+            raise RunRepositoryError("worker progress stage is invalid")
+        counts = payload["counts"]
+        count_names = {
+            "reviewed_fixture_count", "reconciled_fixture_count", "provider_event_count",
+            "priced_fixture_count", "router_selected_count", "router_no_bet_count",
+        }
+        if type(counts) is not dict or set(counts) != count_names:
+            raise RunRepositoryError("worker progress count vocabulary drift")
+        if any(value is not None and (type(value) is not int or value < 0)
+               for value in counts.values()):
+            raise RunRepositoryError("worker progress counts are invalid")
+        digest = payload["evidence_sha256"]
+        if type(digest) is not str or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise RunRepositoryError("worker progress evidence identity is invalid")
+        identities = payload["identity_refs"]
+        if (type(identities) is not dict
+                or set(identities) != {
+                    "source_summary_sha256", "source_identity_sha256",
+                    "model_or_history_sha256", "router_diagnostics_sha256",
+                    "portfolio_sha256",
+                }
+                or any(value is not None and (type(value) is not str
+                    or re.fullmatch(r"[0-9a-f]{64}", value) is None)
+                    for value in identities.values())):
+            raise RunRepositoryError("worker progress identity references are invalid")
+        observed = payload["observed_at"]
+        if type(observed) is not str:
+            raise RunRepositoryError("worker progress time is invalid")
+        try:
+            parsed = datetime.strptime(observed, "%Y-%m-%dT%H:%M:%S.%fZ")
+        except ValueError:
+            raise RunRepositoryError("worker progress time is invalid") from None
+        return stage_index, counts, digest, parsed.replace(tzinfo=timezone.utc)
+
+    def append_worker_progress(self, run_id, attempt_id, lease_token, payload):
+        """Persist a proven typed checkpoint in order, deduplicated by evidence SHA."""
+        stage_index, counts, evidence_sha, observed_at = self._validate_worker_progress(payload)
+        with self._operation(write=True) as conn:
+            self._fence(conn, run_id, attempt_id, lease_token)
+            prior_rows = conn.execute(
+                "SELECT payload_bytes,payload_sha256 FROM app_run_events "
+                "WHERE run_id=? AND event_type='WORKER_PROGRESS_PROVEN' ORDER BY sequence",
+                (run_id,),
+            ).fetchall()
+            prior = None
+            for raw, digest in prior_rows:
+                if (hashlib.sha256(raw).hexdigest() != digest
+                        or canonical_json_bytes(json.loads(raw)) != raw):
+                    raise RunRepositoryError("stored worker progress evidence drift")
+                value = json.loads(raw)
+                previous_index, previous_counts, previous_sha, previous_time = self._validate_worker_progress(value)
+                if previous_sha == evidence_sha:
+                    return False
+                prior = (previous_index, previous_counts, previous_time)
+            if prior is not None:
+                previous_index, previous_counts, previous_time = prior
+                if stage_index < previous_index or observed_at < previous_time:
+                    raise RunStateConflict("worker progress moved backwards")
+                if any(
+                    previous_counts[key] is not None
+                    and (counts[key] is None or counts[key] < previous_counts[key])
+                    for key in counts
+                ):
+                    raise RunStateConflict("worker progress count regressed or became unavailable")
+            self._event(conn, run_id,
+                        conn.execute("SELECT state_version FROM app_runs WHERE run_id=?", (run_id,)).fetchone()[0],
+                        "WORKER_PROGRESS_PROVEN", payload, _utc(self._clock()))
+            return True
+
+    def latest_worker_progress(self, run_id):
+        _identity(run_id)
+        with self._operation() as conn:
+            self._verify_run_identity(conn, run_id, current=False)
+            row = conn.execute(
+                "SELECT payload_bytes,payload_sha256 FROM app_run_events "
+                "WHERE run_id=? AND event_type='WORKER_PROGRESS_PROVEN' ORDER BY sequence DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            raw, digest = row
+            if (hashlib.sha256(raw).hexdigest() != digest
+                    or canonical_json_bytes(json.loads(raw)) != raw):
+                raise RunRepositoryError("stored worker progress evidence drift")
+            value = json.loads(raw)
+            self._validate_worker_progress(value)
+            return value
+
+    def interrupt_worker_without_receipt(self, run_id, attempt_id, lease_token, *,
+                                         exit_code, diagnostic_id, last_proven_stage):
+        allowed = {"WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT", "WORKER_RECEIPT_INVALID",
+                    "WORKER_PROCESS_LOCATOR_UNAVAILABLE"}
+        if (type(exit_code) is not int or not -(2**31) <= exit_code < 2**31
+                or diagnostic_id not in allowed):
+            raise RunRepositoryError("worker interruption metadata is outside its bounded schema")
+        if last_proven_stage is not None:
+            from domain.current_shadow_run_contract_adapter import CURRENT_STAGE_SEQUENCE
+            if type(last_proven_stage) is not str or last_proven_stage not in CURRENT_STAGE_SEQUENCE:
+                raise RunRepositoryError("last proven stage is outside the reviewed vocabulary")
+        with self._operation(write=True) as conn:
+            self._fence(conn, run_id, attempt_id, lease_token)
+            row = conn.execute(
+                "SELECT state,state_version,receipt_artifact_id FROM app_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None or row[0] not in {"RUNNING", "CANCEL_REQUESTED"} or row[2] is not None:
+                raise RunStateConflict("worker interruption state is not eligible")
+            stamp = _utc(self._clock())
+            self._event(conn, run_id, row[1], "WORKER_INTERRUPTED", {
+                "diagnostic_id": diagnostic_id, "exit_code": exit_code,
+                "last_proven_stage": last_proven_stage,
+            }, stamp)
+            conn.execute(
+                "UPDATE app_run_attempts SET finished_at=?,exit_code=?,recovery_disposition=? "
+                "WHERE run_id=? AND attempt_id=?",
+                (stamp, exit_code, "E2_NO_VERIFIED_RECEIPT", run_id, attempt_id),
+            )
+            conn.execute(
+                "UPDATE app_runs SET state='INTERRUPTED',state_version=state_version+1,updated_at=? "
+                "WHERE run_id=? AND state_version=?",
+                (stamp, run_id, row[1]),
+            )
+            self._event(conn, run_id, row[1] + 1, "RUN_INTERRUPTED", {}, stamp)
 
     def heartbeat(self, run_id, attempt_id, lease_token):
         with self._operation(write=True) as conn:
@@ -794,6 +965,15 @@ class DurableRunRepository:
             conn.execute("INSERT INTO app_run_artifacts VALUES(?,?,?,1)", (run_id, artifact_id, "RUN_RECEIPT"))
             conn.execute("UPDATE app_runs SET state='TERMINAL',state_version=state_version+1,updated_at=?,receipt_artifact_id=? WHERE run_id=?",
                          (stamp, artifact_id, run_id))
+            # Receipt publication is the prerequisite for terminal projection;
+            # the same fenced transaction finishes the attempt and frees the
+            # root-wide slot. A published-but-unprojected receipt keeps both
+            # the attempt and slot owned until explicit projection repair.
+            conn.execute(
+                "UPDATE app_run_attempts SET finished_at=?,exit_code=0,recovery_disposition='E2_RECEIPT_PROJECTED' "
+                "WHERE run_id=? AND attempt_id=? AND lease_token=? AND finished_at IS NULL",
+                (stamp, run_id, value["attempt_id"], value["lease_token"]),
+            )
             self._event(conn, run_id, row[4] + 1, "RUN_TERMINAL", {"receipt_sha256": digest}, stamp)
             return True
 

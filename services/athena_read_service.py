@@ -23,7 +23,7 @@ ReceiptState = Literal["NOT_PRODUCED", "VERIFIED", "INTEGRITY_BLOCKED", "UNKNOWN
 RunProfile = Literal["MAIN", "SHADOW"]
 EventKind = Literal[
     "STATE_CHANGED", "STAGE_STARTED", "STAGE_COMPLETED", "BUSINESS_RESULT",
-    "CANCEL_REQUESTED", "DIAGNOSTIC",
+    "CANCEL_REQUESTED", "PROGRESS", "DIAGNOSTIC",
 ]
 ExportKind = Literal["run_summary_json", "verified_receipt_json"]
 RedactionMode = Literal["standard", "strict"]
@@ -41,7 +41,7 @@ _RUN_STATES = frozenset({"QUEUED", "RUNNING", "CANCEL_REQUESTED", "TERMINAL", "C
 _RECEIPT_TERMINAL_STATES = frozenset({"TERMINAL", "CANCELLED", "INTERRUPTED"})
 _EVENT_KINDS = frozenset({
     "STATE_CHANGED", "STAGE_STARTED", "STAGE_COMPLETED", "BUSINESS_RESULT",
-    "CANCEL_REQUESTED", "DIAGNOSTIC",
+    "CANCEL_REQUESTED", "PROGRESS", "DIAGNOSTIC",
 })
 _EXPORT_KINDS = frozenset({"run_summary_json", "verified_receipt_json"})
 _REDACTION_MODES = frozenset({"standard", "strict"})
@@ -225,6 +225,9 @@ class RunEventPayload:
     selected_leg_count: int | None = None
     shortfall: int | None = None
     diagnostic_id: str | None = None
+    counts: Mapping[str, int | None] | None = None
+    evidence_sha256: str | None = None
+    identity_refs: Mapping[str, str | None] | None = None
 
     def __post_init__(self) -> None:
         _safe_code(self.stage, "event stage")
@@ -236,6 +239,31 @@ class RunEventPayload:
         if (self.diagnostic_id is not None
                 and (type(self.diagnostic_id) is not str or _DIAGNOSTIC_ID.fullmatch(self.diagnostic_id) is None)):
             raise ValueError("invalid diagnostic identity")
+        if self.counts is not None:
+            expected = {"reviewed_fixture_count", "reconciled_fixture_count", "provider_event_count",
+                        "priced_fixture_count", "router_selected_count", "router_no_bet_count"}
+            if not isinstance(self.counts, Mapping) or set(self.counts) != expected:
+                raise ValueError("invalid event progress counts")
+            counts = dict(self.counts)
+            for value in counts.values():
+                _count(value, "event progress count")
+            object.__setattr__(self, "counts", MappingProxyType(dict(sorted(counts.items()))))
+        if self.evidence_sha256 is not None and (
+                type(self.evidence_sha256) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", self.evidence_sha256) is None):
+            raise ValueError("invalid event evidence SHA-256")
+        if self.identity_refs is not None:
+            expected_refs = {
+                "source_summary_sha256", "source_identity_sha256",
+                "model_or_history_sha256", "router_diagnostics_sha256", "portfolio_sha256",
+            }
+            if not isinstance(self.identity_refs, Mapping) or set(self.identity_refs) != expected_refs:
+                raise ValueError("invalid event evidence identity references")
+            refs = dict(self.identity_refs)
+            if any(value is not None and (type(value) is not str
+                    or re.fullmatch(r"[0-9a-f]{64}", value) is None) for value in refs.values()):
+                raise ValueError("invalid event evidence identity SHA-256")
+            object.__setattr__(self, "identity_refs", MappingProxyType(dict(sorted(refs.items()))))
 
     def to_dict(self) -> dict[str, object]:
         values = {
@@ -245,6 +273,9 @@ class RunEventPayload:
             "selected_leg_count": self.selected_leg_count,
             "shortfall": self.shortfall,
             "diagnostic_id": self.diagnostic_id,
+            "counts": None if self.counts is None else dict(self.counts),
+            "evidence_sha256": self.evidence_sha256,
+            "identity_refs": None if self.identity_refs is None else dict(self.identity_refs),
         }
         return {key: value for key, value in values.items() if value is not None}
 

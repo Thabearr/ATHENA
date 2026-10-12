@@ -16,6 +16,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 from typing import Any, Mapping, Sequence
 
 from domain.run_contracts import RunContractError, RunRequest, canonical_json_bytes
@@ -264,6 +265,7 @@ class WorkerProcessHandle:
 
     def __init__(self, process: Any) -> None:
         self._process = process
+        self._output_drainers: list[threading.Thread] = []
 
     @property
     def pid(self) -> int | None:
@@ -280,6 +282,25 @@ class WorkerProcessHandle:
         stdout, stderr = self._process.communicate()
         result = WorkerProcessResult(self._process.returncode, stdout or "", stderr or "")
         return result
+
+    def discard_output(self) -> None:
+        """Drain child pipes without interpreting or retaining process output."""
+        for name in ("stdout", "stderr"):
+            stream = getattr(self._process, name, None)
+            if stream is None or not callable(getattr(stream, "read", None)):
+                continue
+
+            def drain(source=stream):
+                try:
+                    while source.read(65536):
+                        pass
+                except (OSError, ValueError):
+                    return
+
+            thread = threading.Thread(target=drain, daemon=True,
+                                      name="athena-worker-output-drain")
+            thread.start()
+            self._output_drainers.append(thread)
 
     def request_cancel(self) -> bool:
         """Request a cooperative process signal; this never schedules a retry."""

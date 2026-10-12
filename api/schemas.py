@@ -128,11 +128,17 @@ class RunEventPayloadDTO(StrictTransportDTO):
     selected_leg_count: StrictInt | None = None
     shortfall: StrictInt | None = None
     diagnostic_id: StrictStr | None = None
+    counts: dict[StrictStr, StrictInt | None] | None = None
+    evidence_sha256: StrictStr | None = None
+    identity_refs: dict[Literal[
+        "source_summary_sha256", "source_identity_sha256", "model_or_history_sha256",
+        "router_diagnostics_sha256", "portfolio_sha256",
+    ], StrictStr | None] | None = None
 
 
 class RunEventDTO(StrictTransportDTO):
     sequence: StrictInt
-    kind: Literal["STATE_CHANGED", "STAGE_STARTED", "STAGE_COMPLETED", "BUSINESS_RESULT", "CANCEL_REQUESTED", "DIAGNOSTIC"]
+    kind: Literal["STATE_CHANGED", "STAGE_STARTED", "STAGE_COMPLETED", "BUSINESS_RESULT", "CANCEL_REQUESTED", "PROGRESS", "DIAGNOSTIC"]
     state_version: StrictInt | None
     observed_at: StrictStr
     payload: RunEventPayloadDTO
