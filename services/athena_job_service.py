@@ -55,7 +55,7 @@ from database.run_repository import (
     RunRepositoryError,
     RunStateConflict,
 )
-from domain.run_contracts import RunRequest, canonical_json_bytes
+from domain.run_contracts import RunReceipt, RunRequest, canonical_json_bytes
 from runtime.release_identity import (
     DevelopmentCheckoutIdentity,
     InstalledReleaseIdentity,
@@ -270,7 +270,7 @@ class AthenaJobService:
         )
 
 
-def _snapshot_record(snapshot: dict, progress: dict | None = None) -> RunSnapshotRecord:
+def _snapshot_record(snapshot: dict, progress: dict | None = None, receipt: RunReceipt | None = None) -> RunSnapshotRecord:
     try:
         run_id = snapshot["run_id"]
         state = snapshot["state"]
@@ -278,6 +278,8 @@ def _snapshot_record(snapshot: dict, progress: dict | None = None) -> RunSnapsho
         created_at = _parse_utc_text(snapshot["created_at"])
         updated_at = _parse_utc_text(snapshot["updated_at"])
         request = RunRequest.from_json_bytes(snapshot["request_bytes"])
+        if state == "TERMINAL" and (receipt is None or receipt.request.canonical_sha256 != snapshot["request_sha256"]):
+            raise ReadBackendError("RUN_STORE_UNAVAILABLE")
         receipt_state = "NOT_PRODUCED" if state != "TERMINAL" else "VERIFIED"
         return RunSnapshotRecord(
             run_id=run_id,
@@ -288,10 +290,10 @@ def _snapshot_record(snapshot: dict, progress: dict | None = None) -> RunSnapsho
             last_proven_stage=None if progress is None else progress["stage"],
             counts=None if progress is None else progress["counts"],
             target_legs=request.target_legs,
-            selected_leg_count=None,
-            shortfall=None,
+            selected_leg_count=None if receipt is None else receipt.counts["selected_leg_count"],
+            shortfall=None if receipt is None else receipt.shortfall,
             execution_state=None,
-            business_result=None,
+            business_result=None if receipt is None else receipt.status,
             delivery_state=None,
             receipt_state=receipt_state,
             request_identity_ref=snapshot["request_sha256"],
@@ -386,7 +388,12 @@ class DurableRunReadAdapter:
             progress = self._repository.latest_worker_progress(run_id)
         except (RunRepositoryError, OSError, ValueError):
             raise ReadBackendError("RUN_STORE_UNAVAILABLE") from None
-        record = _snapshot_record(snapshot, progress)
+        try:
+            receipt = (RunReceipt.from_json_bytes(self._repository.read_receipt_bytes(run_id))
+                       if snapshot["state"] == "TERMINAL" else None)
+        except (RunRepositoryError, OSError, ValueError):
+            raise ReadBackendError("RUN_STORE_UNAVAILABLE") from None
+        record = _snapshot_record(snapshot, progress, receipt)
         if record.run_id != run_id:
             raise ReadBackendError("RUN_STORE_UNAVAILABLE")
         return record

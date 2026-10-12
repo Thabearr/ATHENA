@@ -16,6 +16,13 @@ def test_process_locator_uses_exact_native_process_group_schema():
     assert set(locator) == {"kind", "pid"}
 
 
+def test_native_current_process_locator_carries_no_unreviewed_fields():
+    locator = WorkerCoordinator._native_process_locator(os.getpid())
+    assert set(locator) == {"kind", "pid"}
+    assert locator["pid"] == os.getpid()
+    assert locator["kind"] == ("WINDOWS_PROCESS_GROUP" if os.name == "nt" else "POSIX_PROCESS_GROUP")
+
+
 @pytest.mark.parametrize("pid", [0, -1, True, 117.0, "117", None])
 def test_process_locator_rejects_nonpositive_or_inexact_pids(pid):
     assert WorkerCoordinator._native_process_locator(pid) is None

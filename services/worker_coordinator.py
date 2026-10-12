@@ -50,6 +50,15 @@ _PROGRESS_COUNT_NAMES = (
     "priced_fixture_count", "router_selected_count", "router_no_bet_count",
 )
 _PROGRESS_STATUSES = {"STARTED", "IN_PROGRESS", "COMPLETED"}
+_LEGACY_AUTHORITY_KEYS = frozenset({
+    "research_shadow_current_runner", "research_shadow_source_acquisition",
+    "research_shadow_probability_consumption", "research_shadow_price_all",
+    "research_shadow_market_routing", "research_shadow_portfolio", "research_shadow_shortfall",
+    "research_anonymous_share_code_generation", "provider_create_reload_verification",
+    "production_model", "production_probability", "phase6", "production_price_all",
+    "production_market_router", "production_portfolio", "production_selection",
+    "production_sportybet_execution", "login", "cookies", "wallet", "staking", "bet", "wager_placed",
+})
 _SHADOW_FILES = {
     "request_policy": "current-shadow-request-policy.json",
     "receipt": "current-shadow-all-market-run-receipt.json",
@@ -178,7 +187,7 @@ class WorkerCoordinator:
             )
             if (command.operation != expected_operation
                     or command.request_artifact_id != request.canonical_sha256
-                    or command.run_directory.name != request.canonical_sha256):
+                    or command.run_directory != self._roots.data_root / "runs" / run_id / request.canonical_sha256):
                 raise WorkerLaunchError("worker command differs from the committed request")
             if expected_operation == "CURRENT_SHADOW_REQUEST" and (
                     command.release_identity_kind != "DEVELOPMENT_CHECKOUT"
@@ -187,9 +196,16 @@ class WorkerCoordinator:
                 raise WorkerLaunchError(
                     "installed Current Shadow execution is blocked without authenticated producer provenance"
                 )
+        except Exception:
+            # Staging failed before a launch was attempted. Preserve E1's
+            # generic fenced interruption without a launch-failure diagnostic.
+            try:
+                self._repository.recover_attempt(run_id, attempt_id, lease_token)
+            except Exception:
+                pass
+            return False
+        try:
             handle = self._launcher.launch(command)
-            if type(handle) is not WorkerProcessHandle:
-                raise WorkerLaunchError("launcher did not return an owned WorkerProcessHandle")
         except Exception:
             try:
                 self._repository.record_launch_failure_and_interrupt(
@@ -197,6 +213,11 @@ class WorkerCoordinator:
                 )
             except Exception:
                 pass
+            return False
+
+        if type(handle) is not WorkerProcessHandle:
+            # A launcher returned, so a child may exist. Retain the claimed
+            # attempt rather than inventing a synchronous launch exception.
             return False
 
         with self._owned_lock:
@@ -387,11 +408,15 @@ class WorkerCoordinator:
         for source, filename, _observed in available:
             self._observe_checkpoint(source=source, filename=filename, **kwargs)
 
-    def _build_shadow_receipt(self, *, run_id, request, envelope, snapshot, command):
+    def _build_shadow_receipt(self, *, run_id, attempt_id, request, envelope, snapshot, command):
+        if command.run_directory != self._roots.data_root / "runs" / run_id / request.canonical_sha256:
+            raise ValueError("Current Shadow receipt directory belongs to another run")
         policy_path, policy_raw = self._safe_file(command, "current-shadow/" + _SHADOW_FILES["request_policy"])
         receipt_path, receipt_raw = self._safe_file(command, "current-shadow/" + _SHADOW_FILES["receipt"])
         policy = _strict_json(policy_raw)
         inner = _strict_json(receipt_raw)
+        if "run_id" in inner and inner["run_id"] != run_id:
+            raise ValueError("Current Shadow receipt belongs to another run")
         from services.athena_run_service import _is_provisional_shadow_receipt
         if _is_provisional_shadow_receipt(inner):
             raise ValueError("Current Shadow startup marker is not terminal receipt evidence")
@@ -440,9 +465,21 @@ class WorkerCoordinator:
             stage_payload=stage_payload,
             progress_payload=progress_payload,
         )
+        # Accept only the exact capability vocabulary emitted by the reviewed
+        # runner. The adapter still validates its safety and delivery semantics.
+        if set(adapted.authority_manifest.additional_capabilities) != _LEGACY_AUTHORITY_KEYS:
+            raise ValueError("Current Shadow legacy authority vocabulary drift")
+        authority_fields = (
+            "authority_profile", "mode", "provider_acquisition",
+            "share_code_generation", "login", "cookies", "wallet", "staking", "wager",
+        )
         if (adapted.request.to_dict() != request.to_dict()
                 or adapted.exact_commit_sha != envelope.source_identity.value
-                or adapted.authority_manifest != envelope.authority_manifest
+                or any(getattr(adapted.authority_manifest, field)
+                       != getattr(envelope.authority_manifest, field)
+                       for field in authority_fields)
+                or request.create_share_code != envelope.requested_operations.create_share_code
+                or request.create_share_code is not False
                 or adapted.wager_placed is not False
                 or adapted.share_code_result is not None):
             raise ValueError("Current Shadow receipt differs from admitted authority")
@@ -464,7 +501,10 @@ class WorkerCoordinator:
             }
             router_value = source_summary.get("runtime_progress_diagnostics")
         evidence.update({
+            "legacy_authority_manifest_sha256": _sha(canonical_json_bytes(adapted.authority_manifest)),
+            "admitted_authority_manifest_sha256": _sha(canonical_json_bytes(envelope.authority_manifest)),
             "run_id": run_id,
+            "worker_attempt_id": attempt_id,
             "execution_envelope_sha256": envelope.canonical_sha256,
             "release_id": snapshot["release_id"],
             "run_01b_identity_refs": {
@@ -482,7 +522,46 @@ class WorkerCoordinator:
                 "progress_sha256": None if progress_payload is None else _sha(canonical_json_bytes(progress_payload)),
             },
         })
-        return replace(adapted, evidence=evidence), policy_path, receipt_path
+        canonical = replace(adapted, authority_manifest=envelope.authority_manifest, evidence=evidence)
+        canonical = RunReceipt.from_json_bytes(canonical_json_bytes(canonical))
+        return canonical, policy_path, receipt_path
+
+    def _observe_terminal_receipt(self, *, run_id, attempt_id, lease_token, receipt):
+        """Attach verified result identities to an actual retained checkpoint."""
+        legacy = receipt.evidence["legacy_current_shadow"]
+        checkpoint = legacy["latest_stage_checkpoint"]
+        if checkpoint is None:
+            if receipt.evidence["run_01b_identity_refs"]["portfolio_sha256"] is not None:
+                raise ValueError("Portfolio result lacks its typed COMPLETE checkpoint")
+            return False
+        from domain import current_shadow_run_contract_adapter as adapter
+        parsed = adapter._checkpoint_stage(
+            checkpoint, request=receipt.request,
+            exact_commit_sha=receipt.exact_commit_sha, source="stage",
+        )
+        if receipt.evidence["run_01b_identity_refs"]["portfolio_sha256"] is not None and parsed.stage != "COMPLETE":
+            raise ValueError("Portfolio result requires its typed COMPLETE checkpoint")
+        if parsed.observed_at > receipt.observed_at:
+            raise ValueError("terminal checkpoint postdates its typed receipt")
+        previous = self._repository.latest_worker_progress(run_id)
+        counts = {name: None for name in _PROGRESS_COUNT_NAMES}
+        if previous is not None:
+            counts = dict(previous["counts"])
+        # The receipt carries these exact reviewed counts; Router counts remain
+        # unavailable unless the typed progress checkpoint proved them.
+        for name in _PROGRESS_COUNT_NAMES:
+            if name in receipt.counts:
+                counts[name] = receipt.counts[name]
+        return self._repository.append_worker_progress(
+            run_id, attempt_id, lease_token, {
+                "stage": parsed.stage,
+                "stage_index": adapter.CURRENT_STAGE_SEQUENCE.index(parsed.stage),
+                "counts": counts,
+                "observed_at": _iso(parsed.observed_at),
+                "evidence_sha256": _sha(canonical_json_bytes(receipt)),
+                "identity_refs": dict(receipt.evidence["run_01b_identity_refs"]),
+            },
+        )
 
     def _build_offline_probe_receipt(self, *, request, envelope, snapshot, command, run_id):
         """Prove only the offline identity probe; do not invent business output."""
@@ -555,10 +634,14 @@ class WorkerCoordinator:
                     command=command, run_id=run_id,
                 )
             receipt, _policy_path, _inner_path = self._build_shadow_receipt(
-                run_id=run_id, request=request, envelope=envelope,
+                run_id=run_id, attempt_id=attempt_id, request=request, envelope=envelope,
                 snapshot=snapshot, command=command,
             )
             raw = canonical_json_bytes(receipt)
+            self._observe_terminal_receipt(
+                run_id=run_id, attempt_id=attempt_id, lease_token=lease_token,
+                receipt=receipt,
+            )
             digest = self._repository.publish_terminal_receipt(
                 run_id, receipt_bytes=raw, expected_version=1,
                 attempt_id=attempt_id, lease_token=lease_token,

@@ -59,3 +59,39 @@ The canonical source/evidence receipt is
 the naturally triggered Windows/Linux PORT-02C results are recorded in the
 PR body after the last push. Source-review counter while PR #458 is unmerged:
 `2/5`. **DO NOT MERGE.**
+
+## Review correction after a7d420db
+
+The legacy adapter first validates the original typed Current Shadow receipt.
+RUN-01B requires the exact reviewed legacy authority vocabulary and compares
+authority_profile, mode, provider_acquisition, share_code_generation, login,
+cookies, wallet, staking, and wager against the admitted manifest. It retains
+all legacy authority evidence and both manifest digests, then binds the final
+canonical RunReceipt to the exact admitted authority. Request, source, run,
+release, producer, and attempt remain bound; this path permits no delivery.
+
+Command construction and staging failures use generic fenced interruption.
+Only an exception from the actual launch call emits WORKER_LAUNCH_FAILED and
+RUN_INTERRUPTED atomically. Neither path retries or launches on replay.
+
+A verified terminal receipt supplies its exact Portfolio digest to a durable
+WORKER_PROGRESS_PROVEN observation before terminal projection. The stage and
+time come from an actual typed checkpoint, counts from validated receipt
+evidence, and dedupe identity from the canonical final receipt. Portfolio
+outcomes require a typed COMPLETE checkpoint; absent Portfolio stays None.
+
+Terminal reads reauthenticate retained receipt bytes and project only the
+exact selected_leg_count, shortfall, and receipt status. Execution and delivery
+state stay unavailable because this correction adds no new projection
+vocabulary. No raw share code or arbitrary evidence is exposed.
+
+The correction appends V140 from immutable V139
+5a633d61e8c3248db0cec33eecd4ee36809ff3fde87ecd9c1236dd7eb9a8a071.
+V116–V139 remain unchanged. The focused synthetic regressions cover terminal
+success, authority and Portfolio tamper, launch semantics, dedupe, monotonic
+progress, authenticated snapshots, and read tamper. Local pytest is unavailable;
+syntax and deterministic auditors run locally and fresh natural hosted Tests
+and PORT-02C qualify the final pushed head. Exact final head and hosted gate
+IDs are recorded in the PR body after the final push, preserving this source
+evidence from a self-referential commit identity. SOURCE_REVIEW_COUNTER remains
+2/5; restricted actions remain zero; E3/E4 remain unstarted. DO NOT MERGE.
