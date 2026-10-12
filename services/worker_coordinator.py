@@ -500,6 +500,27 @@ class WorkerCoordinator:
                 if key in source_summary
             }
             router_value = source_summary.get("runtime_progress_diagnostics")
+        # A terminal summary may omit detail already proven by the last typed
+        # progress checkpoint. Both payloads were validated by the adapter and
+        # are retained in the canonical receipt; keep exact checkpoint facts
+        # when the terminal payload does not provide that identity category.
+        if progress_payload is not None:
+            checkpoint_summary = progress_payload["source_summary"]
+            if not source_identity_values:
+                source_identity_values = {
+                    key: checkpoint_summary[key]
+                    for key in ("current_fotmob", "current_fotmob_sources", "current_reconciliation_sha256",
+                                "current_reconciliation_contract_sha256")
+                    if key in checkpoint_summary
+                }
+            if not history_values:
+                history_values = {
+                    key: checkpoint_summary[key]
+                    for key in ("complete_current_history_sha256", "complete_current_history_sha256_by_request_date")
+                    if key in checkpoint_summary
+                }
+            if router_value is None:
+                router_value = checkpoint_summary.get("runtime_progress_diagnostics")
         evidence.update({
             "legacy_authority_manifest_sha256": _sha(canonical_json_bytes(adapted.authority_manifest)),
             "admitted_authority_manifest_sha256": _sha(canonical_json_bytes(envelope.authority_manifest)),

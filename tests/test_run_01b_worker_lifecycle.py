@@ -206,6 +206,30 @@ def test_no_portfolio_terminal_keeps_portfolio_identity_unavailable(tmp_path, cl
     assert len(launches) == 1
 
 
+def test_portfolio_observation_preserves_validated_checkpoint_identities(tmp_path, clock, monkeypatch):
+    coordinator, repository, run_id, envelope, (monitor, kwargs), launches, command, inner = _terminal_case(
+        tmp_path, clock, monkeypatch,
+    )
+    coordinator._observe_available_checkpoints(**{k: kwargs[k] for k in (
+        "run_id", "attempt_id", "lease_token", "request", "envelope", "command")})
+    prior = repository.latest_worker_progress(run_id)["identity_refs"]
+    inner["source_summary"] = {"wager_placed": False}
+    (command.run_directory / "current-shadow/current-shadow-all-market-run-receipt.json").write_bytes(canonical_json_bytes(inner))
+    build_args = dict(run_id=run_id, attempt_id=kwargs["attempt_id"], request=kwargs["request"],
+                      envelope=envelope, snapshot=kwargs["snapshot"], command=command)
+    first, _, _ = coordinator._build_shadow_receipt(**build_args)
+    second, _, _ = coordinator._build_shadow_receipt(**build_args)
+    assert canonical_json_bytes(first) == canonical_json_bytes(second)
+    monitor(**kwargs)
+    assert repository.run_snapshot(run_id)["state"] == "TERMINAL"
+    final = repository.latest_worker_progress(run_id)
+    assert final["stage"] == "COMPLETE"
+    assert final["identity_refs"]["portfolio_sha256"] == inner["portfolio_sha256"]
+    for key in ("source_identity_sha256", "model_or_history_sha256", "router_diagnostics_sha256"):
+        assert prior[key] is not None and final["identity_refs"][key] == prior[key]
+    assert len(launches) == 1
+
+
 @pytest.mark.parametrize("failure", ["staging", "launch"])
 def test_staging_and_actual_launch_failures_have_distinct_evidence(resources, roots, clock, monkeypatch, failure):
     job, repository, previews, _, _ = _seed_job(resources, roots, clock, monkeypatch, specs=[{}])

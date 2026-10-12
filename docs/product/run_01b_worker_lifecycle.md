@@ -108,3 +108,18 @@ snapshot tamper and cross-request rejection, staging versus launch failures,
 and the existing E1 diagnostic-transaction failure regression. Current A2/E1/E2
 auditors, syntax, and diff checks qualify source evidence locally; fresh natural
 hosted Tests plus Windows/Linux PORT-02C remain the final qualification.
+
+The Portfolio observation also preserves an identity category when the final
+receipt summary omits details already present in its validated latest typed
+progress checkpoint. Terminal facts take precedence; absent source/model/Router
+categories use the exact checkpoint facts retained inside the canonical receipt.
+This introduces no log parsing, guessed identities, or nondeterministic database
+state into the receipt builder. Repeated construction remains canonical and
+identical. The preservation regression reaches TERMINAL with the exact three
+prior category identities and the verified final Portfolio digest.
+
+All eighteen focused synthetic cases passed after this source change. V142 is
+appended from immutable V141 canonical SHA
+f94e5005b50ef92ba48f1e0f4bf874b13f8febf734ae322f7602dedb52a91f0b;
+V116–V141 remain unchanged. Fresh natural hosted Tests and PORT-02C must
+qualify the final pushed V142 correction head. No merge is authorized.
