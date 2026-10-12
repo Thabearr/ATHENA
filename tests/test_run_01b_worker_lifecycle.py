@@ -261,7 +261,7 @@ def test_receipt_backed_progress_rejects_regression(tmp_path, clock, monkeypatch
     counts["reviewed_fixture_count"] -= 1
     with pytest.raises(RunStateConflict):
         coordinator._observe_terminal_receipt(**args, receipt=replace(receipt, counts=counts))
-    evidence = json.loads(canonical_json_bytes(receipt.evidence))
+    evidence = receipt.to_dict()["evidence"]
     evidence["legacy_current_shadow"]["latest_stage_checkpoint"]["stage"] = "PORTFOLIO"
     evidence["legacy_current_shadow"]["latest_stage_checkpoint"]["stage_index"] = 5
     with pytest.raises(ValueError):

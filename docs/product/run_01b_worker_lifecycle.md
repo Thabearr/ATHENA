@@ -95,3 +95,16 @@ and PORT-02C qualify the final pushed head. Exact final head and hosted gate
 IDs are recorded in the PR body after the final push, preserving this source
 evidence from a self-referential commit identity. SOURCE_REVIEW_COUNTER remains
 2/5; restricted actions remain zero; E3/E4 remain unstarted. DO NOT MERGE.
+
+The final regression correction preserves V140 byte-for-byte and appends V141
+from V140 canonical SHA
+29441c58c84171e2f5797b6104ed0cc629aed7367f05cd61ec0e6156a155f1db.
+A test-only serialization correction uses RunReceipt.to_dict() to thaw retained
+evidence. Seventeen focused synthetic cases passed by direct execution of the
+existing test functions with a stdlib harness and transport guard. This was not
+a pytest session, and no dependencies were installed. The cases covered both
+terminal outcomes, nine authority/Portfolio mutations, progress regression,
+snapshot tamper and cross-request rejection, staging versus launch failures,
+and the existing E1 diagnostic-transaction failure regression. Current A2/E1/E2
+auditors, syntax, and diff checks qualify source evidence locally; fresh natural
+hosted Tests plus Windows/Linux PORT-02C remain the final qualification.
