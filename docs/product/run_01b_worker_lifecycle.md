@@ -12,9 +12,9 @@ exact platform process-group locator, and owns heartbeats, typed progress,
 receipt verification, and finalization. A capacity loser remains durably
 queued; RUN-01B does not drain it automatically.
 
-Heartbeat authenticates terminal evidence and current source for a matching
+Fenced writes authenticate terminal evidence and current source for a matching
 current lease before the finished-attempt fence. This preserves the specific
-fail-closed diagnosis while a completed attempt still cannot renew its lease;
+fail-closed diagnosis while a completed attempt still cannot mutate state;
 stale and cross-run leases fail at the fence without that preflight.
 
 The native locator helper accepts only a positive exact integer PID and emits
@@ -49,8 +49,8 @@ PR #457's four-epoch successor runtime policy remains
 `9dc0cfb362cf7008d28bcf029755b7361481b683e41155528f9607047773ceba`, and its
 legacy two-epoch policy remains
 `3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a`.
-A2 V116–V137 remain immutable; RUN-01B appends V138 from exact V137
-`3eeb4869444ca4728fa763ccd79d9bb756693286f01624248c80942e417f6989` with
+A2 V116–V138 remain immutable; RUN-01B appends V139 from exact V138
+`69243068a5d1106f896dde94f2f771961df4ac71630281eed199ac708c10fb88` with
 `predecessor_rewritten=false`.
 
 The canonical source/evidence receipt is
