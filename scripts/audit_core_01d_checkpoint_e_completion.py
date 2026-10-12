@@ -176,6 +176,22 @@ RUN_01B_ADDITIVE_PATHS = {
     "tests/test_run_01b_worker_lifecycle.py",
 }
 ALLOWED_PASS4_PATHS |= APP01C_BOUNDED_PATHS | APP01C_CURRENT_SOURCE_PATHS | RUN_01B_ADDITIVE_PATHS
+RUN_02A_PRE_ADDITIVE_PATHS = {
+    "artifacts/product/run_02a_pre_durable_share_send_v1.json",
+    "docs/product/run_02a_pre_durable_share_send.md",
+    "scripts/audit_run_02a_pre_durable_share_send.py",
+    "services/durable_share_code_transport.py",
+    "tests/test_run_02a_pre_durable_share_send.py",
+    "tests/native/test_run_02a_pre_share_send_publication.py",
+    "tests/fixtures/core_01d/run_01b_historical/source_bytes_v1.json",
+    "tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/direct-share-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/auth-worker-boundary-predecessor.py.txt",
+}
+ALLOWED_PASS4_PATHS |= RUN_02A_PRE_ADDITIVE_PATHS | {
+    "runtime/worker_entry.py", "scripts/sportybet_direct_share_bridge.py",
+    "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py",
+}
 # Exact handoff ls-tree inventory excluding only the twelve bounded evidence
 # paths. Available in shallow CI without requiring the handoff commit object.
 UNCHANGED_REPOSITORY_INVENTORY_SHA = "6b407c284a7c2f759e6345f53444478de53427ceae1aaa7d412d078270c5ad27"
@@ -208,11 +224,15 @@ def validate_bounded_inventory(raw: bytes) -> None:
         data01a.BUILD_CONFIG: data01a.BUILD_CONFIG_BLOB,
         "services/athena_preview_service.py": "b8c3898baa28a4243c80a2b58ed284365ae854ab",
     }
+    from scripts import audit_run_02a_pre_durable_share_send as prerequisite
+    for path, (_fixture, blob, _digest) in prerequisite.TRANSPORT_PREDECESSORS.items():
+        prerequisite.historical_transport_bytes(path)
+        predecessor_blobs[path] = blob
     unchanged_lines = []
     for line in raw.splitlines(keepends=True):
         metadata, separator, path_bytes = line.partition(b"\t")
         path = path_bytes.strip().decode()
-        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths:
+        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS:
             continue
         if path in INCIDENT_20261010_PREDECESSOR_BLOBS:
             metadata = (
@@ -224,7 +244,7 @@ def validate_bounded_inventory(raw: bytes) -> None:
         if path in predecessor_blobs:
             metadata = metadata.rsplit(b" ", 1)[0] + b" " + predecessor_blobs[path].encode()
             line = metadata + separator + path_bytes
-        if path in ALLOWED_PASS4_PATHS and path not in APP01C_CURRENT_SOURCE_PATHS:
+        if path in ALLOWED_PASS4_PATHS and path not in APP01C_CURRENT_SOURCE_PATHS and path not in prerequisite.TRANSPORT_PREDECESSORS:
             continue
         if path in APP01C_PREDECESSOR_SOURCE_BLOBS:
             metadata = metadata.rsplit(b" ", 1)[0] + b" " + APP01C_PREDECESSOR_SOURCE_BLOBS[path].encode()

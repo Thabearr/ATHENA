@@ -16,6 +16,7 @@ SOURCES = (
     "scripts/sportybet_direct_share_bridge.py", "services/athena_job_service.py",
     "services/durable_share_code_transport.py", "scripts/audit_run_01b_worker_lifecycle.py",
     "scripts/audit_core_01d_checkpoint_e_completion_v2.py", "scripts/audit_checkpoint_e_workflows.py",
+    "scripts/audit_core_01d_checkpoint_e_completion.py",
     "scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py",
     "scripts/audit_core_01d_exact_pr_trigger_disposition_b1.py",
     "scripts/audit_core_01d_port02c_trigger_authority_b6.py",

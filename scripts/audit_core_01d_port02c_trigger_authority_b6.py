@@ -389,7 +389,8 @@ def _base_tree_entries() -> dict[str, tuple[str, str, str]]:
             mode, _kind, blob = mode_kind_blob
             if (
                 path in app01a.HISTORICAL_RUNTIME_PATHS
-                or path in {"scripts/port_02c_build_config.py", PORT_WORKFLOW, INCIDENT_20261010_PC_RUNTIME}
+                or path in {"scripts/port_02c_build_config.py", PORT_WORKFLOW, INCIDENT_20261010_PC_RUNTIME,
+                            "runtime/worker_entry.py"}
             ):
                 blob = row.get("git_blob_sha1")
             require(blob == row.get("git_blob_sha1"),
