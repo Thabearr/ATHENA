@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 from types import MappingProxyType, SimpleNamespace
 from typing import Any, Callable, Mapping, Sequence
 
@@ -47,9 +48,13 @@ MAX_SOURCE_AGE_SECONDS = legacy.MAX_SOURCE_AGE_SECONDS
 MINIMUM_LEAD_SECONDS = legacy.MINIMUM_LEAD_SECONDS
 MAX_PAGES = source.MAX_PAGES
 PAGE_SIZE = source.PAGE_SIZE
-MAX_CAPTURE_EPOCHS = 2
+MAX_CAPTURE_EPOCHS = 4
 MAX_PAGES_PER_EPOCH = MAX_PAGES
 MAX_SUCCESSFUL_PAGE_RESPONSES = MAX_CAPTURE_EPOCHS * MAX_PAGES_PER_EPOCH
+INTER_EPOCH_BACKOFF_SECONDS = 3
+LEGACY_RUNTIME_POLICY_SHA256 = "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
+LEGACY_MAX_CAPTURE_EPOCHS = 2
+LEGACY_MAX_SUCCESSFUL_PAGE_RESPONSES = 40
 TOTALNUM_DRIFT_ERROR = source.TOTALNUM_DRIFT_ERROR
 EVIDENCE_ROOT = source.EVIDENCE_ROOT
 ALLOWED_OUTPUT_RELATIVE = EVIDENCE_ROOT
@@ -136,8 +141,10 @@ def _policy_payload() -> dict[str, Any]:
             "max_pages_per_epoch": MAX_PAGES_PER_EPOCH,
             "max_successful_page_responses": MAX_SUCCESSFUL_PAGE_RESPONSES,
             "each_epoch_starts_at_page": 1,
+            "inter_epoch_backoff_seconds": INTER_EPOCH_BACKOFF_SECONDS,
+            "backoff_only_after_exact_totalnum_drift": True,
             "no_per_page_http_retry": True,
-            "no_third_capture_epoch": True,
+            "no_capture_epoch_beyond_bound": True,
             "failed_epoch_provider_absence_authority": False,
             "failed_epoch_identity_learning_authority": False,
             "failed_epoch_reconciliation_authority": False,
@@ -153,6 +160,7 @@ def _policy_payload() -> dict[str, Any]:
             "all_attempt_evidence_retained_under_source_evidence_root": True,
             "workflow_retry": False,
             "per_page_transport_retry": False,
+            "provider_request_upper_bound": MAX_SUCCESSFUL_PAGE_RESPONSES,
             "provider_request_upper_bound_is_finite": True,
         },
         "preparse_response_evidence": {
@@ -202,7 +210,7 @@ def calculate_policy_sha256() -> str:
     return hashlib.sha256(_canonical(_policy_payload())).hexdigest()
 
 
-PINNED_POLICY_SHA256 = "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
+PINNED_POLICY_SHA256 = "9dc0cfb362cf7008d28bcf029755b7361481b683e41155528f9607047773ceba"
 EXPECTED_CONTRACT_SHA256 = PINNED_POLICY_SHA256
 CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 = PINNED_POLICY_SHA256
 
@@ -427,12 +435,12 @@ def _write_raw_response_exclusive(path: Path, raw: bytes) -> None:
 
 def _parse_failure_receipt(
     *, attempt_index: int, response: Mapping[str, Any], exception_type: str,
-    exception_message: str,
+    exception_message: str, runtime_policy_sha256: str = PINNED_POLICY_SHA256,
 ) -> dict[str, Any]:
     payload = {
         "schema_version": 1,
         "runtime_policy_id": POLICY_ID,
-        "runtime_policy_sha256": PINNED_POLICY_SHA256,
+        "runtime_policy_sha256": runtime_policy_sha256,
         "source_policy_id": UPSTREAM_SOURCE_POLICY_ID,
         "source_policy_sha256": UPSTREAM_SOURCE_POLICY_SHA256,
         "attempt_index": attempt_index,
@@ -553,6 +561,10 @@ def _stabilization_base() -> dict[str, Any]:
         "max_capture_epochs": MAX_CAPTURE_EPOCHS,
         "max_pages_per_epoch": MAX_PAGES_PER_EPOCH,
         "max_successful_page_responses": MAX_SUCCESSFUL_PAGE_RESPONSES,
+        "inter_epoch_backoff_seconds": INTER_EPOCH_BACKOFF_SECONDS,
+        "backoff_only_after_exact_totalnum_drift": True,
+        "no_capture_epoch_beyond_bound": True,
+        "provider_request_upper_bound": MAX_SUCCESSFUL_PAGE_RESPONSES,
         "attempt_count": 0,
         "accepted_attempt_index": None,
         "failed_attempt_indices": [],
@@ -666,19 +678,33 @@ def verify_runtime_capture_stabilization(
     semantic.pop("canonical_sha256", None)
     if embedded != hashlib.sha256(_canonical(semantic)).hexdigest():
         raise PcUpcomingRuntimeReconciliationError("runtime stabilization receipt SHA mismatch")
+    receipt_policy_sha256 = receipt.get("runtime_policy_sha256")
+    legacy_receipt = receipt_policy_sha256 == LEGACY_RUNTIME_POLICY_SHA256
+    if receipt_policy_sha256 not in {PINNED_POLICY_SHA256, LEGACY_RUNTIME_POLICY_SHA256}:
+        raise PcUpcomingRuntimeReconciliationError("runtime stabilization policy identity is not reviewed")
+    receipt_max_epochs = LEGACY_MAX_CAPTURE_EPOCHS if legacy_receipt else MAX_CAPTURE_EPOCHS
+    receipt_max_successful_pages = (
+        LEGACY_MAX_SUCCESSFUL_PAGE_RESPONSES if legacy_receipt
+        else MAX_SUCCESSFUL_PAGE_RESPONSES
+    )
+    current_only_fields = {
+        "inter_epoch_backoff_seconds",
+        "backoff_only_after_exact_totalnum_drift",
+        "no_capture_epoch_beyond_bound",
+        "provider_request_upper_bound",
+    }
     expected_base = _stabilization_base()
     for key, value in expected_base.items():
+        if legacy_receipt and key in current_only_fields:
+            continue
         if key not in receipt and key not in {"attempt_count", "accepted_attempt_index", "failed_attempt_indices", "attempt_receipts", "final_state"}:
             raise PcUpcomingRuntimeReconciliationError(f"runtime stabilization field is missing: {key}")
-    if (
+    common_policy_drift = (
         receipt.get("schema_version") != 1
         or receipt.get("runtime_policy_id") != POLICY_ID
-        or receipt.get("runtime_policy_sha256") != PINNED_POLICY_SHA256
         or receipt.get("source_v1_policy_id") != UPSTREAM_SOURCE_POLICY_ID
         or receipt.get("source_v1_policy_sha256") != UPSTREAM_SOURCE_POLICY_SHA256
-        or receipt.get("max_capture_epochs") != MAX_CAPTURE_EPOCHS
         or receipt.get("max_pages_per_epoch") != MAX_PAGES_PER_EPOCH
-        or receipt.get("max_successful_page_responses") != MAX_SUCCESSFUL_PAGE_RESPONSES
         or receipt.get("workflow_retry") is not False
         or receipt.get("per_page_transport_retry") is not False
         or receipt.get("pre_parse_raw_response_preservation") is not True
@@ -695,12 +721,28 @@ def verify_runtime_capture_stabilization(
         or receipt.get("portfolio_from_failed_attempt") is not False
         or receipt.get("delivery_from_failed_attempt") is not False
         or receipt.get("cross_epoch_event_merge") is not False
-    ):
+    )
+    if legacy_receipt:
+        generation_policy_drift = (
+            receipt.get("max_capture_epochs") != LEGACY_MAX_CAPTURE_EPOCHS
+            or receipt.get("max_successful_page_responses") != LEGACY_MAX_SUCCESSFUL_PAGE_RESPONSES
+            or any(key in receipt for key in current_only_fields)
+        )
+    else:
+        generation_policy_drift = (
+            receipt.get("max_capture_epochs") != MAX_CAPTURE_EPOCHS
+            or receipt.get("max_successful_page_responses") != MAX_SUCCESSFUL_PAGE_RESPONSES
+            or receipt.get("inter_epoch_backoff_seconds") != INTER_EPOCH_BACKOFF_SECONDS
+            or receipt.get("backoff_only_after_exact_totalnum_drift") is not True
+            or receipt.get("no_capture_epoch_beyond_bound") is not True
+            or receipt.get("provider_request_upper_bound") != MAX_SUCCESSFUL_PAGE_RESPONSES
+        )
+    if common_policy_drift or generation_policy_drift:
         raise PcUpcomingRuntimeReconciliationError("runtime stabilization policy or authority fields drifted")
     attempts = receipt.get("attempt_receipts")
     count = receipt.get("attempt_count")
-    if type(attempts) is not list or type(count) is not int or not 1 <= count <= MAX_CAPTURE_EPOCHS or len(attempts) != count:
-        raise PcUpcomingRuntimeReconciliationError("runtime capture epoch count is outside the pinned bound")
+    if type(attempts) is not list or type(count) is not int or not 1 <= count <= receipt_max_epochs or len(attempts) != count:
+        raise PcUpcomingRuntimeReconciliationError("runtime capture epoch count is outside the reviewed receipt bound")
     attempts_root = root / RUNTIME_ATTEMPTS_DIRECTORY
     if root.is_symlink() or attempts_root.is_symlink():
         raise PcUpcomingRuntimeReconciliationError("runtime evidence root must not contain symlinks")
@@ -870,6 +912,7 @@ def verify_runtime_capture_stabilization(
                         response=item,
                         exception_type=item["exception_type"],
                         exception_message=item["exception_message"],
+                        runtime_policy_sha256=receipt_policy_sha256,
                     )
                     if parse_failure_doc != expected_failure:
                         raise PcUpcomingRuntimeReconciliationError("parse-failure receipt fields differ from exact raw ancestry")
@@ -944,8 +987,8 @@ def verify_runtime_capture_stabilization(
         elif attempt_doc.get("manifest_canonical_sha256") is not None:
             raise PcUpcomingRuntimeReconciliationError("attempt receipt claims an absent manifest hash")
         attempt_documents[expected_index] = attempt_doc
-    if total_successful_pages > MAX_SUCCESSFUL_PAGE_RESPONSES:
-        raise PcUpcomingRuntimeReconciliationError("runtime successful page responses exceed the pinned request bound")
+    if total_successful_pages > receipt_max_successful_pages:
+        raise PcUpcomingRuntimeReconciliationError("runtime successful page responses exceed the reviewed receipt request bound")
     accepted_index = receipt.get("accepted_attempt_index")
     if accepted_index is None:
         if (root / "manifest.json").exists() or (root / "pages").exists():
@@ -956,24 +999,31 @@ def verify_runtime_capture_stabilization(
             raise PcUpcomingRuntimeReconciliationError("failed capture attempt unexpectedly has runtime authority")
         if receipt.get("final_state") == "FAILED_AFTER_EXACT_TOTALNUM_DRIFT":
             if (
-                count != 2
-                or attempt_documents[1].get("failure_message") != TOTALNUM_DRIFT_ERROR
-                or attempt_documents[2].get("failure_message") != TOTALNUM_DRIFT_ERROR
-                or attempt_documents[1].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT"
-                or attempt_documents[2].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT"
+                count != receipt_max_epochs
+                or any(
+                    attempt_documents[index].get("failure_message") != TOTALNUM_DRIFT_ERROR
+                    or attempt_documents[index].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT"
+                    for index in range(1, receipt_max_epochs + 1)
+                )
             ):
-                raise PcUpcomingRuntimeReconciliationError("two-epoch drift exhaustion does not match exact trigger semantics")
+                raise PcUpcomingRuntimeReconciliationError(
+                    "bounded drift exhaustion does not match exact trigger semantics"
+                )
         else:
             if receipt.get("final_state") not in {"FAILED_RUNTIME_INCOMPLETE", "FAILED_SOURCE_OR_EVIDENCE_ERROR"}:
                 raise PcUpcomingRuntimeReconciliationError("failed capture final state is not a reviewed terminal state")
-            if count == 2 and attempt_documents[1].get("failure_message") != TOTALNUM_DRIFT_ERROR:
-                raise PcUpcomingRuntimeReconciliationError("a second epoch exists without exact first-epoch total drift")
-            if any(item.get("failure_message") == TOTALNUM_DRIFT_ERROR for index, item in attempt_documents.items() if index > 1):
-                raise PcUpcomingRuntimeReconciliationError("second epoch drift was not classified as exhausted exact drift")
+            if count > 1 and any(
+                attempt_documents[index].get("failure_message") != TOTALNUM_DRIFT_ERROR
+                or attempt_documents[index].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT"
+                for index in range(1, count)
+            ):
+                raise PcUpcomingRuntimeReconciliationError(
+                    "fresh epoch exists without exact prior-epoch totalNum drift ancestry"
+                )
         if receipt.get("failed_attempt_indices") != list(range(1, count + 1)):
             raise PcUpcomingRuntimeReconciliationError("failed terminal state does not identify every failed epoch")
     else:
-        if type(accepted_index) is not int or accepted_index != count or not 1 <= accepted_index <= MAX_CAPTURE_EPOCHS:
+        if type(accepted_index) is not int or accepted_index != count or not 1 <= accepted_index <= receipt_max_epochs:
             raise PcUpcomingRuntimeReconciliationError("accepted epoch index is outside the attempt sequence")
         if any(attempt_documents[index].get("accepted_by_runtime") for index in attempt_documents if index != accepted_index):
             raise PcUpcomingRuntimeReconciliationError("more than one capture epoch has runtime authority")
@@ -1005,10 +1055,14 @@ def verify_runtime_capture_stabilization(
             raise PcUpcomingRuntimeReconciliationError("top-level provider manifest is not the accepted epoch")
         if canonical_manifest_bytes != accepted_manifest_bytes:
             raise PcUpcomingRuntimeReconciliationError("top-level manifest bytes differ from the exact accepted epoch bytes")
-        if accepted_index == 2 and attempt_documents[1].get("failure_message") != TOTALNUM_DRIFT_ERROR:
-            raise PcUpcomingRuntimeReconciliationError("epoch 2 lacks exact epoch-1 drift trigger ancestry")
-        if accepted_index == 2 and attempt_documents[1].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT":
-            raise PcUpcomingRuntimeReconciliationError("epoch 2 prior attempt did not fail the exact reviewed drift state")
+        if accepted_index > 1 and any(
+            attempt_documents[index].get("failure_message") != TOTALNUM_DRIFT_ERROR
+            or attempt_documents[index].get("status") != "FAILED_EXACT_TOTALNUM_DRIFT"
+            for index in range(1, accepted_index)
+        ):
+            raise PcUpcomingRuntimeReconciliationError(
+                "accepted fresh epoch lacks exact prior-epoch drift trigger ancestry"
+            )
         for page in manifest.pages:
             canonical_raw = (root / page.raw_relative_path).read_bytes()
             accepted_raw = (attempts_root / f"attempt-{accepted_index:03d}" / page.raw_relative_path).read_bytes()
@@ -1026,7 +1080,7 @@ def verify_runtime_capture_stabilization(
 def capture_current_pc_upcoming_discovery(
     *, repository_root: str | Path, execute_live_network: bool
 ) -> tuple[Path, source.PcUpcomingDiscoveryManifest]:
-    """Orchestrate at most two independent V1 epochs; accept only one complete epoch."""
+    """Orchestrate at most four independent V1 epochs; accept only one complete epoch."""
     validate_contract()
     if execute_live_network is not True:
         raise PcUpcomingRuntimeReconciliationError(
@@ -1200,9 +1254,9 @@ def capture_current_pc_upcoming_discovery(
                 accepted=False,
             )
             attempt_receipts[attempt_index] = receipt
-            should_start_fresh_epoch = exact_drift and attempt_index == 1
+            should_start_fresh_epoch = exact_drift and attempt_index < MAX_CAPTURE_EPOCHS
             final_state = (
-                "WAITING_FOR_ONE_FRESH_EPOCH_AFTER_EXACT_TOTALNUM_DRIFT"
+                "WAITING_FOR_FRESH_EPOCH_AFTER_EXACT_TOTALNUM_DRIFT"
                 if should_start_fresh_epoch
                 else "FAILED_AFTER_EXACT_TOTALNUM_DRIFT"
                 if exact_drift
@@ -1218,10 +1272,11 @@ def capture_current_pc_upcoming_discovery(
                 final_state=final_state,
             )
             if should_start_fresh_epoch:
+                time.sleep(INTER_EPOCH_BACKOFF_SECONDS)
                 continue
             if exact_drift and attempt_index == MAX_CAPTURE_EPOCHS:
                 raise PcUpcomingRuntimeReconciliationError(
-                    f"{INCOMPLETE_PAGINATION_STATE}: both allowed capture epochs failed to produce one internally stable complete V1 manifest; epoch 1 and epoch 2 each ended with exact cross-page totalNum drift"
+                    f"{INCOMPLETE_PAGINATION_STATE}: all {MAX_CAPTURE_EPOCHS} allowed capture epochs failed to produce one internally stable complete V1 manifest; every epoch ended with exact cross-page totalNum drift"
                 ) from exc
             if incomplete:
                 raise PcUpcomingRuntimeReconciliationError(
@@ -1299,6 +1354,7 @@ class CurrentShadowPcUpcomingReconciliationBundle:
     manifest: source.PcUpcomingDiscoveryManifest
     repository_root: Path
     stabilization_sha256: str
+    runtime_policy_sha256: str
 
     def __init__(self, *_args: Any, **_kwargs: Any) -> None:
         raise PcUpcomingRuntimeReconciliationError("runtime reconciliation bundles are builder-only")
@@ -1311,9 +1367,19 @@ class CurrentShadowPcUpcomingReconciliationBundle:
     def matched_rows(self):
         return self._legacy_bundle.matched_rows
 
+    def _runtime_policy_identity(self) -> str:
+        value = self.__dict__.get("runtime_policy_sha256")
+        if value is None:
+            value = getattr(self._legacy_bundle, "contract_sha256", PINNED_POLICY_SHA256)
+        if value not in {PINNED_POLICY_SHA256, LEGACY_RUNTIME_POLICY_SHA256}:
+            raise PcUpcomingRuntimeReconciliationError(
+                "reconciliation bundle runtime policy identity is not reviewed"
+            )
+        return value
+
     @property
     def contract_sha256(self) -> str:
-        return PINNED_POLICY_SHA256
+        return self._runtime_policy_identity()
 
     @property
     def canonical_sha256(self) -> str:
@@ -1325,7 +1391,7 @@ class CurrentShadowPcUpcomingReconciliationBundle:
             "dataset_name": "athena-current-shadow-pc-upcoming-runtime-reconciliation-v1",
             "status": STATUS,
             "runtime_policy_id": POLICY_ID,
-            "runtime_policy_sha256": PINNED_POLICY_SHA256,
+            "runtime_policy_sha256": self._runtime_policy_identity(),
             "source_policy_id": UPSTREAM_SOURCE_POLICY_ID,
             "source_policy_sha256": UPSTREAM_SOURCE_POLICY_SHA256,
             "manifest_sha256": self.manifest.canonical_sha256,
@@ -1524,7 +1590,8 @@ def _build(
     snapshot = legacy._identity_state_snapshot()
     object.__setattr__(rebuilt, "_fixture_stable_identity_state_sha256", legacy._identity_state_sha256(snapshot))
     object.__setattr__(rebuilt, "_fixture_stable_identity_state_snapshot", snapshot)
-    object.__setattr__(rebuilt, "contract_sha256", PINNED_POLICY_SHA256)
+    effective_runtime_policy_sha256 = stabilization["runtime_policy_sha256"]
+    object.__setattr__(rebuilt, "contract_sha256", effective_runtime_policy_sha256)
     object.__setattr__(rebuilt, "dataset_name", "athena-current-shadow-pc-upcoming-runtime-reconciliation-v1")
     object.__setattr__(rebuilt, "status", STATUS)
     bundle = object.__new__(CurrentShadowPcUpcomingReconciliationBundle)
@@ -1532,6 +1599,7 @@ def _build(
     object.__setattr__(bundle, "manifest", manifest)
     object.__setattr__(bundle, "repository_root", repository_root)
     object.__setattr__(bundle, "stabilization_sha256", stabilization["canonical_sha256"])
+    object.__setattr__(bundle, "runtime_policy_sha256", effective_runtime_policy_sha256)
     return bundle
 
 

@@ -333,7 +333,15 @@ def audit(latest=None):
         evolved = {"database/run_repository.py", "scripts/audit_data_01b_durable_run_state.py",
                    "scripts/audit_data_01c_app_store_complete.py", "tests/test_data_01c_app_storage.py",
                    "scripts/audit_checkpoint_e_workflows.py", "scripts/audit_data_01c_restore_portability.py",
-                   "tests/test_core_01d_exact_pr_trigger_disposition_b1.py"}
+                   "tests/test_core_01d_exact_pr_trigger_disposition_b1.py",
+                   # Bounded October 10 pcUpcoming incident successor (PR #457,
+                   # unmerged research hardening): predecessor bytes for these
+                   # three historical-projection sources remain pinned in the
+                   # incident fixtures and Checkpoint-E predecessor blobs;
+                   # current bytes are authenticated through the A2 inventory.
+                   "scripts/audit_core_01d_checkpoint_e_completion.py",
+                   "scripts/audit_core_01d_checkpoint_e_completion_v2.py",
+                   "scripts/audit_core_01d_port02c_trigger_authority_b6.py"}
         inventory = boundary.authenticate_inventory()
         identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
         if (set(current) != set(frozen)
