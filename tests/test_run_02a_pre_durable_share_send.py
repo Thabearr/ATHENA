@@ -150,7 +150,7 @@ def test_sent_exception_is_unknown_without_resend(context, error):
 @pytest.mark.parametrize("evidence", [None, bridge.HttpResponseEvidence(200, b""),
     bridge.HttpResponseEvidence(200, b"{truncated"), bridge.HttpResponseEvidence(200, b'{"bizCode":10000,"bizCode":1}'),
     response({"bizCode":12345}), response({"bizCode":10000,"data":{"unavailableOutcomes":[]}}),
-    create_success().__class__(503, create_success().raw)])
+    create_success().__class__(503, create_success().raw), bridge.HttpResponseEvidence(302, create_success().raw)])
 def test_unproven_response_is_unknown_never_failed_or_reload(context, evidence):
     gets = []
     result = service(context, lambda **_: evidence, lambda **_: gets.append(1)).create(SELECTIONS)
@@ -320,7 +320,7 @@ def test_low_level_phases_exact_methods_and_no_internal_retry(monkeypatch):
     def http(request, timeout):
         calls.append((request.get_method(), request.full_url, request.data))
         return Reply()
-    monkeypatch.setattr(bridge, "urlopen", http)
+    monkeypatch.setattr(bridge, "_open_once", http)
     bridge.post_create_once(request_bytes=bridge.build_create_request(SELECTIONS))
     bridge.load_share_code_once(code="ABC123")
     assert [row[0] for row in calls] == ["POST", "GET"]
@@ -383,3 +383,17 @@ def test_product_worker_cannot_fall_back_to_live_wrapper(monkeypatch):
     from types import SimpleNamespace
     with pytest.raises(WorkerEntryError, match="durable transport context"):
         _run_current_shadow(SimpleNamespace(operation="CURRENT_SHADOW_REQUEST"), SimpleNamespace(create_share_code=True))
+
+
+def test_redirect_response_is_retained_without_implicit_request(monkeypatch):
+    from urllib.error import HTTPError
+    from io import BytesIO
+    calls = []
+    def redirect(request, *, timeout):
+        calls.append(request.get_method())
+        raise HTTPError(request.full_url, 302, "redirect", {"Location":"https://unrelated.invalid/"}, BytesIO(b"ambiguous"))
+    monkeypatch.setattr(bridge, "_open_once", redirect)
+    evidence = bridge.post_create_once(request_bytes=bridge.build_create_request(SELECTIONS))
+    assert evidence == bridge.HttpResponseEvidence(302, b"ambiguous")
+    assert calls == ["POST"]
+    assert bridge._NoRedirect().redirect_request(None, None, 302, "redirect", {}, "https://unrelated.invalid/") is None

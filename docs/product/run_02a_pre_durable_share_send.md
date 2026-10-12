@@ -23,6 +23,9 @@ admission across independent connections. No operation in any state can be
 replaced for the same intent by changing an idempotency key or attempt. Repeated
 service calls inspect existing evidence and never resume PREPARED or SENT.
 OUTCOME_UNKNOWN is terminal for the action and never retry authority.
+The low-level private opener refuses automatic redirects and excludes ambient
+global authentication/cookie handlers. Redirect response bytes are retained as
+ambiguous evidence; they cannot initiate an implicit GET or substitute an origin.
 
 Exact HTTP response bytes are encoded losslessly in an immutable server-owned
 evidence document, including raw SHA-256/byte count and HTTP status. The document

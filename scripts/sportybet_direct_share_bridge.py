@@ -20,7 +20,7 @@ from pathlib import Path
 import re
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request, HTTPRedirectHandler, build_opener
 
 SPORTYBET_ORIGIN = "https://www.sportybet.com"
 SPORTYBET_OPER_ID = "2"
@@ -35,6 +35,19 @@ _CODE_RE = re.compile(r"^[A-Za-z0-9]{3,32}$", re.ASCII)
 
 class SportyBetDirectShareError(RuntimeError):
     pass
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # A redirect is retained as ambiguous response evidence. It cannot
+        # authorize another request or substitute a different provider origin.
+        return None
+
+
+def _open_once(request, *, timeout):
+    # Private opener excludes ambient global cookie/authentication handlers.
+    # Refusing redirects prevents an implicit GET before CREATE is confirmed.
+    return build_opener(_NoRedirect()).open(request, timeout=timeout)
 
 
 @dataclass(frozen=True)
@@ -185,7 +198,7 @@ def _request_once(*, path: str, method: str, body: bytes | None) -> HttpResponse
         headers=headers,
     )
     try:
-        with urlopen(req, timeout=45) as response:
+        with _open_once(req, timeout=45) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
             status = int(getattr(response, "status", 200))
     except HTTPError as exc:
