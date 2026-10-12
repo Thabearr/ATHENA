@@ -22,7 +22,9 @@ SOURCES = (
     "scripts/audit_core_01d_port02c_trigger_authority_b6.py",
     "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py",
     "scripts/audit_data_01c_app_store_complete.py",
+    "scripts/audit_lg_a_worker_launch_failure_remediation.py",
     "scripts/audit_run_02a_pre_durable_share_send.py", "tests/test_core_01d_exact_pr_trigger_disposition_b1.py",
+    "tests/test_lg_a_worker_launch_failure_remediation.py",
     "tests/test_run_02a_pre_durable_share_send.py", "tests/native/test_run_02a_pre_share_send_publication.py",
 )
 HISTORY = {
@@ -120,7 +122,7 @@ def build_receipt(source_head):
         "classification": {"before_sent": "FAILED_ONLY_WITH_SHARE_CREATE_NEVER_SENT_AND_ZERO_POST",
                            "retained_success": "HTTP_200_BIZCODE_10000_RECOGNIZED_CODE_TO_CONFIRMED",
                            "post_sent_unproven": "OUTCOME_UNKNOWN_NEVER_FAILED",
-                           "provider_proven_failed": "BLOCKED_NO_REVIEWED_NO_CREATE_CONTRACT"},
+                           "provider_proven_failed": "UNSUPPORTED_NO_REVIEWED_NO_CREATE_CONTRACT_OUTCOME_UNKNOWN_ACCEPTED"},
         "no_resend": "SERIALIZED_RUN_KIND_INTENT_CHECK_ALL_STATES_ALL_ATTEMPTS_ALL_IDEMPOTENCY_KEYS",
         "reload": "EXPLICIT_GET_ONLY_FROM_RETAINED_CONFIRMED_CREATE_CODE_NO_SECOND_POST",
         "authority": "REAUTHENTICATED_ADMITTED_CAPABILITY_NO_ACCOUNT_OR_WAGER_AUTHORITY",
@@ -132,7 +134,7 @@ def build_receipt(source_head):
             "real_share_code_create", "delivery", "login", "cookies", "wallet", "stake", "wager", "email",
             "manual_workflow_dispatch", "manual_workflow_rerun", "manual_workflow_cancel"), 0),
         "review_ready": False, "merge_authorized": False,
-        "residual_blocker": "MANDATORY_PROVIDER_PROVEN_FAILED_ACCEPTANCE_HAS_NO_REVIEWED_CONTRACT",
+        "residual_blocker": "NONE_CONSERVATIVE_POST_SENT_UNKNOWN_IS_ACCEPTED; PROVIDER_PROVEN_FAILED_UNSUPPORTED_WITHOUT_REVIEWED_NO_CREATE_CONTRACT",
         "hosted_gates": "NATURAL_EXACT_HEAD_TESTS_AND_PORT02C_REQUIRED_RECORDED_IN_PR_BODY",
     })
 

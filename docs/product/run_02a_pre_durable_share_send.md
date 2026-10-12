@@ -49,8 +49,11 @@ retained independently. A repeated CREATE call does not automatically reload;
 `reload(operation_id)` is the explicit read-only verification seam.
 
 Owner ruling: no post-SENT response may become FAILED without a future separately
-reviewed provider no-create contract. The mandatory provider-proven FAILED
-acceptance item remains blocked. This document does not claim review-ready.
+reviewed provider no-create contract. Provider-proven post-SENT FAILED is
+intentionally unsupported because no reviewed no-create contract exists.
+Conservative OUTCOME_UNKNOWN is the accepted safe behavior and grants no retry
+authority; this is not a prerequisite blocker. No synthetic failure contract or
+fixture is added. This document does not claim review-ready.
 
 No migration is needed: all supported writers serialize the intent check and row
 insertion inside the existing repository transaction. TESTING_SYNTHETIC retains
