@@ -397,3 +397,35 @@ def test_redirect_response_is_retained_without_implicit_request(monkeypatch):
     assert evidence == bridge.HttpResponseEvidence(302, b"ambiguous")
     assert calls == ["POST"]
     assert bridge._NoRedirect().redirect_request(None, None, 302, "redirect", {}, "https://unrelated.invalid/") is None
+
+
+def test_response_substitution_between_verified_read_and_parse_never_confirms(context, monkeypatch):
+    import base64
+    repo, run, owner, roots = context
+    read = repo.read_share_code_response
+    require = repo._require_artifact_role
+    active = [False]
+    swapped = []
+    def swap(conn, run_id, artifact, role):
+        require(conn, run_id, artifact, role)
+        if active[0] and role == "EXTERNAL_RESPONSE":
+            locator = conn.execute("SELECT logical_path FROM app_artifacts WHERE artifact_id=?", (artifact,)).fetchone()[0]
+            target = roots.data_root / locator
+            value = json.loads(target.read_bytes())
+            payload = json.loads(base64.b64decode(value["raw_base64"]))
+            payload["data"]["shareCode"] = "ZZZ999"
+            raw = canonical_json_bytes(payload)
+            value.update(raw_base64=base64.b64encode(raw).decode(), raw_sha256=hashlib.sha256(raw).hexdigest(), raw_byte_count=len(raw))
+            target.write_bytes(canonical_json_bytes(value))
+            swapped.append(True)
+    def reread(*args, **kwargs):
+        active[0] = True
+        try:
+            return read(*args, **kwargs)
+        finally:
+            active[0] = False
+    monkeypatch.setattr(repo, "_require_artifact_role", swap)
+    monkeypatch.setattr(repo, "read_share_code_response", reread)
+    assert service(context).create(SELECTIONS).outcome == Outcome.CREATE_OUTCOME_UNKNOWN
+    assert swapped
+    assert operations(context)[0][1] == "OUTCOME_UNKNOWN"

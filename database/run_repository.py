@@ -775,6 +775,8 @@ class DurableRunRepository:
             raise ExternalOperationViolation("CREATE artifact byte count mismatch")
         self._require_artifact_role(conn, run_id, artifact_id, role)
         raw = target.read_bytes()
+        if len(raw) != count or hashlib.sha256(raw).hexdigest() != digest:
+            raise ExternalOperationViolation("CREATE artifact reread bytes changed")
         value = json.loads(raw)
         if canonical_json_bytes(value) != raw or value.get("run_id") != run_id:
             raise ExternalOperationViolation("CREATE evidence run/canonical binding mismatch")
