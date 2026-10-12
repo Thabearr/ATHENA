@@ -167,7 +167,15 @@ INCIDENT_20261010_NEW_PATHS = {
     "tests/fixtures/core_01d/inc_20261010/test-p44p-preparse-response-evidence-predecessor.py.txt",
     "tests/fixtures/core_01d/inc_20261010/test-p44q-simple-tournament-identity-predecessor.py.txt",
 }
-ALLOWED_PASS4_PATHS |= APP01C_BOUNDED_PATHS | APP01C_CURRENT_SOURCE_PATHS
+RUN_01B_ADDITIVE_PATHS = {
+    "artifacts/product/run_01b_worker_lifecycle_v1.json",
+    "docs/product/run_01b_worker_lifecycle.md",
+    "scripts/audit_run_01b_worker_lifecycle.py",
+    "services/worker_coordinator.py",
+    "tests/native/test_run_01b_worker_coordinator_native.py",
+    "tests/test_run_01b_worker_lifecycle.py",
+}
+ALLOWED_PASS4_PATHS |= APP01C_BOUNDED_PATHS | APP01C_CURRENT_SOURCE_PATHS | RUN_01B_ADDITIVE_PATHS
 # Exact handoff ls-tree inventory excluding only the twelve bounded evidence
 # paths. Available in shallow CI without requiring the handoff commit object.
 UNCHANGED_REPOSITORY_INVENTORY_SHA = "6b407c284a7c2f759e6345f53444478de53427ceae1aaa7d412d078270c5ad27"

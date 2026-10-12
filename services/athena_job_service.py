@@ -1,4 +1,4 @@
-"""E1 transactional job admission: commit-first durable admission plus one offline worker.
+"""E1/E2 transactional job admission and owned-worker handoff.
 
 This module is the reviewed E1 job integration. It sequences only reviewed
 local seams and never performs provider, acquisition, delivery, wager, login,
@@ -24,12 +24,12 @@ Ordering contract (commit-first, never dispatch-before-commit):
    run. Worker failure is observable via the run snapshot, never via a
    revoked admission.
 
-Worker contract (offline only):
+Worker contract:
 
-* Exactly one allowlisted operation: ``OFFLINE_IDENTITY_PROBE``. Its worker
-  evidence declares ``provider_calls == 0``, ``delivery_calls == 0`` and
-  ``wager is False``. No ``CURRENT_SHADOW_REQUEST`` is launched here; live or
-  shadow execution remains out of scope for E1.
+* The exact committed envelope selects the operation. ``CURRENT_SHADOW_REQUEST``
+  is selected only for an explicit SHADOW/research_shadow request whose
+  envelope authorizes source acquisition; other requests use
+  ``OFFLINE_IDENTITY_PROBE``. Neither path gains authority beyond that envelope.
 * The run directory is ``<data_root>/runs/<run_id>/<request_sha256>`` and its leaf
   name must equal the exact canonical request SHA. The staged
   ``athena-run-request.json`` bytes must equal the committed request bytes;
@@ -55,7 +55,7 @@ from database.run_repository import (
     RunRepositoryError,
     RunStateConflict,
 )
-from domain.run_contracts import RunRequest, canonical_json_bytes
+from domain.run_contracts import RunReceipt, RunRequest, canonical_json_bytes
 from runtime.release_identity import (
     DevelopmentCheckoutIdentity,
     InstalledReleaseIdentity,
@@ -74,6 +74,7 @@ from services.athena_preview_service import (
     AthenaPreviewAdmissionService,
     PreviewAdmissionError,
 )
+from services.worker_coordinator import WorkerCoordinator
 from services.athena_read_service import (
     AthenaReadService,
     ReadBackendError,
@@ -103,7 +104,7 @@ def _parse_utc_text(value: object) -> datetime:
 
 
 class AthenaJobService:
-    """Commit-first admission plus exactly one offline-probe worker launch."""
+    """Commit-first durable admission plus one bounded owned-worker handoff."""
 
     def __init__(
         self,
@@ -156,6 +157,7 @@ class AthenaJobService:
         self._repository = run_repository
         self._launcher = launcher
         self._roots = writable_roots
+        self._coordinator = WorkerCoordinator(run_repository, launcher, writable_roots)
 
     @property
     def preview_service(self) -> AthenaPreviewAdmissionService:
@@ -195,56 +197,20 @@ class AthenaJobService:
 
     def _start_offline_worker_once(self, run_id: str) -> None:
         try:
-            snapshot = self._repository.run_snapshot(run_id)
+            self._coordinator.handoff(
+                run_id,
+                worker_instance_id=_JOB_WORKER_INSTANCE_ID,
+                process_label=_JOB_PROCESS_LABEL,
+                command_factory=lambda request, request_bytes, envelope: self._stage_and_build(
+                    run_id, request, request_bytes, envelope),
+            )
         except Exception:
-            # The commit stands; without proven request bytes there is
-            # nothing safe to launch. The QUEUED run stays observable.
-            return
-        try:
-            if snapshot is None:
-                return
-            request_bytes = snapshot["request_bytes"]
-            request = RunRequest.from_json_bytes(request_bytes)
-        except Exception:
-            return
-        try:
-            attempt_id, lease_token = self._claim_and_start(run_id)
-        except Exception:
-            return
-        try:
-            command = self._stage_and_build(run_id, request, request_bytes)
-        except Exception:
-            self._best_effort_recover(run_id, attempt_id, lease_token)
-            return
-        try:
-            # Exactly one launch per admitted run, by the admitting thread.
-            self._launcher.launch(command)
-        except Exception:
-            try:
-                self._repository.record_launch_failure_and_interrupt(
-                    run_id, attempt_id, lease_token)
-            except Exception:
-                # The transaction failed: retain the committed admission,
-                # never invent interruption or retry the launch.
-                pass
+            # The admission commit remains authoritative. Failed or unavailable
+            # worker handoff never revokes or automatically retries the run.
             return
 
-    def _claim_and_start(self, run_id: str) -> tuple[str, str]:
-        attempt_id, lease_token, _number = self._repository.claim_attempt(
-            run_id,
-            worker_instance_id=_JOB_WORKER_INSTANCE_ID,
-            process_locator={"kind": "OFFLINE_TEST", "label": _JOB_PROCESS_LABEL},
-        )
-        try:
-            self._repository.transition_run(
-                run_id, expected_version=0, state="RUNNING",
-                attempt_id=attempt_id, lease_token=lease_token)
-        except Exception:
-            self._best_effort_recover(run_id, attempt_id, lease_token)
-            raise
-        return attempt_id, lease_token
-
-    def _stage_and_build(self, run_id: str, request: RunRequest, request_bytes: bytes) -> WorkerCommand:
+    def _stage_and_build(self, run_id: str, request: RunRequest, request_bytes: bytes,
+                         envelope: ExecutionEnvelope) -> WorkerCommand:
         run_directory = contained(
             self._roots.data_root, "runs/" + run_id + "/" + request.canonical_sha256)
         try:
@@ -268,23 +234,26 @@ class AthenaJobService:
             identifier = identity.manifest_sha256
         else:
             raise WorkerLaunchError("verified source identity is unavailable")
+        requests_shadow_acquisition = (
+            request.authority_profile == "SHADOW"
+            and request.mode == "research_shadow"
+            and envelope.requested_operations.acquire_sources is True
+            and envelope.authority_manifest.provider_acquisition is True
+        )
+        if requests_shadow_acquisition and type(identity) is not DevelopmentCheckoutIdentity:
+            raise WorkerLaunchError(
+                "installed Current Shadow execution is blocked without authenticated producer provenance"
+            )
+        operation = "CURRENT_SHADOW_REQUEST" if requests_shadow_acquisition else _JOB_OPERATION
         return WorkerCommand(
-            operation=_JOB_OPERATION,
-            mode=WORKER_MODE_BY_OPERATION[_JOB_OPERATION],
+            operation=operation,
+            mode=WORKER_MODE_BY_OPERATION[operation],
             run_directory=run_directory,
             request_artifact_id=request.canonical_sha256,
             envelope_artifact_id=None,
             release_identity_kind=kind,
             release_identity_id=identifier,
         )
-
-    def _best_effort_recover(self, run_id: str, attempt_id: str, lease_token: str) -> None:
-        try:
-            self._repository.recover_attempt(run_id, attempt_id, lease_token)
-        except Exception:
-            # Even a damaged store during best-effort recovery cannot revoke
-            # or conceal the admission identity already committed above.
-            return
 
     def durable_read_service(self) -> AthenaReadService:
         """Provider-free reads over the durable run store.
@@ -301,7 +270,7 @@ class AthenaJobService:
         )
 
 
-def _snapshot_record(snapshot: dict) -> RunSnapshotRecord:
+def _snapshot_record(snapshot: dict, progress: dict | None = None, receipt: RunReceipt | None = None) -> RunSnapshotRecord:
     try:
         run_id = snapshot["run_id"]
         state = snapshot["state"]
@@ -309,20 +278,22 @@ def _snapshot_record(snapshot: dict) -> RunSnapshotRecord:
         created_at = _parse_utc_text(snapshot["created_at"])
         updated_at = _parse_utc_text(snapshot["updated_at"])
         request = RunRequest.from_json_bytes(snapshot["request_bytes"])
-        receipt_state = "NOT_PRODUCED" if state != "TERMINAL" else "UNKNOWN"
+        if state == "TERMINAL" and (receipt is None or receipt.request.canonical_sha256 != snapshot["request_sha256"]):
+            raise ReadBackendError("RUN_STORE_UNAVAILABLE")
+        receipt_state = "NOT_PRODUCED" if state != "TERMINAL" else "VERIFIED"
         return RunSnapshotRecord(
             run_id=run_id,
             state=state,
             state_version=state_version,
             created_at=created_at,
             updated_at=updated_at,
-            last_proven_stage=None,
-            counts=None,
+            last_proven_stage=None if progress is None else progress["stage"],
+            counts=None if progress is None else progress["counts"],
             target_legs=request.target_legs,
-            selected_leg_count=None,
-            shortfall=None,
+            selected_leg_count=None if receipt is None else receipt.counts["selected_leg_count"],
+            shortfall=None if receipt is None else receipt.shortfall,
             execution_state=None,
-            business_result=None,
+            business_result=None if receipt is None else receipt.status,
             delivery_state=None,
             receipt_state=receipt_state,
             request_identity_ref=snapshot["request_sha256"],
@@ -354,6 +325,36 @@ def _event_record(row: tuple) -> RunEventRecord:
                 raise ValueError("invalid launch diagnostic")
             kind = "DIAGNOSTIC"
             payload = RunEventPayload(diagnostic_id="WORKER_LAUNCH_FAILED")
+        elif event_type == "WORKER_PROGRESS_PROVEN":
+            retained = json.loads(_payload)
+            DurableRunRepository._validate_worker_progress(retained)
+            if (canonical_json_bytes(retained) != _payload
+                    or hashlib.sha256(_payload).hexdigest() != _digest):
+                raise ValueError("invalid worker progress event")
+            kind = "PROGRESS"
+            payload = RunEventPayload(
+                stage=retained["stage"],
+                counts=retained["counts"],
+                evidence_sha256=retained["evidence_sha256"],
+                identity_refs=retained["identity_refs"],
+            )
+        elif event_type == "WORKER_INTERRUPTED":
+            retained = json.loads(_payload)
+            expected = {"diagnostic_id", "exit_code", "last_proven_stage"}
+            if (type(retained) is not dict or set(retained) != expected
+                    or retained["diagnostic_id"] not in {
+                        "WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT", "WORKER_RECEIPT_INVALID",
+                        "WORKER_PROCESS_LOCATOR_UNAVAILABLE"}
+                    or type(retained["exit_code"]) is not int
+                    or not -(2**31) <= retained["exit_code"] < 2**31
+                    or canonical_json_bytes(retained) != _payload
+                    or hashlib.sha256(_payload).hexdigest() != _digest):
+                raise ValueError("invalid worker interruption event")
+            kind = "DIAGNOSTIC"
+            payload = RunEventPayload(
+                stage=retained["last_proven_stage"],
+                diagnostic_id=retained["diagnostic_id"],
+            )
         else:
             kind = "DIAGNOSTIC"
             payload = RunEventPayload()
@@ -383,7 +384,16 @@ class DurableRunReadAdapter:
             raise ReadBackendError("RUN_STORE_UNAVAILABLE") from None
         if snapshot is None:
             return None
-        record = _snapshot_record(snapshot)
+        try:
+            progress = self._repository.latest_worker_progress(run_id)
+        except (RunRepositoryError, OSError, ValueError):
+            raise ReadBackendError("RUN_STORE_UNAVAILABLE") from None
+        try:
+            receipt = (RunReceipt.from_json_bytes(self._repository.read_receipt_bytes(run_id))
+                       if snapshot["state"] == "TERMINAL" else None)
+        except (RunRepositoryError, OSError, ValueError):
+            raise ReadBackendError("RUN_STORE_UNAVAILABLE") from None
+        record = _snapshot_record(snapshot, progress, receipt)
         if record.run_id != run_id:
             raise ReadBackendError("RUN_STORE_UNAVAILABLE")
         return record

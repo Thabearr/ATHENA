@@ -79,10 +79,10 @@ def test_e1_receipt_mutation_is_rejected(monkeypatch):
         e1._verify_immutable_receipt()
 
 
-def test_all_four_predecessor_fixtures_match_frozen_e1_source_identities():
+def test_all_exact_predecessor_fixtures_match_frozen_e1_source_identities():
     frozen = _frozen_identities()
     assert set(e1.FORWARD_EVOLVED_SOURCES) == e1.FORWARD_EVOLVED_SOURCE_PATHS
-    assert len(e1.FORWARD_EVOLVED_SOURCES) == 4
+    assert len(e1.FORWARD_EVOLVED_SOURCES) == 6
 
     for source, entry in e1.FORWARD_EVOLVED_SOURCES.items():
         raw = _lf((e1.ROOT / entry["predecessor_fixture"]).read_bytes())
