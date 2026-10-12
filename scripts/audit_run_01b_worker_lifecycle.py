@@ -22,6 +22,7 @@ A2_V127_CANONICAL_SHA256 = "d6896bfa45293a4d8407e9273ea5c56c6276a602a256a6535de4
 A2_V128_CANONICAL_SHA256 = "a1d6c095d13619c64a1242bf44ab58a67f43cbecf6ab099bd85b6d7301f3050b"
 A2_V129_CANONICAL_SHA256 = "7433ba55126df49196668eb162625335fa57edc7793fc51c297071c183d76daf"
 A2_V130_CANONICAL_SHA256 = "e57e42257e922e401ee3a40a5291ab8e8018cbf488653306cc1baef6790b9edc"
+A2_V131_CANONICAL_SHA256 = "71e347caa69c7f42cb471611503fe1524cb430e74034c8e1195ea069b588baaa"
 SUCCESSOR_RUNTIME_SHA256 = "9dc0cfb362cf7008d28bcf029755b7361481b683e41155528f9607047773ceba"
 LEGACY_RUNTIME_SHA256 = "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
 INCIDENT_RECEIPT_PATH = (
@@ -46,6 +47,7 @@ _A2_RAW_SHA256 = {
     128: "59b088624d113599029c38695f2ab485aee1b93fd9eac5cf9c043bcf3f3e9165",
     129: "51dbe3a6cdaa6e7f935a6e3d1233dc46c55249035b0d9336c6e3c69620e24de7",
     130: "a6def3e67316785a8aefa1a5282b678cfc540cd06beb8195937ff6519962a933",
+    131: "07f312fd709d6afe8b14f199f39695fb5fe9b04dd5dd861d53290e4a773087c9",
 }
 _SOURCE_PATHS = (
     "api/schemas.py",
@@ -105,43 +107,47 @@ def build_receipt():
     from domain import current_shadow_sportybet_pc_upcoming_reconciliation as runtime
 
     latest = a2.authenticate_inventory()
-    if latest.get("generation") != 131:
-        raise AssertionError("RUN-01B requires the V131 successor from immutable V130")
+    if latest.get("generation") != 132:
+        raise AssertionError("RUN-01B requires the V132 successor from immutable V131")
     chain = a2.load_inventory_generations()
-    if len(chain) != 131:
-        raise AssertionError("A2 generation sequence is not contiguous through V131")
+    if len(chain) != 132:
+        raise AssertionError("A2 generation sequence is not contiguous through V132")
     predecessor_path, predecessor = chain[-2]
-    if (predecessor_path != a2.inventory_generation_path(130)
-            or predecessor.get("canonical_sha256") != A2_V130_CANONICAL_SHA256):
-        raise AssertionError("V130 predecessor identity changed")
+    if (predecessor_path != a2.inventory_generation_path(131)
+            or predecessor.get("canonical_sha256") != A2_V131_CANONICAL_SHA256):
+        raise AssertionError("V131 predecessor identity changed")
     if latest.get("predecessor_inventory") != {
-        "path": a2.inventory_generation_path(130),
-        "canonical_sha256": A2_V130_CANONICAL_SHA256,
-        "generation": 130,
+        "path": a2.inventory_generation_path(131),
+        "canonical_sha256": A2_V131_CANONICAL_SHA256,
+        "generation": 131,
         "rewritten": False,
     }:
-        raise AssertionError("V131 predecessor binding drift")
-    v129_path, v129 = chain[-3]
+        raise AssertionError("V132 predecessor binding drift")
+    v130_path, v130 = chain[-3]
+    if (v130_path != a2.inventory_generation_path(130)
+            or v130.get("canonical_sha256") != A2_V130_CANONICAL_SHA256):
+        raise AssertionError("immutable V130 identity changed")
+    v129_path, v129 = chain[-4]
     if (v129_path != a2.inventory_generation_path(129)
             or v129.get("canonical_sha256") != A2_V129_CANONICAL_SHA256):
         raise AssertionError("immutable V129 identity changed")
-    v128_path, v128 = chain[-4]
+    v128_path, v128 = chain[-5]
     if (v128_path != a2.inventory_generation_path(128)
             or v128.get("canonical_sha256") != A2_V128_CANONICAL_SHA256):
         raise AssertionError("immutable V128 identity changed")
-    v127_path, v127 = chain[-5]
+    v127_path, v127 = chain[-6]
     if (v127_path != a2.inventory_generation_path(127)
             or v127.get("canonical_sha256") != A2_V127_CANONICAL_SHA256):
         raise AssertionError("immutable V127 identity changed")
-    v126_path, v126 = chain[-6]
+    v126_path, v126 = chain[-7]
     if (v126_path != a2.inventory_generation_path(126)
             or v126.get("canonical_sha256") != A2_V126_CANONICAL_SHA256):
         raise AssertionError("immutable V126 identity changed")
-    v125_path, v125 = chain[-7]
+    v125_path, v125 = chain[-8]
     if (v125_path != a2.inventory_generation_path(125)
             or v125.get("canonical_sha256") != A2_V125_CANONICAL_SHA256):
         raise AssertionError("immutable V125 identity changed")
-    v124_path, v124 = chain[-8]
+    v124_path, v124 = chain[-9]
     if (v124_path != a2.inventory_generation_path(124)
             or v124.get("canonical_sha256") != A2_PREDECESSOR_SHA256):
         raise AssertionError("immutable V124 identity changed")
@@ -180,7 +186,7 @@ def build_receipt():
     source_identities = []
     for path in _SOURCE_PATHS:
         if path not in a2_sources or _lf_sha(path) != a2_sources[path]:
-            raise AssertionError("RUN-01B source differs from A2 V131: " + path)
+            raise AssertionError("RUN-01B source differs from A2 V132: " + path)
         source_identities.append({"path": path, "lf_sha256": a2_sources[path]})
     doc_path = "docs/product/run_01b_worker_lifecycle.md"
     if not (ROOT / doc_path).is_file():
@@ -193,12 +199,12 @@ def build_receipt():
         "reconciled_main": {"commit_sha": MAIN_SHA, "tree_sha": MAIN_TREE_SHA},
         "branch_synchronization_merge_commit": SYNC_MERGE,
         "a2_successor": {
-            "generation": 131,
+            "generation": 132,
             "canonical_sha256": latest["canonical_sha256"],
             "predecessor_path": predecessor_path,
-            "predecessor_canonical_sha256": A2_V130_CANONICAL_SHA256,
+            "predecessor_canonical_sha256": A2_V131_CANONICAL_SHA256,
             "predecessor_rewritten": False,
-            "v116_v130_raw_sha256": {str(k): v for k, v in _A2_RAW_SHA256.items()},
+            "v116_v131_raw_sha256": {str(k): v for k, v in _A2_RAW_SHA256.items()},
         },
         "immutable_history": {
             "e1_receipt_path": e1.RECEIPT,
