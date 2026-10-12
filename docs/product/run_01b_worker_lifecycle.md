@@ -44,9 +44,9 @@ PR #457's four-epoch successor runtime policy remains
 `9dc0cfb362cf7008d28bcf029755b7361481b683e41155528f9607047773ceba`, and its
 legacy two-epoch policy remains
 `3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a`.
-A2 V116–V135 remain immutable; RUN-01B appends V136 with canonical SHA-256
-`daa5e71f17e9aedadabd4919022620f7625d8bef7e6133f98b487e1d372e2c78` from exact
-V135 `be33b12c9149c6c8b645adadbe5770484ac25814269a2fb93c78b2666d37f91e`.
+A2 V116–V136 remain immutable; RUN-01B appends V137 from exact V136
+`daa5e71f17e9aedadabd4919022620f7625d8bef7e6133f98b487e1d372e2c78` with
+`predecessor_rewritten=false`.
 
 The canonical source/evidence receipt is
 `artifacts/product/run_01b_worker_lifecycle_v1.json`; the non-writing audit is
