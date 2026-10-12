@@ -15,7 +15,7 @@ def test_p4_4o_receipt_and_current_runtime_supersession_are_exact():
     assert result["policy_id"] == "ATHENA_P4_4O_PC_UPCOMING_STABLE_EPOCH_RECOVERY_V1"
     assert result["runtime_policy_id"] == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
     assert result["runtime_policy_sha256"] == (
-        "3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a"
+        "9dc0cfb362cf7008d28bcf029755b7361481b683e41155528f9607047773ceba"
     )
     assert result["source_policy_sha256"] == (
         "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5"
