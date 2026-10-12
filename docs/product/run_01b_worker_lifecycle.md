@@ -39,8 +39,8 @@ PR #457's four-epoch successor runtime policy remains
 `9dc0cfb362cf7008d28bcf029755b7361481b683e41155528f9607047773ceba`, and its
 legacy two-epoch policy remains
 `3cf597440422433e7c7e2246d33de4ece22e55395218f8bc2eb8950a361dd68a`.
-A2 V116–V131 remain immutable; RUN-01B appends V132 from exact V131
-`71e347caa69c7f42cb471611503fe1524cb430e74034c8e1195ea069b588baaa`.
+A2 V116–V133 remain immutable; RUN-01B appends V134 from exact V133
+`e01f9b23074076846522056a45514d2a34f78a85c3bc6c89383c33e1b81e69e7`.
 
 The canonical source/evidence receipt is
 `artifacts/product/run_01b_worker_lifecycle_v1.json`; the non-writing audit is

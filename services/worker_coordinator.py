@@ -95,7 +95,7 @@ class WorkerCoordinator:
         *,
         heartbeat_seconds: float = 2.0,
         poll_seconds: float = 0.1,
-        initial_poll_delay: float = 0.05,
+        initial_poll_delay: float = 0.5,
         thread_factory=threading.Thread,
         monotonic=time.monotonic,
         sleeper=time.sleep,
