@@ -429,3 +429,19 @@ def test_response_substitution_between_verified_read_and_parse_never_confirms(co
     assert service(context).create(SELECTIONS).outcome == Outcome.CREATE_OUTCOME_UNKNOWN
     assert swapped
     assert operations(context)[0][1] == "OUTCOME_UNKNOWN"
+
+
+@pytest.mark.parametrize("fault", ["current", "predecessor"])
+def test_historical_transport_projection_cannot_hide_source_or_fixture_tamper(tmp_path, fault):
+    from scripts import audit_run_02a_pre_durable_share_send as audit
+    path = "scripts/sportybet_direct_share_bridge.py"
+    fixture, blob, digest = audit.TRANSPORT_PREDECESSORS[path]
+    for relative in (path, fixture):
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((audit.ROOT / relative).read_bytes())
+    assert hashlib.sha256(audit.historical_transport_bytes(path, root=tmp_path)).hexdigest() == digest
+    target = tmp_path / (path if fault == "current" else fixture)
+    target.write_bytes(target.read_bytes() + b"# tamper\n")
+    with pytest.raises(AssertionError):
+        audit.historical_transport_bytes(path, root=tmp_path)

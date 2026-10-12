@@ -59,6 +59,11 @@ its original transition vocabulary and tests.
 A2 successors are append-only from immutable V142; RUN-01A/RUN-01B receipts and
 PR #457 policy/evidence remain unchanged. Historical E2 audits reconstruct V142
 from byte-pinned source evidence while separately authenticating current A2.
+The B1/B4 trigger reviews, AUTH worker-boundary source rows and master source
+inventory likewise reconstruct their exact frozen predecessors. Each projection
+checks current bytes against A2 and predecessor bytes against exact SHA/blob pins;
+the current worker still receives its static checks and clean-process replay.
+Historical receipt hashes and workflow contracts are never rewritten.
 Final commit identity is recorded in the PR/hosted run attestation rather than
 embedded self-referentially in its own evidence commit. Evidence binds the exact
 source hashes and the source commit immediately preceding its publication.

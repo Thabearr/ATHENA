@@ -227,6 +227,11 @@ def _identity(path: str) -> dict[str, str]:
     normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     blob, digest = SOURCE_PINS[path]
     git_blob = _git("rev-parse", "HEAD:" + path).decode().strip()
+    if path == "scripts/sportybet_direct_share_bridge.py":
+        from scripts import audit_run_02a_pre_durable_share_send as prerequisite
+        raw = prerequisite.historical_transport_bytes(path, root=ROOT)
+        normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        git_blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
     require(git_blob == blob, f"B4 source Git blob drift: {path}")
     require(hashlib.sha256(normalized).hexdigest() == digest, f"B4 normalized source SHA drift: {path}")
     return {"path": path, "git_blob_sha1": git_blob, "normalized_source_sha256": digest,

@@ -120,8 +120,12 @@ RUN_02A_PRE_ADDITIVE_PATHS={
  'artifacts/product/run_02a_pre_durable_share_send_v1.json',
  'docs/product/run_02a_pre_durable_share_send.md',
  'tests/fixtures/core_01d/run_01b_historical/source_bytes_v1.json',
+ 'tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-predecessor.py.txt',
+ 'tests/fixtures/core_01d/run_02a_pre_historical/direct-share-predecessor.py.txt',
+ 'tests/fixtures/core_01d/run_02a_pre_historical/auth-worker-boundary-predecessor.py.txt',
 }
 RUN_02A_PRE_PREDECESSOR_BLOBS={
+ 'scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py':'07ce59ed824d40ef1be12686537c4e355e565c30',
  'runtime/worker_entry.py':'77d8888a4b007f9bb0967409a23e826f97338c90',
  'scripts/sportybet_direct_share_bridge.py':'681ce2a043a334dcb8523c81d092369d6540e6d5',
 }

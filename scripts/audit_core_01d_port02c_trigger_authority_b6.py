@@ -273,6 +273,9 @@ def _canonical(value: Any) -> bytes:
 
 
 def _reviewed_source(path: str, historical: dict[str, Any]) -> bytes:
+    if path == "runtime/worker_entry.py":
+        from scripts import audit_run_02a_pre_durable_share_send as prerequisite
+        return prerequisite.historical_transport_bytes(path, root=ROOT)
     # The B6 receipt stays bound to its pre-APP launcher/UI. Authenticate the
     # complete current successor before reading the bounded historical bytes.
     from scripts import audit_app_01a_local_shell as app01a
@@ -292,6 +295,12 @@ def _reviewed_source(path: str, historical: dict[str, Any]) -> bytes:
 
 
 def _reviewed_git_source(path: str, blob: str, historical: dict[str, Any]) -> bytes:
+    if path == "runtime/worker_entry.py":
+        from scripts import audit_run_02a_pre_durable_share_send as prerequisite
+        raw = prerequisite.historical_transport_bytes(path, root=ROOT)
+        require(hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() == blob,
+                "B6 worker-entry predecessor identity differs")
+        return raw
     from scripts import audit_app_01a_local_shell as app01a
     from scripts import audit_data_01a_app_schema_core as data01a
     if path == data01a.BUILD_CONFIG:

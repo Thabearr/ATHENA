@@ -82,6 +82,12 @@ def _source_identities() -> list[dict[str, str]]:
         payload = subprocess.check_output(
             ["git", "-C", str(REPOSITORY_ROOT), "show", f"HEAD:{relative_path}"]
         )
+        if relative_path == "runtime/worker_entry.py":
+            # Preserve the sealed historical source row; the real current
+            # boundary still undergoes static checks and clean-process replay.
+            from scripts import audit_run_02a_pre_durable_share_send as prerequisite
+            payload = prerequisite.historical_transport_bytes(relative_path, root=REPOSITORY_ROOT)
+            blob_sha1 = hashlib.sha1(b"blob " + str(len(payload)).encode() + b"\0" + payload).hexdigest()
         if relative_path == "services/athena_run_service.py" and blob_sha1 != "16d54ff599bffc70cdd66498a440647cf8e8b131":
             # Preserve the immutable receipt's source identities, but replay the
             # real current worker boundary below. Only the sealed LG-A successor

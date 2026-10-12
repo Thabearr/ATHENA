@@ -16,6 +16,11 @@ SOURCES = (
     "scripts/sportybet_direct_share_bridge.py", "services/athena_job_service.py",
     "services/durable_share_code_transport.py", "scripts/audit_run_01b_worker_lifecycle.py",
     "scripts/audit_core_01d_checkpoint_e_completion_v2.py", "scripts/audit_checkpoint_e_workflows.py",
+    "scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py",
+    "scripts/audit_core_01d_exact_pr_trigger_disposition_b1.py",
+    "scripts/audit_core_01d_port02c_trigger_authority_b6.py",
+    "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py",
+    "scripts/audit_data_01c_app_store_complete.py",
     "scripts/audit_run_02a_pre_durable_share_send.py", "tests/test_core_01d_exact_pr_trigger_disposition_b1.py",
     "tests/test_run_02a_pre_durable_share_send.py", "tests/native/test_run_02a_pre_share_send_publication.py",
 )
@@ -23,6 +28,41 @@ HISTORY = {
     "artifacts/product/run_01a_durable_admission_v1.json": "de2222e7f1c472d7a336f8a4c9c7bec84c2e6ed533b8f568689a3857adaf4f71",
     "artifacts/product/run_01b_worker_lifecycle_v1.json": "e0e76d6fa375028ca4f248134ae61fb2717fd7333104ae8a696544931febc203",
 }
+TRANSPORT_PREDECESSORS = {
+    "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py": (
+        "tests/fixtures/core_01d/run_02a_pre_historical/auth-worker-boundary-predecessor.py.txt",
+        "07ce59ed824d40ef1be12686537c4e355e565c30",
+        "27cc08cb019f649721ebe0b91021553420e442d530cda329ec3d3fcd26c48c64"),
+    "runtime/worker_entry.py": (
+        "tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-predecessor.py.txt",
+        "77d8888a4b007f9bb0967409a23e826f97338c90",
+        "feaf4a9364fd064f081c9a4d086b65fdc31620075f0071ae1385bcbfa5cdaf94"),
+    "scripts/sportybet_direct_share_bridge.py": (
+        "tests/fixtures/core_01d/run_02a_pre_historical/direct-share-predecessor.py.txt",
+        "681ce2a043a334dcb8523c81d092369d6540e6d5",
+        "452a83426077ca758afef1f5e2a4d2e5100a1ef2401824cab733a4d31e0513cd"),
+}
+
+
+def historical_transport_bytes(path, *, root=None):
+    """Exact historical audit evidence; this grants no live execution authority."""
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    root = ROOT if root is None else root
+    latest = a2.authenticate_inventory()
+    v142 = a2.read_generation(a2.inventory_generation_path(142))
+    if v142["canonical_sha256"] != V142_SHA:
+        raise AssertionError("transport predecessor V142 changed")
+    current = {row["path"]:row["lf_source_sha256"] for row in latest["source_identities"]}
+    live = (root / path).read_bytes().replace(b"\r\n", b"\n")
+    if hashlib.sha256(live).hexdigest() != current.get(path):
+        raise AssertionError("current transport differs from authenticated A2: " + path)
+    fixture, blob, digest = TRANSPORT_PREDECESSORS[path]
+    raw = (root / fixture).read_bytes().replace(b"\r\n", b"\n")
+    old_sources = {row["path"]:row["lf_source_sha256"] for row in v142["source_identities"]}
+    if (hashlib.sha256(raw).hexdigest() != digest or old_sources.get(path) != digest
+            or hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() != blob):
+        raise AssertionError("exact transport predecessor bytes changed: " + path)
+    return raw
 
 
 def canonical(value):
@@ -51,6 +91,8 @@ def build_receipt(source_head):
     if policy.calculate_policy_sha256() != "9dc0cfb362cf7008d28bcf029755b7361481b683e41155528f9607047773ceba":
         raise AssertionError("PR457 runtime policy changed")
     current = {row["path"]:row["lf_source_sha256"] for row in latest["source_identities"]}
+    for path in TRANSPORT_PREDECESSORS:
+        historical_transport_bytes(path)
     identities = {}
     for path in SOURCES:
         digest = hashlib.sha256((ROOT / path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
