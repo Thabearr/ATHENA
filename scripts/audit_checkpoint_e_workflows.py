@@ -493,7 +493,7 @@ def authenticate_fresh_holdout_20261014_evidence():
             value.get("predecessor_rewritten") is False and value.get("source_review_counter") == "4/5" and
             value.get("frozen_pass_a_sha256") == "f3cdbec57c380f7a77ce97e4bfab627241cc8b73d0817ec2abfa2f27cf2e209f",
             "Fresh-Holdout additive evidence identity/scope changed")
-    chain = {v["generation"]:v for _,v in a2.load_inventory_generations()}
+    chain = {generation:v for generation,(_,v) in enumerate(a2.load_inventory_generations(), start=1)}
     generation = value.get("a2_successor_generation")
     require(type(generation) is int and generation in chain and generation - 1 in chain,
             "Fresh-Holdout evidence generation missing")
