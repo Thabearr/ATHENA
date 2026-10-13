@@ -16,7 +16,7 @@ def sealed():
     return a2.authenticate_inventory()
 
 @pytest.fixture
-def checkout(tmp_path, monkeypatch, sealed):
+def checkout(tmp_path, monkeypatch, sealed, request):
     original = review.ROOT
     paths = set(PATHS) | {v[0] for v in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES.values()} | {review.INVENTORY_PATH}
     for logical in paths:
@@ -26,7 +26,9 @@ def checkout(tmp_path, monkeypatch, sealed):
     def git(*args):
         return subprocess.check_output(["git", *args], cwd=tmp_path)
     git("init", "-q")
-    git("add", ".")
+    params = getattr(getattr(request.node, "callspec", None), "params", {})
+    omitted = params.get("path") if params.get("mutation") == "untracked" else None
+    git("add", "--", *sorted(paths - {omitted}))
     git("-c", "user.name=Offline Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "Exact current files; no historical ancestor")
     monkeypatch.setattr(review, "ROOT", tmp_path)
     monkeypatch.setattr(a2, "authenticate_inventory", lambda: sealed)
@@ -65,8 +67,7 @@ def test_tampering_cannot_hide_behind_historical_fixture(checkout, path, mutatio
             git("add", path)
             git("-c", "user.name=Offline Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "Unsealed mutation")
     elif mutation == "untracked":
-        git("rm", "--cached", path)
-        git("-c", "user.name=Offline Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "Removed tracked source")
+        assert path not in git("ls-files").decode().splitlines()
     else:
         target = root / "outside.txt"
         target.write_bytes(fixture.read_bytes())
