@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -114,7 +115,18 @@ def _read_canonical(path, *, trailing_newline=True):
 
 
 def _lf_sha(path):
-    raw = (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
+    raw = (ROOT / path).read_bytes()
+    if path in _SOURCE_PATHS:
+        fixture = ROOT / "tests/fixtures/core_01d/run_01b_historical/source_bytes_v1.json"
+        frozen_raw = fixture.read_bytes()
+        if hashlib.sha256(frozen_raw).hexdigest() != "5236bf12003613c6f99a054a9c98be8155f47e997c4dae5f9356628646c85975":
+            raise AssertionError("RUN-01B historical source bytes changed")
+        frozen = json.loads(frozen_raw)
+        if (canonical(frozen) != frozen_raw or frozen["source_commit"] != "4125624948deb314278004df5f13a627d31f8fd2"
+                or set(frozen["sources"]) != set(_SOURCE_PATHS)):
+            raise AssertionError("RUN-01B historical source fixture binding changed")
+        raw = base64.b64decode(frozen["sources"][path], validate=True)
+    raw = raw.replace(b"\r\n", b"\n")
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -127,10 +139,16 @@ def build_receipt():
     from scripts import audit_run_01a_durable_admission as e1
     from domain import current_shadow_sportybet_pc_upcoming_reconciliation as runtime
 
-    latest = a2.authenticate_inventory()
+    current = a2.authenticate_inventory()
+    chain = a2.load_inventory_generations()
+    if current.get("generation", 0) < 142:
+        raise AssertionError("RUN-01B historical inventory is unavailable")
+    # Reconstruct the immutable E2 receipt from its V142 generation, while
+    # authenticating current successor bytes separately through A2 above.
+    chain = chain[:142]
+    latest = chain[-1][1]
     if latest.get("generation") != 142:
         raise AssertionError("RUN-01B requires the V142 successor from immutable V141")
-    chain = a2.load_inventory_generations()
     if len(chain) != 142:
         raise AssertionError("A2 generation sequence is not contiguous through V142")
     predecessor_path, predecessor = chain[-2]

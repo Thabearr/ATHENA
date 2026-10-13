@@ -288,6 +288,9 @@ def seal(value):
 
 
 def read(path):
+    from scripts import audit_run_02a_pre_durable_share_send as prerequisite
+    if path in prerequisite.TRANSPORT_PREDECESSORS:
+        return prerequisite.historical_transport_bytes(path, root=ROOT)
     if path in INCIDENT_20261010_PREDECESSOR_FIXTURES:
         return _incident_20261010_predecessor_source(path)
     if path in PASS_A_HISTORICAL_SOURCE_FIXTURES:
@@ -389,6 +392,11 @@ def git_inventory():
     _authenticate_incident_20261010_current_sources()
     for path, blob in INCIDENT_20261010_PREDECESSOR_BLOBS.items():
         require(path in result, "incident predecessor source missing: " + path)
+        result[path]["git_blob_sha1"] = blob
+    from scripts import audit_run_02a_pre_durable_share_send as prerequisite
+    for path, (_fixture, blob, _digest) in prerequisite.TRANSPORT_PREDECESSORS.items():
+        prerequisite.historical_transport_bytes(path, root=ROOT)
+        require(path in result and result[path]["mode"] == "100644", "transport predecessor path/mode missing: " + path)
         result[path]["git_blob_sha1"] = blob
     return result
 
@@ -503,6 +511,9 @@ def verified_additive_artifact_paths():
     run01b_status = run01b.audit()
     require(run01b_status.get("result") == "PASS",
             "RUN-01B additive worker lifecycle receipt failed authentication")
+    from scripts import audit_run_02a_pre_durable_share_send as share_pre
+    require(share_pre.audit().get("result") == "PASS",
+            "RUN-02A prerequisite additive evidence failed authentication")
     return (
         MATRIX_PATH,
         RECEIPT_PATH,
@@ -548,6 +559,7 @@ def verified_additive_artifact_paths():
         data01c.RECEIPT,
         "artifacts/product/data_01c_restore_portability_v1.json",
         run01b.RECEIPT_PATH,
+        share_pre.RECEIPT_PATH,
         *(path for path in sorted(e1_paths) if path.startswith("artifacts/")),
     )
 
@@ -668,6 +680,10 @@ def base_input():
     from scripts import audit_app_01a_local_shell as app01a
     successor_paths, successor = app01a.authenticated_historical_paths()
     for path, actual in zip(value["scan_paths"], hashed):
+        from scripts import audit_run_02a_pre_durable_share_send as prerequisite
+        if path in prerequisite.TRANSPORT_PREDECESSORS:
+            predecessor = prerequisite.historical_transport_bytes(path, root=ROOT)
+            actual = hashlib.sha1(b"blob " + str(len(predecessor)).encode() + b"\0" + predecessor).hexdigest()
         if path in successor_paths and path in successor["base_identities"]:
             actual = successor["base_identities"][path]["git_blob_sha1"]
         if path in INCIDENT_20261010_PREDECESSOR_BLOBS:

@@ -43,6 +43,14 @@ def tracked(path):
     return historical_tracked(ROOT, path)[0]
 
 
+def historical_worker_boundary_bytes(path):
+    """Read the sealed predecessor only after authenticating current A2 bytes."""
+    if path == "runtime/worker_entry.py":
+        from scripts import audit_run_02a_pre_durable_share_send as prerequisite
+        return prerequisite.historical_transport_bytes(path, root=ROOT)
+    return tracked(path)
+
+
 def historical_source(path, *, root=ROOT):
     """Permit only this sealed remediation successor, preserving old audit pins."""
     from scripts.core_01d_historical_source import historical_tracked
@@ -234,7 +242,8 @@ def expected_receipt():
         "runtime/worker_launcher.py": "5474b2622a4ab980fa136ce6eb3c63c448d915aa351e4d51f0474c85f1fdbcdd",
         "runtime/worker_entry.py": "feaf4a9364fd064f081c9a4d086b65fdc31620075f0071ae1385bcbfa5cdaf94",
     }.items():
-        roles.require(roles.sha(tracked(path)) == digest, "worker security/operation boundary changed")
+        roles.require(roles.sha(historical_worker_boundary_bytes(path)) == digest,
+                      "worker security/operation boundary changed")
     roles.require("--output-root artifacts/athena-runs" in tracked(roles.CANONICAL_WORKFLOW).decode(), "production root changed")
     value = {"schema_version": 1, "policy_id": POLICY_ID, "base_main": BASE_MAIN,
         "failed_live_proof": {"run_id": FAILED.run_id, "attempt": 1, "head": BASE_MAIN, "github_conclusion": "SUCCESS",

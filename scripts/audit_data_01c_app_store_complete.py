@@ -342,6 +342,10 @@ def audit(latest=None):
                    "scripts/audit_core_01d_checkpoint_e_completion.py",
                    "scripts/audit_core_01d_checkpoint_e_completion_v2.py",
                    "scripts/audit_core_01d_port02c_trigger_authority_b6.py"}
+        # Exact RUN-02A prerequisite historical audit seams. Their current
+        # source is authenticated below; historical receipt bytes stay frozen.
+        evolved |= {"scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py",
+                    "scripts/audit_core_01d_exact_pr_trigger_disposition_b1.py"}
         inventory = boundary.authenticate_inventory()
         identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
         if (set(current) != set(frozen)

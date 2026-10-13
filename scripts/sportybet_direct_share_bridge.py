@@ -12,6 +12,7 @@ Nigeria environment. This module targets that actual network path directly.
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -19,7 +20,7 @@ from pathlib import Path
 import re
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request, HTTPRedirectHandler, build_opener
 
 SPORTYBET_ORIGIN = "https://www.sportybet.com"
 SPORTYBET_OPER_ID = "2"
@@ -34,6 +35,73 @@ _CODE_RE = re.compile(r"^[A-Za-z0-9]{3,32}$", re.ASCII)
 
 class SportyBetDirectShareError(RuntimeError):
     pass
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # A redirect is retained as ambiguous response evidence. It cannot
+        # authorize another request or substitute a different provider origin.
+        return None
+
+
+def _open_once(request, *, timeout):
+    # Private opener excludes ambient global cookie/authentication handlers.
+    # Refusing redirects prevents an implicit GET before CREATE is confirmed.
+    return build_opener(_NoRedirect()).open(request, timeout=timeout)
+
+
+@dataclass(frozen=True)
+class HttpResponseEvidence:
+    """Exact HTTP evidence; absence is an exception, never a fake response."""
+
+    status: int
+    raw: bytes
+
+    def __post_init__(self):
+        if (type(self.status) is not int or not 100 <= self.status <= 599
+                or type(self.raw) is not bytes or len(self.raw) > MAX_RESPONSE_BYTES):
+            raise SportyBetDirectShareError("invalid bounded HTTP evidence")
+
+
+def build_create_request(selections):
+    return _canonical_json_bytes({"selections": list(validate_selections(list(selections)))})
+
+
+def parse_response(response):
+    def exact_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise SportyBetDirectShareError("duplicate response field")
+            value[key] = item
+        return value
+
+    def finite(_value):
+        raise SportyBetDirectShareError("nonfinite response")
+
+    try:
+        value = json.loads(response.raw, object_pairs_hook=exact_object, parse_constant=finite)
+    except (ValueError, UnicodeError) as exc:
+        raise SportyBetDirectShareError("unproven HTTP response") from exc
+    if type(value) is not dict:
+        raise SportyBetDirectShareError("response must be an object")
+    return value
+
+
+def post_create_once(*, request_bytes):
+    """One POST, no retry. Caller must have committed its write-ahead SENT."""
+    payload = json.loads(request_bytes)
+    if (type(payload) is not dict or set(payload) != {"selections"}
+            or build_create_request(payload["selections"]) != request_bytes):
+        raise SportyBetDirectShareError("CREATE bytes are not canonical")
+    return _request_once(path=CREATE_PATH, method="POST", body=request_bytes)
+
+
+def load_share_code_once(*, code):
+    """One read-only GET using a previously proven code; never calls CREATE."""
+    if type(code) is not str or _CODE_RE.fullmatch(code) is None:
+        raise SportyBetDirectShareError("unproven code shape")
+    return _request_once(path=LOAD_PREFIX + code, method="GET", body=None)
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
@@ -107,9 +175,14 @@ def validate_selections(value: Any) -> tuple[dict[str, str], ...]:
 def _request_json(
     *, path: str, method: str, payload: dict[str, Any] | None = None
 ) -> tuple[dict[str, Any], bytes, int]:
+    response = _request_once(path=path, method=method,
+                             body=None if payload is None else _canonical_json_bytes(payload))
+    return parse_response(response), response.raw, response.status
+
+
+def _request_once(*, path: str, method: str, body: bytes | None) -> HttpResponseEvidence:
     if not path.startswith("/") or "//" in path:
         raise SportyBetDirectShareError("invalid SportyBet path")
-    body = None if payload is None else _canonical_json_bytes(payload)
     headers = {
         "Accept": "application/json",
         "Accept-Language": "en-NG,en;q=0.9",
@@ -125,7 +198,7 @@ def _request_json(
         headers=headers,
     )
     try:
-        with urlopen(req, timeout=45) as response:
+        with _open_once(req, timeout=45) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
             status = int(getattr(response, "status", 200))
     except HTTPError as exc:
@@ -137,16 +210,7 @@ def _request_json(
         ) from exc
     if len(raw) > MAX_RESPONSE_BYTES:
         raise SportyBetDirectShareError("SportyBet response exceeds byte bound")
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        prefix = raw[:500].decode("utf-8", errors="replace")
-        raise SportyBetDirectShareError(
-            f"SportyBet returned non-JSON HTTP {status}: {prefix}"
-        ) from exc
-    if type(parsed) is not dict:
-        raise SportyBetDirectShareError("SportyBet response must be an object")
-    return parsed, raw, status
+    return HttpResponseEvidence(status, raw)
 
 
 def _success_data(payload: dict[str, Any], label: str) -> dict[str, Any]:
@@ -262,22 +326,23 @@ def create_and_roundtrip(
     *, selections: tuple[dict[str, str], ...], output_dir: Path
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    request_payload = {"selections": list(selections)}
+    request_raw = build_create_request(selections)
+    request_payload = json.loads(request_raw)
     (output_dir / "create-request.json").write_bytes(
-        _canonical_json_bytes(request_payload)
+        request_raw
     )
-    create_payload, create_raw, create_status = _request_json(
-        path=CREATE_PATH, method="POST", payload=request_payload
-    )
+    create_response = post_create_once(request_bytes=request_raw)
+    create_raw, create_status = create_response.raw, create_response.status
     (output_dir / "create-response.raw.json").write_bytes(create_raw)
+    create_payload = parse_response(create_response)
     if create_status != 200:
         raise SportyBetDirectShareError(f"create returned HTTP {create_status}")
     code = extract_share_code(create_payload)
 
-    load_payload, load_raw, load_status = _request_json(
-        path=LOAD_PREFIX + code, method="GET"
-    )
+    load_response = load_share_code_once(code=code)
+    load_raw, load_status = load_response.raw, load_response.status
     (output_dir / "load-response.raw.json").write_bytes(load_raw)
+    load_payload = parse_response(load_response)
     if load_status != 200:
         raise SportyBetDirectShareError(f"load returned HTTP {load_status}")
 

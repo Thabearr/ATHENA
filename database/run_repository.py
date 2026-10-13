@@ -8,6 +8,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
+import base64
 import json
 import os
 import re
@@ -34,6 +35,7 @@ from services.athena_preview_service import (
 )
 
 LOCAL_PROFILE_ID = "local-default"
+SHARE_CREATE_KIND = "SPORTYBET_SHARE_CODE_CREATE_V1"
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _TRANSITIONS = {
     "QUEUED": {"RUNNING", "CANCELLED", "INTERRUPTED"},
@@ -683,6 +685,16 @@ class DurableRunRepository:
     def prepare_external_operation(self, run_id, *, attempt_id, lease_token,
                                    operation_kind, intent_sha256, authority_sha256,
                                    input_artifact_id=None, idempotency_key=None):
+        if operation_kind == SHARE_CREATE_KIND:
+            with self._operation(write=True) as conn:
+                self._fence(conn, run_id, attempt_id, lease_token)
+                document = self._share_input(conn, run_id, input_artifact_id)
+                intent = hashlib.sha256(canonical_json_bytes(document)).hexdigest()
+                authority = document["authority_sha256"]
+                if (intent_sha256, authority_sha256) != (intent, authority):
+                    raise ExternalOperationViolation("admitted CREATE identity mismatch")
+                return self._insert_share_create(conn, run_id, attempt_id, document,
+                                                 input_artifact_id, idempotency_key)
         if operation_kind != "TESTING_SYNTHETIC":
             raise ExternalOperationViolation("production operation kinds are disabled")
         _sha(intent_sha256)
@@ -701,6 +713,188 @@ class DurableRunRepository:
                          (operation_id, run_id, attempt_id, operation_kind, intent_sha256,
                           authority_sha256, input_artifact_id, idempotency_key, _utc(self._clock())))
             return operation_id
+
+    def _share_authority(self, conn, run_id):
+        envelope = self._verify_run_identity(conn, run_id)
+        request = RunRequest.from_json_bytes(envelope.request_bytes)
+        authority = envelope.authority_manifest
+        if (request.create_share_code is not True or request.place_wager is not False
+                or request.bookie != "sportybet"
+                or envelope.requested_operations.create_share_code is not True
+                or authority.share_code_generation is not True
+                or any(getattr(authority, key) is not False
+                       for key in ("wager", "login", "cookies", "wallet", "staking"))):
+            raise ExternalOperationViolation("admitted anonymous CREATE authority unavailable")
+        return envelope
+
+    def _share_document(self, conn, run_id, selections):
+        from scripts import sportybet_direct_share_bridge as bridge
+        envelope = self._share_authority(conn, run_id)
+        body = bridge.build_create_request(selections)
+        return {
+            "schema_version": 1, "operation_kind": SHARE_CREATE_KIND,
+            "run_id": run_id, "request_sha256": envelope.request_sha256,
+            "envelope_sha256": envelope.canonical_sha256,
+            "release_id": conn.execute("SELECT release_id FROM app_runs WHERE run_id=?", (run_id,)).fetchone()[0],
+            "authority_sha256": hashlib.sha256(canonical_json_bytes(envelope.authority_manifest)).hexdigest(),
+            "method": "POST", "origin": bridge.SPORTYBET_ORIGIN, "path": bridge.CREATE_PATH,
+            "body": json.loads(body), "body_sha256": hashlib.sha256(body).hexdigest(),
+            "login": False, "cookies": False, "wallet": False, "staking": False, "wager": False,
+        }
+
+    def _retain_share_artifact(self, conn, run_id, raw, role):
+        digest = hashlib.sha256(raw).hexdigest()
+        artifact_id = "share-" + role.lower().replace("_", "-") + "-" + digest
+        locator = "share-create-evidence/" + digest + ".json"
+        publish(self._data_root, locator, raw)
+        stamp = _utc(self._clock())
+        conn.execute("INSERT OR IGNORE INTO app_artifacts VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                     (artifact_id, digest, digest, len(raw), "application/json", role,
+                      locator, "RETAINED", SHARE_CREATE_KIND, stamp, stamp))
+        conn.execute("INSERT OR IGNORE INTO app_run_artifacts VALUES(?,?,?,1)",
+                     (run_id, artifact_id, role))
+        self._require_artifact_role(conn, run_id, artifact_id, role)
+        return artifact_id
+
+    def _share_artifact(self, conn, run_id, artifact_id, role):
+        _identity(artifact_id)
+        metadata = conn.execute(
+            "SELECT logical_path,byte_sha256,canonical_sha256,byte_count,media_type,artifact_kind,evidence_class,verification_policy_id "
+            "FROM app_artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
+        if metadata is None:
+            raise ExternalOperationViolation("CREATE artifact metadata unavailable")
+        locator, digest, canonical_digest, count, media, kind, evidence_class, policy = metadata
+        _sha(digest)
+        expected_id = "share-" + role.lower().replace("_", "-") + "-" + digest
+        if (artifact_id != expected_id or locator != "share-create-evidence/" + digest + ".json"
+                or canonical_digest != digest or type(count) is not int or not 0 < count <= 3 * 1024 * 1024
+                or (media, kind, evidence_class, policy) != ("application/json", role, "RETAINED", SHARE_CREATE_KIND)):
+            raise ExternalOperationViolation("CREATE artifact metadata binding mismatch")
+        target = contained(self._data_root, logical_locator(locator))
+        if target.stat().st_size != count:
+            raise ExternalOperationViolation("CREATE artifact byte count mismatch")
+        self._require_artifact_role(conn, run_id, artifact_id, role)
+        raw = target.read_bytes()
+        if len(raw) != count or hashlib.sha256(raw).hexdigest() != digest:
+            raise ExternalOperationViolation("CREATE artifact reread bytes changed")
+        value = json.loads(raw)
+        if canonical_json_bytes(value) != raw or value.get("run_id") != run_id:
+            raise ExternalOperationViolation("CREATE evidence run/canonical binding mismatch")
+        return value
+
+    def _share_input(self, conn, run_id, artifact_id):
+        value = self._share_artifact(conn, run_id, artifact_id, "EXTERNAL_INPUT")
+        expected = self._share_document(conn, run_id, value["body"]["selections"])
+        if value != expected:
+            raise ExternalOperationViolation("CREATE input differs from admitted identity")
+        return value
+
+    def _insert_share_create(self, conn, run_id, attempt_id, document, artifact_id, key):
+        if conn.execute("SELECT state FROM app_runs WHERE run_id=?", (run_id,)).fetchone()[0] != "RUNNING":
+            raise ExternalOperationViolation("new CREATE requires RUNNING")
+        if key is not None:
+            _identity(key)
+        intent = hashlib.sha256(canonical_json_bytes(document)).hexdigest()
+        # BEGIN IMMEDIATE serializes all writers. No replacement, even after a
+        # new attempt or a changed caller idempotency key; terminal is not retry.
+        if conn.execute("SELECT 1 FROM app_external_operations WHERE run_id=? AND operation_kind=? AND intent_sha256=?",
+                        (run_id, SHARE_CREATE_KIND, intent)).fetchone():
+            raise ExternalOperationViolation("same CREATE intent already exists; resend forbidden")
+        operation_id = "operation-" + uuid.uuid4().hex
+        conn.execute("INSERT INTO app_external_operations(operation_id,run_id,attempt_id,operation_kind,intent_sha256,authority_sha256,input_artifact_id,idempotency_key,state,prepared_at) VALUES(?,?,?,?,?,?,?,?,'PREPARED',?)",
+                     (operation_id, run_id, attempt_id, SHARE_CREATE_KIND, intent,
+                      document["authority_sha256"], artifact_id, key, _utc(self._clock())))
+        return operation_id
+
+    def prepare_share_code_create(self, run_id, *, attempt_id, lease_token, selections):
+        """Recompute admitted intent, retain it, then prepare once. Never sends."""
+        with self._operation(write=True) as conn:
+            self._fence(conn, run_id, attempt_id, lease_token)
+            document = self._share_document(conn, run_id, selections)
+            intent = hashlib.sha256(canonical_json_bytes(document)).hexdigest()
+            prior = conn.execute("SELECT operation_id FROM app_external_operations WHERE run_id=? AND operation_kind=? AND intent_sha256=?",
+                                 (run_id, SHARE_CREATE_KIND, intent)).fetchone()
+            if prior is not None:
+                return prior[0], False
+            artifact_id = self._retain_share_artifact(conn, run_id, canonical_json_bytes(document), "EXTERNAL_INPUT")
+            self._share_input(conn, run_id, artifact_id)
+            return self._insert_share_create(conn, run_id, attempt_id, document, artifact_id, None), True
+
+    def _share_operation(self, conn, run_id, operation_id):
+        cursor = conn.execute("SELECT * FROM app_external_operations WHERE run_id=? AND operation_id=? AND operation_kind=?",
+                              (run_id, operation_id, SHARE_CREATE_KIND))
+        row = cursor.fetchone()
+        if row is None:
+            raise ExternalOperationViolation("CREATE operation unavailable")
+        result = dict(zip((column[0] for column in cursor.description), row))
+        document = self._share_input(conn, run_id, result["input_artifact_id"])
+        if (result["intent_sha256"] != hashlib.sha256(canonical_json_bytes(document)).hexdigest()
+                or result["authority_sha256"] != document["authority_sha256"]):
+            raise ExternalOperationViolation("CREATE operation immutable identity mismatch")
+        result["input"] = document
+        return result
+
+    def share_code_operation(self, run_id, operation_id, *, attempt_id, lease_token):
+        with self._operation() as conn:
+            self._fence(conn, run_id, attempt_id, lease_token)
+            row = self._share_operation(conn, run_id, operation_id)
+            # A new attempt cannot reuse an earlier operation as transport authority.
+            if row["attempt_id"] != attempt_id:
+                raise RunLeaseFenced("CREATE belongs to another attempt")
+            return row
+
+    def retain_share_code_response(self, run_id, operation_id, *, attempt_id, lease_token,
+                                   response, method="POST"):
+        from scripts import sportybet_direct_share_bridge as bridge
+        if type(response) is not bridge.HttpResponseEvidence or method not in {"POST", "GET"}:
+            raise ExternalOperationViolation("exact HTTP evidence required")
+        with self._operation(write=True) as conn:
+            self._fence(conn, run_id, attempt_id, lease_token)
+            row = self._share_operation(conn, run_id, operation_id)
+            if row["attempt_id"] != attempt_id or row["state"] != ("SENT" if method == "POST" else "CONFIRMED"):
+                raise ExternalOperationViolation("HTTP evidence owner/state mismatch")
+            path = bridge.CREATE_PATH
+            if method == "GET":
+                proven = self._share_response(conn, run_id, row, row["response_artifact_id"])
+                code = bridge.extract_share_code(bridge.parse_response(proven))
+                path = bridge.LOAD_PREFIX + code
+            value = {"schema_version": 1, "run_id": run_id, "operation_id": operation_id,
+                     "operation_kind": SHARE_CREATE_KIND, "intent_sha256": row["intent_sha256"],
+                     "method": method, "origin": bridge.SPORTYBET_ORIGIN, "path": path,
+                     "http_status": response.status, "raw_base64": base64.b64encode(response.raw).decode("ascii"),
+                     "raw_sha256": hashlib.sha256(response.raw).hexdigest(), "raw_byte_count": len(response.raw)}
+            return self._retain_share_artifact(conn, run_id, canonical_json_bytes(value), "EXTERNAL_RESPONSE")
+
+    def _share_response(self, conn, run_id, row, artifact_id, *, method="POST", code=None):
+        from scripts import sportybet_direct_share_bridge as bridge
+        value = self._share_artifact(conn, run_id, artifact_id, "EXTERNAL_RESPONSE")
+        keys = {"schema_version", "run_id", "operation_id", "operation_kind", "intent_sha256",
+                "method", "origin", "path", "http_status", "raw_base64", "raw_sha256", "raw_byte_count"}
+        if (set(value) != keys or value["schema_version"] != 1
+                or value["operation_id"] != row["operation_id"] or value["operation_kind"] != SHARE_CREATE_KIND
+                or value["intent_sha256"] != row["intent_sha256"] or value["method"] != method
+                or value["origin"] != bridge.SPORTYBET_ORIGIN
+                or value["path"] != (bridge.CREATE_PATH if method == "POST" else bridge.LOAD_PREFIX + code)):
+            raise ExternalOperationViolation("HTTP evidence operation binding mismatch")
+        raw = base64.b64decode(value["raw_base64"], validate=True)
+        if (hashlib.sha256(raw).hexdigest() != value["raw_sha256"]
+                or type(value["raw_byte_count"]) is not int or len(raw) != value["raw_byte_count"]):
+            raise ExternalOperationViolation("HTTP raw evidence mismatch")
+        return bridge.HttpResponseEvidence(value["http_status"], raw)
+
+    def read_share_code_response(self, run_id, operation_id, artifact_id, *, attempt_id,
+                                lease_token, method="POST", code=None):
+        with self._operation() as conn:
+            self._fence(conn, run_id, attempt_id, lease_token)
+            row = self._share_operation(conn, run_id, operation_id)
+            if row["attempt_id"] != attempt_id:
+                raise RunLeaseFenced("HTTP evidence belongs to another attempt")
+            if method == "GET":
+                from scripts import sportybet_direct_share_bridge as bridge
+                proven = self._share_response(conn, run_id, row, row["response_artifact_id"])
+                if row["state"] != "CONFIRMED" or code != bridge.extract_share_code(bridge.parse_response(proven)):
+                    raise ExternalOperationViolation("reload code is not proven")
+            return self._share_response(conn, run_id, row, artifact_id, method=method, code=code)
 
     def _require_artifact_role(self, conn, run_id, artifact_id, role):
         _identity(artifact_id)
@@ -750,7 +944,7 @@ class DurableRunRepository:
         if state == "CONFIRMED" and response_artifact_id is None:
             raise ExternalOperationViolation("CONFIRMED requires a retained proven response")
         if state == "FAILED" and response_artifact_id is None and error_code not in {
-                "SYNTHETIC_LOCAL_FAILURE", "SYNTHETIC_CONFIRMED_FAILURE"}:
+                "SYNTHETIC_LOCAL_FAILURE", "SYNTHETIC_CONFIRMED_FAILURE", "SHARE_CREATE_NEVER_SENT"}:
             raise ExternalOperationViolation("response-free failure requires a reviewed synthetic failure code")
         if error_code is not None:
             _identity(error_code)
@@ -760,8 +954,25 @@ class DurableRunRepository:
             self._fence(conn, run_id, attempt_id, lease_token)
             row = conn.execute("SELECT attempt_id,state,operation_kind FROM app_external_operations WHERE run_id=? AND operation_id=?",
                                (run_id, operation_id)).fetchone()
-            if row != (attempt_id, expected_state, "TESTING_SYNTHETIC"):
+            if row is None or row[:2] != (attempt_id, expected_state) or row[2] not in {"TESTING_SYNTHETIC", SHARE_CREATE_KIND}:
                 raise ExternalOperationViolation("operation owner/state mismatch")
+            if row[2] == SHARE_CREATE_KIND:
+                operation = self._share_operation(conn, run_id, operation_id)
+                if state == "FAILED":
+                    if (expected_state != "PREPARED" or response_artifact_id is not None
+                            or error_code != "SHARE_CREATE_NEVER_SENT"):
+                        raise ExternalOperationViolation("no reviewed provider no-create failure contract")
+                if state == "OUTCOME_UNKNOWN" and error_code not in {
+                        "SHARE_CREATE_TRANSPORT_UNKNOWN", "SHARE_CREATE_RESPONSE_UNPROVEN"}:
+                    raise ExternalOperationViolation("CREATE uncertainty requires bounded code")
+                if state == "CONFIRMED":
+                    from scripts import sportybet_direct_share_bridge as bridge
+                    response = self._share_response(conn, run_id, operation, response_artifact_id)
+                    if response.status != 200:
+                        raise ExternalOperationViolation("CREATE HTTP success unproven")
+                    bridge.extract_share_code(bridge.parse_response(response))
+            elif error_code == "SHARE_CREATE_NEVER_SENT":
+                raise ExternalOperationViolation("CREATE code is not synthetic operation vocabulary")
             if expected_state == "PREPARED" and state == "SENT":
                 if conn.execute("SELECT state FROM app_runs WHERE run_id=?", (run_id,)).fetchone()[0] != "RUNNING":
                     raise ExternalOperationViolation("cancellation forbids a new send transition")

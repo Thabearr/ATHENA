@@ -273,6 +273,9 @@ def _canonical(value: Any) -> bytes:
 
 
 def _reviewed_source(path: str, historical: dict[str, Any]) -> bytes:
+    if path == "runtime/worker_entry.py":
+        from scripts import audit_run_02a_pre_durable_share_send as prerequisite
+        return prerequisite.historical_transport_bytes(path, root=ROOT)
     # The B6 receipt stays bound to its pre-APP launcher/UI. Authenticate the
     # complete current successor before reading the bounded historical bytes.
     from scripts import audit_app_01a_local_shell as app01a
@@ -292,6 +295,12 @@ def _reviewed_source(path: str, historical: dict[str, Any]) -> bytes:
 
 
 def _reviewed_git_source(path: str, blob: str, historical: dict[str, Any]) -> bytes:
+    if path == "runtime/worker_entry.py":
+        from scripts import audit_run_02a_pre_durable_share_send as prerequisite
+        raw = prerequisite.historical_transport_bytes(path, root=ROOT)
+        require(hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() == blob,
+                "B6 worker-entry predecessor identity differs")
+        return raw
     from scripts import audit_app_01a_local_shell as app01a
     from scripts import audit_data_01a_app_schema_core as data01a
     if path == data01a.BUILD_CONFIG:
@@ -380,7 +389,8 @@ def _base_tree_entries() -> dict[str, tuple[str, str, str]]:
             mode, _kind, blob = mode_kind_blob
             if (
                 path in app01a.HISTORICAL_RUNTIME_PATHS
-                or path in {"scripts/port_02c_build_config.py", PORT_WORKFLOW, INCIDENT_20261010_PC_RUNTIME}
+                or path in {"scripts/port_02c_build_config.py", PORT_WORKFLOW, INCIDENT_20261010_PC_RUNTIME,
+                            "runtime/worker_entry.py"}
             ):
                 blob = row.get("git_blob_sha1")
             require(blob == row.get("git_blob_sha1"),
