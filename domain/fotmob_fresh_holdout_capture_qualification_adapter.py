@@ -260,7 +260,7 @@ FRESH_HOLDOUT_20261014_AFC_CL2_9469_CAPTURE_LINEAGES = (
     {
         "request_date": "20261014",
         "capture_id": "07e6dd3e5a85eaa4e9be1c96",
-        "observed_at": "2026-10-13T01:55:28.817570Z",
+        "observed_at": "2026-10-13T08:55:14.551847Z",
         "manifest_sha256": "3482cbb4a16f713536b88b8d8c948aa5cd36508dc55502799909f6b94d52e716",
         "raw_sha256": "c9428fe65c3693718eb05bec6aabea5c2c035fc177a515fe1852cf7af7ee779e",
     },

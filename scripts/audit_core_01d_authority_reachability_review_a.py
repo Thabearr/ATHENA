@@ -106,7 +106,54 @@ def _incident_predecessor_source(path):
  require(actual_blob == expected_blob, 'incident predecessor fixture identity drift: ' + path)
  return raw
 
+FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES = {
+ 'domain/fotmob_fresh_holdout_capture_qualification_adapter.py': (
+  'tests/fixtures/core_01d/fresh_holdout_20261014/capture-qualification-predecessor.py.txt',
+  '17dd1b044a90e02a2c5998164b7e5de7caa5b5ee',
+  'c78c855159fc8a2ed9a221d51bfd93b790e4b3eea160695e2a63d7dfe8f6fcf8',
+ ),
+ 'domain/fotmob_fresh_holdout_ordinary_ft_settlement_schema_adapter.py': (
+  'tests/fixtures/core_01d/fresh_holdout_20261014/settlement-schema-predecessor.py.txt',
+  '60f7fef2062fdad3e1ffb0c8023fd01398f88043',
+  '3fd7c0fc12619c7c09ddee87f3deb2aace195a65ee698a25bad8ab1006e6d2a9',
+ ),
+ 'scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py': (
+  'tests/fixtures/core_01d/fresh_holdout_20261014/tick-predecessor.py.txt',
+  '25392b65a4c968474b908ced0d0d8444c4fb1a1a',
+  'ea35a3c84e807a85df570817c7a85a22df3b256cc9de783f8d683127de6b5b59',
+ ),
+}
+
+def _fresh_holdout_predecessor_source(path):
+ """Historical evidence only; current runtime always uses current V6 source."""
+ path = validate_repository_relative_path(path)
+ require(path in FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES,
+         'unclassified Fresh-Holdout historical source path')
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ # A2 authenticates source/AST data without invoking Pass-A: no audit cycle.
+ latest = a2.authenticate_inventory()
+ fixture, blob, digest = FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES[path]
+ for logical in (path, fixture):
+  candidate = ROOT / logical
+  require(candidate.is_file() and not any(p.is_symlink() for p in
+          (candidate, *candidate.parents) if p != ROOT.parent),
+          'Fresh-Holdout historical source must be a regular file: ' + logical)
+ current = _tracked_payloads(((path, (ROOT / path).read_bytes()),))[path]
+ rows = {row['path']: row['lf_source_sha256'] for row in latest['source_identities']}
+ require(sha256(current.replace(b'\r\n', b'\n')) == rows.get(path),
+         'current Fresh-Holdout source differs from authenticated A2: ' + path)
+ subprocess.check_output(['git', 'ls-files', '--error-unmatch', '--', fixture], cwd=ROOT)
+ raw = (ROOT / fixture).read_bytes().replace(b'\r\n', b'\n')
+ actual_blob = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+ frozen = {row['path']: row for row in read_json(INVENTORY_PATH)['sources']}[path]
+ require(actual_blob == blob == frozen['git_blob_sha1'] and
+         sha256(raw) == digest == frozen['normalized_source_sha256'],
+         'Fresh-Holdout predecessor fixture identity drift: ' + path)
+ return raw
+
 def source_bytes(path):
+ if path in FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
+  return _fresh_holdout_predecessor_source(path)
  if path in INCIDENT_20261010_PREDECESSOR_SOURCES:
   return _incident_predecessor_source(path)
  if path=='tests/conftest.py':
