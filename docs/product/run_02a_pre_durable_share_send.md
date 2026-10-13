@@ -67,6 +67,13 @@ inventory likewise reconstruct their exact frozen predecessors. Each projection
 checks current bytes against A2 and predecessor bytes against exact SHA/blob pins;
 the current worker still receives its static checks and clean-process replay.
 Historical receipt hashes and workflow contracts are never rewritten.
+This correction also records the LG-A historical projection regression as an
+expected post-V2 A2 source path. A2 is now V154
+(`1dcf6a62d1e22c7e432c62bcadef824204466298c881741abe57edf709796230`), with V153
+(`b730ff95df937e4ba0fcca0da0f85d6f7eb4a790486379a3479cecddd50a6f50`) as its
+unchanged predecessor. Prerequisite evidence is V154-bound; the evidence
+artifact records its canonical SHA and the exact source commit immediately
+preceding publication.
 Final commit identity is recorded in the PR/hosted run attestation rather than
 embedded self-referentially in its own evidence commit. Evidence binds the exact
 source hashes and the source commit immediately preceding its publication.

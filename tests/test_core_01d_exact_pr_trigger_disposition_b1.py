@@ -277,6 +277,7 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
         "scripts/audit_run_02a_pre_durable_share_send.py",
         "tests/test_run_02a_pre_durable_share_send.py",
         "tests/native/test_run_02a_pre_share_send_publication.py",
+        "tests/test_lg_a_worker_entry_historical_projection.py",
     }
     original_tree = boundary.git("ls-tree", "-r", "HEAD")
     projected = completion_v2.a2_historical_projection(original_tree)
