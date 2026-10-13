@@ -10,7 +10,7 @@ Checkpoint-E historical tree projections retain the exact same three predecessor
 
 The retained archive asset 636458042 has SHA256 `1c1cd0769ce58300e9f9d71dcedf34edfbe164fed41aea0c14d8707e4c977963`. Exact manifests are retained separately from the wrapper-only projection. The second original manifest proves observed_at `2026-10-13T08:55:14.551847Z`, correcting the forward V6 timestamp. No historical response bytes or other capture fields changed. V6 still admits only date 20261014, wrapper 9469 and exact A/B/C/E label pairs. No provider or model authority is added.
 
-Append A2 V156 after V155; never rewrite a predecessor. Current-source authentication, frozen inventory equality, tamper cases and exact retained manifest provenance are exercised by `tests/native/test_fresh_holdout_pass_a_source_projection.py`. Existing wrapper positives and negatives remain required.
+A2 V156 follows V155; V157 follows V156 after correcting the synthetic Git commit arguments to satisfy the existing offline test guard; never rewrite a predecessor. Current-source authentication, frozen inventory equality, tamper cases and exact retained manifest provenance are exercised by `tests/native/test_fresh_holdout_pass_a_source_projection.py`. Existing wrapper positives and negatives remain required.
 
 Old Tests run 38394682795 failed seven shards; old PORT-02C 38395093675 succeeded but was a workflow_dispatch by Thabearr. API metadata did not prove authorization; the owner explicitly confirmed in this session that it was authorized CI-only work. A final exact-head natural Tests and PORT-02C run, complete workflow inventory, and resolution of governance questions remain required. Never waive an unresolved failed check as unrelated.
 

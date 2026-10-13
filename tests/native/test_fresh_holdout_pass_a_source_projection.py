@@ -27,7 +27,7 @@ def checkout(tmp_path, monkeypatch, sealed):
         return subprocess.check_output(["git", *args], cwd=tmp_path)
     git("init", "-q")
     git("add", ".")
-    git("-c", "user.name=Offline Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "Exact current files; no historical ancestor")
+    git("-c", "user.name=Offline Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "Exact current files; no historical ancestor")
     monkeypatch.setattr(review, "ROOT", tmp_path)
     monkeypatch.setattr(a2, "authenticate_inventory", lambda: sealed)
     review._tracked_payloads.cache_clear()
@@ -63,10 +63,10 @@ def test_tampering_cannot_hide_behind_historical_fixture(checkout, path, mutatio
         current.write_bytes(current.read_bytes() + b"# unauthorized mutation\n")
         if mutation == "committed_current":
             git("add", path)
-            git("-c", "user.name=Offline Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "Unsealed mutation")
+            git("-c", "user.name=Offline Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "Unsealed mutation")
     elif mutation == "untracked":
         git("rm", "--cached", path)
-        git("-c", "user.name=Offline Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "Removed tracked source")
+        git("-c", "user.name=Offline Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "Removed tracked source")
     else:
         target = root / "outside.txt"
         target.write_bytes(fixture.read_bytes())
