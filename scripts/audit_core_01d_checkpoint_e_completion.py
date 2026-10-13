@@ -212,6 +212,7 @@ FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS = {'domain/fotmob_fresh_holdout_capture
  'domain/fotmob_fresh_holdout_ordinary_ft_settlement_schema_adapter.py': '60f7fef2062fdad3e1ffb0c8023fd01398f88043',
  'scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py': '25392b65a4c968474b908ced0d0d8444c4fb1a1a',
  'tests/test_fotmob_fresh_holdout_duplicate_group_wrapper.py': 'e989f73070cd5f8710e4f5f30f22e8e31af4cc62'}
+FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS["tests/test_fotmob_fresh_holdout_team_shortname_compatibility.py"] = "862f454061ef4eb596ec727cc86764c54bd64dd3"
 ALLOWED_PASS4_PATHS |= FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | set(FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS)
 # Exact handoff ls-tree inventory excluding only the twelve bounded evidence
 # paths. Available in shallow CI without requiring the handoff commit object.

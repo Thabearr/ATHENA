@@ -22,7 +22,7 @@ def sealed():
 @pytest.fixture
 def checkout(tmp_path, monkeypatch, sealed, request):
     original = review.ROOT
-    paths = set(PATHS) | set(share.RETAINED_AUDIT_PREDECESSORS) | {v[0] for v in share.RETAINED_AUDIT_PREDECESSORS.values()} | {share.RECEIPT_PATH, a2.inventory_generation_path(154)} | {v[0] for v in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES.values()} | {review.INVENTORY_PATH, WRAPPER_TEST}
+    paths = set(PATHS) | set(share.RETAINED_AUDIT_PREDECESSORS) | {v[0] for v in share.RETAINED_AUDIT_PREDECESSORS.values()} | {share.RECEIPT_PATH, a2.inventory_generation_path(154)} | {v[0] for v in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES.values()} | {review.INVENTORY_PATH} | set(checkpoint.FRESH_HOLDOUT_20261014_TEST_TREE_IDENTITIES)
     for logical in paths:
         target = tmp_path / logical
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -117,7 +117,7 @@ def test_retained_capture_timestamps_match_original_manifest_bytes():
         assert retained["raw_sha256"] == row["raw_sha256"]
     assert rows[1]["observed_at"] == "2026-10-13T08:55:14.551847Z"
 
-@pytest.mark.parametrize("path", [WRAPPER_TEST])
+@pytest.mark.parametrize("path", tuple(checkpoint.FRESH_HOLDOUT_20261014_TEST_TREE_IDENTITIES))
 @pytest.mark.parametrize("mutation", ["none", "current", "committed_current", "symlink", "untracked", "missing"])
 def test_historical_wrapper_test_tree_identity_authenticates_current_source(checkout, path, mutation):
     root, git = checkout
@@ -141,10 +141,10 @@ def test_historical_wrapper_test_tree_identity_authenticates_current_source(chec
         raw = (ORIGINAL_ROOT / checkpoint.BASE_PATH).read_bytes()
         assert checkpoint.sha(raw) == checkpoint.BASE_INPUT_SHA
         expected = checkpoint.strict(raw)["files"][path]
-        assert checkpoint._fresh_holdout_20261014_test_identity() == expected
+        assert checkpoint._fresh_holdout_20261014_test_identity(path) == expected
     else:
         with pytest.raises((AssertionError, RuntimeError, ValueError, OSError)):
-            checkpoint._fresh_holdout_20261014_test_identity()
+            checkpoint._fresh_holdout_20261014_test_identity(path)
 
 @pytest.mark.parametrize("path", tuple(share.RETAINED_AUDIT_PREDECESSORS))
 @pytest.mark.parametrize("mutation", ["none", "fixture", "missing", "crosswired", "current", "committed_current", "untracked", "fixture_untracked", "symlink"])
