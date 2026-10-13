@@ -467,6 +467,56 @@ def historical_audit_forward(base):
     return before, hashlib.sha1(b"blob " + str(len(after)).encode() + b"\0" + after).hexdigest()
 
 
+FRESH_HOLDOUT_20261014_EVIDENCE = "artifacts/product/fresh_holdout_20261014_pass_a_source_projection_v1.json"
+
+
+def authenticate_fresh_holdout_20261014_evidence():
+    """One exact additive fact record; this is never execution authority."""
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    from scripts import audit_run_02a_pre_durable_share_send as share
+    a2.authenticate_inventory()
+    candidate = ROOT / FRESH_HOLDOUT_20261014_EVIDENCE
+    require(candidate.is_file() and not any(p.is_symlink() for p in (candidate, *candidate.parents)),
+            "Fresh-Holdout additive evidence requires a regular file")
+    review._tracked_payloads(((FRESH_HOLDOUT_20261014_EVIDENCE, candidate.read_bytes()),))
+    raw = candidate.read_bytes()
+    value = strict(raw)
+    encoded = (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False) + "\n").encode()
+    require(raw == encoded, "Fresh-Holdout additive evidence encoding changed")
+    body = {k:v for k,v in value.items() if k != "canonical_sha256"}
+    require(value.get("canonical_sha256") == sha(json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode()),
+            "Fresh-Holdout additive evidence self-hash changed")
+    require(value.get("schema") == "FRESH_HOLDOUT_20261014_PASS_A_SOURCE_PROJECTION_V1" and
+            value.get("base_main") == "7c787130e2662e34813a61422b865046fae52ebd" and
+            value.get("starting_head") == "f98900bc815d7a97f73f2f865cc5242115ba886a" and
+            value.get("predecessor_rewritten") is False and value.get("source_review_counter") == "4/5" and
+            value.get("frozen_pass_a_sha256") == "f3cdbec57c380f7a77ce97e4bfab627241cc8b73d0817ec2abfa2f27cf2e209f",
+            "Fresh-Holdout additive evidence identity/scope changed")
+    chain = {v["generation"]:v for _,v in a2.load_inventory_generations()}
+    generation = value.get("a2_successor_generation")
+    require(type(generation) is int and generation in chain and generation - 1 in chain,
+            "Fresh-Holdout evidence generation missing")
+    require(chain[generation]["canonical_sha256"] == value.get("a2_successor_sha256") and
+            value.get("a2_predecessor_generation") == generation - 1 and
+            chain[generation - 1]["canonical_sha256"] == value.get("a2_predecessor_sha256"),
+            "Fresh-Holdout evidence A2 lineage changed")
+    expected = {p:dict(zip(("path", "git_blob_sha1", "normalized_source_sha256"), row))
+                for p,row in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES.items()}
+    require(value.get("historical_fixtures") == expected,
+            "Fresh-Holdout predecessor fact set changed")
+    retained = value.get("pr459_retained_receipt", {})
+    require(retained.get("canonical_sha256") == share.RETAINED_RECEIPT_SHA and
+            retained.get("generation") == share.RETAINED_GENERATION and
+            retained.get("inventory_sha256") == share.RETAINED_INVENTORY_SHA and
+            retained.get("predecessors") == {p:dict(zip(("path", "git_blob_sha1", "normalized_source_sha256"), row)) for p,row in share.RETAINED_AUDIT_PREDECESSORS.items()},
+            "Fresh-Holdout retained prerequisite facts changed")
+    require(value.get("authority") == dict.fromkeys(("historical_runtime_execution", "provider_acquisition", "live_fresh_holdout", "live_current_shadow", "share_code", "delivery", "manual_workflow_dispatch", "rerun", "cancel"), False) and
+            all(value.get(k) == "UNSTARTED" for k in ("run_02a", "e4", "e5")),
+            "Fresh-Holdout evidence grants authority")
+    return FRESH_HOLDOUT_20261014_EVIDENCE
+
+
 def verified_additive_artifact_paths():
     for path, expected in ((MATRIX_PATH, CHECKPOINT_MATRIX_SHA), (RECEIPT_PATH, CHECKPOINT_RECEIPT_SHA)):
         raw = read(path)
@@ -559,7 +609,9 @@ def verified_additive_artifact_paths():
     from scripts import audit_run_02a_pre_durable_share_send as share_pre
     require(share_pre.audit().get("result") == "PASS",
             "RUN-02A prerequisite additive evidence failed authentication")
+    fresh_evidence = authenticate_fresh_holdout_20261014_evidence()
     return (
+        fresh_evidence,
         MATRIX_PATH,
         RECEIPT_PATH,
         *additive_paths(),
