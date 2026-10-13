@@ -207,6 +207,7 @@ FRESH_HOLDOUT_20261014_ADDITIVE_PATHS = {'artifacts/product/fresh_holdout_202610
  'tests/fixtures/fotmob_fresh_holdout_20261014/README.md',
  'tests/fixtures/fotmob_fresh_holdout_20261014/afc-cl2-9469-20261014-wrappers.json',
  'tests/native/test_fresh_holdout_pass_a_source_projection.py'}
+FRESH_HOLDOUT_20261014_ADDITIVE_PATHS |= {'tests/fixtures/core_01d/fresh_holdout_20261014/checkpoint-completion-predecessor.py.txt', 'tests/fixtures/core_01d/fresh_holdout_20261014/share-prerequisite-predecessor.py.txt', 'tests/fixtures/core_01d/fresh_holdout_20261014/b1-tests-predecessor.py.txt', 'tests/fixtures/core_01d/fresh_holdout_20261014/checkpoint-workflows-predecessor.py.txt', 'tests/fixtures/core_01d/fresh_holdout_20261014/checkpoint-completion-v2-predecessor.py.txt'}
 FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS = {'domain/fotmob_fresh_holdout_capture_qualification_adapter.py': '17dd1b044a90e02a2c5998164b7e5de7caa5b5ee',
  'domain/fotmob_fresh_holdout_ordinary_ft_settlement_schema_adapter.py': '60f7fef2062fdad3e1ffb0c8023fd01398f88043',
  'scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py': '25392b65a4c968474b908ced0d0d8444c4fb1a1a',
