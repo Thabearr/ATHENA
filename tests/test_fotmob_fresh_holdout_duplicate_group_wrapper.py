@@ -928,10 +928,19 @@ def test_duplicate_group_receipt_binds_exact_failure_evidence_and_no_authority()
         "collection_workflow_run_id": 38370644665,
         "collection_result": "FAILURE",
         "source_release_tag": "athena-fresh-holdout-evidence-2026-W42",
-        "actions_artifact_id": 636458042,
+        "release_asset_id": 636458042,
+        "release_asset_name": "failure-20261013T083700Z-run-38370644665.tar.gz",
+        "release_asset_sha256": "1c1cd0769ce58300e9f9d71dcedf34edfbe164fed41aea0c14d8707e4c977963",
+        "release_asset_size": 5654718,
+        "actions_artifact_id": 11799099479,
         "actions_artifact_name": "failure-20261013T083700Z-run-38370644665.tar.gz",
-        "actions_artifact_sha256": "1c1cd0769ce58300e9f9d71dcedf34edfbe164fed41aea0c14d8707e4c977963",
+        "actions_artifact_size": 5584290,
     }
+    evidence = receipt["afc_cl2_9469_20261014_fresh_holdout_failure_evidence"]
+    assert evidence["release_asset_id"] != evidence["actions_artifact_id"]
+    assert evidence["release_asset_size"] != evidence["actions_artifact_size"]
+    assert "actions_artifact_sha256" not in evidence
+    assert not hasattr(adapter, "FRESH_HOLDOUT_20261014_AFC_CL2_9469_ACTIONS_ARTIFACT_SHA256")
     assert receipt["compatibility_projection_is_not_source_evidence"] is True
     assert receipt["duplicate_group_labels_are_opaque"] is True
     assert receipt["football_semantics_not_promoted"] is True
