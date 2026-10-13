@@ -187,6 +187,11 @@ RUN_02A_PRE_ADDITIVE_PATHS = {
     "tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-predecessor.py.txt",
     "tests/fixtures/core_01d/run_02a_pre_historical/direct-share-predecessor.py.txt",
     "tests/fixtures/core_01d/run_02a_pre_historical/auth-worker-boundary-predecessor.py.txt",
+    "tests/test_lg_a_worker_entry_historical_projection.py",
+}
+RUN_02A_PRE_PREDECESSOR_SOURCE_BLOBS = {
+    "scripts/audit_lg_a_worker_launch_failure_remediation.py":
+        "0e8a349d49ad2cb9a41a709ad134e48e6c766069",
 }
 ALLOWED_PASS4_PATHS |= RUN_02A_PRE_ADDITIVE_PATHS | {
     "runtime/worker_entry.py", "scripts/sportybet_direct_share_bridge.py",
@@ -224,6 +229,7 @@ def validate_bounded_inventory(raw: bytes) -> None:
         data01a.BUILD_CONFIG: data01a.BUILD_CONFIG_BLOB,
         "services/athena_preview_service.py": "b8c3898baa28a4243c80a2b58ed284365ae854ab",
     }
+    predecessor_blobs.update(RUN_02A_PRE_PREDECESSOR_SOURCE_BLOBS)
     from scripts import audit_run_02a_pre_durable_share_send as prerequisite
     for path, (_fixture, blob, _digest) in prerequisite.TRANSPORT_PREDECESSORS.items():
         prerequisite.historical_transport_bytes(path)
