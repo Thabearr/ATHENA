@@ -11,6 +11,8 @@ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
 from scripts import audit_checkpoint_e_workflows as checkpoint
 
 PATHS = tuple(review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES)
+ORIGINAL_ROOT = review.ROOT
+WRAPPER_TEST = "tests/test_fotmob_fresh_holdout_duplicate_group_wrapper.py"
 
 @pytest.fixture(scope="module")
 def sealed():
@@ -19,7 +21,7 @@ def sealed():
 @pytest.fixture
 def checkout(tmp_path, monkeypatch, sealed, request):
     original = review.ROOT
-    paths = set(PATHS) | {v[0] for v in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES.values()} | {review.INVENTORY_PATH}
+    paths = set(PATHS) | {v[0] for v in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES.values()} | {review.INVENTORY_PATH, WRAPPER_TEST}
     for logical in paths:
         target = tmp_path / logical
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -33,6 +35,7 @@ def checkout(tmp_path, monkeypatch, sealed, request):
     git("-c", "user.name=Offline Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "Exact current files; no historical ancestor")
     monkeypatch.setattr(review, "ROOT", tmp_path)
     monkeypatch.setattr(checkpoint, "ROOT", tmp_path)
+    monkeypatch.setattr(a2, "ROOT", tmp_path)
     monkeypatch.setattr(a2, "authenticate_inventory", lambda: sealed)
     review._tracked_payloads.cache_clear()
     return tmp_path, git
@@ -107,3 +110,32 @@ def test_retained_capture_timestamps_match_original_manifest_bytes():
         assert retained["observed_at"] == row["observed_at"]
         assert retained["raw_sha256"] == row["raw_sha256"]
     assert rows[1]["observed_at"] == "2026-10-13T08:55:14.551847Z"
+
+@pytest.mark.parametrize("path", [WRAPPER_TEST])
+@pytest.mark.parametrize("mutation", ["none", "current", "committed_current", "symlink", "untracked", "missing"])
+def test_historical_wrapper_test_tree_identity_authenticates_current_source(checkout, path, mutation):
+    root, git = checkout
+    current = root / path
+    if mutation in {"current", "committed_current"}:
+        current.write_bytes(current.read_bytes() + b"# unauthorized mutation\n")
+        if mutation == "committed_current":
+            git("add", path)
+            git("-c", "user.name=Offline Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "Unsealed test mutation")
+    elif mutation == "missing":
+        current.unlink()
+    elif mutation == "symlink":
+        target = root / "outside.txt"
+        target.write_bytes(current.read_bytes())
+        current.unlink()
+        try:
+            current.symlink_to(target)
+        except OSError:
+            pytest.skip("Native account lacks symlink privilege")
+    if mutation == "none":
+        raw = (ORIGINAL_ROOT / checkpoint.BASE_PATH).read_bytes()
+        assert checkpoint.sha(raw) == checkpoint.BASE_INPUT_SHA
+        expected = checkpoint.strict(raw)["files"][path]
+        assert checkpoint._fresh_holdout_20261014_test_identity() == expected
+    else:
+        with pytest.raises((AssertionError, RuntimeError, ValueError, OSError)):
+            checkpoint._fresh_holdout_20261014_test_identity()

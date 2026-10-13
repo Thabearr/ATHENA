@@ -295,6 +295,23 @@ def _fresh_holdout_20261014_source(path):
     return review.source_bytes(path)
 
 
+def _fresh_holdout_20261014_test_identity():
+    # Tree identity only: no historical test bytes are imported or executed.
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    require(ROOT == review.ROOT == a2.ROOT, "Fresh-Holdout test source root mismatch")
+    path = "tests/test_fotmob_fresh_holdout_duplicate_group_wrapper.py"
+    candidate = ROOT / path
+    require(candidate.is_file() and not any(p.is_symlink() for p in (candidate, *candidate.parents)),
+            "Fresh-Holdout test source must be a regular file")
+    latest = a2.authenticate_inventory()
+    payload = review._tracked_payloads(((path, candidate.read_bytes()),))[path]
+    current = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
+    require(sha(payload.replace(b"\r\n", b"\n")) == current.get(path),
+            "current Fresh-Holdout test source differs from authenticated A2")
+    return {"mode": "100644", "git_blob_sha1": "e989f73070cd5f8710e4f5f30f22e8e31af4cc62"}
+
+
 def read(path):
     from scripts import audit_core_01d_authority_reachability_review_a as review
     if path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
@@ -415,6 +432,10 @@ def git_inventory():
         require(path in result and result[path]["mode"] == "100644",
                 "Fresh-Holdout predecessor path/mode missing: " + path)
         result[path]["git_blob_sha1"] = blob
+    path = "tests/test_fotmob_fresh_holdout_duplicate_group_wrapper.py"
+    require(path in result and result[path]["mode"] == "100644",
+            "Fresh-Holdout historical test path/mode missing")
+    result[path] = _fresh_holdout_20261014_test_identity()
     return result
 
 
@@ -705,6 +726,8 @@ def base_input():
         if path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
             predecessor = _fresh_holdout_20261014_source(path)
             actual = hashlib.sha1(b"blob " + str(len(predecessor)).encode() + b"\0" + predecessor).hexdigest()
+        if path == "tests/test_fotmob_fresh_holdout_duplicate_group_wrapper.py":
+            actual = _fresh_holdout_20261014_test_identity()["git_blob_sha1"]
         if path in successor_paths and path in successor["base_identities"]:
             actual = successor["base_identities"][path]["git_blob_sha1"]
         if path in INCIDENT_20261010_PREDECESSOR_BLOBS:
