@@ -86,7 +86,7 @@ def historical_prerequisite_source_bytes(path, *, latest=None):
     current = {r["path"]:r["lf_source_sha256"] for r in latest["source_identities"]}
     if hashlib.sha256(live.replace(b"\r\n", b"\n")).hexdigest() != current.get(path):
         raise AssertionError("current prerequisite source differs from authenticated A2")
-    subprocess.check_output(["git", "ls-files", "--error-unmatch", "--", fixture], cwd=ROOT)
+    review._tracked_payloads(((fixture, (ROOT / fixture).read_bytes()),))
     raw = (ROOT / fixture).read_bytes().replace(b"\r\n", b"\n")
     retained_sources = {r["path"]:r["lf_source_sha256"] for r in retained["source_identities"]}
     if (hashlib.sha256(raw).hexdigest() != digest or retained_sources.get(path) != digest
