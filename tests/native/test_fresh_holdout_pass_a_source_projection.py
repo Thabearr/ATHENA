@@ -8,6 +8,7 @@ import subprocess
 import pytest
 from scripts import audit_core_01d_authority_reachability_review_a as review
 from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+from scripts import audit_checkpoint_e_workflows as checkpoint
 
 PATHS = tuple(review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES)
 
@@ -31,6 +32,7 @@ def checkout(tmp_path, monkeypatch, sealed, request):
     git("add", "--", *sorted(paths - {omitted}))
     git("-c", "user.name=Offline Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "Exact current files; no historical ancestor")
     monkeypatch.setattr(review, "ROOT", tmp_path)
+    monkeypatch.setattr(checkpoint, "ROOT", tmp_path)
     monkeypatch.setattr(a2, "authenticate_inventory", lambda: sealed)
     review._tracked_payloads.cache_clear()
     return tmp_path, git
@@ -42,11 +44,12 @@ def test_exact_predecessor_without_historical_ancestor(checkout, path):
     raw = review.source_bytes(path)
     assert hashlib.sha256(raw).hexdigest() == digest
     assert hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() == blob
-    # There is one synthetic current commit, and no historical source object.
+    # The exact source blobs are supplied by fixtures; no historical ancestor commit exists.
     assert git("rev-list", "--count", "HEAD").strip() == b"1"
     assert git("rev-parse", "HEAD:" + path).strip().decode() != blob
     (root / fixture).write_bytes(raw.replace(b"\n", b"\r\n"))
     assert review.source_bytes(path) == raw
+    assert checkpoint.read(path) == raw
 
 @pytest.mark.parametrize("path", PATHS)
 @pytest.mark.parametrize("mutation", ["fixture", "missing", "crosswired", "current", "committed_current", "untracked", "symlink"])
@@ -78,11 +81,15 @@ def test_tampering_cannot_hide_behind_historical_fixture(checkout, path, mutatio
             pytest.skip("Native account lacks symlink privilege")
     with pytest.raises((AssertionError, RuntimeError, ValueError, OSError)):
         review.source_bytes(path)
+    with pytest.raises((AssertionError, RuntimeError, ValueError, OSError)):
+        checkpoint.read(path)
 
 @pytest.mark.parametrize("path", ["../outside.py", "/absolute.py", "domain/unclassified.py"])
 def test_no_generic_historical_substitution(checkout, path):
     with pytest.raises((AssertionError, RuntimeError, ValueError)):
         review._fresh_holdout_predecessor_source(path)
+    with pytest.raises((AssertionError, RuntimeError, ValueError)):
+        checkpoint._fresh_holdout_20261014_source(path)
 
 def test_frozen_inventory_rederives_without_current_edge_drift():
     assert review.build_inventory() == review.read_json(review.INVENTORY_PATH)

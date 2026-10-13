@@ -287,7 +287,18 @@ def seal(value):
     return value
 
 
+def _fresh_holdout_20261014_source(path):
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    require(path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES,
+            "unclassified Fresh-Holdout historical source path")
+    require(ROOT == review.ROOT, "Fresh-Holdout historical source root mismatch")
+    return review.source_bytes(path)
+
+
 def read(path):
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    if path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
+        return _fresh_holdout_20261014_source(path)
     from scripts import audit_run_02a_pre_durable_share_send as prerequisite
     if path in prerequisite.TRANSPORT_PREDECESSORS:
         return prerequisite.historical_transport_bytes(path, root=ROOT)
@@ -397,6 +408,12 @@ def git_inventory():
     for path, (_fixture, blob, _digest) in prerequisite.TRANSPORT_PREDECESSORS.items():
         prerequisite.historical_transport_bytes(path, root=ROOT)
         require(path in result and result[path]["mode"] == "100644", "transport predecessor path/mode missing: " + path)
+        result[path]["git_blob_sha1"] = blob
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    for path, (_fixture, blob, _digest) in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES.items():
+        _fresh_holdout_20261014_source(path)
+        require(path in result and result[path]["mode"] == "100644",
+                "Fresh-Holdout predecessor path/mode missing: " + path)
         result[path]["git_blob_sha1"] = blob
     return result
 
@@ -683,6 +700,10 @@ def base_input():
         from scripts import audit_run_02a_pre_durable_share_send as prerequisite
         if path in prerequisite.TRANSPORT_PREDECESSORS:
             predecessor = prerequisite.historical_transport_bytes(path, root=ROOT)
+            actual = hashlib.sha1(b"blob " + str(len(predecessor)).encode() + b"\0" + predecessor).hexdigest()
+        from scripts import audit_core_01d_authority_reachability_review_a as review
+        if path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
+            predecessor = _fresh_holdout_20261014_source(path)
             actual = hashlib.sha1(b"blob " + str(len(predecessor)).encode() + b"\0" + predecessor).hexdigest()
         if path in successor_paths and path in successor["base_identities"]:
             actual = successor["base_identities"][path]["git_blob_sha1"]
