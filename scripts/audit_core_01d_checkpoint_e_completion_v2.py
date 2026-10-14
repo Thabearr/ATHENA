@@ -132,6 +132,7 @@ RUN_02A_PRE_PREDECESSOR_BLOBS={
 }
 PR459_HISTORICAL_SOURCE_FORWARD_PATHS={
  'tests/fixtures/core_01d/pr459_live_trigger_incident/p4-3-workflow-retirement-ledger-predecessor.py.txt',
+ 'tests/fixtures/core_01d/pr459_live_trigger_incident/run-02a-pre-base.py.txt',
 }
 
 APP01C_NEW_PATHS={
@@ -160,6 +161,10 @@ PASS_A_HISTORICAL_BLOBS={
  # by current A2 and their current focused audits.
  'scripts/audit_p4_3_workflow_retirement_ledger.py':'77927732b2abc2b13f20a4979ad7092307873900',
  'scripts/audit_core_01d_retained_workflow_status_v2.py':'53e49b94d7587cab38144d441d8459829bac69bb',
+ # Preserve the exact main-base P4 resolver and historical-retention test blobs
+ # while their PR #461 current successors remain independently A2-authenticated.
+ 'scripts/audit_p4_workflow_evolution_ledger.py':'bab8af0400f1065bdba00168d1a19c50b3976b5f',
+ 'tests/test_core_01d_historical_retention_acceptance.py':'9ac2d450e29c0faf5fd471f06f3f1ae0dfdaa51d',
 }
 B1_ADDITIVE_EVIDENCE_PATHS={
  'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v3.json',

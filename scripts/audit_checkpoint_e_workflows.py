@@ -7,6 +7,7 @@ CI. No provider module, GitHub transport, executor or real SMTP is invoked.
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 from datetime import datetime
 import hashlib
@@ -468,6 +469,47 @@ def historical_audit_forward(base):
 
 
 FRESH_HOLDOUT_20261014_EVIDENCE = "artifacts/product/fresh_holdout_20261014_pass_a_source_projection_v1.json"
+PR459_RUN02A_BASE_SOURCE = "scripts/audit_run_02a_pre_durable_share_send.py"
+PR459_RUN02A_BASE_FIXTURE = "tests/fixtures/core_01d/pr459_live_trigger_incident/run-02a-pre-base.py.txt"
+PR459_RUN02A_BASE_GIT_BLOB = "ccb698bf97aced811a9e95d74f4a0523d54f85a0"
+PR459_RUN02A_BASE_LF_SHA256 = "3e8b6e1c4d6ddb08d02f17dc20059c51f175faba53b58cc22f49e99ac1be35cb"
+
+
+def _fresh_holdout_retained_run02a_predecessors(share):
+    """Read the exact five-entry predecessor map from the sealed PR base source."""
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+
+    current_raw = (ROOT / PR459_RUN02A_BASE_SOURCE).read_bytes()
+    fixture_worktree = (ROOT / PR459_RUN02A_BASE_FIXTURE).read_bytes()
+    review._tracked_payloads(((PR459_RUN02A_BASE_SOURCE, current_raw),
+                              (PR459_RUN02A_BASE_FIXTURE, fixture_worktree)))
+    latest = a2.authenticate_inventory()
+    current_rows = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
+    current_lf = current_raw.replace(b"\r\n", b"\n")
+    require(hashlib.sha256(current_lf).hexdigest() == current_rows.get(PR459_RUN02A_BASE_SOURCE),
+            "current RUN-02A prerequisite source differs from authenticated A2")
+
+    fixture_git = subprocess.check_output(
+        ["git", "show", "HEAD:" + PR459_RUN02A_BASE_FIXTURE], cwd=ROOT)
+    fixture_lf = fixture_worktree.replace(b"\r\n", b"\n")
+    fixture_git_lf = fixture_git.replace(b"\r\n", b"\n")
+    fixture_blob = hashlib.sha1(
+        b"blob " + str(len(fixture_git)).encode("ascii") + b"\0" + fixture_git).hexdigest()
+    require(fixture_lf == fixture_git_lf
+            and fixture_blob == PR459_RUN02A_BASE_GIT_BLOB
+            and hashlib.sha256(fixture_lf).hexdigest() == PR459_RUN02A_BASE_LF_SHA256,
+            "RUN-02A prerequisite base fixture identity drift")
+
+    predecessor_tree = ast.parse(fixture_lf.decode("utf-8"))
+    predecessor_maps = [node for node in predecessor_tree.body
+                        if isinstance(node, ast.Assign)
+                        and any(isinstance(target, ast.Name)
+                                and target.id == "RETAINED_AUDIT_PREDECESSORS"
+                                for target in node.targets)]
+    require(len(predecessor_maps) == 1,
+            "RUN-02A prerequisite base predecessor map is ambiguous")
+    return ast.literal_eval(predecessor_maps[0].value)
 
 
 def authenticate_fresh_holdout_20261014_evidence():
@@ -506,10 +548,15 @@ def authenticate_fresh_holdout_20261014_evidence():
     require(value.get("historical_fixtures") == expected,
             "Fresh-Holdout predecessor fact set changed")
     retained = value.get("pr459_retained_receipt", {})
+    retained_predecessors = _fresh_holdout_retained_run02a_predecessors(share)
+    expected_retained_predecessors = {
+        path: dict(zip(("path", "git_blob_sha1", "normalized_source_sha256"), row))
+        for path, row in retained_predecessors.items()
+    }
     require(retained.get("canonical_sha256") == share.RETAINED_RECEIPT_SHA and
             retained.get("generation") == share.RETAINED_GENERATION and
             retained.get("inventory_sha256") == share.RETAINED_INVENTORY_SHA and
-            retained.get("predecessors") == {p:dict(zip(("path", "git_blob_sha1", "normalized_source_sha256"), row)) for p,row in share.RETAINED_AUDIT_PREDECESSORS.items()},
+            retained.get("predecessors") == expected_retained_predecessors,
             "Fresh-Holdout retained prerequisite facts changed")
     require(value.get("authority") == dict.fromkeys(("historical_runtime_execution", "provider_acquisition", "live_fresh_holdout", "live_current_shadow", "share_code", "delivery", "manual_workflow_dispatch", "rerun", "cancel"), False) and
             all(value.get(k) == "UNSTARTED" for k in ("run_02a", "e4", "e5")),

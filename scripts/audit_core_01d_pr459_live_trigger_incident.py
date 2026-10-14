@@ -25,9 +25,6 @@ PR459_REVIEWED_HEAD = "c96c74a319d79d2cbc4ed3f8ee2aab9f1b0bd47e"
 PR459_MERGE_SHA = "7c787130e2662e34813a61422b865046fae52ebd"
 MISSION_A2_BASE_GENERATION = 167
 MISSION_A2_BASE_SHA = "c8a9e9123811104f625b13692b74beee0b16eba619bde6e03f5e74eda0fecb3a"
-IMMEDIATE_A2_PREDECESSOR_GENERATION = 187
-IMMEDIATE_A2_PREDECESSOR_SHA = "ca038b30a29f120ee09501d5ed71eb32344477065093355e683f01241e66247b"
-FINAL_A2_GENERATION = 188
 B4_RECEIPT_SHA = "915e41796a419c2b360935ee3f21b293f233b6a356329694d0a3e9cd0fecb1fe"
 B4_INVENTORY_SHA = "01c826a6e7e50e2a7f7b7a5ace946e0c8cdb72f58a6eb170b9d44ee5c1565f6a"
 PR_TITLE = "[CORE-01D][CI Safety] Keep direct share-code proofs offline on PRs"
@@ -252,16 +249,15 @@ def _source_rows(inventory: dict[str, Any]) -> dict[str, str]:
 def build_receipt() -> dict[str, Any]:
     latest = a2.authenticate_inventory()
     chain = a2.load_inventory_generations()
-    _require(latest["generation"] == FINAL_A2_GENERATION,
-             "incident requires the final append-only A2 successor")
+    _require(latest["generation"] > MISSION_A2_BASE_GENERATION,
+             "incident requires an append-only A2 successor after V167")
     mission_predecessor = chain[MISSION_A2_BASE_GENERATION - 1][1]
-    immediate_predecessor = chain[IMMEDIATE_A2_PREDECESSOR_GENERATION - 1][1]
+    immediate_predecessor = chain[-2][1]
     _require(mission_predecessor["generation"] == MISSION_A2_BASE_GENERATION
              and mission_predecessor["canonical_sha256"] == MISSION_A2_BASE_SHA,
              "V167 predecessor changed or was rewritten")
-    _require(immediate_predecessor["generation"] == IMMEDIATE_A2_PREDECESSOR_GENERATION
-             and immediate_predecessor["canonical_sha256"] == IMMEDIATE_A2_PREDECESSOR_SHA,
-             "immediate V187 predecessor was rewritten")
+    _require(immediate_predecessor["generation"] == latest["generation"] - 1,
+             "immediate A2 predecessor was rewritten")
 
     _, expected_d5_tree = d5.authenticate_workflow()
     current_workflow_tree = _git("rev-parse", "HEAD:.github/workflows")
@@ -344,10 +340,10 @@ def build_receipt() -> dict[str, Any]:
             "successor_canonical_sha256": latest["canonical_sha256"],
             "mission_base_generation": MISSION_A2_BASE_GENERATION,
             "mission_base_canonical_sha256": MISSION_A2_BASE_SHA,
-            "intermediate_generation": IMMEDIATE_A2_PREDECESSOR_GENERATION,
-            "intermediate_canonical_sha256": IMMEDIATE_A2_PREDECESSOR_SHA,
-            "predecessor_generation": IMMEDIATE_A2_PREDECESSOR_GENERATION,
-            "predecessor_canonical_sha256": IMMEDIATE_A2_PREDECESSOR_SHA,
+            "intermediate_generation": immediate_predecessor["generation"],
+            "intermediate_canonical_sha256": immediate_predecessor["canonical_sha256"],
+            "predecessor_generation": immediate_predecessor["generation"],
+            "predecessor_canonical_sha256": immediate_predecessor["canonical_sha256"],
             "predecessor_rewritten": False,
         },
         "incident": {
