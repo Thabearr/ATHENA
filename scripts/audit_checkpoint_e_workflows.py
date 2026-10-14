@@ -287,7 +287,42 @@ def seal(value):
     return value
 
 
+def _fresh_holdout_20261014_source(path):
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    require(path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES,
+            "unclassified Fresh-Holdout historical source path")
+    require(ROOT == review.ROOT, "Fresh-Holdout historical source root mismatch")
+    return review.source_bytes(path)
+
+
+FRESH_HOLDOUT_20261014_TEST_TREE_IDENTITIES = {
+    "tests/test_fotmob_fresh_holdout_duplicate_group_wrapper.py": "e989f73070cd5f8710e4f5f30f22e8e31af4cc62",
+    "tests/test_fotmob_fresh_holdout_team_shortname_compatibility.py": "862f454061ef4eb596ec727cc86764c54bd64dd3",
+}
+
+
+def _fresh_holdout_20261014_test_identity(path="tests/test_fotmob_fresh_holdout_duplicate_group_wrapper.py"):
+    # Tree identity only: no historical test bytes are imported or executed.
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    require(ROOT == review.ROOT == a2.ROOT, "Fresh-Holdout test source root mismatch")
+    require(path in FRESH_HOLDOUT_20261014_TEST_TREE_IDENTITIES,
+            "unclassified Fresh-Holdout historical test path")
+    candidate = ROOT / path
+    require(candidate.is_file() and not any(p.is_symlink() for p in (candidate, *candidate.parents)),
+            "Fresh-Holdout test source must be a regular file")
+    latest = a2.authenticate_inventory()
+    payload = review._tracked_payloads(((path, candidate.read_bytes()),))[path]
+    current = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
+    require(sha(payload.replace(b"\r\n", b"\n")) == current.get(path),
+            "current Fresh-Holdout test source differs from authenticated A2")
+    return {"mode": "100644", "git_blob_sha1": FRESH_HOLDOUT_20261014_TEST_TREE_IDENTITIES[path]}
+
+
 def read(path):
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    if path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
+        return _fresh_holdout_20261014_source(path)
     from scripts import audit_run_02a_pre_durable_share_send as prerequisite
     if path in prerequisite.TRANSPORT_PREDECESSORS:
         return prerequisite.historical_transport_bytes(path, root=ROOT)
@@ -398,6 +433,16 @@ def git_inventory():
         prerequisite.historical_transport_bytes(path, root=ROOT)
         require(path in result and result[path]["mode"] == "100644", "transport predecessor path/mode missing: " + path)
         result[path]["git_blob_sha1"] = blob
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    for path, (_fixture, blob, _digest) in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES.items():
+        _fresh_holdout_20261014_source(path)
+        require(path in result and result[path]["mode"] == "100644",
+                "Fresh-Holdout predecessor path/mode missing: " + path)
+        result[path]["git_blob_sha1"] = blob
+    for path in FRESH_HOLDOUT_20261014_TEST_TREE_IDENTITIES:
+        require(path in result and result[path]["mode"] == "100644",
+                "Fresh-Holdout historical test path/mode missing")
+        result[path] = _fresh_holdout_20261014_test_identity(path)
     return result
 
 
@@ -420,6 +465,56 @@ def historical_audit_forward(base):
     after = before.replace(anchor, addition + anchor).replace(old, new)
     require(read(HISTORICAL_AUDIT) == after, "historical audit change exceeds authenticated additive artifact allowance")
     return before, hashlib.sha1(b"blob " + str(len(after)).encode() + b"\0" + after).hexdigest()
+
+
+FRESH_HOLDOUT_20261014_EVIDENCE = "artifacts/product/fresh_holdout_20261014_pass_a_source_projection_v1.json"
+
+
+def authenticate_fresh_holdout_20261014_evidence():
+    """One exact additive fact record; this is never execution authority."""
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    from scripts import audit_run_02a_pre_durable_share_send as share
+    a2.authenticate_inventory()
+    candidate = ROOT / FRESH_HOLDOUT_20261014_EVIDENCE
+    require(candidate.is_file() and not any(p.is_symlink() for p in (candidate, *candidate.parents)),
+            "Fresh-Holdout additive evidence requires a regular file")
+    review._tracked_payloads(((FRESH_HOLDOUT_20261014_EVIDENCE, candidate.read_bytes()),))
+    raw = candidate.read_bytes()
+    value = strict(raw)
+    encoded = (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False) + "\n").encode()
+    require(raw == encoded, "Fresh-Holdout additive evidence encoding changed")
+    body = {k:v for k,v in value.items() if k != "canonical_sha256"}
+    require(value.get("canonical_sha256") == sha(json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode()),
+            "Fresh-Holdout additive evidence self-hash changed")
+    require(value.get("schema") == "FRESH_HOLDOUT_20261014_PASS_A_SOURCE_PROJECTION_V1" and
+            value.get("base_main") == "7c787130e2662e34813a61422b865046fae52ebd" and
+            value.get("starting_head") == "f98900bc815d7a97f73f2f865cc5242115ba886a" and
+            value.get("predecessor_rewritten") is False and value.get("source_review_counter") == "4/5" and
+            value.get("frozen_pass_a_sha256") == "f3cdbec57c380f7a77ce97e4bfab627241cc8b73d0817ec2abfa2f27cf2e209f",
+            "Fresh-Holdout additive evidence identity/scope changed")
+    chain = {generation:v for generation,(_,v) in enumerate(a2.load_inventory_generations(), start=1)}
+    generation = value.get("a2_successor_generation")
+    require(type(generation) is int and generation in chain and generation - 1 in chain,
+            "Fresh-Holdout evidence generation missing")
+    require(chain[generation]["canonical_sha256"] == value.get("a2_successor_sha256") and
+            value.get("a2_predecessor_generation") == generation - 1 and
+            chain[generation - 1]["canonical_sha256"] == value.get("a2_predecessor_sha256"),
+            "Fresh-Holdout evidence A2 lineage changed")
+    expected = {p:dict(zip(("path", "git_blob_sha1", "normalized_source_sha256"), row))
+                for p,row in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES.items()}
+    require(value.get("historical_fixtures") == expected,
+            "Fresh-Holdout predecessor fact set changed")
+    retained = value.get("pr459_retained_receipt", {})
+    require(retained.get("canonical_sha256") == share.RETAINED_RECEIPT_SHA and
+            retained.get("generation") == share.RETAINED_GENERATION and
+            retained.get("inventory_sha256") == share.RETAINED_INVENTORY_SHA and
+            retained.get("predecessors") == {p:dict(zip(("path", "git_blob_sha1", "normalized_source_sha256"), row)) for p,row in share.RETAINED_AUDIT_PREDECESSORS.items()},
+            "Fresh-Holdout retained prerequisite facts changed")
+    require(value.get("authority") == dict.fromkeys(("historical_runtime_execution", "provider_acquisition", "live_fresh_holdout", "live_current_shadow", "share_code", "delivery", "manual_workflow_dispatch", "rerun", "cancel"), False) and
+            all(value.get(k) == "UNSTARTED" for k in ("run_02a", "e4", "e5")),
+            "Fresh-Holdout evidence grants authority")
+    return FRESH_HOLDOUT_20261014_EVIDENCE
 
 
 def verified_additive_artifact_paths():
@@ -514,7 +609,9 @@ def verified_additive_artifact_paths():
     from scripts import audit_run_02a_pre_durable_share_send as share_pre
     require(share_pre.audit().get("result") == "PASS",
             "RUN-02A prerequisite additive evidence failed authentication")
+    fresh_evidence = authenticate_fresh_holdout_20261014_evidence()
     return (
+        fresh_evidence,
         MATRIX_PATH,
         RECEIPT_PATH,
         *additive_paths(),
@@ -684,6 +781,12 @@ def base_input():
         if path in prerequisite.TRANSPORT_PREDECESSORS:
             predecessor = prerequisite.historical_transport_bytes(path, root=ROOT)
             actual = hashlib.sha1(b"blob " + str(len(predecessor)).encode() + b"\0" + predecessor).hexdigest()
+        from scripts import audit_core_01d_authority_reachability_review_a as review
+        if path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
+            predecessor = _fresh_holdout_20261014_source(path)
+            actual = hashlib.sha1(b"blob " + str(len(predecessor)).encode() + b"\0" + predecessor).hexdigest()
+        if path in FRESH_HOLDOUT_20261014_TEST_TREE_IDENTITIES:
+            actual = _fresh_holdout_20261014_test_identity(path)["git_blob_sha1"]
         if path in successor_paths and path in successor["base_identities"]:
             actual = successor["base_identities"][path]["git_blob_sha1"]
         if path in INCIDENT_20261010_PREDECESSOR_BLOBS:

@@ -197,6 +197,23 @@ ALLOWED_PASS4_PATHS |= RUN_02A_PRE_ADDITIVE_PATHS | {
     "runtime/worker_entry.py", "scripts/sportybet_direct_share_bridge.py",
     "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py",
 }
+FRESH_HOLDOUT_20261014_ADDITIVE_PATHS = {'artifacts/product/fresh_holdout_20261014_pass_a_source_projection_v1.json',
+ 'docs/product/fresh_holdout_20261014_pass_a_source_projection.md',
+ 'tests/fixtures/core_01d/fresh_holdout_20261014/capture-qualification-predecessor.py.txt',
+ 'tests/fixtures/core_01d/fresh_holdout_20261014/settlement-schema-predecessor.py.txt',
+ 'tests/fixtures/core_01d/fresh_holdout_20261014/tick-predecessor.py.txt',
+ 'tests/fixtures/fotmob_fresh_holdout_20261014/07e6dd3e5a85eaa4e9be1c96-manifest.json',
+ 'tests/fixtures/fotmob_fresh_holdout_20261014/6cb5f96614054a5c91a63515-manifest.json',
+ 'tests/fixtures/fotmob_fresh_holdout_20261014/README.md',
+ 'tests/fixtures/fotmob_fresh_holdout_20261014/afc-cl2-9469-20261014-wrappers.json',
+ 'tests/native/test_fresh_holdout_pass_a_source_projection.py'}
+FRESH_HOLDOUT_20261014_ADDITIVE_PATHS |= {'tests/fixtures/core_01d/fresh_holdout_20261014/checkpoint-completion-predecessor.py.txt', 'tests/fixtures/core_01d/fresh_holdout_20261014/share-prerequisite-predecessor.py.txt', 'tests/fixtures/core_01d/fresh_holdout_20261014/b1-tests-predecessor.py.txt', 'tests/fixtures/core_01d/fresh_holdout_20261014/checkpoint-workflows-predecessor.py.txt', 'tests/fixtures/core_01d/fresh_holdout_20261014/checkpoint-completion-v2-predecessor.py.txt'}
+FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS = {'domain/fotmob_fresh_holdout_capture_qualification_adapter.py': '17dd1b044a90e02a2c5998164b7e5de7caa5b5ee',
+ 'domain/fotmob_fresh_holdout_ordinary_ft_settlement_schema_adapter.py': '60f7fef2062fdad3e1ffb0c8023fd01398f88043',
+ 'scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py': '25392b65a4c968474b908ced0d0d8444c4fb1a1a',
+ 'tests/test_fotmob_fresh_holdout_duplicate_group_wrapper.py': 'e989f73070cd5f8710e4f5f30f22e8e31af4cc62'}
+FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS["tests/test_fotmob_fresh_holdout_team_shortname_compatibility.py"] = "862f454061ef4eb596ec727cc86764c54bd64dd3"
+ALLOWED_PASS4_PATHS |= FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | set(FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS)
 # Exact handoff ls-tree inventory excluding only the twelve bounded evidence
 # paths. Available in shallow CI without requiring the handoff commit object.
 UNCHANGED_REPOSITORY_INVENTORY_SHA = "6b407c284a7c2f759e6345f53444478de53427ceae1aaa7d412d078270c5ad27"
@@ -230,6 +247,10 @@ def validate_bounded_inventory(raw: bytes) -> None:
         "services/athena_preview_service.py": "b8c3898baa28a4243c80a2b58ed284365ae854ab",
     }
     predecessor_blobs.update(RUN_02A_PRE_PREDECESSOR_SOURCE_BLOBS)
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    for path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
+        review.source_bytes(path)
+    predecessor_blobs.update(FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS)
     from scripts import audit_run_02a_pre_durable_share_send as prerequisite
     for path, (_fixture, blob, _digest) in prerequisite.TRANSPORT_PREDECESSORS.items():
         prerequisite.historical_transport_bytes(path)
@@ -238,7 +259,7 @@ def validate_bounded_inventory(raw: bytes) -> None:
     for line in raw.splitlines(keepends=True):
         metadata, separator, path_bytes = line.partition(b"\t")
         path = path_bytes.strip().decode()
-        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS:
+        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS:
             continue
         if path in INCIDENT_20261010_PREDECESSOR_BLOBS:
             metadata = (
@@ -250,7 +271,7 @@ def validate_bounded_inventory(raw: bytes) -> None:
         if path in predecessor_blobs:
             metadata = metadata.rsplit(b" ", 1)[0] + b" " + predecessor_blobs[path].encode()
             line = metadata + separator + path_bytes
-        if path in ALLOWED_PASS4_PATHS and path not in APP01C_CURRENT_SOURCE_PATHS and path not in prerequisite.TRANSPORT_PREDECESSORS:
+        if path in ALLOWED_PASS4_PATHS and path not in APP01C_CURRENT_SOURCE_PATHS and path not in prerequisite.TRANSPORT_PREDECESSORS and path not in FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS:
             continue
         if path in APP01C_PREDECESSOR_SOURCE_BLOBS:
             metadata = metadata.rsplit(b" ", 1)[0] + b" " + APP01C_PREDECESSOR_SOURCE_BLOBS[path].encode()

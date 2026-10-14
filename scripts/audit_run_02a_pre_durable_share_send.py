@@ -47,6 +47,54 @@ TRANSPORT_PREDECESSORS = {
 }
 
 
+RETAINED_RECEIPT_SHA = "a62a8847dad208f1ed1c9bcd8cdcb36cf21b576b8528d2aaf6ca23209db5c22e"
+RETAINED_GENERATION = 154
+RETAINED_INVENTORY_SHA = "1dcf6a62d1e22c7e432c62bcadef824204466298c881741abe57edf709796230"
+RETAINED_AUDIT_PREDECESSORS = {'scripts/audit_checkpoint_e_workflows.py': ('tests/fixtures/core_01d/fresh_holdout_20261014/checkpoint-workflows-predecessor.py.txt',
+                                             '54d1af95d7aaebe99292fc33da5bd4d24db4462e',
+                                             '502d20abe4155277fc671466fb2e759fc265201b116b76ef740cb69148313ffd'),
+ 'scripts/audit_core_01d_checkpoint_e_completion.py': ('tests/fixtures/core_01d/fresh_holdout_20261014/checkpoint-completion-predecessor.py.txt',
+                                                       'a3906ff8c6189e09f2106ae0ed03ddef929dec2b',
+                                                       'bd848f32e9311a3aba49cf024d89b5089f70abcb877913fabb0a401b5ecd31ee'),
+ 'scripts/audit_core_01d_checkpoint_e_completion_v2.py': ('tests/fixtures/core_01d/fresh_holdout_20261014/checkpoint-completion-v2-predecessor.py.txt',
+                                                          'f427baed805abe41894d7c66d7492247aa82a9b2',
+                                                          '2e0e6bb6dc6ba27f35a04066d4a29fb8a8e265998be8fa29719b2943eb30801b'),
+ 'scripts/audit_run_02a_pre_durable_share_send.py': ('tests/fixtures/core_01d/fresh_holdout_20261014/share-prerequisite-predecessor.py.txt',
+                                                     '35617b52e020e9350b6de422dfd74171243990c6',
+                                                     'eb2e8dbc6fcb464ab1dead01c0db3096ed85db0110e96e8c0c23a2f69d9d7974'),
+ 'tests/test_core_01d_exact_pr_trigger_disposition_b1.py': ('tests/fixtures/core_01d/fresh_holdout_20261014/b1-tests-predecessor.py.txt',
+                                                            '36f784e7902f9f2317da5bcf9a95e2c90a206f56',
+                                                            '9b68157609e03eb3ca0bf2e0a29729a23998ff0f1a3c8f9f35921773b91e4705')}
+
+
+def historical_prerequisite_source_bytes(path, *, latest=None):
+    """Five exact audit/test predecessors; never runtime execution authority."""
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    if path not in RETAINED_AUDIT_PREDECESSORS or ROOT != review.ROOT or ROOT != a2.ROOT:
+        raise AssertionError("unclassified retained prerequisite source/root")
+    latest = a2.authenticate_inventory() if latest is None else latest
+    retained = a2.read_generation(a2.inventory_generation_path(RETAINED_GENERATION))
+    if retained["canonical_sha256"] != RETAINED_INVENTORY_SHA:
+        raise AssertionError("retained prerequisite A2 identity drift")
+    fixture, blob, digest = RETAINED_AUDIT_PREDECESSORS[path]
+    for logical in (path, fixture):
+        candidate = ROOT / logical
+        if not candidate.is_file() or any(p.is_symlink() for p in (candidate, *candidate.parents)):
+            raise AssertionError("retained prerequisite requires regular source/fixture")
+    live = review._tracked_payloads(((path, (ROOT / path).read_bytes()),))[path]
+    current = {r["path"]:r["lf_source_sha256"] for r in latest["source_identities"]}
+    if hashlib.sha256(live.replace(b"\r\n", b"\n")).hexdigest() != current.get(path):
+        raise AssertionError("current prerequisite source differs from authenticated A2")
+    review._tracked_payloads(((fixture, (ROOT / fixture).read_bytes()),))
+    raw = (ROOT / fixture).read_bytes().replace(b"\r\n", b"\n")
+    retained_sources = {r["path"]:r["lf_source_sha256"] for r in retained["source_identities"]}
+    if (hashlib.sha256(raw).hexdigest() != digest or retained_sources.get(path) != digest
+            or hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() != blob):
+        raise AssertionError("retained prerequisite predecessor fixture drift")
+    return raw
+
+
 def historical_transport_bytes(path, *, root=None):
     """Exact historical audit evidence; this grants no live execution authority."""
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
@@ -80,7 +128,7 @@ def seal(value):
     return value
 
 
-def build_receipt(source_head):
+def build_receipt(source_head, *, retained=False):
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     from domain import current_shadow_sportybet_pc_upcoming_reconciliation as policy
     latest = a2.authenticate_inventory()
@@ -101,17 +149,24 @@ def build_receipt(source_head):
         digest = hashlib.sha256((ROOT / path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
         if current.get(path) != digest:
             raise AssertionError("source differs from authenticated A2: " + path)
+        if retained and path in RETAINED_AUDIT_PREDECESSORS:
+            digest = hashlib.sha256(historical_prerequisite_source_bytes(path, latest=latest)).hexdigest()
         identities[path] = digest
     if (type(source_head) is not str or len(source_head) != 40
             or any(c not in "0123456789abcdef" for c in source_head)):
         raise AssertionError("invalid source commit identity")
+    evidence_inventory = latest
+    if retained:
+        evidence_inventory = a2.read_generation(a2.inventory_generation_path(RETAINED_GENERATION))
+        if evidence_inventory["canonical_sha256"] != RETAINED_INVENTORY_SHA:
+            raise AssertionError("retained prerequisite inventory changed")
     return seal({
         "schema_version": 1, "policy_id": "ATHENA_RUN_02A_PRE_DURABLE_SHARE_SEND_V1",
         "base_main": BASE, "source_head": source_head,
         "final_head_binding": "PR_AND_NATURAL_HOSTED_EXACT_HEAD_ATTESTATION_WITH_EXACT_SOURCE_HASHES",
         "source_identities": identities,
         "document_lf_sha256": hashlib.sha256((ROOT / "docs/product/run_02a_pre_durable_share_send.md").read_bytes().replace(b"\r\n", b"\n")).hexdigest(),
-        "a2": {"generation": latest["generation"], "canonical_sha256": latest["canonical_sha256"],
+        "a2": {"generation": evidence_inventory["generation"], "canonical_sha256": evidence_inventory["canonical_sha256"],
                "immutable_predecessor_generation": 142, "immutable_predecessor_canonical_sha256": V142_SHA,
                "predecessor_rewritten": False},
         "history": HISTORY,
@@ -142,7 +197,8 @@ def build_receipt(source_head):
 def audit():
     raw = (ROOT / RECEIPT_PATH).read_bytes()
     value = json.loads(raw)
-    if raw != canonical(value) or value != build_receipt(value["source_head"]):
+    if (raw != canonical(value) or value.get("canonical_sha256") != RETAINED_RECEIPT_SHA
+            or value != build_receipt(value["source_head"], retained=True)):
         raise AssertionError("prerequisite source/evidence drift")
     return {"result": "PASS", "canonical_sha256": value["canonical_sha256"],
             "a2_generation": value["a2"]["generation"], "review_ready": False}
@@ -153,8 +209,7 @@ def main():
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
     if args.write:
-        head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT).decode().strip()
-        (ROOT / RECEIPT_PATH).write_bytes(canonical(build_receipt(head)))
+        raise SystemExit("retained PR #459 receipt is immutable; reviewed successor evidence is required")
     print(json.dumps(audit(), sort_keys=True))
 
 
