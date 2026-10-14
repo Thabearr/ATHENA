@@ -130,6 +130,9 @@ RUN_02A_PRE_PREDECESSOR_BLOBS={
  'runtime/worker_entry.py':'77d8888a4b007f9bb0967409a23e826f97338c90',
  'scripts/sportybet_direct_share_bridge.py':'681ce2a043a334dcb8523c81d092369d6540e6d5',
 }
+PR459_HISTORICAL_SOURCE_FORWARD_PATHS={
+ 'tests/fixtures/core_01d/pr459_live_trigger_incident/p4-3-workflow-retirement-ledger-predecessor.py.txt',
+}
 
 APP01C_NEW_PATHS={
  'api/v1/common.py','api/v1/exports.py','api/v1/fixtures.py','api/v1/runs.py',
@@ -152,6 +155,9 @@ PASS_A_HISTORICAL_BLOBS={
  'domain/execution_envelope.py':'8f0a84db708fef11fabb857b21b1322cb5b5a36e',
  'scripts/audit_core_01_schedule_date_disposition.py':'6f8d453cee00a13865c984b9a80880678b4fd84c',
  'tests/test_core_01_schedule_date_disposition.py':'f658773457d6a46bbd25f6b2a5636fff019b0043',
+ # Preserve the exact P4.3 source reviewed before PR #461's narrow historical
+ # resolver change. The live resolver itself is authenticated by current A2.
+ 'scripts/audit_p4_3_workflow_retirement_ledger.py':'77927732b2abc2b13f20a4979ad7092307873900',
 }
 B1_ADDITIVE_EVIDENCE_PATHS={
  'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v3.json',
@@ -224,7 +230,7 @@ def a2_historical_projection(raw):
  # part of the immutable Pass-A historical tree. Discover their contiguous
  # chain from V3 onward after authenticate_inventory has verified it.
  successor_inventory_paths=current_successor_inventory_paths(a2)
- new_paths=(a2.A2_PATHS-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|successor_inventory_paths|B1_ADDITIVE_EVIDENCE_PATHS|APP01B_ADDITIVE_PATHS|APP01C_NEW_PATHS|INCIDENT_20261010_NEW_PATHS|RUN_01B_ADDITIVE_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS
+ new_paths=(a2.A2_PATHS-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|successor_inventory_paths|B1_ADDITIVE_EVIDENCE_PATHS|APP01B_ADDITIVE_PATHS|APP01C_NEW_PATHS|INCIDENT_20261010_NEW_PATHS|RUN_01B_ADDITIVE_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS
  for path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
   review.source_bytes(path)
  rows=[]
@@ -250,7 +256,7 @@ def authenticate_current_scope():
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  generation_additions=a2_generation_additions(a2)
  successor_inventory_paths=current_successor_inventory_paths(a2)
- allowed=ALLOWED_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|successor_inventory_paths|app_successor_paths()|INCIDENT_20261010_CURRENT_PATHS|RUN_01B_ADDITIVE_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|set(RUN_02A_PRE_PREDECESSOR_BLOBS)|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS|set(v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS)
+ allowed=ALLOWED_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|successor_inventory_paths|app_successor_paths()|INCIDENT_20261010_CURRENT_PATHS|RUN_01B_ADDITIVE_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|set(RUN_02A_PRE_PREDECESSOR_BLOBS)|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS|set(v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS)
  git=review.retention.v4.v3._git
  review.require(review.sha256(unchanged_inventory(a2_historical_projection(git('ls-tree','-r','HEAD'))))==UNCHANGED_SCOPE_SHA,'Pass-A runtime/workflow/ledger/historical source change outside bounded evidence scope')
  review.require(set(git('diff','--name-only','HEAD').decode().splitlines())<=allowed,'unapproved dirty source in Pass A or its exact A2-generation/evidence seam')
@@ -278,7 +284,7 @@ def historical_v1_git_view():
   if args==('diff','--name-only','HEAD'):
    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
    generation_additions=a2_generation_additions(a2)
-   return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|app_successor_paths()|INCIDENT_20261010_CURRENT_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|set(RUN_02A_PRE_PREDECESSOR_BLOBS)|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS|set(v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS))
+   return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|app_successor_paths()|INCIDENT_20261010_CURRENT_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|set(RUN_02A_PRE_PREDECESSOR_BLOBS)|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS|set(v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS))
   return raw
  original_identity=module._source_identity
  def projected_identity(path,**kwargs):
