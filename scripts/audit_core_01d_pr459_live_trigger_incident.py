@@ -25,9 +25,9 @@ PR459_REVIEWED_HEAD = "c96c74a319d79d2cbc4ed3f8ee2aab9f1b0bd47e"
 PR459_MERGE_SHA = "7c787130e2662e34813a61422b865046fae52ebd"
 MISSION_A2_BASE_GENERATION = 167
 MISSION_A2_BASE_SHA = "c8a9e9123811104f625b13692b74beee0b16eba619bde6e03f5e74eda0fecb3a"
-IMMEDIATE_A2_PREDECESSOR_GENERATION = 179
-IMMEDIATE_A2_PREDECESSOR_SHA = "b38e51a207e843be8cf014ba7b53c2992b7305c694b287574b41212d098b9f92"
-FINAL_A2_GENERATION = 180
+IMMEDIATE_A2_PREDECESSOR_GENERATION = 180
+IMMEDIATE_A2_PREDECESSOR_SHA = "93cccbf743fc805e2cd75635ca0d970b24f958ffd3655266ecf9f719ad4d7f06"
+FINAL_A2_GENERATION = 181
 B4_RECEIPT_SHA = "915e41796a419c2b360935ee3f21b293f233b6a356329694d0a3e9cd0fecb1fe"
 B4_INVENTORY_SHA = "01c826a6e7e50e2a7f7b7a5ace946e0c8cdb72f58a6eb170b9d44ee5c1565f6a"
 PR_TITLE = "[CORE-01D][CI Safety] Keep direct share-code proofs offline on PRs"
@@ -178,7 +178,7 @@ def _validate_workflow(path: str) -> dict[str, Any]:
         "Checkout repository without persisted credentials",
         "Enforce offline-only manual mode",
         "Set up Python 3.12",
-        "Install focused offline test dependencies",
+        "Install repository dependencies for offline source audit",
         ("Run focused offline boundary tests" if path == CREATE_WORKFLOW
          else "Run historical trigger-projection regressions"),
         "Audit both direct-share workflow surfaces",
@@ -198,10 +198,21 @@ def _validate_workflow(path: str) -> dict[str, Any]:
              and "exit 1" in guard_source,
              "non-offline manual dispatch does not fail closed: " + path)
     _require(python.get("uses") == "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
-             and python.get("with", {}).get("python-version") == "3.12",
+             and python.get("with") == {
+                 "python-version": "3.12", "cache": "pip",
+                 "cache-dependency-path": "requirements.txt",
+             },
              "offline workflow Python runtime drift: " + path)
-    _require("pytest" in install.get("run", "") and "PyYAML" in install.get("run", ""),
-             "focused offline workflow omits the conftest YAML dependency: " + path)
+    _require(install.get("run") ==
+             "python -m pip install --disable-pip-version-check -r requirements.txt",
+             "offline source audit dependencies are not installed from requirements.txt: " + path)
+    declared_dependencies = {
+        line.strip().split("=", 1)[0].strip().casefold()
+        for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    _require({"pytest", "pyyaml", "numpy"}.issubset(declared_dependencies),
+             "requirements.txt omits dependencies used by offline tests/source audit")
     _require("python -m pytest -q" in test.get("run", ""),
              "offline workflow does not run focused deterministic tests: " + path)
     if path == CREATE_WORKFLOW:
@@ -250,7 +261,7 @@ def build_receipt() -> dict[str, Any]:
              "V167 predecessor changed or was rewritten")
     _require(immediate_predecessor["generation"] == IMMEDIATE_A2_PREDECESSOR_GENERATION
              and immediate_predecessor["canonical_sha256"] == IMMEDIATE_A2_PREDECESSOR_SHA,
-             "immediate V179 predecessor was rewritten")
+             "immediate V180 predecessor was rewritten")
 
     _, expected_d5_tree = d5.authenticate_workflow()
     current_workflow_tree = _git("rev-parse", "HEAD:.github/workflows")
