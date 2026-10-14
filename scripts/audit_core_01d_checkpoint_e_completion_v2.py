@@ -131,8 +131,16 @@ RUN_02A_PRE_PREDECESSOR_BLOBS={
  'scripts/sportybet_direct_share_bridge.py':'681ce2a043a334dcb8523c81d092369d6540e6d5',
 }
 PR459_HISTORICAL_SOURCE_FORWARD_PATHS={
+ 'docs/architecture/core_01d_pr459_live_trigger_incident.md',
+ 'tests/fixtures/core_01d/pr459_live_trigger_incident/create-direct-share-workflow-b4-predecessor.yml.txt',
  'tests/fixtures/core_01d/pr459_live_trigger_incident/p4-3-workflow-retirement-ledger-predecessor.py.txt',
  'tests/fixtures/core_01d/pr459_live_trigger_incident/run-02a-pre-base.py.txt',
+ 'tests/fixtures/core_01d/pr459_live_trigger_incident/prove-direct-share-workflow-b4-predecessor.yml.txt',
+ 'tests/fixtures/core_01d/pr459_live_trigger_incident_v1.json',
+ 'tests/fixtures/core_01d/run_01a_historical/pr461/audit-data-01b-durable-run-state-predecessor.py.txt',
+ 'tests/fixtures/core_01d/run_01a_historical/pr461/audit-data-01c-restore-portability-predecessor.py.txt',
+ 'tests/fixtures/core_01d/run_02a_pre_historical/app-store-complete-v154.py.txt',
+ 'tests/fixtures/core_01d/run_02a_pre_historical/b4-trigger-authority-predecessor.py.txt',
 }
 
 APP01C_NEW_PATHS={
