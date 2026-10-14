@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from scripts import audit_core_01d_pr459_live_trigger_incident as incident
+from scripts import audit_app_01a_local_shell as app_history
 from scripts import audit_core_01d_checkpoint_e_completion_v2 as pass_a_v2
 from scripts import audit_core_01d_ci_offline_transport_boundary as a2
 from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
@@ -50,6 +51,15 @@ def test_a2_successor_workflows_keep_their_immutable_pass_a_blob_pins():
     assert pass_a_v2.pass_a_nonhistorical_a2_generation_paths(a2, paths) == set()
     for path in paths:
         assert pass_a_v2.PASS_A_HISTORICAL_BLOBS[path] == b4.SOURCE_PINS[path][0]
+
+
+def test_pass_a_projection_does_not_override_authenticated_app_predecessors():
+    app_sources = {
+        "scripts/audit_checkpoint_e_workflows.py",
+        "scripts/audit_core_01d_checkpoint_e_completion_v2.py",
+    }
+    assert app_sources <= set(app_history.PATHS)
+    assert not (app_sources & set(pass_a_v2.PASS_A_HISTORICAL_BLOBS))
 
 
 def test_tampered_b4_predecessor_fixture_fails(monkeypatch):

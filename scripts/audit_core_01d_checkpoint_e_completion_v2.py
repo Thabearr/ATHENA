@@ -173,12 +173,8 @@ PASS_A_HISTORICAL_BLOBS={
  # while their PR #461 current successors remain independently A2-authenticated.
  'scripts/audit_p4_workflow_evolution_ledger.py':'bab8af0400f1065bdba00168d1a19c50b3976b5f',
  'tests/test_core_01d_historical_retention_acceptance.py':'9ac2d450e29c0faf5fd471f06f3f1ae0dfdaa51d',
- 'scripts/audit_checkpoint_e_workflows.py':'b7976ec440af6ca1aca29fe4e53bf61cc6419cf7',
  'tests/test_core_01d_canonical_drive_transfer_completed_history.py':'facfa6cd0932972d729215b8121942661a75cc54',
  'tests/test_p4_3d_retirement_audit_extensibility.py':'5e7de20231b2455f15fdc20c4fd21e1720714f64',
- # This Pass-A auditor is itself in the retained source tree; preserve its
- # exact PR-base blob while the current source-forward remains A2-authenticated.
- 'scripts/audit_core_01d_checkpoint_e_completion_v2.py':'a6999c46e5bb882c4b5c07332619bade643d16ca',
  # PR #461 adds these already-existing Pass-A workflow files to A2's current
  # source inventory. Preserve their exact pre-PR blobs in the immutable Pass-A
  # projection while A2 independently authenticates their current successors.
@@ -257,6 +253,8 @@ def a2_historical_projection(raw):
  latest=a2.authenticate_inventory()
  preserved_a2_successors=pass_a_preserved_a2_successor_paths(a2)
  from scripts import audit_app_01a_local_shell as app
+ review.require(not (set(PASS_A_HISTORICAL_BLOBS) & set(app.PATHS)),
+                'Pass-A blob override must not supersede authenticated APP predecessor projection')
  raw=app.historical_tree_projection(raw)
  # The immutable Pass-A projection predates the generic A2 inventory
  # generation chain. Exclude only Python sources first admitted after V2;
