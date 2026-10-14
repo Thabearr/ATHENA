@@ -289,7 +289,13 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
     projected = completion_v2.a2_historical_projection(original_tree)
     projected_paths = {line.split(b"\t", 1)[1].strip().decode()
                        for line in projected.splitlines() if b"\t" in line}
-    assert added.isdisjoint(projected_paths)
+    preserved_successors = completion_v2.pass_a_preserved_a2_successor_paths(boundary)
+    assert preserved_successors == {
+        ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml",
+        ".github/workflows/prove-sportybet-direct-share-code.yml",
+    }
+    assert added & projected_paths == preserved_successors
+    assert (added - preserved_successors).isdisjoint(projected_paths)
     assert completion_v2.B1_ADDITIVE_EVIDENCE_PATHS.isdisjoint(projected_paths)
     assert ".github/workflows/athena-run.yml" in projected_paths
 

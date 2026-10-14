@@ -751,13 +751,31 @@ def _authenticate_pr119_release_only_workflow_forward(current, before):
         [row["path"] for row in supporting] == list(retained_status_v2.SUPPORTING_SOURCE_PATHS),
         "Pass-1 supporting source inventory path set drift",
     )
+    historical_supporting_predecessors = (
+        retained_status_v2.HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS
+    )
     for row in supporting:
-        observed_support = current.get(row["path"])
-        require(
-            observed_support is not None
-            and observed_support["git_blob_sha1"] == row["git_blob_sha1"],
-            "Pass-1 supporting source differs from its V2 authenticated identity: " + row["path"],
-        )
+        path = row["path"]
+        observed_support = current.get(path)
+        predecessor = historical_supporting_predecessors.get(path)
+        if predecessor is not None:
+            # Status V2 authenticates the current source through A2, then
+            # authenticates this exact retained predecessor fixture. Keep the
+            # Pass-1 projection on that predecessor instead of comparing it
+            # with the intentionally changed current source bytes.
+            require(
+                observed_support is not None
+                and observed_support["mode"] == "100644"
+                and row["git_blob_sha1"] == predecessor["git_blob_sha1"]
+                and row["source_sha256"] == predecessor["source_sha256"],
+                "Pass-1 supporting predecessor differs from its V2 authenticated identity: " + path,
+            )
+        else:
+            require(
+                observed_support is not None
+                and observed_support["git_blob_sha1"] == row["git_blob_sha1"],
+                "Pass-1 supporting source differs from its V2 authenticated identity: " + path,
+            )
     return {
         "workflow_blob": transition["after"]["git_blob_sha1"],
         "supporting_source_blobs": {
@@ -794,13 +812,28 @@ def base_input():
                 "fresh-holdout workflow differs from its transition-14 identity",
             )
         elif path in supporting_source_blobs:
-            require(
-                current.get(path) == {
-                    "mode": identity["mode"],
-                    "git_blob_sha1": supporting_source_blobs[path],
-                },
-                "Pass-1 supporting source differs from its V2 authenticated identity: " + path,
-            )
+            from scripts import audit_core_01d_retained_workflow_status_v2 as retained_status_v2
+            predecessor = retained_status_v2.HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS.get(path)
+            expected_support = {
+                "mode": identity["mode"],
+                "git_blob_sha1": supporting_source_blobs[path],
+            }
+            if predecessor is not None:
+                # The source was edited after Pass-1. Its current bytes were
+                # authenticated by Status V2 against A2 above; this immutable
+                # base row must continue to match the separately retained
+                # predecessor identity.
+                require(
+                    identity == expected_support
+                    and current.get(path) is not None
+                    and current[path]["mode"] == identity["mode"],
+                    "Pass-1 supporting predecessor differs from its V2 authenticated identity: " + path,
+                )
+            else:
+                require(
+                    current.get(path) == expected_support,
+                    "Pass-1 supporting source differs from its V2 authenticated identity: " + path,
+                )
         elif path in PASS_A_HISTORICAL_SOURCE_FIXTURES:
             require(
                 identity == {
@@ -848,6 +881,11 @@ def base_input():
         if path in identities() or path in d5.snapshot()["sources"]:
             inspected = read(path)
             actual = hashlib.sha1(b"blob " + str(len(inspected)).encode() + b"\0" + inspected).hexdigest()
+        from scripts import audit_core_01d_retained_workflow_status_v2 as retained_status_v2
+        if path in supporting_source_blobs and path in retained_status_v2.HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS:
+            # _authenticate_pr119_release_only_workflow_forward verified both
+            # the current A2 identity and the exact retained predecessor blob.
+            actual = supporting_source_blobs[path]
         expected_blob = (
             audit_after if path == HISTORICAL_AUDIT
             else fresh_workflow_after_blob if path == fresh_workflow_path and fresh_workflow_after_blob
