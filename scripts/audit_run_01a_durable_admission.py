@@ -31,6 +31,8 @@ FORWARD_EVOLVED_SOURCE_PATHS = frozenset({
     "scripts/audit_run_01a_durable_admission.py",
     "services/athena_job_service.py",
     "database/run_repository.py",
+    "scripts/audit_data_01b_durable_run_state.py",
+    "scripts/audit_data_01c_restore_portability.py",
 })
 FORWARD_EVOLVED_SOURCES = {
     "scripts/audit_checkpoint_e_workflows.py": {

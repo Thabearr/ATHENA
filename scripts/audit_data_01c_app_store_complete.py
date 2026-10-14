@@ -357,6 +357,7 @@ def audit(latest=None):
         evolved |= {"scripts/audit_core_01d_ci_offline_transport_boundary.py",
                     "scripts/audit_core_01d_retained_workflow_status_v2.py",
                     "scripts/audit_p4_workflow_evolution_ledger.py",
+                    "scripts/audit_run_01a_durable_admission.py",
                     "sitecustomize.py",
                     "tests/test_data_01c_app_storage.py"}
         inventory = boundary.authenticate_inventory()
