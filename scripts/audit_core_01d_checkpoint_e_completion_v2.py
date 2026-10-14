@@ -246,10 +246,16 @@ def pass_a_preserved_a2_successor_paths(a2):
                 'A2 successor workflow is missing its immutable Pass-A blob pin')
  return paths
 
+def pass_a_nonhistorical_a2_generation_paths(a2,generation_additions):
+ # A2 successor workflows are additions to the A2 chain but not new Pass-A
+ # paths: their predecessor bytes were already part of the immutable tree.
+ return set(generation_additions)-pass_a_preserved_a2_successor_paths(a2)
+
 def a2_historical_projection(raw):
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  # Authenticate all current caller/guard source before using a historical view.
  latest=a2.authenticate_inventory()
+ preserved_a2_successors=pass_a_preserved_a2_successor_paths(a2)
  from scripts import audit_app_01a_local_shell as app
  raw=app.historical_tree_projection(raw)
  # The immutable Pass-A projection predates the generic A2 inventory
@@ -259,12 +265,12 @@ def a2_historical_projection(raw):
  predecessor=a2.read_generation(a2.inventory_generation_path(2))
  predecessor_paths={row['path'] for row in predecessor['source_identities']}
  latest_paths={row['path'] for row in latest['source_identities']}
- generation_additions=latest_paths-predecessor_paths
+ generation_additions=pass_a_nonhistorical_a2_generation_paths(
+  a2,latest_paths-predecessor_paths)
  # Authenticated A2 successor inventory documents are additive evidence, not
  # part of the immutable Pass-A historical tree. Discover their contiguous
  # chain from V3 onward after authenticate_inventory has verified it.
  successor_inventory_paths=current_successor_inventory_paths(a2)
- preserved_a2_successors=pass_a_preserved_a2_successor_paths(a2)
  new_paths=(a2.A2_PATHS-preserved_a2_successors-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|successor_inventory_paths|B1_ADDITIVE_EVIDENCE_PATHS|APP01B_ADDITIVE_PATHS|APP01C_NEW_PATHS|INCIDENT_20261010_NEW_PATHS|RUN_01B_ADDITIVE_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS
  for path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
   review.source_bytes(path)

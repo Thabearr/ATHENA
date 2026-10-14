@@ -47,6 +47,7 @@ def test_a2_successor_workflows_keep_their_immutable_pass_a_blob_pins():
     assert paths == set(b4.B4_WORKFLOW_PREDECESSORS)
     assert paths <= a2.A2_PATHS
     assert pass_a_v2.pass_a_preserved_a2_successor_paths(a2) == paths
+    assert pass_a_v2.pass_a_nonhistorical_a2_generation_paths(a2, paths) == set()
     for path in paths:
         assert pass_a_v2.PASS_A_HISTORICAL_BLOBS[path] == b4.SOURCE_PINS[path][0]
 
