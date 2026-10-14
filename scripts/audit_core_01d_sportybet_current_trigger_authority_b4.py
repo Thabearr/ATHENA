@@ -375,7 +375,9 @@ def _validate_source_semantics() -> None:
         triggers = workflow.get("on", {})
         require(set(triggers) == expected_triggers[path], f"trigger sibling set drift: {path}")
         require(workflow.get("permissions", {}).get("contents") == "read", f"contents permission drift: {path}")
-        raw = (ROOT / path).read_text(encoding="utf-8")
+        raw = (_historical_b4_workflow_bytes(path).decode("utf-8")
+               if path in B4_WORKFLOW_PREDECESSORS
+               else (ROOT / path).read_text(encoding="utf-8"))
         require("secrets." not in raw, f"B4 workflow acquired secrets.*: {path}")
         require("${{ github.token }}" not in raw and "${{ secrets." not in raw,
                 f"B4 workflow acquired an explicit GitHub or external credential binding: {path}")
