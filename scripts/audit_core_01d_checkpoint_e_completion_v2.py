@@ -164,14 +164,12 @@ PASS_A_HISTORICAL_BLOBS={
  'domain/execution_envelope.py':'8f0a84db708fef11fabb857b21b1322cb5b5a36e',
  'scripts/audit_core_01_schedule_date_disposition.py':'6f8d453cee00a13865c984b9a80880678b4fd84c',
  'tests/test_core_01_schedule_date_disposition.py':'f658773457d6a46bbd25f6b2a5636fff019b0043',
- # Preserve the exact P4.3 and retained-status V2 sources reviewed before PR
- # #461's narrow historical resolver change. Their live bytes are authenticated
- # by current A2 and their current focused audits.
+ # Preserve the exact P4.3 source reviewed before PR #461's narrow resolver
+ # change. Current bytes remain authenticated by A2 and the focused audit.
  'scripts/audit_p4_3_workflow_retirement_ledger.py':'77927732b2abc2b13f20a4979ad7092307873900',
- 'scripts/audit_core_01d_retained_workflow_status_v2.py':'53e49b94d7587cab38144d441d8459829bac69bb',
- # Preserve the exact main-base P4 resolver and historical-retention test blobs
- # while their PR #461 current successors remain independently A2-authenticated.
- 'scripts/audit_p4_workflow_evolution_ledger.py':'bab8af0400f1065bdba00168d1a19c50b3976b5f',
+ # P4 evolution and retained-status source predecessors are projected from
+ # the authenticated D5 source snapshot / A2 fixture below; do not replace
+ # those earlier identities with their later main-base blobs.
  'tests/test_core_01d_historical_retention_acceptance.py':'9ac2d450e29c0faf5fd471f06f3f1ae0dfdaa51d',
  'tests/test_core_01d_canonical_drive_transfer_completed_history.py':'facfa6cd0932972d729215b8121942661a75cc54',
  'tests/test_p4_3d_retirement_audit_extensibility.py':'5e7de20231b2455f15fdc20c4fd21e1720714f64',
@@ -253,8 +251,12 @@ def a2_historical_projection(raw):
  latest=a2.authenticate_inventory()
  preserved_a2_successors=pass_a_preserved_a2_successor_paths(a2)
  from scripts import audit_app_01a_local_shell as app
+ from scripts import audit_data_01c_restore_portability as d5
  review.require(not (set(PASS_A_HISTORICAL_BLOBS) & set(app.PATHS)),
                 'Pass-A blob override must not supersede authenticated APP predecessor projection')
+ d5_predecessor_paths=set(d5.snapshot()['sources'])|set(d5.HISTORICAL_A2_SOURCE_FIXTURES)
+ review.require(not (set(PASS_A_HISTORICAL_BLOBS)&d5_predecessor_paths),
+                'Pass-A blob override must not supersede authenticated D5/A2 predecessor projection')
  raw=app.historical_tree_projection(raw)
  # The immutable Pass-A projection predates the generic A2 inventory
  # generation chain. Exclude only Python sources first admitted after V2;

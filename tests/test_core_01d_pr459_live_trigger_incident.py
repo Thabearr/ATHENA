@@ -10,6 +10,7 @@ from scripts import audit_app_01a_local_shell as app_history
 from scripts import audit_core_01d_checkpoint_e_completion_v2 as pass_a_v2
 from scripts import audit_core_01d_ci_offline_transport_boundary as a2
 from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+from scripts import audit_data_01c_restore_portability as d5
 from scripts import audit_p4_workflow_evolution_ledger as evolution
 
 
@@ -53,13 +54,25 @@ def test_a2_successor_workflows_keep_their_immutable_pass_a_blob_pins():
         assert pass_a_v2.PASS_A_HISTORICAL_BLOBS[path] == b4.SOURCE_PINS[path][0]
 
 
-def test_pass_a_projection_does_not_override_authenticated_app_predecessors():
+def test_pass_a_projection_does_not_override_authenticated_predecessors():
     app_sources = {
         "scripts/audit_checkpoint_e_workflows.py",
         "scripts/audit_core_01d_checkpoint_e_completion_v2.py",
     }
     assert app_sources <= set(app_history.PATHS)
     assert not (app_sources & set(pass_a_v2.PASS_A_HISTORICAL_BLOBS))
+
+    # These two rows already have stronger immutable predecessor owners. The
+    # first is in D5's sealed source snapshot; the second is in both D5 and
+    # the exact A2 V1 source fixture. Later main-source blobs cannot replace
+    # those historic identities in the Pass-A projection.
+    retained_status = "scripts/audit_core_01d_retained_workflow_status_v2.py"
+    p4_evolution = "scripts/audit_p4_workflow_evolution_ledger.py"
+    d5_sources = d5.snapshot()["sources"]
+    assert d5_sources[retained_status]["git_blob_sha1"] == "26968a425f642910991332dba87519add8a0cc19"
+    assert d5_sources[p4_evolution]["git_blob_sha1"] == "fdd2932200ed4467dca902fabe01dab76d5fe451"
+    assert not ({retained_status, p4_evolution} & set(pass_a_v2.PASS_A_HISTORICAL_BLOBS))
+    assert p4_evolution in d5.HISTORICAL_A2_SOURCE_FIXTURES
 
 
 def test_tampered_b4_predecessor_fixture_fails(monkeypatch):
