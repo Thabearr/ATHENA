@@ -346,6 +346,11 @@ def audit(latest=None):
         # source is authenticated below; historical receipt bytes stay frozen.
         evolved |= {"scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py",
                     "scripts/audit_core_01d_exact_pr_trigger_disposition_b1.py"}
+        # PR #461's two direct-share workflows retain their historical B4
+        # bytes in sealed fixtures while the current offline-only revisions
+        # are authenticated by the append-only A2 inventory and incident audit.
+        evolved |= {".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml",
+                    ".github/workflows/prove-sportybet-direct-share-code.yml"}
         inventory = boundary.authenticate_inventory()
         identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
         if (set(current) != set(frozen)

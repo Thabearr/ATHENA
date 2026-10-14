@@ -7,6 +7,7 @@ import pytest
 
 from scripts import audit_core_01d_pr459_live_trigger_incident as incident
 from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+from scripts import audit_p4_workflow_evolution_ledger as evolution
 
 
 def test_both_direct_share_workflows_are_offline_only():
@@ -22,6 +23,11 @@ def test_both_direct_share_workflows_are_offline_only():
             for step in workflow["jobs"]["offline-validation"]["steps"]
             for key in ("run", "uses")
         )
+
+
+def test_offline_workflow_successor_is_authenticated_by_current_evolution_projection():
+    ledger = evolution.validate_current_state()
+    assert evolution.current_workflow_tree_sha1(ledger) == evolution.PR459_OFFLINE_WORKFLOW_TREE_SHA1
 
 
 def test_b4_historical_workflow_identity_and_receipt_remain_unchanged():

@@ -145,7 +145,11 @@ def test_policy_build_is_offline_and_cannot_call_operational_commands(monkeypatc
     original = subprocess.run
     def git_read_only(command, *args, **kwargs):
         assert command[0] == "git"
-        assert command[1] in {"show", "rev-parse", "hash-object", "cat-file", "ls-tree", "diff", "log"}
+        index = 1
+        if command[1] == "-C":
+            assert command[2] == str(policy.ROOT)
+            index = 3
+        assert command[index] in {"show", "rev-parse", "hash-object", "cat-file", "ls-tree", "diff", "log"}
         return original(command, *args, **kwargs)
     monkeypatch.setattr(subprocess, "run", git_read_only)
     result = policy.build_receipt()

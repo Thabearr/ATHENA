@@ -67,7 +67,10 @@ RETAINED_AUDIT_PREDECESSORS = {'scripts/audit_checkpoint_e_workflows.py': ('test
                                                      'eb2e8dbc6fcb464ab1dead01c0db3096ed85db0110e96e8c0c23a2f69d9d7974'),
  'tests/test_core_01d_exact_pr_trigger_disposition_b1.py': ('tests/fixtures/core_01d/fresh_holdout_20261014/b1-tests-predecessor.py.txt',
                                                             '36f784e7902f9f2317da5bcf9a95e2c90a206f56',
-                                                            '9b68157609e03eb3ca0bf2e0a29729a23998ff0f1a3c8f9f35921773b91e4705')}
+                                                            '9b68157609e03eb3ca0bf2e0a29729a23998ff0f1a3c8f9f35921773b91e4705'),
+ 'scripts/audit_data_01c_app_store_complete.py': ('tests/fixtures/core_01d/run_02a_pre_historical/app-store-complete-v154.py.txt',
+                                                  'f8fc830dfd3ab9a487d8245d6bf545ff2408cacf',
+                                                  'c44aecd7405ba13d4f4156e400fe8de15cba89bfc4b4f4e48b0ad34833d3cffd')}
 
 
 def historical_prerequisite_source_bytes(path, *, latest=None):
