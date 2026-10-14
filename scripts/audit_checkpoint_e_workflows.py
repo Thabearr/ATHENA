@@ -169,6 +169,9 @@ PASS_A_HISTORICAL_SOURCE_BLOBS = {
     "run_desktop.py": "39c4cf8c780eb2831b637a69ff0648b6eb465874",
     "tests/test_api_error_handling.py": "a827e02b95779ca0478ffa74db34e41de1e04b42",
     "tests/test_product_baseline_v1.py": "2d552f49cf84462bd1b32e86eea2a96ee0570b64",
+    # The current regression source is A2-authenticated, while Checkpoint E
+    # continues to reconstruct this exact original Pass-A inventory blob.
+    "tests/test_p4_3d_retirement_audit_extensibility.py": "5e7de20231b2455f15fdc20c4fd21e1720714f64",
 }
 PASS_A_BASE_SOURCE_BLOBS = {
     "api/server.py": "21c9aa432aaccd8db041778a26365f12f6af80de",
@@ -176,15 +179,18 @@ PASS_A_BASE_SOURCE_BLOBS = {
     "tests/test_api_error_handling.py": "a827e02b95779ca0478ffa74db34e41de1e04b42",
     "tests/test_product_baseline_v1.py": "2d552f49cf84462bd1b32e86eea2a96ee0570b64",
 }
-# These exact Pass-A workflow blobs are also tracked as later A2 successors.
-# Their current PR-trigger guards are authenticated by A2; the immutable
-# Checkpoint-E base view must remain pinned to these original blobs.
+# These exact Pass-A base blobs are edited in the current PR and are also
+# tracked by A2. Their current source bytes are authenticated by A2; the
+# immutable Checkpoint-E base view remains pinned to these original blobs.
 PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS = {
     ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml": (
         "84fd86333c34e8b6e27afe7f9d6e0e1c4234e93c"
     ),
     ".github/workflows/prove-sportybet-direct-share-code.yml": (
         "18e5656c232102df141aaa614aca3d5d7575ec5b"
+    ),
+    "tests/test_p4_3d_retirement_audit_extensibility.py": (
+        "5e7de20231b2455f15fdc20c4fd21e1720714f64"
     ),
 }
 PASS_A_HISTORICAL_SOURCE_FIXTURES = {
@@ -901,8 +907,6 @@ def base_input():
         if path in INCIDENT_20261010_PREDECESSOR_BLOBS:
             _authenticate_incident_20261010_current_sources()
             actual = INCIDENT_20261010_PREDECESSOR_BLOBS[path]
-        if path in PASS_A_HISTORICAL_SOURCE_BLOBS:
-            actual = PASS_A_HISTORICAL_SOURCE_BLOBS[path]
         if path in a2.HISTORICAL_TEST_BLOBS:
             actual = a2.HISTORICAL_TEST_BLOBS[path]
         from scripts.core_01d_historical_source import identities
@@ -915,11 +919,21 @@ def base_input():
             # _authenticate_pr119_release_only_workflow_forward verified both
             # the current A2 identity and the exact retained predecessor blob.
             actual = supporting_source_blobs[path]
+        if path in PASS_A_HISTORICAL_SOURCE_BLOBS:
+            # Current bytes are independently authenticated by A2 above; this
+            # scan projects the separately pinned Pass-A historical identity.
+            actual = PASS_A_HISTORICAL_SOURCE_BLOBS[path]
+        if path in PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS:
+            # These current workflow/test successors are also authenticated
+            # by the complete latest A2 inventory above; preserve the exact
+            # immutable Pass-A base identity for this historical scan.
+            actual = PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS[path]
         expected_blob = (
             audit_after if path == HISTORICAL_AUDIT
             else fresh_workflow_after_blob if path == fresh_workflow_path and fresh_workflow_after_blob
             else supporting_source_blobs[path] if path in supporting_source_blobs
-            else PASS_A_HISTORICAL_SOURCE_BLOBS[path] if path in PASS_A_HISTORICAL_SOURCE_FIXTURES
+            else PASS_A_HISTORICAL_SOURCE_BLOBS[path] if path in PASS_A_HISTORICAL_SOURCE_BLOBS
+            else PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS[path] if path in PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS
             else INCIDENT_20261010_PREDECESSOR_BLOBS[path] if path in INCIDENT_20261010_PREDECESSOR_BLOBS
             else value["files"][path]["git_blob_sha1"]
         )
