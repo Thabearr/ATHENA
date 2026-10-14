@@ -15,6 +15,7 @@ from typing import Any
 
 import yaml
 
+from runtime.source_identity import read_tracked_head_blob
 from scripts.audit_data_01c_restore_portability import historical_workflow_tree
 
 from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
@@ -250,13 +251,16 @@ def _historical_b4_workflow_bytes(path: str) -> bytes:
     require(current_rows.get(path) == hashlib.sha256(current).hexdigest(),
             "current B4 successor workflow differs from latest A2: " + path)
 
-    raw = fixture_path.read_bytes()
-    normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     blob, digest = SOURCE_PINS[path]
-    observed_blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
-    require(observed_blob == blob and hashlib.sha256(normalized).hexdigest() == digest,
+    committed, fixture_identity = read_tracked_head_blob(ROOT, fixture)
+    normalized_committed = committed.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    normalized_worktree = fixture_path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    require(normalized_worktree == normalized_committed,
             "B4 workflow predecessor fixture identity mismatch: " + path)
-    return raw
+    require(fixture_identity.git_blob_sha1 == blob
+            and hashlib.sha256(normalized_committed).hexdigest() == digest,
+            "B4 workflow predecessor fixture identity mismatch: " + path)
+    return committed
 
 
 def project_b4_workflow_tree(observed_tree: str) -> str:

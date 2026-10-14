@@ -37,6 +37,21 @@ def test_source_identity_tolerates_checkout_eol_conversion_without_weakening_git
     assert observed["normalized_source_sha256"] == expected_sha
 
 
+def test_historical_workflow_fixture_tolerates_checkout_eol_conversion(monkeypatch):
+    path = b4.TARGETS[0][0]
+    fixture = b4.ROOT / b4.B4_WORKFLOW_PREDECESSORS[path]
+    original = Path.read_bytes
+
+    def crlf_view(candidate):
+        raw = original(candidate)
+        if Path(candidate) == fixture:
+            return raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        return raw
+
+    monkeypatch.setattr(Path, "read_bytes", crlf_view)
+    assert b4._historical_b4_workflow_bytes(path) == original(fixture)
+
+
 def test_exact_nine_surface_scope_and_completion_v6_inheritance(receipt):
     keys = [(row["identity"]["workflow_path"], row["identity"]["trigger_kind"])
             for row in receipt["review_rows"]]

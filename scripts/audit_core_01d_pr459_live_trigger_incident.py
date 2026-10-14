@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shlex
 import subprocess
 from typing import Any
 
@@ -24,9 +25,9 @@ PR459_REVIEWED_HEAD = "c96c74a319d79d2cbc4ed3f8ee2aab9f1b0bd47e"
 PR459_MERGE_SHA = "7c787130e2662e34813a61422b865046fae52ebd"
 MISSION_A2_BASE_GENERATION = 167
 MISSION_A2_BASE_SHA = "c8a9e9123811104f625b13692b74beee0b16eba619bde6e03f5e74eda0fecb3a"
-IMMEDIATE_A2_PREDECESSOR_GENERATION = 176
-IMMEDIATE_A2_PREDECESSOR_SHA = "dc5fde9b35cf308570d4446458a9eb87a5a70cca9f282df3ca42713cb94f0280"
-FINAL_A2_GENERATION = 177
+IMMEDIATE_A2_PREDECESSOR_GENERATION = 178
+IMMEDIATE_A2_PREDECESSOR_SHA = "0c4463ea37f5d031b7d235384909e7ae5977924386b78ebcdae5cd94f0d1483e"
+FINAL_A2_GENERATION = 179
 B4_RECEIPT_SHA = "915e41796a419c2b360935ee3f21b293f233b6a356329694d0a3e9cd0fecb1fe"
 B4_INVENTORY_SHA = "01c826a6e7e50e2a7f7b7a5ace946e0c8cdb72f58a6eb170b9d44ee5c1565f6a"
 PR_TITLE = "[CORE-01D][CI Safety] Keep direct share-code proofs offline on PRs"
@@ -215,7 +216,7 @@ def _validate_workflow(path: str) -> dict[str, Any]:
             POLICY_TEST + "::test_tampered_b4_predecessor_fixture_fails",
             POLICY_TEST + "::test_current_workflow_tampering_cannot_hide_behind_b4_fixture",
         ]
-    _require(test.get("run", "").split() == expected_test_command,
+    _require(shlex.split(test.get("run", "")) == expected_test_command,
              "offline workflow test selection drift: " + path)
     _require(audit.get("run") == "python -m scripts.audit_core_01d_pr459_live_trigger_incident",
              "offline workflow omits the source-controlled authority audit: " + path)
