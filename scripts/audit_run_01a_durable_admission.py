@@ -57,6 +57,14 @@ FORWARD_EVOLVED_SOURCES = {
         "predecessor_lf_sha256": "b394a7013d3926f52af36223187eea8c44bb9b8424d21e6cfce6d5c0f6283e9f",
         "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr458/run-repository-predecessor.py.txt",
     },
+    "scripts/audit_data_01b_durable_run_state.py": {
+        "predecessor_lf_sha256": "06cd75cab23b13553b561821c5e761bdefbc3393ab38f92e03465c35736bd0ff",
+        "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr461/audit-data-01b-durable-run-state-predecessor.py.txt",
+    },
+    "scripts/audit_data_01c_restore_portability.py": {
+        "predecessor_lf_sha256": "5faf6540116e17e089382a296e16278e145da86aa0da682e02b22182d22f4728",
+        "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr461/audit-data-01c-restore-portability-predecessor.py.txt",
+    },
 }
 FORWARD_SUCCESSOR_PATHS = frozenset({
     "tests/fixtures/core_01d/run_01a_historical/pr457/audit-checkpoint-e-workflows-predecessor.py.txt",
@@ -65,6 +73,8 @@ FORWARD_SUCCESSOR_PATHS = frozenset({
     "tests/fixtures/core_01d/run_01a_historical/pr457/audit-run-01a-durable-admission-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr458/athena-job-service-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr458/run-repository-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr461/audit-data-01b-durable-run-state-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr461/audit-data-01c-restore-portability-predecessor.py.txt",
     "tests/test_run_01a_forward_successor_pr457.py",
 })
 

@@ -25,9 +25,9 @@ PR459_REVIEWED_HEAD = "c96c74a319d79d2cbc4ed3f8ee2aab9f1b0bd47e"
 PR459_MERGE_SHA = "7c787130e2662e34813a61422b865046fae52ebd"
 MISSION_A2_BASE_GENERATION = 167
 MISSION_A2_BASE_SHA = "c8a9e9123811104f625b13692b74beee0b16eba619bde6e03f5e74eda0fecb3a"
-IMMEDIATE_A2_PREDECESSOR_GENERATION = 183
-IMMEDIATE_A2_PREDECESSOR_SHA = "39a93a0aa90b0fd5e48ea37dce15d34d54108142e425c6664f04e555c9625aca"
-FINAL_A2_GENERATION = 184
+IMMEDIATE_A2_PREDECESSOR_GENERATION = 184
+IMMEDIATE_A2_PREDECESSOR_SHA = "763f717243e19986524b33bfe54fd66dcee83d59b04651cc53c68a6cd10229ae"
+FINAL_A2_GENERATION = 185
 B4_RECEIPT_SHA = "915e41796a419c2b360935ee3f21b293f233b6a356329694d0a3e9cd0fecb1fe"
 B4_INVENTORY_SHA = "01c826a6e7e50e2a7f7b7a5ace946e0c8cdb72f58a6eb170b9d44ee5c1565f6a"
 PR_TITLE = "[CORE-01D][CI Safety] Keep direct share-code proofs offline on PRs"
@@ -261,7 +261,7 @@ def build_receipt() -> dict[str, Any]:
              "V167 predecessor changed or was rewritten")
     _require(immediate_predecessor["generation"] == IMMEDIATE_A2_PREDECESSOR_GENERATION
              and immediate_predecessor["canonical_sha256"] == IMMEDIATE_A2_PREDECESSOR_SHA,
-             "immediate V183 predecessor was rewritten")
+             "immediate V184 predecessor was rewritten")
 
     _, expected_d5_tree = d5.authenticate_workflow()
     current_workflow_tree = _git("rev-parse", "HEAD:.github/workflows")

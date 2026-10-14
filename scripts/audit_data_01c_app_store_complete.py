@@ -355,6 +355,7 @@ def audit(latest=None):
         # The immutable D5 receipt remains byte-for-byte historical; current
         # identities for these exact sources are authenticated by A2 above.
         evolved |= {"scripts/audit_core_01d_ci_offline_transport_boundary.py",
+                    "scripts/audit_core_01d_retained_workflow_status_v2.py",
                     "scripts/audit_p4_workflow_evolution_ledger.py",
                     "sitecustomize.py",
                     "tests/test_data_01c_app_storage.py"}
