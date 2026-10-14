@@ -155,9 +155,11 @@ PASS_A_HISTORICAL_BLOBS={
  'domain/execution_envelope.py':'8f0a84db708fef11fabb857b21b1322cb5b5a36e',
  'scripts/audit_core_01_schedule_date_disposition.py':'6f8d453cee00a13865c984b9a80880678b4fd84c',
  'tests/test_core_01_schedule_date_disposition.py':'f658773457d6a46bbd25f6b2a5636fff019b0043',
- # Preserve the exact P4.3 source reviewed before PR #461's narrow historical
- # resolver change. The live resolver itself is authenticated by current A2.
+ # Preserve the exact P4.3 and retained-status V2 sources reviewed before PR
+ # #461's narrow historical resolver change. Their live bytes are authenticated
+ # by current A2 and their current focused audits.
  'scripts/audit_p4_3_workflow_retirement_ledger.py':'77927732b2abc2b13f20a4979ad7092307873900',
+ 'scripts/audit_core_01d_retained_workflow_status_v2.py':'53e49b94d7587cab38144d441d8459829bac69bb',
 }
 B1_ADDITIVE_EVIDENCE_PATHS={
  'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v3.json',
