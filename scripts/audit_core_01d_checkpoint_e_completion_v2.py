@@ -179,6 +179,11 @@ PASS_A_HISTORICAL_BLOBS={
  # This Pass-A auditor is itself in the retained source tree; preserve its
  # exact PR-base blob while the current source-forward remains A2-authenticated.
  'scripts/audit_core_01d_checkpoint_e_completion_v2.py':'a6999c46e5bb882c4b5c07332619bade643d16ca',
+ # PR #461 adds these already-existing Pass-A workflow files to A2's current
+ # source inventory. Preserve their exact pre-PR blobs in the immutable Pass-A
+ # projection while A2 independently authenticates their current successors.
+ '.github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml':'84fd86333c34e8b6e27afe7f9d6e0e1c4234e93c',
+ '.github/workflows/prove-sportybet-direct-share-code.yml':'18e5656c232102df141aaa614aca3d5d7575ec5b',
 }
 B1_ADDITIVE_EVIDENCE_PATHS={
  'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v3.json',
@@ -233,6 +238,14 @@ def current_successor_inventory_paths(a2):
  # V3 onward is an authenticated, contiguous additive evidence chain.
  return {path for generation,path in a2.discover_inventory_generations() if generation>=3}
 
+def pass_a_preserved_a2_successor_paths(a2):
+ # These workflow files were already present in the immutable Pass-A tree
+ # before A2 began authenticating their current offline-only successors.
+ paths=set(a2.A2_SUCCESSOR_WORKFLOWS)
+ review.require(paths <= set(PASS_A_HISTORICAL_BLOBS),
+                'A2 successor workflow is missing its immutable Pass-A blob pin')
+ return paths
+
 def a2_historical_projection(raw):
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  # Authenticate all current caller/guard source before using a historical view.
@@ -251,7 +264,8 @@ def a2_historical_projection(raw):
  # part of the immutable Pass-A historical tree. Discover their contiguous
  # chain from V3 onward after authenticate_inventory has verified it.
  successor_inventory_paths=current_successor_inventory_paths(a2)
- new_paths=(a2.A2_PATHS-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|successor_inventory_paths|B1_ADDITIVE_EVIDENCE_PATHS|APP01B_ADDITIVE_PATHS|APP01C_NEW_PATHS|INCIDENT_20261010_NEW_PATHS|RUN_01B_ADDITIVE_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS
+ preserved_a2_successors=pass_a_preserved_a2_successor_paths(a2)
+ new_paths=(a2.A2_PATHS-preserved_a2_successors-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|successor_inventory_paths|B1_ADDITIVE_EVIDENCE_PATHS|APP01B_ADDITIVE_PATHS|APP01C_NEW_PATHS|INCIDENT_20261010_NEW_PATHS|RUN_01B_ADDITIVE_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS
  for path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
   review.source_bytes(path)
  rows=[]

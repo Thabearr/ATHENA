@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 
 from scripts import audit_core_01d_pr459_live_trigger_incident as incident
+from scripts import audit_core_01d_checkpoint_e_completion_v2 as pass_a_v2
+from scripts import audit_core_01d_ci_offline_transport_boundary as a2
 from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
 from scripts import audit_p4_workflow_evolution_ledger as evolution
 
@@ -38,6 +40,15 @@ def test_b4_historical_workflow_identity_and_receipt_remain_unchanged():
         assert Path(b4.ROOT / expected).is_file()
     assert b4.audit()["result"] == "PASS"
     assert incident.audit()["canonical_sha256"] == incident.build_receipt()["canonical_sha256"]
+
+
+def test_a2_successor_workflows_keep_their_immutable_pass_a_blob_pins():
+    paths = set(a2.A2_SUCCESSOR_WORKFLOWS)
+    assert paths == set(b4.B4_WORKFLOW_PREDECESSORS)
+    assert paths <= a2.A2_PATHS
+    assert pass_a_v2.pass_a_preserved_a2_successor_paths(a2) == paths
+    for path in paths:
+        assert pass_a_v2.PASS_A_HISTORICAL_BLOBS[path] == b4.SOURCE_PINS[path][0]
 
 
 def test_tampered_b4_predecessor_fixture_fails(monkeypatch):
