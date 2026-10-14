@@ -231,6 +231,27 @@ def build_receipt():
         from scripts import audit_data_01c_restore_portability as d5
         d5.authenticate_workflow()
         changed = [path for path in changed if path != d5.WORKFLOW]
+    # PR #461 changes only these two retained direct-share workflows, and the
+    # current source is an offline-only revision. Keep D4's historical receipt
+    # fixed while authenticating the current pair independently through A2 and
+    # the incident auditor before treating their changes as reviewed.
+    direct_share_workflows = {
+        ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml",
+        ".github/workflows/prove-sportybet-direct-share-code.yml",
+    }
+    changed_direct_share = direct_share_workflows.intersection(changed)
+    if changed_direct_share:
+        from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+        from scripts import audit_core_01d_pr459_live_trigger_incident as incident
+
+        latest = boundary.authenticate_inventory()
+        identities = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
+        for path in direct_share_workflows:
+            raw = (ROOT / path).read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            if identities.get(path) != hashlib.sha256(raw).hexdigest():
+                raise AssertionError("direct-share current source differs from authenticated A2: " + path)
+            incident._validate_workflow(path)
+        changed = [path for path in changed if path not in direct_share_workflows]
     if any(path.startswith(".github/workflows/") or path in {
             "database/athena.db", "database/athena_history.db"} for path in changed):
         raise AssertionError("prohibited workflow or legacy database delta")

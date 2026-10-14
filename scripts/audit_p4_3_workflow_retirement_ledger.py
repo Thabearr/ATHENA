@@ -382,7 +382,8 @@ def resolve_reviewed_workflow_source(
         if any(
             item.get("operation") == "MAINTENANCE_REVISE" and item.get("workflow_path") == path
             for item in evolution_ledger.get("transitions", [])
-        ) or path in evolution.CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES:
+        ) or path in evolution.CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES \
+                or path in evolution.PR459_OFFLINE_WORKFLOW_FORWARD:
             raw = evolution.resolve_p43a_historical_workflow_source(
                 path,
                 retirement_ledger=ledger,

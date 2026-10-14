@@ -606,6 +606,26 @@ def resolve_p43a_historical_workflow_source(
         item for item in evolution_ledger.get("transitions", [])
         if item.get("operation") == "MAINTENANCE_REVISE" and item.get("workflow_path") == path
     ]
+    if not revisions and path in PR459_OFFLINE_WORKFLOW_FORWARD:
+        before, _after = PR459_OFFLINE_WORKFLOW_FORWARD[path]
+        expected = {key: row.get(key) for key in IDENTITY_KEYS}
+        if expected != before:
+            raise WorkflowEvolutionError(
+                f"PR459 offline predecessor differs from frozen P4.3A identity: {path}"
+            )
+        head_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
+        if not _exact_pr119_historical_source_context(evolution_ledger, head_tree):
+            raise WorkflowEvolutionError(
+                "PR459 P4.3A source forward is outside its exact offline-only context"
+            )
+        from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+
+        raw = b4._historical_b4_workflow_bytes(path)
+        if source_identity(raw) != expected:
+            raise WorkflowEvolutionError(
+                f"PR459 sealed B4 predecessor differs from frozen P4.3A identity: {path}"
+            )
+        return raw
     if not revisions and path in CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES:
         fixture_path, expected = CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES[path]
         head_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()

@@ -351,6 +351,13 @@ def audit(latest=None):
         # are authenticated by the append-only A2 inventory and incident audit.
         evolved |= {".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml",
                     ".github/workflows/prove-sportybet-direct-share-code.yml"}
+        # Current D5 source-forward projections for the PR #461 incident fix.
+        # The immutable D5 receipt remains byte-for-byte historical; current
+        # identities for these exact sources are authenticated by A2 above.
+        evolved |= {"scripts/audit_core_01d_ci_offline_transport_boundary.py",
+                    "scripts/audit_p4_workflow_evolution_ledger.py",
+                    "sitecustomize.py",
+                    "tests/test_data_01c_app_storage.py"}
         inventory = boundary.authenticate_inventory()
         identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
         if (set(current) != set(frozen)
