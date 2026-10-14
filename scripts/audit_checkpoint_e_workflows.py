@@ -176,6 +176,17 @@ PASS_A_BASE_SOURCE_BLOBS = {
     "tests/test_api_error_handling.py": "a827e02b95779ca0478ffa74db34e41de1e04b42",
     "tests/test_product_baseline_v1.py": "2d552f49cf84462bd1b32e86eea2a96ee0570b64",
 }
+# These exact Pass-A workflow blobs are also tracked as later A2 successors.
+# Their current PR-trigger guards are authenticated by A2; the immutable
+# Checkpoint-E base view must remain pinned to these original blobs.
+PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS = {
+    ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml": (
+        "84fd86333c34e8b6e27afe7f9d6e0e1c4234e93c"
+    ),
+    ".github/workflows/prove-sportybet-direct-share-code.yml": (
+        "18e5656c232102df141aaa614aca3d5d7575ec5b"
+    ),
+}
 PASS_A_HISTORICAL_SOURCE_FIXTURES = {
     "api/server.py": "tests/fixtures/core_01d/app_01c_historical/api_server.py.b64",
     "run_desktop.py": "tests/fixtures/core_01d/app_01c_historical/run_desktop.py.txt",
@@ -842,6 +853,16 @@ def base_input():
                 },
                 "Pass-A base inventory differs from its exact V1 source identity: " + path,
             )
+        elif path in PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS:
+            require(
+                identity == {
+                    "mode": "100644",
+                    "git_blob_sha1": PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS[path],
+                }
+                and current.get(path) is not None
+                and current[path]["mode"] == identity["mode"],
+                "Pass-A preserved A2 successor differs from its exact V1 base identity: " + path,
+            )
         else:
             require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
     # Git can be clean while the working tree has edits. Verify inspected source
@@ -853,7 +874,13 @@ def base_input():
     ).stdout.decode().splitlines()
     require(len(hashed) == len(value["scan_paths"]), "worktree filtered hash inventory incomplete")
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
-    a2.authenticate_inventory()
+    latest_a2 = a2.authenticate_inventory()
+    latest_a2_paths = {row["path"] for row in latest_a2["source_identities"]}
+    for path in PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS:
+        require(
+            path in latest_a2_paths,
+            "Pass-A preserved workflow is not authenticated by current A2: " + path,
+        )
     from scripts import audit_app_01a_local_shell as app01a
     successor_paths, successor = app01a.authenticated_historical_paths()
     for path, actual in zip(value["scan_paths"], hashed):
