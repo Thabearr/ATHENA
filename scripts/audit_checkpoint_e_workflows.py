@@ -832,10 +832,12 @@ def base_input():
             if predecessor is not None:
                 # The source was edited after Pass-1. Its current bytes were
                 # authenticated by Status V2 against A2 above; this immutable
-                # base row must continue to match the separately retained
-                # predecessor identity.
+                # base inventory row is older than the later Pass-1
+                # predecessor fixture, so authenticate each historical view
+                # through its own pinned identity and only require the current
+                # path/mode to remain present here.
                 require(
-                    identity == expected_support
+                    supporting_source_blobs[path] == predecessor["git_blob_sha1"]
                     and current.get(path) is not None
                     and current[path]["mode"] == identity["mode"],
                     "Pass-1 supporting predecessor differs from its V2 authenticated identity: " + path,
