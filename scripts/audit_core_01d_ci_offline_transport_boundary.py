@@ -67,10 +67,16 @@ BRIDGE_RECEIPT_PATH = "tests/fixtures/core_01d/ci-offline-transport-boundary-evo
 EVOLUTION_TEST_PATH = "tests/test_core_01d_ci_offline_transport_inventory_evolution.py"
 TARGETS = ((".github/workflows/athena-patch-bridge.yml", "issue_comment"),
            (".github/workflows/tests.yml", "pull_request"), (".github/workflows/tests.yml", "push"))
+A2_SUCCESSOR_WORKFLOWS = (
+    ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml",
+    ".github/workflows/prove-sportybet-direct-share-code.yml",
+)
 GUARD_PATHS = ("sitecustomize.py", "tests/conftest.py", "tests/offline_transport.py",
                "tests/offline_linux.py", "tests/_offline_bootstrap/sitecustomize.py")
 A2_PATHS = frozenset((*GUARD_PATHS, INVENTORY_PATH, INVENTORY_V2_PATH, RECEIPT_PATH, COMPLETION_PATH,
     BRIDGE_RECEIPT_PATH, EVOLUTION_TEST_PATH,
+    ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml",
+    ".github/workflows/prove-sportybet-direct-share-code.yml",
     "scripts/audit_core_01d_ci_offline_transport_boundary.py",
     "scripts/audit_core_01d_checkpoint_e_completion_v3.py",
     "tests/test_core_01d_ci_offline_transport_boundary.py",
@@ -272,6 +278,7 @@ def current_source_paths():
     paths.add("requirements.txt")
     paths.update(path for path in A2_PATHS if path.endswith(".py") and (ROOT / path).exists())
     paths.update(path for path, _ in TARGETS)
+    paths.update(path for path in A2_SUCCESSOR_WORKFLOWS if (ROOT / path).is_file())
     return sorted(paths)
 
 

@@ -59,6 +59,9 @@ RETAINED_AUDIT_PREDECESSORS = {'scripts/audit_checkpoint_e_workflows.py': ('test
  'scripts/audit_core_01d_checkpoint_e_completion_v2.py': ('tests/fixtures/core_01d/fresh_holdout_20261014/checkpoint-completion-v2-predecessor.py.txt',
                                                           'f427baed805abe41894d7c66d7492247aa82a9b2',
                                                           '2e0e6bb6dc6ba27f35a04066d4a29fb8a8e265998be8fa29719b2943eb30801b'),
+ 'scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py': ('tests/fixtures/core_01d/run_02a_pre_historical/b4-trigger-authority-predecessor.py.txt',
+                                                                     '28e4963c668ab5992cd5760b499c0f69fd6f14db',
+                                                                     'b10036a6fc5d56c9d718db3e14d0a998cffad3c3050530e28ed4e21630e2ac2b'),
  'scripts/audit_run_02a_pre_durable_share_send.py': ('tests/fixtures/core_01d/fresh_holdout_20261014/share-prerequisite-predecessor.py.txt',
                                                      '35617b52e020e9350b6de422dfd74171243990c6',
                                                      'eb2e8dbc6fcb464ab1dead01c0db3096ed85db0110e96e8c0c23a2f69d9d7974'),
@@ -68,7 +71,7 @@ RETAINED_AUDIT_PREDECESSORS = {'scripts/audit_checkpoint_e_workflows.py': ('test
 
 
 def historical_prerequisite_source_bytes(path, *, latest=None):
-    """Five exact audit/test predecessors; never runtime execution authority."""
+    """Exact retained audit/test predecessors; never runtime execution authority."""
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     from scripts import audit_core_01d_authority_reachability_review_a as review
     if path not in RETAINED_AUDIT_PREDECESSORS or ROOT != review.ROOT or ROOT != a2.ROOT:

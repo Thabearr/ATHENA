@@ -83,6 +83,16 @@ SOURCE_PINS: dict[str, tuple[str, str]] = {
     "tests/test_sportybet_direct_market_probe.py": ("8d0e5e1d19b7ac08931961b9c71cf72fbe92bf13", "5d4aaa61cb6872fb8a53e61c49ab993a2f97aee388894807ef53fd292890ac3c"),
 }
 
+# B4 remains an immutable historical audit. These two workflow files now have
+# a reviewed current successor that is authenticated by A2; B4 must continue to
+# derive its original receipt from the sealed predecessor bytes below.
+B4_WORKFLOW_PREDECESSORS = {
+    ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml": (
+        "tests/fixtures/core_01d/pr459_live_trigger_incident/create-direct-share-workflow-b4-predecessor.yml.txt"),
+    ".github/workflows/prove-sportybet-direct-share-code.yml": (
+        "tests/fixtures/core_01d/pr459_live_trigger_incident/prove-direct-share-workflow-b4-predecessor.yml.txt"),
+}
+
 TARGET_REACHABILITY = {
     (TARGETS[0]): "CONDITIONALLY_REACHABLE_PULL_REQUEST_PATH_FILTERED",
     (TARGETS[1]): "MANUALLY_REACHABLE_WORKFLOW_DISPATCH",
@@ -222,11 +232,69 @@ def _canonical_hash(value: Any) -> str:
     return hashlib.sha256(boundary.canonical(value)).hexdigest()
 
 
-def _identity(path: str) -> dict[str, str]:
-    raw = (ROOT / path).read_bytes()
+def _historical_b4_workflow_bytes(path: str) -> bytes:
+    fixture = B4_WORKFLOW_PREDECESSORS.get(path)
+    require(fixture is not None, "unclassified B4 workflow predecessor: " + path)
+    live_path = ROOT / path
+    fixture_path = ROOT / fixture
+    require(live_path.is_file() and not live_path.is_symlink()
+            and fixture_path.is_file() and not fixture_path.is_symlink(),
+            "B4 workflow source or predecessor fixture is unavailable: " + path)
+
+    # Current source is independently bound to the latest A2 inventory. Read
+    # the authenticated chain directly here because this helper also runs
+    # while A2 is projecting the historical workflow tree.
+    latest = boundary.load_inventory_generations()[-1][1]
+    current_rows = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
+    current = live_path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    require(current_rows.get(path) == hashlib.sha256(current).hexdigest(),
+            "current B4 successor workflow differs from latest A2: " + path)
+
+    raw = fixture_path.read_bytes()
     normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     blob, digest = SOURCE_PINS[path]
-    git_blob = _git("rev-parse", "HEAD:" + path).decode().strip()
+    observed_blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+    require(observed_blob == blob and hashlib.sha256(normalized).hexdigest() == digest,
+            "B4 workflow predecessor fixture identity mismatch: " + path)
+    return raw
+
+
+def project_b4_workflow_tree(observed_tree: str) -> str:
+    """Replace only A2-authenticated successors with the exact B4 tree bytes."""
+    actual_tree = _git("rev-parse", "HEAD:.github/workflows").decode().strip()
+    require(observed_tree == actual_tree, "B4 workflow projection is not for the checked-out tree")
+    replacements = {}
+    for path in B4_WORKFLOW_PREDECESSORS:
+        raw = _historical_b4_workflow_bytes(path)
+        name = Path(path).name
+        replacements[name] = hashlib.sha1(
+            b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+
+    rows = []
+    for line in _git("ls-tree", observed_tree).splitlines():
+        header, name = line.split(b"\t", 1)
+        mode, kind, blob = header.decode("ascii").split(" ")
+        name_text = name.decode("utf-8")
+        if name_text in replacements:
+            require(kind == "blob", "B4 workflow successor is not a regular blob: " + name_text)
+            blob = replacements[name_text]
+        rows.append((mode.encode("ascii"), name, blob.encode("ascii")))
+    require(set(replacements) <= {name.decode("utf-8") for _, name, _ in rows},
+            "B4 workflow tree is missing a reviewed direct-share workflow")
+    body = b"".join(mode + b" " + name + b"\0" + bytes.fromhex(blob.decode("ascii"))
+                    for mode, name, blob in rows)
+    return hashlib.sha1(b"tree " + str(len(body)).encode() + b"\0" + body).hexdigest()
+
+
+def _identity(path: str) -> dict[str, str]:
+    raw = (_historical_b4_workflow_bytes(path) if path in B4_WORKFLOW_PREDECESSORS
+           else (ROOT / path).read_bytes())
+    normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    blob, digest = SOURCE_PINS[path]
+    if path in B4_WORKFLOW_PREDECESSORS:
+        git_blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+    else:
+        git_blob = _git("rev-parse", "HEAD:" + path).decode().strip()
     if path == "scripts/sportybet_direct_share_bridge.py":
         from scripts import audit_run_02a_pre_durable_share_send as prerequisite
         raw = prerequisite.historical_transport_bytes(path, root=ROOT)
@@ -239,7 +307,9 @@ def _identity(path: str) -> dict[str, str]:
 
 
 def _parse_workflow(path: str) -> dict[str, Any]:
-    value = yaml.load((ROOT / path).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    raw = (_historical_b4_workflow_bytes(path) if path in B4_WORKFLOW_PREDECESSORS
+           else (ROOT / path).read_bytes())
+    value = yaml.load(raw.decode("utf-8"), Loader=yaml.BaseLoader)
     require(type(value) is dict, f"workflow YAML did not parse as a mapping: {path}")
     return value
 

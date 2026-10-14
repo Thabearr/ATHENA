@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+import pytest
+
+from scripts import audit_core_01d_pr459_live_trigger_incident as incident
+from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+
+
+def test_both_direct_share_workflows_are_offline_only():
+    for path in (incident.CREATE_WORKFLOW, incident.PROVE_WORKFLOW):
+        workflow = incident._validate_workflow(path)
+        assert workflow["permissions"] == {"contents": "read"}
+        assert workflow["on"]["workflow_dispatch"]["inputs"]["validation_mode"]["options"] == [
+            "offline_only"
+        ]
+        assert all(
+            not any(marker.casefold() in str(step.get(key, "")).casefold()
+                    for marker in incident.LIVE_MARKERS)
+            for step in workflow["jobs"]["offline-validation"]["steps"]
+            for key in ("run", "uses")
+        )
+
+
+def test_b4_historical_workflow_identity_and_receipt_remain_unchanged():
+    for path, expected in b4.B4_WORKFLOW_PREDECESSORS.items():
+        raw = b4._historical_b4_workflow_bytes(path)
+        assert hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() == b4.SOURCE_PINS[path][0]
+        assert hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest() == b4.SOURCE_PINS[path][1]
+        assert Path(b4.ROOT / expected).is_file()
+    assert b4.audit()["result"] == "PASS"
+    assert incident.audit()["canonical_sha256"] == incident.build_receipt()["canonical_sha256"]
+
+
+def test_tampered_b4_predecessor_fixture_fails(monkeypatch):
+    path = incident.CREATE_WORKFLOW
+    fixture = b4.ROOT / b4.B4_WORKFLOW_PREDECESSORS[path]
+    original = Path.read_bytes
+
+    def tampered(source):
+        raw = original(source)
+        return raw + b"#tampered\n" if Path(source) == fixture else raw
+
+    monkeypatch.setattr(Path, "read_bytes", tampered)
+    with pytest.raises(AssertionError, match="predecessor fixture identity mismatch"):
+        b4._historical_b4_workflow_bytes(path)
+
+
+def test_current_workflow_tampering_cannot_hide_behind_b4_fixture(monkeypatch):
+    path = incident.PROVE_WORKFLOW
+    source = b4.ROOT / path
+    original = Path.read_bytes
+
+    def tampered(candidate):
+        raw = original(candidate)
+        return raw + b"#unreviewed\n" if Path(candidate) == source else raw
+
+    monkeypatch.setattr(Path, "read_bytes", tampered)
+    with pytest.raises(AssertionError, match="differs from latest A2"):
+        b4._historical_b4_workflow_bytes(path)
+
+
+def test_shallow_projection_does_not_request_the_historical_b4_base(monkeypatch):
+    original = b4._git
+
+    def reject_base_lookup(*args: str) -> bytes:
+        assert b4.BASE_MAIN not in args
+        return original(*args)
+
+    monkeypatch.setattr(b4, "_git", reject_base_lookup)
+    assert b4.audit()["result"] == "PASS"
