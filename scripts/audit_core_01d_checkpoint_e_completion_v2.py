@@ -165,6 +165,7 @@ PASS_A_HISTORICAL_BLOBS={
  # while their PR #461 current successors remain independently A2-authenticated.
  'scripts/audit_p4_workflow_evolution_ledger.py':'bab8af0400f1065bdba00168d1a19c50b3976b5f',
  'tests/test_core_01d_historical_retention_acceptance.py':'9ac2d450e29c0faf5fd471f06f3f1ae0dfdaa51d',
+ 'scripts/audit_checkpoint_e_workflows.py':'b7976ec440af6ca1aca29fe4e53bf61cc6419cf7',
  # This Pass-A auditor is itself in the retained source tree; preserve its
  # exact PR-base blob while the current source-forward remains A2-authenticated.
  'scripts/audit_core_01d_checkpoint_e_completion_v2.py':'a6999c46e5bb882c4b5c07332619bade643d16ca',
