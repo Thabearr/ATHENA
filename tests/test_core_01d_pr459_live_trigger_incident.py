@@ -12,6 +12,8 @@ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
 from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
 from scripts import audit_data_01c_restore_portability as d5
 from scripts import audit_p4_workflow_evolution_ledger as evolution
+from scripts import audit_checkpoint_e_workflows as checkpoint
+from scripts import audit_core_01d_checkpoint_e_completion as completion_v1
 
 
 def test_both_direct_share_workflows_are_offline_only():
@@ -54,6 +56,60 @@ def test_a2_successor_workflows_keep_their_immutable_pass_a_blob_pins():
         assert pass_a_v2.PASS_A_HISTORICAL_BLOBS[path] == b4.SOURCE_PINS[path][0]
 
 
+def test_checkpoint_census_reads_exact_predecessor_bytes():
+    for path in b4.B4_WORKFLOW_PREDECESSORS:
+        assert hashlib.sha256(checkpoint.read(path)).hexdigest() == b4.SOURCE_PINS[path][1]
+    path = "tests/test_p4_3d_retirement_audit_extensibility.py"
+    raw = checkpoint.read(path)
+    assert hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() == (
+        "5e7de20231b2455f15fdc20c4fd21e1720714f64"
+    )
+
+
+def test_historical_v1_identity_reader_preserves_exact_workflow_pins_and_restores():
+    module = pass_a_v2.review.retention.v4.v3
+    original = module._source_identity
+    with pass_a_v2.historical_v1_git_view():
+        for path in b4.B4_WORKFLOW_PREDECESSORS:
+            row = module._source_identity(path)
+            assert (row["git_blob_sha1"], row["source_sha256"]) == b4.SOURCE_PINS[path]
+    assert module._source_identity is original
+
+
+@pytest.mark.parametrize("target", ["fixture", "current"])
+def test_checkpoint_test_predecessor_cannot_hide_tampering(monkeypatch, target):
+    path = "tests/test_p4_3d_retirement_audit_extensibility.py"
+    fixture = checkpoint.PASS1_V1_BASE_SOURCE_FIXTURES[path][0]
+    candidate = checkpoint.ROOT / (fixture if target == "fixture" else path)
+    original = Path.read_bytes
+
+    def tampered(source):
+        raw = original(source)
+        return raw + b"#unreviewed\n" if source == candidate else raw
+
+    monkeypatch.setattr(Path, "read_bytes", tampered)
+    reason = ("pinned Checkpoint E V1 source fixture drift" if target == "fixture"
+              else "source or process discovery drift")
+    with pytest.raises((ValueError, AssertionError), match=reason):
+        checkpoint.read(path)
+
+
+def test_v1_scope_rejects_a_forged_reviewed_workflow_blob():
+    raw = completion_v1.policy.v4.v3._git("ls-tree", "-r", "HEAD")
+    forged = []
+    altered = 0
+    for line in raw.splitlines(keepends=True):
+        metadata, separator, path = line.partition(b"\t")
+        if path.strip().decode() in b4.B4_WORKFLOW_PREDECESSORS:
+            line = b"100644 blob " + b"0" * 40 + separator + path
+            altered += 1
+        forged.append(line)
+    assert altered == 2
+    with pytest.raises(completion_v1.policy.RetentionAcceptanceError,
+                       match="PR459 source inventory identity is unverified"):
+        completion_v1.validate_bounded_inventory(b"".join(forged))
+
+
 def test_pass_a_projection_does_not_override_authenticated_predecessors():
     app_sources = {
         "scripts/audit_checkpoint_e_workflows.py",
@@ -85,8 +141,9 @@ def test_tampered_b4_predecessor_fixture_fails(monkeypatch):
         return raw + b"#tampered\n" if Path(source) == fixture else raw
 
     monkeypatch.setattr(Path, "read_bytes", tampered)
-    with pytest.raises(AssertionError, match="predecessor fixture identity mismatch"):
-        b4._historical_b4_workflow_bytes(path)
+    for reader in (b4._historical_b4_workflow_bytes, checkpoint.read):
+        with pytest.raises(AssertionError, match="predecessor fixture identity mismatch"):
+            reader(path)
 
 
 def test_current_workflow_tampering_cannot_hide_behind_b4_fixture(monkeypatch):
@@ -99,8 +156,9 @@ def test_current_workflow_tampering_cannot_hide_behind_b4_fixture(monkeypatch):
         return raw + b"#unreviewed\n" if Path(candidate) == source else raw
 
     monkeypatch.setattr(Path, "read_bytes", tampered)
-    with pytest.raises(AssertionError, match="differs from latest A2"):
-        b4._historical_b4_workflow_bytes(path)
+    for reader in (b4._historical_b4_workflow_bytes, checkpoint.read):
+        with pytest.raises(AssertionError, match="differs from latest A2"):
+            reader(path)
 
 
 def test_shallow_projection_does_not_request_the_historical_b4_base(monkeypatch):

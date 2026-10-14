@@ -82,7 +82,16 @@ def test_e1_receipt_mutation_is_rejected(monkeypatch):
 def test_all_exact_predecessor_fixtures_match_frozen_e1_source_identities():
     frozen = _frozen_identities()
     assert set(e1.FORWARD_EVOLVED_SOURCES) == e1.FORWARD_EVOLVED_SOURCE_PATHS
-    assert len(e1.FORWARD_EVOLVED_SOURCES) == 6
+    assert set(e1.FORWARD_EVOLVED_SOURCES) == {
+        "scripts/audit_checkpoint_e_workflows.py",
+        "scripts/audit_data_01c_app_store_complete.py",
+        "tests/test_core_01d_exact_pr_trigger_disposition_b1.py",
+        "scripts/audit_run_01a_durable_admission.py",
+        "services/athena_job_service.py",
+        "database/run_repository.py",
+        "scripts/audit_data_01b_durable_run_state.py",
+        "scripts/audit_data_01c_restore_portability.py",
+    }
 
     for source, entry in e1.FORWARD_EVOLVED_SOURCES.items():
         raw = _lf((e1.ROOT / entry["predecessor_fixture"]).read_bytes())

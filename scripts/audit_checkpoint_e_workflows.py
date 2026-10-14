@@ -54,6 +54,12 @@ PASS1_SUPPORTING_SOURCE_PATHS = (
     "tests/test_p4_4a1_baseline_workflow_maintenance_revision_authority.py",
 )
 PASS1_V1_BASE_SOURCE_FIXTURES = {
+    "tests/test_p4_3d_retirement_audit_extensibility.py": (
+        "tests/fixtures/core_01d/pr459_live_trigger_incident/"
+        "test-p4-3d-retirement-audit-extensibility-predecessor.py.txt",
+        "5e7de20231b2455f15fdc20c4fd21e1720714f64",
+        "bb04b8fd35608d0fb474861a3444628c9abf7eb0695f18ba4f65f4080c42db1e",
+    ),
     ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml": (
         "tests/fixtures/core_01d/pass1-v1-source/audit-lineage.yml",
         "0ba12d02fc2cd5f7a7d9fb1458eeec5cbe3bbd23",
@@ -344,6 +350,9 @@ def read(path):
     from scripts import audit_run_02a_pre_durable_share_send as prerequisite
     if path in prerequisite.TRANSPORT_PREDECESSORS:
         return prerequisite.historical_transport_bytes(path, root=ROOT)
+    from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+    if path in b4.B4_WORKFLOW_PREDECESSORS:
+        return b4._historical_b4_workflow_bytes(path)
     if path in INCIDENT_20261010_PREDECESSOR_FIXTURES:
         return _incident_20261010_predecessor_source(path)
     if path in PASS_A_HISTORICAL_SOURCE_FIXTURES:
@@ -374,6 +383,10 @@ def read(path):
         # checkouts can reproduce the original census without fetching history.
         # Pass 1's current versions are separately authenticated by status V2.
         fixture, expected_blob, expected_sha = PASS1_V1_BASE_SOURCE_FIXTURES[path]
+        if path in PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS:
+            # A historical fixture cannot hide mutation of its current successor.
+            from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+            a2.authenticate_inventory()
         inventory_raw = (ROOT / BASE_PATH).read_bytes().replace(b"\r\n", b"\n")
         require(sha(inventory_raw) == BASE_INPUT_SHA, "exact-main base inventory identity drift")
         inventory = strict(inventory_raw)

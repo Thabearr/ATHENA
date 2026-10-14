@@ -131,6 +131,7 @@ RUN_02A_PRE_PREDECESSOR_BLOBS={
  'scripts/sportybet_direct_share_bridge.py':'681ce2a043a334dcb8523c81d092369d6540e6d5',
 }
 PR459_HISTORICAL_SOURCE_FORWARD_PATHS={
+ 'tests/fixtures/core_01d/pr459_live_trigger_incident/test-p4-3d-retirement-audit-extensibility-predecessor.py.txt',
  'docs/architecture/core_01d_pr459_live_trigger_incident.md',
  'tests/fixtures/core_01d/pr459_live_trigger_incident/create-direct-share-workflow-b4-predecessor.yml.txt',
  'tests/fixtures/core_01d/pr459_live_trigger_incident/p4-3-workflow-retirement-ledger-predecessor.py.txt',
@@ -333,6 +334,9 @@ def historical_v1_git_view():
   if path==portability.WORKFLOW:
    portability.authenticate_workflow()
    return {'path':path,**portability.identity(portability.predecessor_source(path))}
+  from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+  if path in b4.B4_WORKFLOW_PREDECESSORS:
+   return {'path':path,**portability.identity(b4._historical_b4_workflow_bytes(path))}
   return original_identity(path,**kwargs)
  module._git=projected
  module._source_identity=projected_identity
