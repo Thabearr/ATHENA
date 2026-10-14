@@ -24,9 +24,9 @@ PR459_REVIEWED_HEAD = "c96c74a319d79d2cbc4ed3f8ee2aab9f1b0bd47e"
 PR459_MERGE_SHA = "7c787130e2662e34813a61422b865046fae52ebd"
 MISSION_A2_BASE_GENERATION = 167
 MISSION_A2_BASE_SHA = "c8a9e9123811104f625b13692b74beee0b16eba619bde6e03f5e74eda0fecb3a"
-IMMEDIATE_A2_PREDECESSOR_GENERATION = 175
-IMMEDIATE_A2_PREDECESSOR_SHA = "77c52f4c586a554cd7c28394132d755cc2a71b33a3a8217a32ba5564f2517920"
-FINAL_A2_GENERATION = 176
+IMMEDIATE_A2_PREDECESSOR_GENERATION = 176
+IMMEDIATE_A2_PREDECESSOR_SHA = "dc5fde9b35cf308570d4446458a9eb87a5a70cca9f282df3ca42713cb94f0280"
+FINAL_A2_GENERATION = 177
 B4_RECEIPT_SHA = "915e41796a419c2b360935ee3f21b293f233b6a356329694d0a3e9cd0fecb1fe"
 B4_INVENTORY_SHA = "01c826a6e7e50e2a7f7b7a5ace946e0c8cdb72f58a6eb170b9d44ee5c1565f6a"
 PR_TITLE = "[CORE-01D][CI Safety] Keep direct share-code proofs offline on PRs"
@@ -203,9 +203,19 @@ def _validate_workflow(path: str) -> dict[str, Any]:
              "focused offline workflow omits the conftest YAML dependency: " + path)
     _require("python -m pytest -q" in test.get("run", ""),
              "offline workflow does not run focused deterministic tests: " + path)
-    expected_test_paths = ((DIRECT_TEST, POLICY_TEST) if path == CREATE_WORKFLOW
-                           else (B4_TEST, POLICY_TEST))
-    _require(all(test_path in test.get("run", "") for test_path in expected_test_paths),
+    if path == CREATE_WORKFLOW:
+        expected_test_command = [
+            "python", "-m", "pytest", "-q", DIRECT_TEST,
+            POLICY_TEST + "::test_both_direct_share_workflows_are_offline_only",
+        ]
+    else:
+        expected_test_command = [
+            "python", "-m", "pytest", "-q", "-k",
+            "not audit_does_not_require_the_base_commit_object", B4_TEST,
+            POLICY_TEST + "::test_tampered_b4_predecessor_fixture_fails",
+            POLICY_TEST + "::test_current_workflow_tampering_cannot_hide_behind_b4_fixture",
+        ]
+    _require(test.get("run", "").split() == expected_test_command,
              "offline workflow test selection drift: " + path)
     _require(audit.get("run") == "python -m scripts.audit_core_01d_pr459_live_trigger_incident",
              "offline workflow omits the source-controlled authority audit: " + path)
@@ -432,11 +442,12 @@ def build_receipt() -> dict[str, Any]:
     })
 
 
-def audit() -> dict[str, Any]:
+def audit(expected_receipt: dict[str, Any] | None = None) -> dict[str, Any]:
     raw = (ROOT / RECEIPT_PATH).read_bytes()
     value = json.loads(raw)
     _require(raw == _canonical(value), "incident evidence is not canonical JSON")
-    _require(value == build_receipt(), "incident evidence differs from current source and history")
+    expected = build_receipt() if expected_receipt is None else expected_receipt
+    _require(value == expected, "incident evidence differs from current source and history")
     _require(value.get("canonical_sha256") == hashlib.sha256(_canonical({
         key: child for key, child in value.items() if key != "canonical_sha256"
     })).hexdigest(), "incident evidence canonical hash mismatch")
@@ -456,7 +467,8 @@ def main() -> None:
         target.write_bytes(_canonical(value))
     elif not (ROOT / RECEIPT_PATH).is_file():
         raise SystemExit("incident evidence artifact is missing; use --write after source qualification")
-    print(json.dumps({"result": "PASS" if args.write else audit()["result"],
+    result = "PASS" if args.write else audit(value)["result"]
+    print(json.dumps({"result": result,
                       "canonical_sha256": value["canonical_sha256"],
                       "a2_generation": value["a2"]["successor_generation"],
                       "review_ready": False}, sort_keys=True))
