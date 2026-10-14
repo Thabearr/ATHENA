@@ -22,9 +22,9 @@ BASE_MAIN = "bca71d0614e50b32f99077f092e9e22190b4d79c"
 BASE_TREE = "99e411e31052b7ebc1f03daf7edd55d851999355"
 MISSION_A2_BASE_GENERATION = 167
 MISSION_A2_BASE_SHA = "c8a9e9123811104f625b13692b74beee0b16eba619bde6e03f5e74eda0fecb3a"
-IMMEDIATE_A2_PREDECESSOR_GENERATION = 173
-IMMEDIATE_A2_PREDECESSOR_SHA = "c15f63d40048c522038d51fc99f688941b32669d6f4bd35f0a2d930d4e39b018"
-FINAL_A2_GENERATION = 174
+IMMEDIATE_A2_PREDECESSOR_GENERATION = 174
+IMMEDIATE_A2_PREDECESSOR_SHA = "b37cf0ba936feb3ed571d3f5d557ba8cdb2a1716352182f74bd722da20635dc7"
+FINAL_A2_GENERATION = 175
 B4_RECEIPT_SHA = "915e41796a419c2b360935ee3f21b293f233b6a356329694d0a3e9cd0fecb1fe"
 B4_INVENTORY_SHA = "01c826a6e7e50e2a7f7b7a5ace946e0c8cdb72f58a6eb170b9d44ee5c1565f6a"
 PR_TITLE = "[CORE-01D][CI Safety] Keep direct share-code proofs offline on PRs"
@@ -38,6 +38,7 @@ AUDIT_SCRIPT = "scripts/audit_core_01d_pr459_live_trigger_incident.py"
 POLICY_TEST = "tests/test_core_01d_pr459_live_trigger_incident.py"
 B4_TEST = "tests/test_core_01d_sportybet_current_trigger_authority_b4.py"
 DIRECT_TEST = "tests/test_sportybet_direct_share_bridge.py"
+NATIVE_TEST = "tests/native/test_pr459_hosted_pr_live_share_trigger_safety.py"
 BRIDGE = "scripts/sportybet_direct_share_bridge.py"
 
 WORKFLOW_PATHS = {
@@ -216,6 +217,10 @@ def build_receipt() -> dict[str, Any]:
 
     workflow_contracts = {}
     current_sources = _source_rows(latest)
+    native_source = (ROOT / NATIVE_TEST).read_bytes().replace(b"\r\n", b"\n")
+    native_sha = hashlib.sha256(native_source).hexdigest()
+    _require(current_sources.get(NATIVE_TEST) == native_sha,
+             "native PORT-02C safety test is not authenticated by A2")
     for path in (CREATE_WORKFLOW, PROVE_WORKFLOW):
         source = (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
         _require(current_sources.get(path) == hashlib.sha256(source).hexdigest(),
@@ -261,6 +266,13 @@ def build_receipt() -> dict[str, Any]:
             "accidental_dependency_failure_is_not_a_safety_guard": True,
         },
         "current_workflow_contracts": workflow_contracts,
+        "native_qualification": {
+            "test_path": NATIVE_TEST,
+            "test_source_lf_sha256": native_sha,
+            "port_02c_path_filter": "tests/native/**",
+            "natural_windows_linux_qualification": True,
+            "network_or_provider_calls": 0,
+        },
         "delivery_authority": {
             "automatic_pr_share_code_create": False,
             "manual_workflow_share_code_create": False,
