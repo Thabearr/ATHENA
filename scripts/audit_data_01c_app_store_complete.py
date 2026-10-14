@@ -359,6 +359,9 @@ def audit(latest=None):
                     "scripts/audit_p4_workflow_evolution_ledger.py",
                     "scripts/audit_run_01a_durable_admission.py",
                     "sitecustomize.py",
+                    # The exact B2 predecessor-set regression tracks the same
+                    # reviewed PR #461 pins; its current bytes remain A2-bound.
+                    "tests/test_core_01d_historical_warehouse_transfer_authority_b2.py",
                     "tests/test_data_01c_app_storage.py"}
         inventory = boundary.authenticate_inventory()
         identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
