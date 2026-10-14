@@ -67,4 +67,4 @@ jobs:
           tests/test_core_01d_pr459_live_trigger_incident.py
 
       - name: Audit both direct-share workflow surfaces
-        run: python scripts/audit_core_01d_pr459_live_trigger_incident.py
+        run: python -m scripts.audit_core_01d_pr459_live_trigger_incident

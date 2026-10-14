@@ -22,9 +22,9 @@ BASE_MAIN = "bca71d0614e50b32f99077f092e9e22190b4d79c"
 BASE_TREE = "99e411e31052b7ebc1f03daf7edd55d851999355"
 MISSION_A2_BASE_GENERATION = 167
 MISSION_A2_BASE_SHA = "c8a9e9123811104f625b13692b74beee0b16eba619bde6e03f5e74eda0fecb3a"
-IMMEDIATE_A2_PREDECESSOR_GENERATION = 170
-IMMEDIATE_A2_PREDECESSOR_SHA = "901bbd98463af1034614eba7e1dac04102be097baaa8b7ae62635e553e23c633"
-FINAL_A2_GENERATION = 171
+IMMEDIATE_A2_PREDECESSOR_GENERATION = 171
+IMMEDIATE_A2_PREDECESSOR_SHA = "0550db750224aa5c0e24dcc9bfc3de18bc32e7e657263b2772d25a6ff528bf5c"
+FINAL_A2_GENERATION = 172
 B4_RECEIPT_SHA = "915e41796a419c2b360935ee3f21b293f233b6a356329694d0a3e9cd0fecb1fe"
 B4_INVENTORY_SHA = "01c826a6e7e50e2a7f7b7a5ace946e0c8cdb72f58a6eb170b9d44ee5c1565f6a"
 PR_TITLE = "[CORE-01D][CI Safety] Keep direct share-code proofs offline on PRs"
@@ -163,7 +163,7 @@ def _validate_workflow(path: str) -> dict[str, Any]:
                            else (B4_TEST, POLICY_TEST))
     _require(all(test_path in test.get("run", "") for test_path in expected_test_paths),
              "offline workflow test selection drift: " + path)
-    _require(audit.get("run") == "python scripts/audit_core_01d_pr459_live_trigger_incident.py",
+    _require(audit.get("run") == "python -m scripts.audit_core_01d_pr459_live_trigger_incident",
              "offline workflow omits the source-controlled authority audit: " + path)
 
     for step in steps:
