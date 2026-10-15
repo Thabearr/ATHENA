@@ -146,17 +146,30 @@ def require(condition, reason):
         raise AssertionError(reason)
 
 
-def read(path):
+@lru_cache(maxsize=512)
+def _authenticated_json_bytes(raw, path, canonical_generation=False):
+    """Cache only successful validation of exact immutable input bytes.
+
+    No path/mtime/source-corpus verdict is cached. Callers reread the file and
+    receive a newly decoded object, so neither file changes nor caller mutation
+    can reuse a stale verdict. Eviction only causes validation to run again.
+    """
     def pairs(items):
         value = {}
         for key, child in items:
             require(key not in value, "duplicate JSON key")
             value[key] = child
         return value
-    raw = (ROOT / path).read_bytes()
     value = json.loads(raw, object_pairs_hook=pairs, parse_constant=lambda _: require(False, "nonfinite JSON"))
     require(value == seal(value), "artifact self-hash mismatch: " + path)
-    return value
+    if canonical_generation:
+        require(lf(raw) == canonical(value), "artifact self-hash mismatch: " + path)
+    return raw
+
+
+def read(path):
+    raw = (ROOT / path).read_bytes()
+    return json.loads(_authenticated_json_bytes(raw, path))
 
 
 def git(*args, data=None):
@@ -496,10 +509,8 @@ def read_generation(path):
     Trailing bytes, reordering or any other textual rewrite is rejected even
     when it would still parse to a document with a matching self-hash.
     """
-    raw = lf((ROOT / path).read_bytes())
-    value = read(path)
-    require(raw == canonical(value), "artifact self-hash mismatch: " + path)
-    return value
+    raw = (ROOT / path).read_bytes()
+    return json.loads(_authenticated_json_bytes(raw, path, True))
 
 
 def discover_inventory_generations(directory=None):

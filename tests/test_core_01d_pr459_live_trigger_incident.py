@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 from pathlib import Path
 
 import pytest
@@ -14,6 +16,88 @@ from scripts import audit_data_01c_restore_portability as d5
 from scripts import audit_p4_workflow_evolution_ledger as evolution
 from scripts import audit_checkpoint_e_workflows as checkpoint
 from scripts import audit_core_01d_checkpoint_e_completion as completion_v1
+
+
+
+def _cache_test_document(tmp_path, monkeypatch):
+    monkeypatch.setattr(a2, "ROOT", tmp_path)
+    path = tmp_path / "cache.json"
+    value = a2.seal({"schema_version": 1, "value": 1, "nested": {"rows": ["original"]}})
+    path.write_bytes(a2.canonical(value))
+    a2._authenticated_json_bytes.cache_clear()
+    return path, value
+
+
+def test_evidence_cache_returns_isolated_objects(tmp_path, monkeypatch):
+    _, expected = _cache_test_document(tmp_path, monkeypatch)
+    first = a2.read_generation("cache.json")
+    first["nested"]["rows"][0] = "caller mutation"
+    first["canonical_sha256"] = "0" * 64
+    assert a2.read_generation("cache.json") == expected
+    assert a2.read("cache.json") == expected
+
+
+def test_evidence_cache_rereads_same_size_same_mtime_changes(tmp_path, monkeypatch):
+    path, _ = _cache_test_document(tmp_path, monkeypatch)
+    a2.read_generation("cache.json")
+    stamp = path.stat()
+    raw = path.read_bytes()
+    changed = raw.replace(b'"value":1', b'"value":2')
+    assert changed != raw and len(changed) == len(raw)
+    path.write_bytes(changed)
+    os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    with pytest.raises(AssertionError, match="artifact self-hash mismatch"):
+        a2.read_generation("cache.json")
+
+
+@pytest.mark.parametrize("corruption", ["duplicate", "nonfinite"])
+def test_evidence_cache_rejects_malformed_bytes_after_warmup(tmp_path, monkeypatch, corruption):
+    path, _ = _cache_test_document(tmp_path, monkeypatch)
+    a2.read("cache.json")
+    raw = path.read_bytes()
+    replacement = (b'"value":1,"value":1' if corruption == "duplicate" else b'"value":NaN')
+    path.write_bytes(raw.replace(b'"value":1', replacement))
+    reason = "duplicate JSON key" if corruption == "duplicate" else "nonfinite JSON"
+    with pytest.raises(AssertionError, match=reason):
+        a2.read("cache.json")
+
+
+def test_evidence_cache_keeps_generation_canonicality_separate(tmp_path, monkeypatch):
+    path, expected = _cache_test_document(tmp_path, monkeypatch)
+    path.write_text(json.dumps(expected, indent=2) + "\n")
+    assert a2.read("cache.json") == expected
+    with pytest.raises(AssertionError, match="artifact self-hash mismatch"):
+        a2.read_generation("cache.json")
+
+
+def test_evidence_cache_rechecks_lineage_after_warmup(monkeypatch):
+    a2.load_inventory_generations()
+    target = a2.ROOT / a2.inventory_generation_path(2)
+    changed = a2.read_generation(a2.inventory_generation_path(2))
+    changed["predecessor_inventory"]["canonical_sha256"] = "0" * 64
+    replacement = a2.canonical(a2.seal(changed))
+    original = Path.read_bytes
+
+    def tampered(path):
+        return replacement if path == target else original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", tampered)
+    with pytest.raises(AssertionError, match="predecessor canonical hash mismatch"):
+        a2.load_inventory_generations()
+
+
+def test_evidence_cache_cannot_hide_current_source_mutation(monkeypatch):
+    a2.authenticate_inventory()
+    target = a2.ROOT / incident.CREATE_WORKFLOW
+    original = Path.read_bytes
+
+    def tampered(path):
+        raw = original(path)
+        return raw + b"#unreviewed\n" if path == target else raw
+
+    monkeypatch.setattr(Path, "read_bytes", tampered)
+    with pytest.raises(AssertionError, match="source or process discovery drift"):
+        a2.authenticate_inventory()
 
 
 def test_both_direct_share_workflows_are_offline_only():
