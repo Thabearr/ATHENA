@@ -254,3 +254,37 @@ def test_shallow_projection_does_not_request_the_historical_b4_base(monkeypatch)
 
     monkeypatch.setattr(b4, "_git", reject_base_lookup)
     assert b4.audit()["result"] == "PASS"
+
+
+def test_incident_v208_receipt_authenticates_after_v209_and_later_successors():
+    current = a2.authenticate_inventory()
+    assert current["generation"] >= 209
+    receipt = incident.build_receipt()
+    assert receipt["a2"]["successor_generation"] == 208
+    assert receipt["a2"]["predecessor_generation"] == 207
+    assert receipt["canonical_sha256"] == incident.HISTORICAL_RECEIPT_SHA
+    assert incident.audit()["canonical_sha256"] == incident.HISTORICAL_RECEIPT_SHA
+    assert a2.authenticate_inventory() == current
+
+
+@pytest.mark.parametrize("target", ["predecessor", "current", "historical_inventory"])
+def test_later_a2_generation_cannot_hide_incident_source_tampering(monkeypatch, target):
+    original = Path.read_bytes
+    candidate = incident.ROOT / {
+        "predecessor": incident.HISTORICAL_SOURCE,
+        "current": incident.AUDIT_SCRIPT,
+        "historical_inventory": a2.inventory_generation_path(208),
+    }[target]
+
+    def tampered(path):
+        raw = original(path)
+        return raw + b"#unreviewed\n" if path == candidate else raw
+
+    monkeypatch.setattr(Path, "read_bytes", tampered)
+    reason = {
+        "predecessor": "incident predecessor source fixture identity drift",
+        "current": "source or process discovery drift",
+        "historical_inventory": "invalid strict JSON|artifact self-hash mismatch|Extra data",
+    }[target]
+    with pytest.raises((ValueError, AssertionError), match=reason):
+        incident.build_receipt()

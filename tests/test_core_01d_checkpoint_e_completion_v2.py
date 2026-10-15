@@ -81,3 +81,30 @@ def test_local_test_products_are_not_authority_evidence(monkeypatch):
   return original(*args)
  monkeypatch.setattr(review.retention.v4.v3,'_git',extra)
  with pytest.raises(AssertionError,match='unapproved untracked source'):current.authenticate_current_scope()
+
+
+def test_october15_forward_projection_preserves_both_historical_scope_digests():
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ raw=review.retention.v4.v3._git('ls-tree','-r','HEAD')
+ projected=current.a2_historical_projection(raw)
+ assert review.sha256(current.unchanged_inventory(projected))==current.UNCHANGED_SCOPE_SHA
+ current.v1.validate_bounded_inventory(raw)
+ paths={line.split(b'\t',1)[1].decode():line.split()[2].decode() for line in projected.splitlines()}
+ for path,blob in current.v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS.items():
+  assert paths[path]==blob
+ assert not current.v1.FRESH_HOLDOUT_20261015_ADDITIVE_PATHS & set(paths)
+ latest=a2.authenticate_inventory()
+ rows={row['path']:row['lf_source_sha256'] for row in latest['source_identities']}
+ for path in current.v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS:
+  assert rows[path]==review.sha256((review.ROOT/path).read_bytes().replace(b'\r\n',b'\n'))
+
+
+def test_october15_evidence_cannot_hide_tampering(monkeypatch):
+ from runtime import source_identity
+ original=source_identity.read_tracked_head_blob
+ def tampered(root,path):
+  raw,identity=original(root,path)
+  return raw+b' ',identity
+ monkeypatch.setattr(source_identity,'read_tracked_head_blob',tampered)
+ with pytest.raises(AssertionError,match='October 15 additive evidence identity drift'):
+  current.v1.authenticate_fresh_holdout_20261015_evidence()

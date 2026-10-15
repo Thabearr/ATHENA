@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+import types
 from typing import Any
 
 import yaml
@@ -246,208 +247,46 @@ def _source_rows(inventory: dict[str, Any]) -> dict[str, str]:
     return {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
 
 
+# PR #461's merged incident checkpoint is immutable. Later A2 generations
+# authenticate current sources, never become a new historical incident receipt.
+HISTORICAL_GENERATION = 208
+HISTORICAL_INVENTORY_SHA = "eac19de61bc8db38c8fd0496d9224c9de5377408c994800452bb84911180f626"
+HISTORICAL_RECEIPT_SHA = "42569818232faed0dd35725e574676149dd9886eb6d20953a034ad03b0b9c579"
+HISTORICAL_SOURCE = "tests/fixtures/core_01d/pr459_live_trigger_incident/incident-audit-v208-predecessor.py.txt"
+HISTORICAL_SOURCE_BLOB = "4d877d598ea3aa161f1a19ed86f46d6dfc2b5bb0"
+HISTORICAL_SOURCE_SHA = "212501c2653be6d01297e0d954c94631e1a3a3ff8f6142ad4f1fe2dadfc48532"
+
+
 def build_receipt() -> dict[str, Any]:
-    latest = a2.authenticate_inventory()
+    # Authenticate the entire current corpus before opening the bounded
+    # historical view. Imported B4/D5/RUN-02A auditors still use current A2.
+    current = a2.authenticate_inventory()
     chain = a2.load_inventory_generations()
-    _require(latest["generation"] > MISSION_A2_BASE_GENERATION,
-             "incident requires an append-only A2 successor after V167")
-    mission_predecessor = chain[MISSION_A2_BASE_GENERATION - 1][1]
-    immediate_predecessor = chain[-2][1]
-    _require(mission_predecessor["generation"] == MISSION_A2_BASE_GENERATION
-             and mission_predecessor["canonical_sha256"] == MISSION_A2_BASE_SHA,
-             "V167 predecessor changed or was rewritten")
-    _require(immediate_predecessor["generation"] == latest["generation"] - 1,
-             "immediate A2 predecessor was rewritten")
-
-    _, expected_d5_tree = d5.authenticate_workflow()
-    current_workflow_tree = _git("rev-parse", "HEAD:.github/workflows")
-    projected_tree = b4.project_b4_workflow_tree(current_workflow_tree)
-    _require(projected_tree == expected_d5_tree,
-             "current workflow tree is not the exact B4/D5 projection")
-    _require(d5.historical_workflow_tree(current_workflow_tree) == b4.WORKFLOW_TREE,
-             "immutable B4 workflow tree cannot be rederived")
-
-    _require(b4.audit()["result"] == "PASS", "immutable B4 evidence no longer rederives")
-    b4_receipt = b4.boundary.read(b4.RECEIPT_PATH)
-    b4_inventory = b4.boundary.read(b4.SOURCE_INVENTORY_PATH)
-    _require(hashlib.sha256(b4.boundary.canonical(b4_receipt)).hexdigest() == B4_RECEIPT_SHA
-             and hashlib.sha256(b4.boundary.canonical(b4_inventory)).hexdigest() == B4_INVENTORY_SHA,
-             "immutable B4 evidence changed")
-    _require(run02a.audit()["canonical_sha256"] == run02a.RETAINED_RECEIPT_SHA,
-             "RUN-02A-PRE retained evidence changed")
-
-    workflow_contracts = {}
-    historical_workflow_contracts = {}
-    current_sources = _source_rows(latest)
-    native_source = (ROOT / NATIVE_TEST).read_bytes().replace(b"\r\n", b"\n")
-    native_sha = hashlib.sha256(native_source).hexdigest()
-    _require(current_sources.get(NATIVE_TEST) == native_sha,
-             "native PORT-02C safety test is not authenticated by A2")
-    for path, fixture in b4.B4_WORKFLOW_PREDECESSORS.items():
-        historical = b4._parse_workflow(path)
-        pr_paths = historical["on"]["pull_request"].get("paths", [])
-        legacy_commands = []
-        for job in historical.get("jobs", {}).values():
-            for step in job.get("steps", []):
-                run = step.get("run", "")
-                legacy_commands.extend(
-                    line.strip() for line in run.splitlines()
-                    if "python scripts/sportybet_direct_share_bridge.py" in line
-                )
-        _require(BRIDGE in pr_paths and legacy_commands,
-                 "historical workflow no longer proves its live PR capability: " + path)
-        historical_workflow_contracts[path] = {
-            "fixture": fixture,
-            "git_blob_sha1": b4.SOURCE_PINS[path][0],
-            "lf_source_sha256": b4.SOURCE_PINS[path][1],
-            "pull_request_paths": pr_paths,
-            "legacy_bridge_commands": legacy_commands,
-            "conditionally_reachable_live_create_and_reload": True,
-        }
-    for path in (CREATE_WORKFLOW, PROVE_WORKFLOW):
-        source = (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
-        _require(current_sources.get(path) == hashlib.sha256(source).hexdigest(),
-                 "current workflow is not authenticated by A2: " + path)
-        workflow = _validate_workflow(path)
-        raw_workflow = (ROOT / path).read_bytes()
-        current_blob = _git_blob_sha1(raw_workflow)
-        _require(current_blob == _git("rev-parse", "HEAD:" + path),
-                 "current workflow worktree differs from exact Git blob: " + path)
-        workflow_contracts[path] = {
-            "source_git_blob_sha1": current_blob,
-            "source_lf_sha256": current_sources[path],
-            "event_names": sorted(workflow["on"]),
-            "pr_branches": workflow["on"]["pull_request"]["branches"],
-            "pr_paths": workflow["on"]["pull_request"]["paths"],
-            "dispatch_mode": "OFFLINE_ONLY",
-            "permissions": workflow["permissions"],
-            "reachable_provider_calls": [],
-            "reachable_share_code_create_or_reload": False,
-            "artifact_upload": False,
-            "checkout_credentials_persisted": False,
-        }
-
-    return _seal({
-        "schema_version": 1,
-        "policy_id": "ATHENA_CORE_01D_PR459_LIVE_TRIGGER_INCIDENT_V1",
-        "repository": "Thabearr/ATHENA",
-        "pr_title": PR_TITLE,
-        "branch": BRANCH,
-        "base_main_sha": BASE_MAIN,
-        "base_tree_sha": BASE_TREE,
-        "a2": {
-            "successor_generation": latest["generation"],
-            "successor_canonical_sha256": latest["canonical_sha256"],
-            "mission_base_generation": MISSION_A2_BASE_GENERATION,
-            "mission_base_canonical_sha256": MISSION_A2_BASE_SHA,
-            "intermediate_generation": immediate_predecessor["generation"],
-            "intermediate_canonical_sha256": immediate_predecessor["canonical_sha256"],
-            "predecessor_generation": immediate_predecessor["generation"],
-            "predecessor_canonical_sha256": immediate_predecessor["canonical_sha256"],
-            "predecessor_rewritten": False,
-        },
-        "incident": {
-            "pr459_reviewed_head_sha": PR459_REVIEWED_HEAD,
-            "pr459_merge_commit_sha": PR459_MERGE_SHA,
-            "pr459_merged_with_two_failed_non_skipped_checks": True,
-            "historical_exact_head_runs": [
-                {"head_sha": PR459_REVIEWED_HEAD, "event": "pull_request", **run}
-                for run in HISTORICAL_RUNS
-            ],
-            "failed_runs": [38335345800, 38335345629],
-            "failure": "MISSING_PYYAML_BEFORE_LIVE_STEP; LIVE_CREATE_AND_RELOAD_STEPS_SKIPPED",
-            "root_cause": "PYTEST_INSTALL_OMITTED_PYYAML_IMPORTED_BY_TESTS_CONFTEST",
-            "observed_error": "ModuleNotFoundError: No module named 'yaml'",
-            "failed_job_ids": [115094049269, 115094048229],
-            "failed_jobs_external_operation_observation": {
-                "create_steps": "SKIPPED",
-                "reload_get_performed": False,
-                "provider_post_observed": False,
-                "create_outcome": "skipped",
-                "direct_outcome": "skipped",
-            },
-            "historical_capability": "LIVE_POST_AND_RELOAD_WERE_CONDITIONALLY_REACHABLE_IF_PYYAML_INSTALLATION_HAD_SUCCEEDED",
-            "merge_review_disposition": "MERGE_ACCEPTED_DESPITE_TWO_APPLICABLE_TRIGGERED_FAILURES; INCIDENT_IS_GOVERNANCE_AND_CI_SAFETY_NOT_RETROACTIVE_INVALIDATION_OF_PR459_CODE",
-            "accidental_dependency_failure_is_not_a_safety_guard": True,
-        },
-        "historical_workflow_contracts": historical_workflow_contracts,
-        "current_workflow_contracts": workflow_contracts,
-        "native_qualification": {
-            "test_path": NATIVE_TEST,
-            "test_source_lf_sha256": native_sha,
-            "port_02c_path_filter": "tests/native/**",
-            "natural_windows_linux_qualification": True,
-            "network_or_provider_calls": 0,
-        },
-        "delivery_authority": {
-            "automatic_pr_share_code_create": False,
-            "manual_workflow_share_code_create": False,
-            "manual_workflow_mode": "OFFLINE_ONLY",
-            "direct_bridge_product_authority_changed": False,
-            "future_live_proof_requires_separate_reviewed_authority": True,
-            "no_live_proof_or_provider_request_performed": True,
-        },
-        "historical_evidence": {
-            "b4_receipt_path": b4.RECEIPT_PATH,
-            "b4_receipt_canonical_sha256": B4_RECEIPT_SHA,
-            "b4_source_inventory_path": b4.SOURCE_INVENTORY_PATH,
-            "b4_source_inventory_canonical_sha256": B4_INVENTORY_SHA,
-            "b4_workflow_predecessors": {
-                path: {
-                    "fixture": fixture,
-                    "git_blob_sha1": b4.SOURCE_PINS[path][0],
-                    "lf_source_sha256": b4.SOURCE_PINS[path][1],
-                }
-                for path, fixture in b4.B4_WORKFLOW_PREDECESSORS.items()
-            },
-            "run_02a_pre_receipt_canonical_sha256": run02a.RETAINED_RECEIPT_SHA,
-            "run_01a_receipt_unchanged": True,
-            "run_01b_receipt_unchanged": True,
-            "pr457_policy_unchanged": True,
-        },
-        "branch_protection": {
-            "repository_ruleset_og": "OBSERVED_DISABLED",
-            "main_protection_api": "UNVERIFIED_403_INTEGRATION_LIMIT",
-            "owner_settings_followup_required": True,
-            "settings_mutated": False,
-        },
-        "governance": {
-            "source_review_counter_while_unmerged": SOURCE_REVIEW_COUNTER,
-            "source_review_counter_if_owner_merges": SOURCE_REVIEW_COUNTER_IF_MERGED,
-            "run_02a": "BLOCKED_UNSTARTED",
-            "e4": "UNSTARTED",
-            "e5": "UNSTARTED",
-            "merge_authorized": False,
-            "merge_review_policy": "EXACT_HEAD_ALL_EVENT_RUN_AND_CHECK_INVENTORY_REQUIRED",
-            "check_inventory_is_read_only_and_paginated": True,
-            "path_filtered_skips_require_source_proven_reason": True,
-            "pending_or_failed_applicable_check_blocks_review_ready": True,
-            "owner_settings_followup": {
-                "require_pull_request_review": True,
-                "forbid_unauthorized_bypass": True,
-                "require_always_present_tests_aggregate": True,
-                "do_not_globally_require_absent_path_filtered_jobs": True,
-                "do_not_require_live_workflow_for_ordinary_prs": True,
-            },
-            "final_head_and_exact_head_ci": "RECORDED_IN_PR_BODY_AFTER_NATURAL_HOSTED_GATES",
-        },
-        "rollback": {
-            "requires_separately_reviewed_pr": True,
-            "may_restore_automatic_live_share_code_on_pr": False,
-            "preserve_historical_evidence": True,
-        },
-        "restricted_action_counts": dict.fromkeys((
-            "provider_acquisition", "provider_get", "provider_post",
-            "live_current_shadow", "fresh_holdout_manual",
-            "real_share_code_create", "share_code_reload_get", "delivery",
-            "login", "cookies", "wallet", "stake", "wager", "email", "manual_workflow_dispatch",
-            "manual_workflow_rerun", "manual_workflow_cancel", "deployment",
-            "release", "merge",
-        ), 0),
-        "review_state": "SOURCE_POLICY_PASS_EXACT_HEAD_HOSTED_GATES_PENDING",
-        "review_ready": False,
-        "merge_authorized": False,
-    })
+    _require(current["generation"] >= HISTORICAL_GENERATION,
+             "incident checkpoint requires A2 V208 or its authenticated successor")
+    historical = chain[HISTORICAL_GENERATION - 1][1]
+    _require(historical["canonical_sha256"] == HISTORICAL_INVENTORY_SHA,
+             "immutable incident A2 V208 identity drift")
+    source = (ROOT / HISTORICAL_SOURCE).read_bytes().replace(b"\r\n", b"\n")
+    _require(_git_blob_sha1(source) == HISTORICAL_SOURCE_BLOB
+             and hashlib.sha256(source).hexdigest() == HISTORICAL_SOURCE_SHA
+             == _source_rows(historical).get(AUDIT_SCRIPT),
+             "incident predecessor source fixture identity drift")
+    # Execute only the exact authenticated predecessor implementation. Its
+    # local A2 binding reconstructs V208/V207; no shared module is patched.
+    checkpoint = types.ModuleType("_athena_pr459_incident_v208")
+    checkpoint.__file__ = str(ROOT / HISTORICAL_SOURCE)
+    exec(compile(source, checkpoint.__file__, "exec"), checkpoint.__dict__)
+    checkpoint.ROOT = ROOT
+    checkpoint.a2 = types.SimpleNamespace(
+        canonical=a2.canonical,
+        authenticate_inventory=lambda: historical,
+        load_inventory_generations=lambda: chain[:HISTORICAL_GENERATION],
+    )
+    value = checkpoint.build_receipt()
+    _require(value["canonical_sha256"] == HISTORICAL_RECEIPT_SHA,
+             "immutable incident reconstruction identity drift")
+    return value
 
 
 def audit(expected_receipt: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -470,9 +309,7 @@ def main() -> None:
     args = parser.parse_args()
     value = build_receipt()
     if args.write:
-        target = ROOT / RECEIPT_PATH
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(_canonical(value))
+        raise SystemExit("PR #459 incident receipt is immutable; use a reviewed forward successor")
     elif not (ROOT / RECEIPT_PATH).is_file():
         raise SystemExit("incident evidence artifact is missing; use --write after source qualification")
     result = "PASS" if args.write else audit(value)["result"]
