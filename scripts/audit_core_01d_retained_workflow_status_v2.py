@@ -51,6 +51,13 @@ SUPPORTING_SOURCE_PATHS = (
     "tests/test_p4_2_athena_run_workflow.py",
     "tests/test_p4_4a1_baseline_workflow_maintenance_revision_authority.py",
 )
+HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS = {
+    "scripts/audit_p4_3_workflow_retirement_ledger.py": {
+        "fixture_path": "tests/fixtures/core_01d/pr459_live_trigger_incident/p4-3-workflow-retirement-ledger-predecessor.py.txt",
+        "git_blob_sha1": "77927732b2abc2b13f20a4979ad7092307873900",
+        "source_sha256": "1e6cde7b5414847c2bd1fed4996d1e02deaf022bc2efaf56f9df696443ffaf22",
+    },
+}
 PAYLOAD_FIXTURE_SHA256 = "d596baef519ef1ac3ad459b0f49f4acf58557d416c549c159f3bd30d13b15ad0"
 HISTORICAL_BLOCKER = "PROTECTED_FRESH_HOLDOUT_PR119_EXACT_FALLBACK_NOT_DURABLY_RECOVERED"
 REMAINING_BLOCKER_IDS = (
@@ -163,9 +170,35 @@ def _current_workflows() -> tuple[list[str], dict[str, bytes], int]:
 
 def _supporting_source_inventory() -> list[dict[str, str]]:
     rows = []
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+
+    latest = boundary.load_inventory_generations()[-1][1]
+    current_a2 = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
     for path in SUPPORTING_SOURCE_PATHS:
         working_tree_raw = (ROOT / path).read_bytes()
         _require_head_file_identity(path, working_tree_raw)
+        predecessor = HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS.get(path)
+        if predecessor is not None:
+            current_lf_sha = hashlib.sha256(
+                working_tree_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            ).hexdigest()
+            require(current_a2.get(path) == current_lf_sha,
+                    f"current supporting source differs from authenticated A2: {path}")
+            fixture_path = predecessor["fixture_path"]
+            fixture = ROOT / fixture_path
+            if not fixture.is_file() or fixture.is_symlink():
+                raise RetainedWorkflowStatusV2Error(
+                    f"historical supporting-source fixture is unavailable: {fixture_path}"
+                )
+            fixture_raw = fixture.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            _require_head_file_identity(fixture_path, fixture_raw)
+            identity = evolution.source_identity(fixture_raw)
+            require(identity == {
+                "git_blob_sha1": predecessor["git_blob_sha1"],
+                "source_sha256": predecessor["source_sha256"],
+            }, f"historical supporting-source identity drift: {fixture_path}")
+            rows.append({"path": path, **identity})
+            continue
         raw = _head_blob(path)
         blob = _git("rev-parse", f"HEAD:{path}").decode("ascii").strip()
         identity = roles.sha(raw)

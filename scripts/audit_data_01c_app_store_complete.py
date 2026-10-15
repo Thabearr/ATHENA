@@ -346,6 +346,23 @@ def audit(latest=None):
         # source is authenticated below; historical receipt bytes stay frozen.
         evolved |= {"scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py",
                     "scripts/audit_core_01d_exact_pr_trigger_disposition_b1.py"}
+        # PR #461's two direct-share workflows retain their historical B4
+        # bytes in sealed fixtures while the current offline-only revisions
+        # are authenticated by the append-only A2 inventory and incident audit.
+        evolved |= {".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml",
+                    ".github/workflows/prove-sportybet-direct-share-code.yml"}
+        # Current D5 source-forward projections for the PR #461 incident fix.
+        # The immutable D5 receipt remains byte-for-byte historical; current
+        # identities for these exact sources are authenticated by A2 above.
+        evolved |= {"scripts/audit_core_01d_ci_offline_transport_boundary.py",
+                    "scripts/audit_core_01d_retained_workflow_status_v2.py",
+                    "scripts/audit_p4_workflow_evolution_ledger.py",
+                    "scripts/audit_run_01a_durable_admission.py",
+                    "sitecustomize.py",
+                    # The exact B2 predecessor-set regression tracks the same
+                    # reviewed PR #461 pins; its current bytes remain A2-bound.
+                    "tests/test_core_01d_historical_warehouse_transfer_authority_b2.py",
+                    "tests/test_data_01c_app_storage.py"}
         inventory = boundary.authenticate_inventory()
         identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
         if (set(current) != set(frozen)

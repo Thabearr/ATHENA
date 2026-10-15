@@ -271,6 +271,12 @@ def test_completion_v2_additive_projection_allowlist_is_exact_and_narrow():
         "domain/execution_envelope.py": "8f0a84db708fef11fabb857b21b1322cb5b5a36e",
         "scripts/audit_core_01_schedule_date_disposition.py": "6f8d453cee00a13865c984b9a80880678b4fd84c",
         "tests/test_core_01_schedule_date_disposition.py": "f658773457d6a46bbd25f6b2a5636fff019b0043",
+        "scripts/audit_p4_3_workflow_retirement_ledger.py": "77927732b2abc2b13f20a4979ad7092307873900",
+        "tests/test_core_01d_historical_retention_acceptance.py": "9ac2d450e29c0faf5fd471f06f3f1ae0dfdaa51d",
+        "tests/test_core_01d_canonical_drive_transfer_completed_history.py": "facfa6cd0932972d729215b8121942661a75cc54",
+        "tests/test_p4_3d_retirement_audit_extensibility.py": "5e7de20231b2455f15fdc20c4fd21e1720714f64",
+        ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml": "84fd86333c34e8b6e27afe7f9d6e0e1c4234e93c",
+        ".github/workflows/prove-sportybet-direct-share-code.yml": "18e5656c232102df141aaa614aca3d5d7575ec5b",
     }
     assert completion_v2.B1_ADDITIVE_EVIDENCE_PATHS == expected
     assert not any("*" in path for path in completion_v2.B1_ADDITIVE_EVIDENCE_PATHS)

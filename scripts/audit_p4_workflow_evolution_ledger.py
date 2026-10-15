@@ -606,6 +606,26 @@ def resolve_p43a_historical_workflow_source(
         item for item in evolution_ledger.get("transitions", [])
         if item.get("operation") == "MAINTENANCE_REVISE" and item.get("workflow_path") == path
     ]
+    if not revisions and path in PR459_OFFLINE_WORKFLOW_FORWARD:
+        before, _after = PR459_OFFLINE_WORKFLOW_FORWARD[path]
+        expected = {key: row.get(key) for key in IDENTITY_KEYS}
+        if expected != before:
+            raise WorkflowEvolutionError(
+                f"PR459 offline predecessor differs from frozen P4.3A identity: {path}"
+            )
+        head_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
+        if not _exact_pr119_historical_source_context(evolution_ledger, head_tree):
+            raise WorkflowEvolutionError(
+                "PR459 P4.3A source forward is outside its exact offline-only context"
+            )
+        from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+
+        raw = b4._historical_b4_workflow_bytes(path)
+        if source_identity(raw) != expected:
+            raise WorkflowEvolutionError(
+                f"PR459 sealed B4 predecessor differs from frozen P4.3A identity: {path}"
+            )
+        return raw
     if not revisions and path in CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES:
         fixture_path, expected = CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES[path]
         head_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
@@ -674,7 +694,22 @@ def _exact_pr119_historical_source_context(evolution_ledger, head_tree):
         _successor_identity, successor_tree = d5.authenticate_workflow()
     except (OSError, ValueError):
         return False
-    return head_tree == successor_tree
+    if head_tree == successor_tree:
+        return True
+    if head_tree == PR459_OFFLINE_WORKFLOW_TREE_SHA1:
+        for path, (_before, after) in PR459_OFFLINE_WORKFLOW_FORWARD.items():
+            try:
+                raw = Path(path).read_bytes().replace(b"\r\n", b"\n")
+            except OSError:
+                return False
+            if source_identity(raw) != after:
+                return False
+        from scripts import audit_core_01d_pr459_live_trigger_incident as incident
+        try:
+            return all(incident._validate_workflow(path) for path in PR459_OFFLINE_WORKFLOW_FORWARD)
+        except (OSError, ValueError, AssertionError):
+            return False
+    return False
 
 
 def _resolve_reviewed_transition_after_source(
@@ -910,6 +945,24 @@ CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES = {
     ),
 }
 
+# Exact current source projection for PR #461's two offline-only direct-share
+# workflows. The P4.3A ledger and B4 predecessor identities remain immutable.
+PR459_OFFLINE_WORKFLOW_TREE_SHA1 = "72db53f1ef85470e4aaa15959672dcf0bb1b1065"
+PR459_OFFLINE_WORKFLOW_FORWARD = {
+    ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml": (
+        {"git_blob_sha1": "84fd86333c34e8b6e27afe7f9d6e0e1c4234e93c",
+         "source_sha256": "c7493daa862a79788102ec85848c7f2161542c6d6e109967c34ddcc9ee6eb151"},
+        {"git_blob_sha1": "796166ba2768f834f996ac7a3b995901b1f2ee3a",
+         "source_sha256": "267fd85f6ecff0f54190086b96ca12676661cb4e4221291bbf25368dba7869c8"},
+    ),
+    ".github/workflows/prove-sportybet-direct-share-code.yml": (
+        {"git_blob_sha1": "18e5656c232102df141aaa614aca3d5d7575ec5b",
+         "source_sha256": "f3211e23db24f6519e9e3f2635e6ca46b0993f1f9efbdb706d53f80988b74382"},
+        {"git_blob_sha1": "834323310f6379d8341fd307a1a05aa4d48a0d72",
+         "source_sha256": "20ad7330d4d90e80e92db355a75422d94ba318399e9466ffe112ae3a146bba88"},
+    ),
+}
+
 
 def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha):
     """Exact qualification/Git-free launcher successor; no history rewriting.
@@ -919,6 +972,30 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
     """
     from scripts import audit_data_01c_restore_portability as d5
     successor_identity, successor_tree = d5.successor_context()
+    if head_tree == PR459_OFFLINE_WORKFLOW_TREE_SHA1:
+        if ledger_sha != CORE01D_PR119_LEDGER_SHA256:
+            raise WorkflowEvolutionError(
+                "PR459 offline workflow source-forward is outside the exact P4.3A ledger"
+            )
+        try:
+            d5.authenticate_workflow()
+        except (OSError, ValueError) as exc:
+            raise WorkflowEvolutionError(
+                "PR459 offline workflow source-forward failed D5 authentication"
+            ) from exc
+        projected_observed = dict(observed)
+        for path, (before, after) in PR459_OFFLINE_WORKFLOW_FORWARD.items():
+            if derived.get(path) != before or observed.get(path) != after:
+                raise WorkflowEvolutionError(
+                    "PR459 offline workflow source-forward identity changed: " + path
+                )
+            projected_observed[path] = dict(before)
+        result = _port02c_current_source_forward(
+            derived, projected_observed, head_tree=successor_tree, ledger_sha=ledger_sha
+        )
+        for path, (_before, after) in PR459_OFFLINE_WORKFLOW_FORWARD.items():
+            result[path] = dict(after)
+        return result
     if head_tree == successor_tree:
         if ledger_sha != CORE01D_PR119_LEDGER_SHA256 or observed.get(PORT02C_REPLAY_WORKFLOW_PATH) != successor_identity:
             raise WorkflowEvolutionError("workflow tree differs without exact PORT-02C D5 successor")

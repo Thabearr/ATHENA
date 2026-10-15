@@ -26,7 +26,7 @@ def sealed_chain(sealed):
 @pytest.fixture
 def checkout(tmp_path, monkeypatch, sealed, sealed_chain, request):
     original = review.ROOT
-    paths = set(PATHS) | set(share.RETAINED_AUDIT_PREDECESSORS) | {v[0] for v in share.RETAINED_AUDIT_PREDECESSORS.values()} | {share.RECEIPT_PATH, a2.inventory_generation_path(154), checkpoint.FRESH_HOLDOUT_20261014_EVIDENCE} | {v[0] for v in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES.values()} | {review.INVENTORY_PATH} | set(checkpoint.FRESH_HOLDOUT_20261014_TEST_TREE_IDENTITIES)
+    paths = set(PATHS) | set(share.RETAINED_AUDIT_PREDECESSORS) | {v[0] for v in share.RETAINED_AUDIT_PREDECESSORS.values()} | {share.RECEIPT_PATH, a2.inventory_generation_path(154), checkpoint.FRESH_HOLDOUT_20261014_EVIDENCE, checkpoint.PR459_RUN02A_BASE_FIXTURE} | {v[0] for v in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES.values()} | {review.INVENTORY_PATH} | set(checkpoint.FRESH_HOLDOUT_20261014_TEST_TREE_IDENTITIES)
     for logical in paths:
         target = tmp_path / logical
         target.parent.mkdir(parents=True, exist_ok=True)

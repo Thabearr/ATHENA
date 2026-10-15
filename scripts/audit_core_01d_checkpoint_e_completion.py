@@ -217,6 +217,18 @@ ALLOWED_PASS4_PATHS |= FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | set(FRESH_HOLDOUT
 # Exact handoff ls-tree inventory excluding only the twelve bounded evidence
 # paths. Available in shallow CI without requiring the handoff commit object.
 UNCHANGED_REPOSITORY_INVENTORY_SHA = "6b407c284a7c2f759e6345f53444478de53427ceae1aaa7d412d078270c5ad27"
+PR459_PREDECESSOR_SOURCE_BLOBS = {
+    ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml":
+        "84fd86333c34e8b6e27afe7f9d6e0e1c4234e93c",
+    ".github/workflows/prove-sportybet-direct-share-code.yml":
+        "18e5656c232102df141aaa614aca3d5d7575ec5b",
+    "scripts/audit_p4_3_workflow_retirement_ledger.py":
+        "77927732b2abc2b13f20a4979ad7092307873900",
+    "tests/test_core_01d_sportybet_current_trigger_authority_b4.py":
+        "ad0f75490126ffd020124fd7ec7ecc14d78b66a6",
+    "tests/test_p4_3d_retirement_audit_extensibility.py":
+        "5e7de20231b2455f15fdc20c4fd21e1720714f64",
+}
 
 
 def validate_bounded_inventory(raw: bytes) -> None:
@@ -229,7 +241,21 @@ def validate_bounded_inventory(raw: bytes) -> None:
     data01a.historical_build_config()
     successor_paths = data01a.successor_paths()
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
-    a2.authenticate_inventory()
+    latest = a2.authenticate_inventory()
+    from runtime.source_identity import read_tracked_head_blob
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion_v2
+    from scripts import audit_core_01d_pr459_live_trigger_incident as incident
+    pr459_additive_paths = completion_v2.PR459_HISTORICAL_SOURCE_FORWARD_PATHS | {
+        incident.AUDIT_SCRIPT, incident.POLICY_TEST, incident.NATIVE_TEST,
+    }
+    current_sources = {row["path"]: row["lf_source_sha256"]
+                       for row in latest["source_identities"]}
+    pr459_current_blobs = {}
+    for path in PR459_PREDECESSOR_SOURCE_BLOBS:
+        payload, identity = read_tracked_head_blob(ROOT, path)
+        policy.require(current_sources.get(path) == policy.sha256(payload.replace(b"\r\n", b"\n")),
+                       "PR459 current source is not authenticated by A2: " + path)
+        pr459_current_blobs[path] = identity.git_blob_sha1
     # Preserve every pre-incident A2 inventory row exactly. Only generations
     # appended by this bounded incident successor are additive scope and may be
     # removed from the historical Checkpoint-E projection.
@@ -247,6 +273,7 @@ def validate_bounded_inventory(raw: bytes) -> None:
         "services/athena_preview_service.py": "b8c3898baa28a4243c80a2b58ed284365ae854ab",
     }
     predecessor_blobs.update(RUN_02A_PRE_PREDECESSOR_SOURCE_BLOBS)
+    predecessor_blobs.update(PR459_PREDECESSOR_SOURCE_BLOBS)
     from scripts import audit_core_01d_authority_reachability_review_a as review
     for path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
         review.source_bytes(path)
@@ -259,8 +286,13 @@ def validate_bounded_inventory(raw: bytes) -> None:
     for line in raw.splitlines(keepends=True):
         metadata, separator, path_bytes = line.partition(b"\t")
         path = path_bytes.strip().decode()
-        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS:
+        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | pr459_additive_paths:
             continue
+        if path in PR459_PREDECESSOR_SOURCE_BLOBS:
+            policy.require(metadata.split()[:2] == [b"100644", b"blob"]
+                           and metadata.rsplit(b" ", 1)[-1].decode() in {
+                               pr459_current_blobs[path], PR459_PREDECESSOR_SOURCE_BLOBS[path],
+                           }, "PR459 source inventory identity is unverified: " + path)
         if path in INCIDENT_20261010_PREDECESSOR_BLOBS:
             metadata = (
                 metadata.rsplit(b" ", 1)[0]
@@ -352,6 +384,10 @@ def build_receipt() -> dict:
         if path == d5.WORKFLOW:
             d5.authenticate_workflow()
             source = d5.predecessor_source(path)
+            identity = {**identity, **d5.identity(source)}
+        from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+        if path in b4.B4_WORKFLOW_PREDECESSORS:
+            source = b4._historical_b4_workflow_bytes(path)
             identity = {**identity, **d5.identity(source)}
         doc = yaml.load(source, Loader=yaml.BaseLoader)
         actual = sorted(doc["on"])

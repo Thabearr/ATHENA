@@ -182,7 +182,11 @@ def test_network_and_operational_actions_are_denied_during_offline_audit(monkeyp
 
     def git_reads_only(command, *args, **kwargs):
         assert command[0] == "git"
-        assert command[1] in {"show", "rev-parse", "hash-object", "cat-file", "ls-tree", "diff", "log"}
+        index = 1
+        if command[1] == "-C":
+            assert command[2] == str(transfer.ROOT)
+            index = 3
+        assert command[index] in {"show", "rev-parse", "hash-object", "cat-file", "ls-tree", "diff", "log"}
         return original(command, *args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", git_reads_only)

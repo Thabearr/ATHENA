@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 
 from scripts.qualify_data_01c_restore_portability import canonical, NODEIDS, PHASES, validate_receipt
 
@@ -170,7 +171,17 @@ def authenticate_workflow():
     directory = ROOT / ".github/workflows"
     if sorted(p.name for p in directory.iterdir()) != sorted(row["name"] for row in entries):
         raise ValueError("D5 successor changed the workflow set")
+    actual_tree = subprocess.check_output(
+        ["git", "rev-parse", "HEAD:.github/workflows"], cwd=ROOT, text=True
+    ).strip()
+    from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+    projected_tree = b4.project_b4_workflow_tree(actual_tree)
+    if projected_tree != tree:
+        raise ValueError("direct-share workflow successors exceed the exact B4-to-D5 workflow projection")
     for row in entries:
+        path = ".github/workflows/" + row["name"]
+        if path in b4.B4_WORKFLOW_PREDECESSORS:
+            continue
         source = (directory / row["name"]).read_bytes().replace(b"\r\n", b"\n")
         expected_blob = after["git_blob_sha1"] if row["name"] == "port-02c-native-runtime.yml" else row["blob"]
         if identity(source)["git_blob_sha1"] != expected_blob:
@@ -182,7 +193,10 @@ def historical_workflow_tree(observed_tree):
     if observed_tree == PREDECESSOR_TREE:
         return observed_tree
     _, tree = authenticate_workflow()
-    if observed_tree != tree:
+    actual_tree = subprocess.check_output(
+        ["git", "rev-parse", "HEAD:.github/workflows"], cwd=ROOT, text=True
+    ).strip()
+    if observed_tree not in {tree, actual_tree}:
         raise ValueError("unknown PORT-02C source-forward workflow tree")
     return PREDECESSOR_TREE
 

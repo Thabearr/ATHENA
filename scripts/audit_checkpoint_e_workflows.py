@@ -7,6 +7,7 @@ CI. No provider module, GitHub transport, executor or real SMTP is invoked.
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 from datetime import datetime
 import hashlib
@@ -53,6 +54,12 @@ PASS1_SUPPORTING_SOURCE_PATHS = (
     "tests/test_p4_4a1_baseline_workflow_maintenance_revision_authority.py",
 )
 PASS1_V1_BASE_SOURCE_FIXTURES = {
+    "tests/test_p4_3d_retirement_audit_extensibility.py": (
+        "tests/fixtures/core_01d/pr459_live_trigger_incident/"
+        "test-p4-3d-retirement-audit-extensibility-predecessor.py.txt",
+        "5e7de20231b2455f15fdc20c4fd21e1720714f64",
+        "bb04b8fd35608d0fb474861a3444628c9abf7eb0695f18ba4f65f4080c42db1e",
+    ),
     ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml": (
         "tests/fixtures/core_01d/pass1-v1-source/audit-lineage.yml",
         "0ba12d02fc2cd5f7a7d9fb1458eeec5cbe3bbd23",
@@ -168,12 +175,29 @@ PASS_A_HISTORICAL_SOURCE_BLOBS = {
     "run_desktop.py": "39c4cf8c780eb2831b637a69ff0648b6eb465874",
     "tests/test_api_error_handling.py": "a827e02b95779ca0478ffa74db34e41de1e04b42",
     "tests/test_product_baseline_v1.py": "2d552f49cf84462bd1b32e86eea2a96ee0570b64",
+    # The current regression source is A2-authenticated, while Checkpoint E
+    # continues to reconstruct this exact original Pass-A inventory blob.
+    "tests/test_p4_3d_retirement_audit_extensibility.py": "5e7de20231b2455f15fdc20c4fd21e1720714f64",
 }
 PASS_A_BASE_SOURCE_BLOBS = {
     "api/server.py": "21c9aa432aaccd8db041778a26365f12f6af80de",
     "run_desktop.py": "3495618a198ccde18cad7d578362b1366e4bcedc",
     "tests/test_api_error_handling.py": "a827e02b95779ca0478ffa74db34e41de1e04b42",
     "tests/test_product_baseline_v1.py": "2d552f49cf84462bd1b32e86eea2a96ee0570b64",
+}
+# These exact Pass-A base blobs are edited in the current PR and are also
+# tracked by A2. Their current source bytes are authenticated by A2; the
+# immutable Checkpoint-E base view remains pinned to these original blobs.
+PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS = {
+    ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml": (
+        "84fd86333c34e8b6e27afe7f9d6e0e1c4234e93c"
+    ),
+    ".github/workflows/prove-sportybet-direct-share-code.yml": (
+        "18e5656c232102df141aaa614aca3d5d7575ec5b"
+    ),
+    "tests/test_p4_3d_retirement_audit_extensibility.py": (
+        "5e7de20231b2455f15fdc20c4fd21e1720714f64"
+    ),
 }
 PASS_A_HISTORICAL_SOURCE_FIXTURES = {
     "api/server.py": "tests/fixtures/core_01d/app_01c_historical/api_server.py.b64",
@@ -326,6 +350,9 @@ def read(path):
     from scripts import audit_run_02a_pre_durable_share_send as prerequisite
     if path in prerequisite.TRANSPORT_PREDECESSORS:
         return prerequisite.historical_transport_bytes(path, root=ROOT)
+    from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+    if path in b4.B4_WORKFLOW_PREDECESSORS:
+        return b4._historical_b4_workflow_bytes(path)
     if path in INCIDENT_20261010_PREDECESSOR_FIXTURES:
         return _incident_20261010_predecessor_source(path)
     if path in PASS_A_HISTORICAL_SOURCE_FIXTURES:
@@ -356,6 +383,10 @@ def read(path):
         # checkouts can reproduce the original census without fetching history.
         # Pass 1's current versions are separately authenticated by status V2.
         fixture, expected_blob, expected_sha = PASS1_V1_BASE_SOURCE_FIXTURES[path]
+        if path in PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS:
+            # A historical fixture cannot hide mutation of its current successor.
+            from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+            a2.authenticate_inventory()
         inventory_raw = (ROOT / BASE_PATH).read_bytes().replace(b"\r\n", b"\n")
         require(sha(inventory_raw) == BASE_INPUT_SHA, "exact-main base inventory identity drift")
         inventory = strict(inventory_raw)
@@ -468,6 +499,47 @@ def historical_audit_forward(base):
 
 
 FRESH_HOLDOUT_20261014_EVIDENCE = "artifacts/product/fresh_holdout_20261014_pass_a_source_projection_v1.json"
+PR459_RUN02A_BASE_SOURCE = "scripts/audit_run_02a_pre_durable_share_send.py"
+PR459_RUN02A_BASE_FIXTURE = "tests/fixtures/core_01d/pr459_live_trigger_incident/run-02a-pre-base.py.txt"
+PR459_RUN02A_BASE_GIT_BLOB = "ccb698bf97aced811a9e95d74f4a0523d54f85a0"
+PR459_RUN02A_BASE_LF_SHA256 = "3e8b6e1c4d6ddb08d02f17dc20059c51f175faba53b58cc22f49e99ac1be35cb"
+
+
+def _fresh_holdout_retained_run02a_predecessors(share):
+    """Read the exact five-entry predecessor map from the sealed PR base source."""
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+
+    current_raw = (ROOT / PR459_RUN02A_BASE_SOURCE).read_bytes()
+    fixture_worktree = (ROOT / PR459_RUN02A_BASE_FIXTURE).read_bytes()
+    review._tracked_payloads(((PR459_RUN02A_BASE_SOURCE, current_raw),
+                              (PR459_RUN02A_BASE_FIXTURE, fixture_worktree)))
+    latest = a2.authenticate_inventory()
+    current_rows = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
+    current_lf = current_raw.replace(b"\r\n", b"\n")
+    require(hashlib.sha256(current_lf).hexdigest() == current_rows.get(PR459_RUN02A_BASE_SOURCE),
+            "current RUN-02A prerequisite source differs from authenticated A2")
+
+    fixture_git = subprocess.check_output(
+        ["git", "show", "HEAD:" + PR459_RUN02A_BASE_FIXTURE], cwd=ROOT)
+    fixture_lf = fixture_worktree.replace(b"\r\n", b"\n")
+    fixture_git_lf = fixture_git.replace(b"\r\n", b"\n")
+    fixture_blob = hashlib.sha1(
+        b"blob " + str(len(fixture_git)).encode("ascii") + b"\0" + fixture_git).hexdigest()
+    require(fixture_lf == fixture_git_lf
+            and fixture_blob == PR459_RUN02A_BASE_GIT_BLOB
+            and hashlib.sha256(fixture_lf).hexdigest() == PR459_RUN02A_BASE_LF_SHA256,
+            "RUN-02A prerequisite base fixture identity drift")
+
+    predecessor_tree = ast.parse(fixture_lf.decode("utf-8"))
+    predecessor_maps = [node for node in predecessor_tree.body
+                        if isinstance(node, ast.Assign)
+                        and any(isinstance(target, ast.Name)
+                                and target.id == "RETAINED_AUDIT_PREDECESSORS"
+                                for target in node.targets)]
+    require(len(predecessor_maps) == 1,
+            "RUN-02A prerequisite base predecessor map is ambiguous")
+    return ast.literal_eval(predecessor_maps[0].value)
 
 
 def authenticate_fresh_holdout_20261014_evidence():
@@ -506,10 +578,15 @@ def authenticate_fresh_holdout_20261014_evidence():
     require(value.get("historical_fixtures") == expected,
             "Fresh-Holdout predecessor fact set changed")
     retained = value.get("pr459_retained_receipt", {})
+    retained_predecessors = _fresh_holdout_retained_run02a_predecessors(share)
+    expected_retained_predecessors = {
+        path: dict(zip(("path", "git_blob_sha1", "normalized_source_sha256"), row))
+        for path, row in retained_predecessors.items()
+    }
     require(retained.get("canonical_sha256") == share.RETAINED_RECEIPT_SHA and
             retained.get("generation") == share.RETAINED_GENERATION and
             retained.get("inventory_sha256") == share.RETAINED_INVENTORY_SHA and
-            retained.get("predecessors") == {p:dict(zip(("path", "git_blob_sha1", "normalized_source_sha256"), row)) for p,row in share.RETAINED_AUDIT_PREDECESSORS.items()},
+            retained.get("predecessors") == expected_retained_predecessors,
             "Fresh-Holdout retained prerequisite facts changed")
     require(value.get("authority") == dict.fromkeys(("historical_runtime_execution", "provider_acquisition", "live_fresh_holdout", "live_current_shadow", "share_code", "delivery", "manual_workflow_dispatch", "rerun", "cancel"), False) and
             all(value.get(k) == "UNSTARTED" for k in ("run_02a", "e4", "e5")),
@@ -704,13 +781,31 @@ def _authenticate_pr119_release_only_workflow_forward(current, before):
         [row["path"] for row in supporting] == list(retained_status_v2.SUPPORTING_SOURCE_PATHS),
         "Pass-1 supporting source inventory path set drift",
     )
+    historical_supporting_predecessors = (
+        retained_status_v2.HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS
+    )
     for row in supporting:
-        observed_support = current.get(row["path"])
-        require(
-            observed_support is not None
-            and observed_support["git_blob_sha1"] == row["git_blob_sha1"],
-            "Pass-1 supporting source differs from its V2 authenticated identity: " + row["path"],
-        )
+        path = row["path"]
+        observed_support = current.get(path)
+        predecessor = historical_supporting_predecessors.get(path)
+        if predecessor is not None:
+            # Status V2 authenticates the current source through A2, then
+            # authenticates this exact retained predecessor fixture. Keep the
+            # Pass-1 projection on that predecessor instead of comparing it
+            # with the intentionally changed current source bytes.
+            require(
+                observed_support is not None
+                and observed_support["mode"] == "100644"
+                and row["git_blob_sha1"] == predecessor["git_blob_sha1"]
+                and row["source_sha256"] == predecessor["source_sha256"],
+                "Pass-1 supporting predecessor differs from its V2 authenticated identity: " + path,
+            )
+        else:
+            require(
+                observed_support is not None
+                and observed_support["git_blob_sha1"] == row["git_blob_sha1"],
+                "Pass-1 supporting source differs from its V2 authenticated identity: " + path,
+            )
     return {
         "workflow_blob": transition["after"]["git_blob_sha1"],
         "supporting_source_blobs": {
@@ -747,13 +842,30 @@ def base_input():
                 "fresh-holdout workflow differs from its transition-14 identity",
             )
         elif path in supporting_source_blobs:
-            require(
-                current.get(path) == {
-                    "mode": identity["mode"],
-                    "git_blob_sha1": supporting_source_blobs[path],
-                },
-                "Pass-1 supporting source differs from its V2 authenticated identity: " + path,
-            )
+            from scripts import audit_core_01d_retained_workflow_status_v2 as retained_status_v2
+            predecessor = retained_status_v2.HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS.get(path)
+            expected_support = {
+                "mode": identity["mode"],
+                "git_blob_sha1": supporting_source_blobs[path],
+            }
+            if predecessor is not None:
+                # The source was edited after Pass-1. Its current bytes were
+                # authenticated by Status V2 against A2 above; this immutable
+                # base inventory row is older than the later Pass-1
+                # predecessor fixture, so authenticate each historical view
+                # through its own pinned identity and only require the current
+                # path/mode to remain present here.
+                require(
+                    supporting_source_blobs[path] == predecessor["git_blob_sha1"]
+                    and current.get(path) is not None
+                    and current[path]["mode"] == identity["mode"],
+                    "Pass-1 supporting predecessor differs from its V2 authenticated identity: " + path,
+                )
+            else:
+                require(
+                    current.get(path) == expected_support,
+                    "Pass-1 supporting source differs from its V2 authenticated identity: " + path,
+                )
         elif path in PASS_A_HISTORICAL_SOURCE_FIXTURES:
             require(
                 identity == {
@@ -761,6 +873,16 @@ def base_input():
                     "git_blob_sha1": PASS_A_BASE_SOURCE_BLOBS[path],
                 },
                 "Pass-A base inventory differs from its exact V1 source identity: " + path,
+            )
+        elif path in PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS:
+            require(
+                identity == {
+                    "mode": "100644",
+                    "git_blob_sha1": PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS[path],
+                }
+                and current.get(path) is not None
+                and current[path]["mode"] == identity["mode"],
+                "Pass-A preserved A2 successor differs from its exact V1 base identity: " + path,
             )
         else:
             require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
@@ -773,7 +895,13 @@ def base_input():
     ).stdout.decode().splitlines()
     require(len(hashed) == len(value["scan_paths"]), "worktree filtered hash inventory incomplete")
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
-    a2.authenticate_inventory()
+    latest_a2 = a2.authenticate_inventory()
+    latest_a2_paths = {row["path"] for row in latest_a2["source_identities"]}
+    for path in PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS:
+        require(
+            path in latest_a2_paths,
+            "Pass-A preserved workflow is not authenticated by current A2: " + path,
+        )
     from scripts import audit_app_01a_local_shell as app01a
     successor_paths, successor = app01a.authenticated_historical_paths()
     for path, actual in zip(value["scan_paths"], hashed):
@@ -792,8 +920,6 @@ def base_input():
         if path in INCIDENT_20261010_PREDECESSOR_BLOBS:
             _authenticate_incident_20261010_current_sources()
             actual = INCIDENT_20261010_PREDECESSOR_BLOBS[path]
-        if path in PASS_A_HISTORICAL_SOURCE_BLOBS:
-            actual = PASS_A_HISTORICAL_SOURCE_BLOBS[path]
         if path in a2.HISTORICAL_TEST_BLOBS:
             actual = a2.HISTORICAL_TEST_BLOBS[path]
         from scripts.core_01d_historical_source import identities
@@ -801,11 +927,26 @@ def base_input():
         if path in identities() or path in d5.snapshot()["sources"]:
             inspected = read(path)
             actual = hashlib.sha1(b"blob " + str(len(inspected)).encode() + b"\0" + inspected).hexdigest()
+        from scripts import audit_core_01d_retained_workflow_status_v2 as retained_status_v2
+        if path in supporting_source_blobs and path in retained_status_v2.HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS:
+            # _authenticate_pr119_release_only_workflow_forward verified both
+            # the current A2 identity and the exact retained predecessor blob.
+            actual = supporting_source_blobs[path]
+        if path in PASS_A_HISTORICAL_SOURCE_BLOBS:
+            # Current bytes are independently authenticated by A2 above; this
+            # scan projects the separately pinned Pass-A historical identity.
+            actual = PASS_A_HISTORICAL_SOURCE_BLOBS[path]
+        if path in PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS:
+            # These current workflow/test successors are also authenticated
+            # by the complete latest A2 inventory above; preserve the exact
+            # immutable Pass-A base identity for this historical scan.
+            actual = PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS[path]
         expected_blob = (
             audit_after if path == HISTORICAL_AUDIT
             else fresh_workflow_after_blob if path == fresh_workflow_path and fresh_workflow_after_blob
             else supporting_source_blobs[path] if path in supporting_source_blobs
-            else PASS_A_HISTORICAL_SOURCE_BLOBS[path] if path in PASS_A_HISTORICAL_SOURCE_FIXTURES
+            else PASS_A_HISTORICAL_SOURCE_BLOBS[path] if path in PASS_A_HISTORICAL_SOURCE_BLOBS
+            else PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS[path] if path in PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS
             else INCIDENT_20261010_PREDECESSOR_BLOBS[path] if path in INCIDENT_20261010_PREDECESSOR_BLOBS
             else value["files"][path]["git_blob_sha1"]
         )

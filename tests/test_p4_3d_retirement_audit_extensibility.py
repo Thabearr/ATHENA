@@ -201,6 +201,24 @@ def test_reviewed_protected_and_successor_workflow_sources_match_baseline() -> N
         assert ledger._git_blob_sha1(raw) == baseline_blobs[path]
 
 
+def test_pr459_offline_workflows_project_sealed_p43a_bytes_and_authenticate_current_head() -> None:
+    from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    from scripts import audit_core_01d_pr459_live_trigger_incident as incident
+
+    matrix, _ = ledger.load_baseline()
+    baseline = {row["workflow_path"]: row for row in matrix["workflow_rows"]}
+    current = ledger.validate_ledger()
+    latest = boundary.authenticate_inventory()
+    identities = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
+    for path in b4.B4_WORKFLOW_PREDECESSORS:
+        historical = ledger.resolve_reviewed_workflow_source(path, ledger=current)
+        assert ledger._git_blob_sha1(historical) == baseline[path]["git_blob_sha1"]
+        source = Path(path).read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        assert hashlib.sha256(source).hexdigest() == identities[path]
+        assert incident._validate_workflow(path)
+
+
 def test_p43d_receipt_hash_and_no_retirement_state() -> None:
     receipt = audit.check()
     assert receipt["canonical_sha256"] == ledger.canonical_sha256(receipt)
