@@ -214,9 +214,10 @@ FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS = {'domain/fotmob_fresh_holdout_capture
  'tests/test_fotmob_fresh_holdout_duplicate_group_wrapper.py': 'e989f73070cd5f8710e4f5f30f22e8e31af4cc62'}
 FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS["tests/test_fotmob_fresh_holdout_team_shortname_compatibility.py"] = "862f454061ef4eb596ec727cc86764c54bd64dd3"
 ALLOWED_PASS4_PATHS |= FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | set(FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS)
-# PR #462 adds three retained evidence paths. Its five evolved Python paths
-# already have stronger October 14 predecessor owners above: reuse those
-# exact blobs instead of replacing them with October 15 main-base identities.
+# PR #462 adds three retained evidence paths and one source-authenticated
+# native compatibility test. Its five evolved Python paths already have
+# stronger October 14 predecessor owners above: reuse those exact blobs
+# instead of replacing them with October 15 main-base identities.
 FRESH_HOLDOUT_20261015_ADDITIVE_IDENTITIES = {
     "tests/fixtures/fotmob_fresh_holdout_20261015/7d46b089a3363f67e42f5fdc-manifest.json":
         ("d25b12bf2fa70d526795de2eb407124e1cd75488", "e6a794624b0c13ce1572003fe70789238d9b99e05c6594bb81215deeff0467fd"),
@@ -224,6 +225,8 @@ FRESH_HOLDOUT_20261015_ADDITIVE_IDENTITIES = {
         ("bf894446bec41d65819a2f6e871d4b5bb70f633a", "223fa83207fdb3d9066305a3561a68a23b9a867673fe06ab629f12ebfe1d4312"),
     "tests/fixtures/fotmob_fresh_holdout_20261015/afc-cl2-9469-20261015-wrappers.json":
         ("7f370cb6f7750bf8637c90d3630c2371903cfb6c", "e0e824e8c8688209bcb6452e3694b20b2f1d780a795a9524f8b17493e228651d"),
+    "tests/native/test_fresh_holdout_20261015_v7_native_compatibility.py":
+        ("988ec6e84076b21a01f8d12111e2f8fcd461d991", "6bd390bd14ab224d08c9c9cb8bf4756273664b1c913566161f16a57c65f9372d"),
 }
 FRESH_HOLDOUT_20261015_ADDITIVE_PATHS = set(FRESH_HOLDOUT_20261015_ADDITIVE_IDENTITIES)
 ALLOWED_PASS4_PATHS |= FRESH_HOLDOUT_20261015_ADDITIVE_PATHS
@@ -238,8 +241,9 @@ def authenticate_fresh_holdout_20261015_evidence():
     return FRESH_HOLDOUT_20261015_ADDITIVE_PATHS
 
 
-# Exact handoff ls-tree inventory excluding only the twelve bounded evidence
-# paths. Available in shallow CI without requiring the handoff commit object.
+# Exact handoff ls-tree inventory excluding only the enumerated bounded
+# additive paths. Available in shallow CI without requiring the handoff commit
+# object.
 UNCHANGED_REPOSITORY_INVENTORY_SHA = "6b407c284a7c2f759e6345f53444478de53427ceae1aaa7d412d078270c5ad27"
 PR459_PREDECESSOR_SOURCE_BLOBS = {
     ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml":
