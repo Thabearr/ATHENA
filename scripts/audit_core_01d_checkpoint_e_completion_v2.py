@@ -252,6 +252,8 @@ def a2_historical_projection(raw):
  # Authenticate all current caller/guard source before using a historical view.
  latest=a2.authenticate_inventory()
  v1.authenticate_fresh_holdout_20261015_evidence()
+ from scripts import audit_core_01d_pr459_live_trigger_incident as incident
+ incident.historical_incident_source()
  preserved_a2_successors=pass_a_preserved_a2_successor_paths(a2)
  from scripts import audit_app_01a_local_shell as app
  from scripts import audit_data_01c_restore_portability as d5

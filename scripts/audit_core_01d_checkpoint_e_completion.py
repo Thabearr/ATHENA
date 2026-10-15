@@ -270,6 +270,7 @@ def validate_bounded_inventory(raw: bytes) -> None:
     from runtime.source_identity import read_tracked_head_blob
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion_v2
     from scripts import audit_core_01d_pr459_live_trigger_incident as incident
+    incident.historical_incident_source()
     pr459_additive_paths = completion_v2.PR459_HISTORICAL_SOURCE_FORWARD_PATHS | {
         incident.AUDIT_SCRIPT, incident.POLICY_TEST, incident.NATIVE_TEST,
     }

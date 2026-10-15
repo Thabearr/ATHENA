@@ -257,6 +257,21 @@ HISTORICAL_SOURCE_BLOB = "4d877d598ea3aa161f1a19ed86f46d6dfc2b5bb0"
 HISTORICAL_SOURCE_SHA = "212501c2653be6d01297e0d954c94631e1a3a3ff8f6142ad4f1fe2dadfc48532"
 
 
+def historical_incident_source() -> bytes:
+    historical = a2.read_generation(a2.inventory_generation_path(HISTORICAL_GENERATION))
+    _require(historical["canonical_sha256"] == HISTORICAL_INVENTORY_SHA,
+             "immutable incident A2 V208 identity drift")
+    fixture = ROOT / HISTORICAL_SOURCE
+    _require(fixture.is_file() and not fixture.is_symlink(),
+             "incident predecessor source must be a regular file")
+    source = (ROOT / HISTORICAL_SOURCE).read_bytes().replace(b"\r\n", b"\n")
+    _require(_git_blob_sha1(source) == HISTORICAL_SOURCE_BLOB
+             and hashlib.sha256(source).hexdigest() == HISTORICAL_SOURCE_SHA
+             == _source_rows(historical).get(AUDIT_SCRIPT),
+             "incident predecessor source fixture identity drift")
+    return source
+
+
 def build_receipt() -> dict[str, Any]:
     # Authenticate the entire current corpus before opening the bounded
     # historical view. Imported B4/D5/RUN-02A auditors still use current A2.
@@ -267,11 +282,7 @@ def build_receipt() -> dict[str, Any]:
     historical = chain[HISTORICAL_GENERATION - 1][1]
     _require(historical["canonical_sha256"] == HISTORICAL_INVENTORY_SHA,
              "immutable incident A2 V208 identity drift")
-    source = (ROOT / HISTORICAL_SOURCE).read_bytes().replace(b"\r\n", b"\n")
-    _require(_git_blob_sha1(source) == HISTORICAL_SOURCE_BLOB
-             and hashlib.sha256(source).hexdigest() == HISTORICAL_SOURCE_SHA
-             == _source_rows(historical).get(AUDIT_SCRIPT),
-             "incident predecessor source fixture identity drift")
+    source = historical_incident_source()
     # Execute only the exact authenticated predecessor implementation. Its
     # local A2 binding reconstructs V208/V207; no shared module is patched.
     checkpoint = types.ModuleType("_athena_pr459_incident_v208")
@@ -293,6 +304,8 @@ def audit(expected_receipt: dict[str, Any] | None = None) -> dict[str, Any]:
     raw = (ROOT / RECEIPT_PATH).read_bytes()
     value = json.loads(raw)
     _require(raw == _canonical(value), "incident evidence is not canonical JSON")
+    _require(value.get("canonical_sha256") == HISTORICAL_RECEIPT_SHA,
+             "immutable incident receipt identity drift")
     expected = build_receipt() if expected_receipt is None else expected_receipt
     _require(value == expected, "incident evidence differs from current source and history")
     _require(value.get("canonical_sha256") == hashlib.sha256(_canonical({
