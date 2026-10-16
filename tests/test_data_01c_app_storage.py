@@ -518,6 +518,28 @@ def test_d5_cli_write_refuses_to_overwrite_immutable_receipt(monkeypatch, tmp_pa
     assert target.read_bytes() == b"immutable historical receipt\n"
 
 
+def test_later_a2_generation_cannot_hide_e1_predecessor_fixture_tamper(monkeypatch):
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    from scripts import audit_run_01a_durable_admission as e1
+
+    latest = boundary.authenticate_inventory()
+    fixture = e1.ROOT / e1.FORWARD_EVOLVED_SOURCES[
+        "tests/test_data_01c_app_storage.py"]["predecessor_fixture"]
+    original_read_bytes = Path.read_bytes
+
+    def read_tampered_predecessor(path):
+        raw = original_read_bytes(path)
+        if path == fixture:
+            return raw + b"\n# tampered after a later A2 generation\n"
+        return raw
+
+    monkeypatch.setattr(boundary, "authenticate_inventory", lambda: latest)
+    monkeypatch.setattr(Path, "read_bytes", read_tampered_predecessor)
+
+    with pytest.raises(AssertionError, match="E1 predecessor fixture identity drift"):
+        e1.authenticate_successor()
+
+
 def test_d5_prohibited_scope_guard_is_base_independent_for_shallow_ci(monkeypatch):
     from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
     from scripts import audit_data_01c_app_store_complete as data01c

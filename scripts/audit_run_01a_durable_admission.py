@@ -35,6 +35,7 @@ FORWARD_EVOLVED_SOURCE_PATHS = frozenset({
     "tests/test_run_01a_durable_admission.py",
     "scripts/audit_data_01b_durable_run_state.py",
     "scripts/audit_data_01c_restore_portability.py",
+    "tests/test_data_01c_app_storage.py",
 })
 FORWARD_EVOLVED_SOURCES = {
     "scripts/audit_checkpoint_e_workflows.py": {
@@ -77,6 +78,11 @@ FORWARD_EVOLVED_SOURCES = {
         "predecessor_lf_sha256": "5faf6540116e17e089382a296e16278e145da86aa0da682e02b22182d22f4728",
         "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr461/audit-data-01c-restore-portability-predecessor.py.txt",
     },
+    "tests/test_data_01c_app_storage.py": {
+        "predecessor_lf_sha256": "3be15604a25453310671e965ec622c41513e8441a6e0b8ea4bc1568151d8606c",
+        "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr463/test-data-01c-app-storage-predecessor.py.txt",
+        "predecessor_git_blob_sha1": "2110631b57af44102b36ce07e6124251310e855e",
+    },
 }
 FORWARD_SUCCESSOR_PATHS = frozenset({
     "tests/fixtures/core_01d/run_01a_historical/pr457/audit-checkpoint-e-workflows-predecessor.py.txt",
@@ -87,6 +93,7 @@ FORWARD_SUCCESSOR_PATHS = frozenset({
     "tests/fixtures/core_01d/run_01a_historical/pr458/run-repository-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr463/run-desktop-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr463/test-run-01a-durable-admission-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr463/test-data-01c-app-storage-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr461/audit-data-01b-durable-run-state-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr461/audit-data-01c-restore-portability-predecessor.py.txt",
     "tests/test_run_01a_forward_successor_pr457.py",
@@ -109,7 +116,9 @@ def _validate_forward_evolved_sources():
     if not FORWARD_EVOLVED_SOURCE_PATHS <= set(SOURCES):
         raise AssertionError("E1 forward source is outside the frozen source set")
     for path, entry in FORWARD_EVOLVED_SOURCES.items():
-        if set(entry) != {"predecessor_lf_sha256", "predecessor_fixture"}:
+        if (not {"predecessor_lf_sha256", "predecessor_fixture"} <= set(entry)
+                or set(entry) - {"predecessor_lf_sha256", "predecessor_fixture",
+                                 "predecessor_git_blob_sha1"}):
             raise AssertionError("E1 forward predecessor descriptor drift: " + path)
 
 
@@ -118,9 +127,15 @@ def _predecessor_bytes(path, *, root=ROOT):
     entry = FORWARD_EVOLVED_SOURCES.get(path)
     if entry is None:
         raise AssertionError("E1 predecessor fixture is not authorized: " + path)
-    raw = _lf((root / entry["predecessor_fixture"]).read_bytes())
+    fixture_raw = (root / entry["predecessor_fixture"]).read_bytes()
+    raw = _lf(fixture_raw)
     if _sha(raw) != entry["predecessor_lf_sha256"]:
         raise AssertionError("E1 predecessor fixture identity drift: " + path)
+    expected_blob = entry.get("predecessor_git_blob_sha1")
+    if (expected_blob is not None
+            and hashlib.sha1(b"blob " + str(len(fixture_raw)).encode() + b"\0" + fixture_raw).hexdigest()
+            != expected_blob):
+        raise AssertionError("E1 predecessor Git blob identity drift: " + path)
     return raw
 
 
