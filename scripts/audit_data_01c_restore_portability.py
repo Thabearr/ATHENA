@@ -212,14 +212,20 @@ def authenticate_workflow():
     return after, tree
 
 
+def authenticated_current_workflow_tree():
+    """Return HEAD's raw tree only after the exact current source is verified."""
+    authenticate_workflow()
+    return subprocess.check_output(
+        ["git", "rev-parse", "HEAD:.github/workflows"], cwd=ROOT, text=True
+    ).strip()
+
+
 def historical_workflow_tree(observed_tree):
     if observed_tree == PREDECESSOR_TREE:
         return observed_tree
     _, d5_tree = d5_successor_context()
     _, tree = authenticate_workflow()
-    actual_tree = subprocess.check_output(
-        ["git", "rev-parse", "HEAD:.github/workflows"], cwd=ROOT, text=True
-    ).strip()
+    actual_tree = authenticated_current_workflow_tree()
     if observed_tree not in {d5_tree, tree, actual_tree}:
         raise ValueError("unknown PORT-02C source-forward workflow tree")
     return PREDECESSOR_TREE

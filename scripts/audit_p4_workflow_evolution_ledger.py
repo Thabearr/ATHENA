@@ -972,6 +972,10 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
     """
     from scripts import audit_data_01c_restore_portability as d5
     successor_identity, successor_tree = d5.successor_context()
+    try:
+        current_successor_tree = d5.authenticated_current_workflow_tree()
+    except (OSError, ValueError) as exc:
+        raise WorkflowEvolutionError("current PORT-02C source-forward failed D5 authentication") from exc
     if head_tree == PR459_OFFLINE_WORKFLOW_TREE_SHA1:
         if ledger_sha != CORE01D_PR119_LEDGER_SHA256:
             raise WorkflowEvolutionError(
@@ -996,13 +1000,13 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
         for path, (_before, after) in PR459_OFFLINE_WORKFLOW_FORWARD.items():
             result[path] = dict(after)
         return result
-    if head_tree == successor_tree:
+    if head_tree in {successor_tree, current_successor_tree}:
         if ledger_sha != CORE01D_PR119_LEDGER_SHA256 or observed.get(PORT02C_REPLAY_WORKFLOW_PATH) != successor_identity:
-            raise WorkflowEvolutionError("workflow tree differs without exact PORT-02C D5 successor")
+            raise WorkflowEvolutionError("workflow tree differs without exact PORT-02C D5/E3 successor")
         try:
             d5.authenticate_workflow()
         except ValueError as exc:
-            raise WorkflowEvolutionError("workflow tree differs without exact PORT-02C D5 successor") from exc
+            raise WorkflowEvolutionError("workflow tree differs without exact PORT-02C D5/E3 successor") from exc
         predecessor_observed = dict(observed)
         predecessor_observed[PORT02C_REPLAY_WORKFLOW_PATH] = dict(PORT02C_REPLAY_WORKFLOW_AFTER)
         result = _port02c_current_source_forward(derived, predecessor_observed,

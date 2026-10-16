@@ -242,6 +242,9 @@ def test_second_successor_retains_exact_predecessor_and_rejects_future(mutation)
         observed[name] = dict(current)
     ledger = evolution.CORE01D_PR119_LEDGER_SHA256
     assert evolution._port02c_current_source_forward(derived, observed, head_tree=tree, ledger_sha=ledger)[path] == after
+    raw_head_tree = audit.authenticated_current_workflow_tree()
+    assert evolution._port02c_current_source_forward(
+        derived, observed, head_tree=raw_head_tree, ledger_sha=ledger)[path] == after
     if mutation == 'tree': tree = '0' * 40
     elif mutation == 'ledger': ledger = '0' * 64
     elif mutation == 'before': derived[path]['source_sha256'] = '0' * 64
