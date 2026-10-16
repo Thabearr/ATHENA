@@ -377,6 +377,10 @@ def audit(latest=None):
                     # reviewed PR #461 pins; its current bytes remain A2-bound.
                     "tests/test_core_01d_historical_warehouse_transfer_authority_b2.py",
                         "tests/test_data_01c_app_storage.py",
+                        # E3 expands only the offline transport guard's exact
+                        # Windows process-control symbol allowlist. A2 authenticates
+                        # these current bytes; the retained D5 receipt stays frozen.
+                        "tests/offline_transport.py",
                         # E3 updates the existing durable-run test receipts to bind
                         # their live attempt identity; the historical D5 test bytes
                         # remain frozen in the retained source receipt above.
