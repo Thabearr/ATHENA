@@ -141,6 +141,8 @@ RUN_02A_PRE_PREDECESSOR_BLOBS={
  'scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py':'07ce59ed824d40ef1be12686537c4e355e565c30',
  'scripts/audit_lg_a_worker_launch_failure_remediation.py':'0e8a349d49ad2cb9a41a709ad134e48e6c766069',
  'runtime/worker_entry.py':'77d8888a4b007f9bb0967409a23e826f97338c90',
+ 'database/run_repository.py':'103bcbf4e06a90ef768a122408235b9d9267fe6b',
+ 'services/athena_job_service.py':'d0291cc9a25b1372d86464e2fb54ac97f1fc7f98',
  'scripts/sportybet_direct_share_bridge.py':'681ce2a043a334dcb8523c81d092369d6540e6d5',
 }
 PR459_HISTORICAL_SOURCE_FORWARD_PATHS={
@@ -264,6 +266,16 @@ def a2_historical_projection(raw):
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  # Authenticate all current caller/guard source before using a historical view.
  latest=a2.authenticate_inventory()
+ from scripts import audit_run_02a_pre_durable_share_send as run02a
+ # Reuse the retained V154 predecessor seam for the exact E3-evolved E1
+ # sources. It independently checks the fixture Git blob/LF hash, its
+ # historical A2 identity, and the current source bytes against latest A2.
+ for path in ('database/run_repository.py','services/athena_job_service.py'):
+  predecessor=run02a.RUN_02A_CURRENT_SOURCE_PREDECESSORS.get(path)
+  review.require(predecessor is not None
+                 and predecessor[1]==RUN_02A_PRE_PREDECESSOR_BLOBS[path],
+                 'E3 Pass-A predecessor differs from retained RUN-02A source seam: '+path)
+  run02a.historical_prerequisite_source_bytes(path,latest=latest)
  v1.authenticate_fresh_holdout_20261015_evidence()
  from scripts import audit_core_01d_pr459_live_trigger_incident as incident
  incident.historical_incident_source()

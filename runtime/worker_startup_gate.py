@@ -41,7 +41,7 @@ def gate_bytes(*, command: WorkerCommand, pid: int, owner: dict[str, str],
 
 
 def publish_gate(path: Path, raw: bytes) -> None:
-    if type(path) is not Path or path.name != FILENAME or type(raw) is not bytes:
+    if not isinstance(path, Path) or path.name != FILENAME or type(raw) is not bytes:
         raise StartupGateError("startup gate destination is not exact")
     if path.is_symlink() or path.exists():
         raise StartupGateError("startup gate already exists or is linked")

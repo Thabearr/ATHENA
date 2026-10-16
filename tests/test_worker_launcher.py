@@ -472,15 +472,16 @@ def test_platform_process_group_ownership_interface(monkeypatch, platform_name: 
 def test_development_offline_probe_is_a_real_zero_external_process(tmp_path: Path):
     request = _request()
     identity = verify_development_checkout(ROOT)
+    run_id = "run-worker-launcher-test"
     command = _command(
-        tmp_path / "development-run",
+        tmp_path / "runs" / run_id,
         request,
         operation="OFFLINE_IDENTITY_PROBE",
         identity_id=identity.head_commit_sha,
     )
     handle = WorkerLauncher.for_development(identity).launch(command)
     owner = owner_identity(
-        run_id="run-worker-launcher-test", attempt_id="attempt-worker-launcher-test",
+        run_id=run_id, attempt_id="attempt-worker-launcher-test",
         worker_instance_id="worker-launcher-test", lease_token="lease-worker-launcher-test",
     )
     control = WorkerProcessControl(handle, owner)

@@ -227,7 +227,7 @@ def test_recovery_keeps_sent_operation_outcome_unknown(tmp_path, clock):
     )
     operation_id = repository.prepare_external_operation(
         run_id, attempt_id=attempt_id, lease_token=lease_token,
-        operation_kind=SHARE_CREATE_KIND, intent_sha256="1" * 64,
+        operation_kind="TESTING_SYNTHETIC", intent_sha256="1" * 64,
         authority_sha256="2" * 64,
     )
     repository.transition_external_operation(

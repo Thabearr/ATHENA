@@ -507,7 +507,12 @@ def test_http_returns_with_one_owned_worker_and_root_capacity_is_durable(
             ).fetchone()
         locator = json.loads(attempt[0])
         expected_kind = "WINDOWS_PROCESS_GROUP" if os.name == "nt" else "POSIX_PROCESS_GROUP"
-        assert locator == {"kind": expected_kind, "pid": children[0].pid}
+        assert locator["kind"] == expected_kind
+        assert locator["pid"] == children[0].pid
+        assert locator["run_id"] == first_id
+        assert locator["attempt_id"]
+        assert locator["worker_instance_id"]
+        assert len(locator["lease_sha256"]) == 64
 
         clock.advance(timedelta(seconds=1))
         assert _wait_for(lambda: _heartbeat_advanced(repository, first_id, attempt[2]))
@@ -539,7 +544,7 @@ def test_http_returns_with_one_owned_worker_and_root_capacity_is_durable(
         assert job.coordinator._process_controls[attempt_id].cancel_count == 1
 
         children[0].finish(1)
-        assert _wait_for(lambda: repository.run_snapshot(first_id)["state"] == "INTERRUPTED")
+        assert _wait_for(lambda: repository.run_snapshot(first_id)["state"] == "CANCELLED")
         assert repository.run_snapshot(second_id)["state"] == "QUEUED"
         replay = client.post("/api/v1/runs", headers=headers, json=second_body)
         assert replay.status_code == 202

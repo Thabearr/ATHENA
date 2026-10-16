@@ -61,6 +61,19 @@ def _wait_for(predicate, timeout=5.0):
     return bool(predicate())
 
 
+def _linux_process_state(pid: int) -> str | None:
+    """Read the kernel state for a test-owned PID; missing means it was reaped."""
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_bytes()
+    except FileNotFoundError:
+        return None
+    close = raw.rfind(b")")
+    if close < 0:
+        raise AssertionError("malformed Linux process stat for test-owned child")
+    fields = raw[close + 2:].split()
+    return fields[0].decode("ascii")
+
+
 def _bind(handle: WorkerProcessHandle, label: str):
     control = WorkerProcessControl(handle, _owner(label))
     locator = control.bind()
@@ -77,11 +90,25 @@ def test_native_process_group_owns_leader_and_descendant(tmp_path, graceful):
         assert control.state_current() == "ACTIVE"
         assert WorkerProcessControl.state(locator, control.owner) == "ACTIVE"
         assert control.request_cancel(locator) is True
+        child_pid = None
+        if os.name == "posix":
+            child_pid = int(_wait_for(marker.exists) and marker.read_text(encoding="ascii"))
         if not graceful:
             time.sleep(0.15)
             assert control.force_terminate(locator) is True
-        assert _wait_for(lambda: (handle.poll() is not None)
-                         and control.state_current() == "DEAD")
+        if graceful or os.name == "nt":
+            assert _wait_for(lambda: (handle.poll() is not None)
+                             and control.state_current() == "DEAD")
+        else:
+            # SIGKILL may leave a terminated grandchild as a zombie when the
+            # test runner's init does not reap promptly. It cannot execute,
+            # while the surviving process group must remain UNKNOWN to recovery.
+            assert _wait_for(lambda: handle.poll() is not None
+                             and _linux_process_state(child_pid) in (None, "Z", "X"))
+            state = control.state_current()
+            assert state in ("DEAD", "UNKNOWN")
+            if state == "UNKNOWN":
+                assert _linux_process_state(child_pid) in ("Z", "X")
     finally:
         if control.state_current() != "DEAD":
             try:
@@ -141,6 +168,12 @@ def test_stale_process_identity_cannot_signal_or_claim_dead_owner(tmp_path):
     handle, marker = _spawn_tree(tmp_path, graceful=False)
     control, locator = _bind(handle, "stale")
     try:
+        if os.name == "posix":
+            reused = dict(locator)
+            reused["start_ticks"] += 1
+            assert WorkerProcessControl.state(reused, control.owner) == "UNKNOWN"
+            assert control.request_cancel(reused) is False
+            assert handle.poll() is None
         assert control.request_cancel(locator) is True
         if handle.poll() is None:
             control.force_terminate(locator)
@@ -150,10 +183,6 @@ def test_stale_process_identity_cannot_signal_or_claim_dead_owner(tmp_path):
         changed = dict(locator)
         changed["lease_sha256"] = "0" * 64
         assert WorkerProcessControl.state(changed, control.owner) == "UNKNOWN"
-        if os.name == "posix":
-            reused = dict(locator)
-            reused["start_ticks"] += 1
-            assert WorkerProcessControl.state(reused, control.owner) == "UNKNOWN"
     finally:
         if control.state_current() != "DEAD":
             try:
