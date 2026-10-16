@@ -27,12 +27,15 @@ def _owner(label: str) -> dict[str, str]:
 def _spawn_tree(tmp_path: Path, *, graceful: bool, parent_exits: bool = False):
     marker = tmp_path / "descendant.pid"
     handler = "getattr(signal, 'SIGBREAK', signal.SIGTERM)"
+    # Poll briefly so Python can service CTRL_BREAK on Windows instead of
+    # remaining inside one long sleep until the test timeout expires.
+    cooperative_wait = "[time.sleep(0.02) for _ in range(3000)]"
     child_code = (
         "import signal,time; "
         + ("signal.signal(" + handler + ", lambda *_: exit(0)); " if graceful
            else "signal.signal(" + handler + ", signal.SIG_IGN); ")
         + "signal.signal(signal.SIGTERM, lambda *_: exit(0) if " + str(graceful) + " else None); "
-        + "time.sleep(60)"
+        + cooperative_wait
     )
     parent_code = (
         "import pathlib,signal,subprocess,sys,time; "
@@ -42,7 +45,7 @@ def _spawn_tree(tmp_path: Path, *, graceful: bool, parent_exits: bool = False):
         + "child=subprocess.Popen([sys.executable,'-c',sys.argv[2]],"
           "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); "
         + "pathlib.Path(sys.argv[1]).write_text(str(child.pid),encoding='ascii'); "
-        + ("sys.exit(0); " if parent_exits else "time.sleep(60); ")
+        + ("sys.exit(0); " if parent_exits else cooperative_wait)
     )
     process = _spawn_process(
         [sys.executable, "-c", parent_code, os.fspath(marker), child_code],
