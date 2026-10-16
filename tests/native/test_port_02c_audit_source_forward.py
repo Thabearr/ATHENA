@@ -55,6 +55,9 @@ def test_d5_second_successor_does_not_replace_original_identity():
     for path, (before, current) in evolution.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD.items():
         derived[path] = deepcopy(before)
         observed[path] = deepcopy(current)
+    for path, (before, current) in evolution.PR459_OFFLINE_WORKFLOW_FORWARD.items():
+        derived[path] = deepcopy(before)
+        observed[path] = deepcopy(current)
     forwarded = evolution._port02c_current_source_forward(
         derived,
         observed,
@@ -62,6 +65,8 @@ def test_d5_second_successor_does_not_replace_original_identity():
         ledger_sha=evolution.CORE01D_PR119_LEDGER_SHA256,
     )
     assert forwarded[d5.WORKFLOW] == after
+    for path, (_before, current) in evolution.PR459_OFFLINE_WORKFLOW_FORWARD.items():
+        assert forwarded[path] == current
     with pytest.raises(evolution.WorkflowEvolutionError):
         evolution._port02c_current_source_forward(
             derived,
