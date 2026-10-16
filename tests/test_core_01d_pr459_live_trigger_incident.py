@@ -254,3 +254,67 @@ def test_shallow_projection_does_not_request_the_historical_b4_base(monkeypatch)
 
     monkeypatch.setattr(b4, "_git", reject_base_lookup)
     assert b4.audit()["result"] == "PASS"
+
+
+def test_incident_v208_receipt_authenticates_after_v209_and_later_successors():
+    assert a2.discover_inventory_generations()[-1][0] >= 209
+    receipt = incident.build_receipt()
+    assert receipt["a2"]["successor_generation"] == 208
+    assert receipt["a2"]["predecessor_generation"] == 207
+    assert receipt["canonical_sha256"] == incident.HISTORICAL_RECEIPT_SHA
+    assert incident.audit(receipt)["canonical_sha256"] == incident.HISTORICAL_RECEIPT_SHA
+
+
+@pytest.mark.parametrize("target", ["predecessor", "current", "historical_inventory"])
+def test_later_a2_generation_cannot_hide_incident_source_tampering(monkeypatch, target):
+    original = Path.read_bytes
+    candidate = incident.ROOT / {
+        "predecessor": incident.HISTORICAL_SOURCE,
+        "current": incident.AUDIT_SCRIPT,
+        "historical_inventory": a2.inventory_generation_path(208),
+    }[target]
+
+    def tampered(path):
+        raw = original(path)
+        return raw + b"#unreviewed\n" if path == candidate else raw
+
+    monkeypatch.setattr(Path, "read_bytes", tampered)
+    reason = {
+        "predecessor": "incident predecessor source fixture identity drift",
+        "current": "source or process discovery drift",
+        "historical_inventory": "invalid strict JSON|artifact self-hash mismatch|Extra data",
+    }[target]
+    with pytest.raises((ValueError, AssertionError), match=reason):
+        incident.build_receipt()
+
+
+# Keep the forward regression on the already additive incident test surface.
+current = pass_a_v2
+review = pass_a_v2.review
+
+
+def test_october15_forward_projection_preserves_both_historical_scope_digests():
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ raw=review.retention.v4.v3._git('ls-tree','-r','HEAD')
+ projected=current.a2_historical_projection(raw)
+ assert review.sha256(current.unchanged_inventory(projected))==current.UNCHANGED_SCOPE_SHA
+ current.v1.validate_bounded_inventory(raw)
+ paths={line.split(b'\t',1)[1].decode():line.split()[2].decode() for line in projected.splitlines()}
+ for path,blob in current.v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS.items():
+  assert paths[path]==blob
+ assert not current.v1.FRESH_HOLDOUT_20261015_ADDITIVE_PATHS & set(paths)
+ latest=a2.authenticate_inventory()
+ rows={row['path']:row['lf_source_sha256'] for row in latest['source_identities']}
+ for path in current.v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS:
+  assert rows[path]==review.sha256((review.ROOT/path).read_bytes().replace(b'\r\n',b'\n'))
+
+
+def test_october15_evidence_cannot_hide_tampering(monkeypatch):
+ from runtime import source_identity
+ original=source_identity.read_tracked_head_blob
+ def tampered(root,path):
+  raw,identity=original(root,path)
+  return raw+b' ',identity
+ monkeypatch.setattr(source_identity,'read_tracked_head_blob',tampered)
+ with pytest.raises(AssertionError,match='October 15 additive evidence identity drift'):
+  current.v1.authenticate_fresh_holdout_20261015_evidence()

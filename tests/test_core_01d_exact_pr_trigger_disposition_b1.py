@@ -278,6 +278,7 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
         "scripts/audit_run_02a_pre_durable_share_send.py",
         "tests/test_run_02a_pre_durable_share_send.py",
         "tests/native/test_run_02a_pre_share_send_publication.py",
+        "tests/native/test_fresh_holdout_20261015_v7_native_compatibility.py",
         "tests/test_lg_a_worker_entry_historical_projection.py",
         ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml",
         ".github/workflows/prove-sportybet-direct-share-code.yml",
