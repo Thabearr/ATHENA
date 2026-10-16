@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 from contextlib import contextmanager
+import hashlib
 import json
 import types
 from scripts import audit_core_01d_authority_reachability_review_a as review
@@ -135,7 +136,6 @@ RUN_02A_PRE_ADDITIVE_PATHS={
  'tests/native/test_run_02a_process_tree.py',
  'tests/test_run_02a_recovery.py',
  'tests/test_run_02a_pre_durable_share_send.py',
- 'tests/test_run_01a_durable_admission.py',
  'tests/test_run_01b_worker_lifecycle.py',
  'tests/test_worker_launcher.py',
 }
@@ -145,6 +145,7 @@ RUN_02A_PRE_PREDECESSOR_BLOBS={
  'runtime/worker_entry.py':'77d8888a4b007f9bb0967409a23e826f97338c90',
  'database/run_repository.py':'103bcbf4e06a90ef768a122408235b9d9267fe6b',
  'services/athena_job_service.py':'d0291cc9a25b1372d86464e2fb54ac97f1fc7f98',
+ 'tests/test_run_01a_durable_admission.py':'2a256f2a52761733280725f21b66e4b8a1bf2e24',
  'scripts/sportybet_direct_share_bridge.py':'681ce2a043a334dcb8523c81d092369d6540e6d5',
 }
 PR459_HISTORICAL_SOURCE_FORWARD_PATHS={
@@ -278,6 +279,12 @@ def a2_historical_projection(raw):
                  and predecessor[1]==RUN_02A_PRE_PREDECESSOR_BLOBS[path],
                  'E3 Pass-A predecessor differs from retained RUN-02A source seam: '+path)
   run02a.historical_prerequisite_source_bytes(path,latest=latest)
+ from scripts import audit_run_01a_durable_admission as e1
+ path='tests/test_run_01a_durable_admission.py'
+ predecessor=e1._predecessor_bytes(path)
+ predecessor_blob=hashlib.sha1(b'blob '+str(len(predecessor)).encode()+b'\0'+predecessor).hexdigest()
+ review.require(predecessor_blob==RUN_02A_PRE_PREDECESSOR_BLOBS[path],
+                'E3 Pass-A E1 test predecessor differs from its authenticated fixture')
  v1.authenticate_fresh_holdout_20261015_evidence()
  from scripts import audit_core_01d_pr459_live_trigger_incident as incident
  incident.historical_incident_source()
