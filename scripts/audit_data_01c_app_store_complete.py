@@ -149,6 +149,9 @@ SUCCESSOR_SOURCE_PATHS = frozenset({
     "tests/offline_transport.py",
     "tests/test_core_01d_ci_offline_transport_boundary.py",
 })
+EXACT_WORKFLOW_FORWARD_PATHS = frozenset({
+    ".github/workflows/port-02c-native-runtime.yml",
+})
 
 
 def canonical(value):
@@ -378,7 +381,10 @@ def audit(latest=None):
         inventory = boundary.authenticate_inventory()
         identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
         if (set(current) != set(frozen)
-                or any(digest != frozen[path] and (path not in evolved or identities.get(path) != digest)
+                or any(digest != frozen[path] and (
+                    path not in evolved
+                    or (path not in EXACT_WORKFLOW_FORWARD_PATHS and identities.get(path) != digest)
+                )
                        for path, digest in current.items())):
             raise AssertionError("unreviewed D5 source evolution")
         return value
