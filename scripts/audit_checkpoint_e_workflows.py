@@ -178,12 +178,14 @@ PASS_A_HISTORICAL_SOURCE_BLOBS = {
     # The current regression source is A2-authenticated, while Checkpoint E
     # continues to reconstruct this exact original Pass-A inventory blob.
     "tests/test_p4_3d_retirement_audit_extensibility.py": "5e7de20231b2455f15fdc20c4fd21e1720714f64",
+    "tests/test_worker_launcher.py": "973e00174e8967569e98fbf15bc58d2c13a3a20d",
 }
 PASS_A_BASE_SOURCE_BLOBS = {
     "api/server.py": "21c9aa432aaccd8db041778a26365f12f6af80de",
     "run_desktop.py": "3495618a198ccde18cad7d578362b1366e4bcedc",
     "tests/test_api_error_handling.py": "a827e02b95779ca0478ffa74db34e41de1e04b42",
     "tests/test_product_baseline_v1.py": "2d552f49cf84462bd1b32e86eea2a96ee0570b64",
+    "tests/test_worker_launcher.py": "973e00174e8967569e98fbf15bc58d2c13a3a20d",
 }
 # These exact Pass-A base blobs are edited in the current PR and are also
 # tracked by A2. Their current source bytes are authenticated by A2; the
@@ -198,12 +200,16 @@ PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS = {
     "tests/test_p4_3d_retirement_audit_extensibility.py": (
         "5e7de20231b2455f15fdc20c4fd21e1720714f64"
     ),
+    "tests/test_worker_launcher.py": (
+        "973e00174e8967569e98fbf15bc58d2c13a3a20d"
+    ),
 }
 PASS_A_HISTORICAL_SOURCE_FIXTURES = {
     "api/server.py": "tests/fixtures/core_01d/app_01c_historical/api_server.py.b64",
     "run_desktop.py": "tests/fixtures/core_01d/app_01c_historical/run_desktop.py.txt",
     "tests/test_api_error_handling.py": "tests/fixtures/core_01d/app_01c_historical/test_api_error_handling.py.txt",
     "tests/test_product_baseline_v1.py": "tests/fixtures/core_01d/app_01c_historical/test_product_baseline_v1.py.txt",
+    "tests/test_worker_launcher.py": "tests/fixtures/core_01d/run_02a_pre_historical/test-worker-launcher-pr463-base.py.txt",
 }
 
 INCIDENT_20261010_PREDECESSOR_BLOBS = {

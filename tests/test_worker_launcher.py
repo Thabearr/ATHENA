@@ -531,6 +531,7 @@ def test_installed_offline_probe_semantics_equal_development_but_provenance_diff
         command_file=run_dir / WORKER_COMMAND_FILENAME,
         release_root=root,
         trusted_manifest_sha256=trusted,
+        startup_gate_required=True,
     ) == 0
     installed_semantic = (run_dir / WORKER_OFFLINE_PROBE_FILENAME).read_bytes()
     installed_provenance = json.loads((run_dir / WORKER_PROVENANCE_FILENAME).read_bytes())
@@ -539,6 +540,22 @@ def test_installed_offline_probe_semantics_equal_development_but_provenance_diff
     assert installed_provenance["release_identity_kind"] == "INSTALLED_RELEASE"
     assert installed_provenance["release_identity_id"] == identity.manifest_sha256
     assert installed_provenance["canonical_sha256"] != dev_provenance["canonical_sha256"]
+
+
+def test_current_shadow_worker_entry_still_requires_owned_process_gate(tmp_path: Path):
+    request = _request(shadow=True)
+    command = _command(
+        tmp_path / "current-shadow-run",
+        request,
+        operation="CURRENT_SHADOW_REQUEST",
+    )
+    command_path = persist_worker_command(command)
+    with pytest.raises(worker_entry.WorkerEntryError, match="process ownership gate failed"):
+        worker_entry.execute_worker_command(
+            command_file=command_path,
+            development_root=ROOT,
+            startup_gate_required=True,
+        )
 
 
 def test_port_02b_receipt_and_audit_pin_offline_probe_vector(tmp_path: Path):

@@ -362,7 +362,11 @@ def audit(latest=None):
                     # The exact B2 predecessor-set regression tracks the same
                     # reviewed PR #461 pins; its current bytes remain A2-bound.
                     "tests/test_core_01d_historical_warehouse_transfer_authority_b2.py",
-                    "tests/test_data_01c_app_storage.py"}
+                        "tests/test_data_01c_app_storage.py",
+                        # E3 updates the existing durable-run test receipts to bind
+                        # their live attempt identity; the historical D5 test bytes
+                        # remain frozen in the retained source receipt above.
+                        "tests/test_data_01b_durable_run_state.py"}
         inventory = boundary.authenticate_inventory()
         identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
         if (set(current) != set(frozen)

@@ -179,7 +179,13 @@ def execute_worker_command(
     startup_gate_required: bool = False,
 ) -> int:
     command, _resolved_command_path = _read_command_file(command_file)
-    if startup_gate_required:
+    # The offline identity probe is a bounded InstalledRelease/DevelopmentCheckout
+    # identity operation that only writes its deterministic local probe and
+    # provenance documents. PORT-02C invokes that probe directly to qualify an
+    # installed worker without creating a product run or an owned attempt. The
+    # ownership gate remains mandatory for every other operation, including
+    # CURRENT_SHADOW_REQUEST; unknown operations still fail closed below.
+    if startup_gate_required and command.operation != "OFFLINE_IDENTITY_PROBE":
         from runtime.worker_startup_gate import StartupGateError, wait_for_gate
         try:
             wait_for_gate(command)

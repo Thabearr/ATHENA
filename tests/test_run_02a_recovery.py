@@ -440,6 +440,7 @@ def test_pr459_receipt_reconstructs_v154_source_without_resealing():
     }
     assert audit.RUN_02A_CURRENT_SOURCE_PREDECESSORS.keys() == {
         "database/run_repository.py", "services/athena_job_service.py",
+        "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py",
         "runtime/worker_entry.py",
     }
 

@@ -129,6 +129,7 @@ RUN_02A_PRE_ADDITIVE_PATHS={
  'tests/fixtures/core_01d/run_02a_pre_historical/athena-job-service-pr463-base.py.txt',
  'tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-pr463-base.py.txt',
  'tests/fixtures/core_01d/run_02a_pre_historical/test-worker-launcher-pr463-base.py.txt',
+ 'tests/fixtures/core_01d/run_02a_pre_historical/audit-run-01a-admission-pr463-base.py.txt',
  'tests/fixtures/core_01d/run_02a_pre_historical/auth-worker-boundary-pr463-base.py.txt',
  'tests/fixtures/core_01d/run_01a_historical/pr463/run-desktop-predecessor.py.txt',
  'tests/fixtures/core_01d/run_01a_historical/pr463/test-run-01a-durable-admission-predecessor.py.txt',
@@ -148,6 +149,7 @@ RUN_02A_PRE_PREDECESSOR_BLOBS={
  'services/athena_job_service.py':'d0291cc9a25b1372d86464e2fb54ac97f1fc7f98',
  'tests/test_run_01a_durable_admission.py':'2a256f2a52761733280725f21b66e4b8a1bf2e24',
  'tests/test_worker_launcher.py':'973e00174e8967569e98fbf15bc58d2c13a3a20d',
+ 'scripts/audit_run_01a_durable_admission.py':'42d7550bec98ddc25b5999b20ed6195a442cd69f',
  'scripts/sportybet_direct_share_bridge.py':'681ce2a043a334dcb8523c81d092369d6540e6d5',
 }
 RUN_02A_PRE_PREDECESSOR_SOURCES={
@@ -155,6 +157,11 @@ RUN_02A_PRE_PREDECESSOR_SOURCES={
   'tests/fixtures/core_01d/run_02a_pre_historical/test-worker-launcher-pr463-base.py.txt',
   '973e00174e8967569e98fbf15bc58d2c13a3a20d',
   'bbcaeef0bab1e60aa6a8e74ccdacedad87fe83295825041ce47a8a81c25802f4',
+ ),
+ 'scripts/audit_run_01a_durable_admission.py':(
+  'tests/fixtures/core_01d/run_02a_pre_historical/audit-run-01a-admission-pr463-base.py.txt',
+  '42d7550bec98ddc25b5999b20ed6195a442cd69f',
+  '90babe8cb97c9d16969fa00b721fad01a84e54aa838e38241663152def00fee8',
  ),
 }
 PR459_HISTORICAL_SOURCE_FORWARD_PATHS={
@@ -316,6 +323,25 @@ def a2_historical_projection(raw):
  review.require(hashlib.sha256(predecessor_bytes).hexdigest()==digest
                 and predecessor_blob==blob and retained_sources.get(path)==digest,
                 'E3 Pass-A worker-launcher predecessor differs from authenticated V216 fixture')
+ # The E1 admission auditor itself was already in the Pass-A tree at the
+ # current main base. Preserve that exact main blob in the historical view;
+ # its current E3 successor remains independently authenticated by A2.
+ path='scripts/audit_run_01a_durable_admission.py'
+ fixture,blob,digest=RUN_02A_PRE_PREDECESSOR_SOURCES[path]
+ for logical in (path,fixture):
+  candidate=ROOT/logical
+  review.require(candidate.is_file() and not any(p.is_symlink() for p in (candidate,*candidate.parents)),
+                 'E3 Pass-A E1-auditor predecessor requires regular source/fixture')
+ current_sources={row['path']:row['lf_source_sha256'] for row in latest['source_identities']}
+ current_bytes=a2.lf((ROOT/path).read_bytes())
+ review.require(hashlib.sha256(current_bytes).hexdigest()==current_sources.get(path),
+                'current E3 E1 auditor differs from authenticated A2')
+ predecessor_bytes=a2.lf((ROOT/fixture).read_bytes())
+ predecessor_blob=hashlib.sha1(b'blob '+str(len(predecessor_bytes)).encode()+b'\0'+predecessor_bytes).hexdigest()
+ review.require(hashlib.sha256(predecessor_bytes).hexdigest()==digest
+                and predecessor_blob==blob
+                and RUN_02A_PRE_PREDECESSOR_BLOBS[path]==blob,
+                'E3 Pass-A E1-auditor predecessor differs from exact base fixture')
  v1.authenticate_fresh_holdout_20261015_evidence()
  from scripts import audit_core_01d_pr459_live_trigger_incident as incident
  incident.historical_incident_source()

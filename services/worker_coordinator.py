@@ -140,6 +140,19 @@ class WorkerCoordinator:
         self._pending_projection: dict[str, str] = {}
         self._output_drainers: list[threading.Thread] = []
 
+    @staticmethod
+    def _native_process_locator(pid: int) -> dict | None:
+        """Return the legacy E1 locator shape for schema compatibility only.
+
+        This value is not persisted, used to signal a process, or accepted by
+        recovery as ownership evidence. E3 ownership locators are minted by
+        WorkerProcessControl.bind() with an authenticated run/attempt/lease.
+        """
+        if type(pid) is not int or pid <= 0:
+            return None
+        kind = "WINDOWS_PROCESS_GROUP" if os.name == "nt" else "POSIX_PROCESS_GROUP"
+        return {"kind": kind, "pid": pid}
+
     def handoff(
         self,
         run_id: str,
