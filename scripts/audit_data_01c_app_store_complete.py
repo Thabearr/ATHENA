@@ -361,6 +361,9 @@ def audit(latest=None):
                     "scripts/audit_core_01d_retained_workflow_status_v2.py",
                     "scripts/audit_p4_workflow_evolution_ledger.py",
                     "scripts/audit_run_01a_durable_admission.py",
+                    # E3's native-test metadata assertion is an exact current
+                    # successor; its source bytes are authenticated by A2.
+                    "tests/test_data_01c_restore_portability.py",
                     # E3 adds exactly its offline process-tree suite after the
                     # retained D5 step; assert_prohibited_scope_unchanged()
                     # authenticates the complete current workflow bytes.
