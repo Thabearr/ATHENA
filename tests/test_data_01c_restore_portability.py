@@ -20,6 +20,15 @@ def test_exact_workflow_delta_preserves_all_existing_authority_and_cases():
     upload = after['jobs']['native-slice']['steps'][-1]['with']
     upload['path'] = upload['path'].replace(audit.UPLOAD.strip() + '\n', '')
     assert after == before
+    current = yaml.load(audit.expected_e3_native_workflow(), Loader=yaml.BaseLoader)
+    d5_steps = yaml.load(audit.expected_workflow(), Loader=yaml.BaseLoader)['jobs']['native-slice']['steps']
+    current_steps = current['jobs']['native-slice']['steps']
+    native_steps = [step for step in current_steps
+                    if step.get('name') == 'E3 native process-tree recovery tests (offline)']
+    assert len(native_steps) == 1
+    assert native_steps[0]['run'] == 'python -m pytest -q tests/native/test_run_02a_process_tree.py'
+    assert [step for step in current_steps if step not in native_steps] == d5_steps
+    assert audit.audit()['canonical_sha256'] == 'f85937fae092981c655b0fa66756527633549b867209bb731171ab7d6e1e6a97'
     assert audit.authenticate_workflow() == audit.successor_context()
 
 
@@ -28,12 +37,14 @@ def test_exact_workflow_delta_preserves_all_existing_authority_and_cases():
     'python scripts/build_dev_bundle.py', 'name: CASE 1', 'name: CASE 2',
     'name: CASE 3', 'name: CASE 4', 'name: CASE 5', 'retention-days: 14',
     'workflow_dispatch:', 'branches:', 'name: Upload qualification evidence',
+    'E3 native process-tree recovery tests (offline)',
+    'tests/native/test_run_02a_process_tree.py',
 ])
 def test_workflow_mutation_cannot_unlock_successor(monkeypatch, mutation):
     from pathlib import Path
     original = Path.read_bytes
-    changed = audit.expected_workflow().replace(mutation.encode(), b'UNAPPROVED', 1)
-    assert changed != audit.expected_workflow()
+    changed = audit.expected_e3_native_workflow().replace(mutation.encode(), b'UNAPPROVED', 1)
+    assert changed != audit.expected_e3_native_workflow()
     monkeypatch.setattr(Path, 'read_bytes', lambda path: changed if path == audit.ROOT / audit.WORKFLOW else original(path))
     with pytest.raises(ValueError, match='exact D5'):
         audit.authenticate_workflow()
@@ -172,6 +183,43 @@ def test_platform_evidence_fails_closed(host, mutation):
     else: value['network_calls'] = 1
     with pytest.raises(ValueError):
         qualifier.validate_receipt(seal(value), 'a' * 40)
+
+
+def test_native_pair_requires_exact_e3_process_tree_step(tmp_path, monkeypatch):
+    import json
+
+    head = 'a' * 40
+    receipts = []
+    for host in ('Windows', 'Linux'):
+        receipt = seal(synthetic_receipt(host))
+        path = tmp_path / (host.lower() + '.json')
+        path.write_bytes(qualifier.canonical(receipt))
+        receipts.append(path)
+    steps = [
+        {'name': 'D5 native restore portability (offline, four cases)', 'conclusion': 'success'},
+        {'name': 'E3 native process-tree recovery tests (offline)', 'conclusion': 'success'},
+        {'name': 'Upload qualification evidence', 'conclusion': 'success'},
+        *[{'name': 'CASE ' + str(index), 'conclusion': 'success'} for index in range(1, 6)],
+    ]
+    jobs = [
+        {'name': 'native slice (' + host.lower() + ')', 'id': index,
+         'conclusion': 'success', 'steps': list(steps)}
+        for index, host in enumerate(('Windows', 'Linux'), 1)
+    ]
+    metadata = {'head_sha': head, 'event': 'pull_request', 'conclusion': 'success',
+                'run_attempt': 1, 'id': 1, 'jobs': jobs}
+    metadata_path = tmp_path / 'jobs.json'
+    metadata_path.write_text(json.dumps(metadata), encoding='utf-8')
+    monkeypatch.setattr(audit, 'audit', lambda: {'canonical_sha256': 'd' * 64})
+
+    evidence = audit.audit_native_pair(receipts[0], receipts[1], head, metadata_path)
+    assert evidence['final_pr_head'] == head
+    assert [row['host_os'] for row in evidence['jobs']] == ['windows', 'linux']
+
+    jobs[0]['steps'][1]['conclusion'] = 'failure'
+    metadata_path.write_text(json.dumps(metadata), encoding='utf-8')
+    with pytest.raises(ValueError, match='native qualification or evidence upload failed'):
+        audit.audit_native_pair(receipts[0], receipts[1], head, metadata_path)
 
 
 @pytest.mark.parametrize('path', list(audit.FROZEN_EVIDENCE))

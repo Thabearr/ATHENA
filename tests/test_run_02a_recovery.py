@@ -14,6 +14,7 @@ import pytest
 from database.run_repository import (
     DurableRunRepository,
     ExternalOperationViolation,
+    MAX_TERMINAL_RECEIPT_BYTES,
     ReceiptProducerUnavailable,
     RunLeaseFenced,
     RunRepositoryError,
@@ -426,6 +427,18 @@ def test_recovery_ignores_receipt_file_without_exact_database_link(tmp_path, clo
     assert summary.blocked_runs == 1
     assert repository.run_snapshot(run_id)["state"] == "RUNNING"
     assert repository.list_pending_terminal_receipts() == []
+
+
+def test_terminal_receipt_projection_bounds_startup_file_reads(tmp_path, clock):
+    _identity, roots, repository, _item, _envelope = _development_shadow_run(tmp_path, clock)
+    raw = b"x" * (MAX_TERMINAL_RECEIPT_BYTES + 1)
+    digest = hashlib.sha256(raw).hexdigest()
+    target = roots.data_root / "run-receipts" / (digest + ".json")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(raw)
+
+    with pytest.raises(RunRepositoryError, match="exceeds its reviewed byte bound"):
+        repository.project_terminal_receipt(digest)
 
 
 def test_pr459_receipt_reconstructs_v154_source_without_resealing():

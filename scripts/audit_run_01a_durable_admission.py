@@ -17,6 +17,7 @@ SOURCES = (
     "scripts/audit_run_01a_durable_admission.py",
     "tests/test_run_01a_durable_admission.py",
     "tests/test_data_01c_app_storage.py",
+    "services/athena_capability_service.py",
     "tests/test_core_01d_exact_pr_trigger_disposition_b1.py",
     "scripts/audit_checkpoint_e_workflows.py",
     "scripts/audit_data_01c_restore_portability.py",
@@ -33,6 +34,7 @@ FORWARD_EVOLVED_SOURCE_PATHS = frozenset({
     "database/run_repository.py",
     "run_desktop.py",
     "tests/test_run_01a_durable_admission.py",
+    "services/athena_capability_service.py",
     "scripts/audit_data_01b_durable_run_state.py",
     "scripts/audit_data_01c_restore_portability.py",
     "tests/test_data_01c_app_storage.py",
@@ -83,6 +85,11 @@ FORWARD_EVOLVED_SOURCES = {
         "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr463/test-data-01c-app-storage-predecessor.py.txt",
         "predecessor_git_blob_sha1": "2110631b57af44102b36ce07e6124251310e855e",
     },
+    "services/athena_capability_service.py": {
+        "predecessor_lf_sha256": "f33cdb4207bac0ecc5daa72bfe0d264ea28c6453a9f6d6d6070c960501c8aef0",
+        "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr463/athena-capability-service-predecessor.py.txt",
+        "predecessor_git_blob_sha1": "00fab1b190326f748fe705298838bf76a0ee78d0",
+    },
 }
 FORWARD_SUCCESSOR_PATHS = frozenset({
     "tests/fixtures/core_01d/run_01a_historical/pr457/audit-checkpoint-e-workflows-predecessor.py.txt",
@@ -94,6 +101,7 @@ FORWARD_SUCCESSOR_PATHS = frozenset({
     "tests/fixtures/core_01d/run_01a_historical/pr463/run-desktop-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr463/test-run-01a-durable-admission-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr463/test-data-01c-app-storage-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr463/athena-capability-service-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr461/audit-data-01b-durable-run-state-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr461/audit-data-01c-restore-portability-predecessor.py.txt",
     "tests/test_run_01a_forward_successor_pr457.py",

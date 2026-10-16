@@ -411,6 +411,16 @@ def test_capability_truth_follows_durable_wiring(resources, roots, clock, monkey
     assert durable_states["cancel_intent"] == "available"
     assert durable_caps["run_admission_authority"] is True
 
+    from services.athena_job_service import DurableCancelAdapter
+    unsignalled_reads = job.durable_read_service()
+    unsignalled_reads.cancel_repository = DurableCancelAdapter(_repository)
+    unsignalled_caps = AthenaCapabilityService(
+        resources, preview_admission_service=job.preview_service,
+        read_service=unsignalled_reads, job_service=job).snapshot()
+    unsignalled_states = {row["capability_id"]: row["state"]
+                          for row in unsignalled_caps["capabilities"]}
+    assert unsignalled_states["cancel_intent"] == "blocked_implementation"
+
 
 def test_job_module_has_no_forbidden_transport_imports():
     raw = (ROOT / "services" / "athena_job_service.py").read_bytes().decode("utf-8")

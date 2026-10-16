@@ -1,4 +1,4 @@
-"""Exact PORT-02C second source successor and offline native evidence audit."""
+"""Exact D5 and E3 PORT-02C source successors and offline native evidence audit."""
 from __future__ import annotations
 
 import argparse
@@ -27,6 +27,10 @@ STEP = '''      - name: D5 native restore portability (offline, four cases)
           D5_PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           python scripts/qualify_data_01c_restore_portability.py --runner-temp "${{ runner.temp }}"
+
+'''
+E3_PROCESS_TREE_STEP = '''      - name: E3 native process-tree recovery tests (offline)
+        run: python -m pytest -q tests/native/test_run_02a_process_tree.py
 
 '''
 UPLOAD = "            ${{ runner.temp }}/data01c-restore-portability.json\n"
@@ -142,30 +146,49 @@ def expected_workflow():
     return raw.replace(anchor, STEP.encode() + anchor).replace(upload, upload + UPLOAD.encode())
 
 
+def expected_e3_native_workflow():
+    """Add the exact E3 process-control regression after the retained D5 step."""
+    raw = expected_workflow()
+    anchor = b"      - name: Require variant semantic equality\n"
+    if raw.count(anchor) != 1:
+        raise ValueError("ambiguous bounded E3 native process-test anchor")
+    return raw.replace(anchor, E3_PROCESS_TREE_STEP.encode() + anchor)
+
+
 def tree_identity(entries):
     body = b"".join(row["mode"].encode() + b" " + row["name"].encode() + b"\0" + bytes.fromhex(row["blob"])
                     for row in entries)
     return hashlib.sha1(b"tree " + str(len(body)).encode() + b"\0" + body).hexdigest()
 
 
-def successor_context():
+def _successor_context(workflow):
     entries = snapshot()["workflow_entries"]
     if tree_identity(entries) != PREDECESSOR_TREE:
         raise ValueError("retained PORT-02C predecessor workflow tree drift")
-    after = identity(expected_workflow())
+    after = identity(workflow)
     changed = [dict(row, blob=after["git_blob_sha1"]) if row["name"] == "port-02c-native-runtime.yml"
                else row for row in entries]
     return after, tree_identity(changed)
+
+
+def d5_successor_context():
+    """Return the frozen D5-only successor identity for its immutable receipt."""
+    return _successor_context(expected_workflow())
+
+
+def successor_context():
+    """Return the current exact D5-plus-E3 PORT-02C source successor."""
+    return _successor_context(expected_e3_native_workflow())
 
 
 def authenticate_workflow():
     for path, digest in FROZEN_EVIDENCE.items():
         if hashlib.sha256((ROOT / path).read_bytes().replace(b"\r\n", b"\n")).hexdigest() != digest:
             raise ValueError("frozen PORT-02C historical evidence drift: " + path)
-    expected = expected_workflow()
+    expected = expected_e3_native_workflow()
     raw = (ROOT / WORKFLOW).read_bytes().replace(b"\r\n", b"\n")
     if raw != expected:
-        raise ValueError("PORT-02C change exceeds the exact D5 offline qualification delta")
+        raise ValueError("PORT-02C change exceeds the exact D5 plus E3 offline qualification deltas")
     after, tree = successor_context()
     entries = snapshot()["workflow_entries"]
     directory = ROOT / ".github/workflows"
@@ -192,11 +215,12 @@ def authenticate_workflow():
 def historical_workflow_tree(observed_tree):
     if observed_tree == PREDECESSOR_TREE:
         return observed_tree
+    _, d5_tree = d5_successor_context()
     _, tree = authenticate_workflow()
     actual_tree = subprocess.check_output(
         ["git", "rev-parse", "HEAD:.github/workflows"], cwd=ROOT, text=True
     ).strip()
-    if observed_tree not in {tree, actual_tree}:
+    if observed_tree not in {d5_tree, tree, actual_tree}:
         raise ValueError("unknown PORT-02C source-forward workflow tree")
     return PREDECESSOR_TREE
 
@@ -270,7 +294,10 @@ def project_historical_inventory(raw):
 
 
 def build_receipt():
-    after, tree = authenticate_workflow()
+    # Authenticate the live E3 successor, but preserve the D5-only identity in
+    # the immutable D5 receipt. E3 native test coverage is a forward layer.
+    authenticate_workflow()
+    after, tree = d5_successor_context()
     baseline_sources = historical_d4_sources()
     paths = list(FROZEN_EVIDENCE)
     frozen = {path: identity((ROOT / path).read_bytes()) for path in paths}
@@ -330,7 +357,9 @@ def audit_native_pair(windows, linux, head, jobs_metadata):
         if len(matches) != 1 or matches[0].get("conclusion") != "success":
             raise ValueError("native qualification job is absent or unsuccessful")
         job = matches[0]
-        for name in ("D5 native restore portability (offline, four cases)", "Upload qualification evidence"):
+        for name in ("D5 native restore portability (offline, four cases)",
+                     "E3 native process-tree recovery tests (offline)",
+                     "Upload qualification evidence"):
             steps = [step for step in job.get("steps", []) if step.get("name") == name]
             if len(steps) != 1 or steps[0].get("conclusion") != "success":
                 raise ValueError("native qualification or evidence upload failed")

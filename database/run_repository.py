@@ -36,6 +36,7 @@ from services.athena_preview_service import (
 
 LOCAL_PROFILE_ID = "local-default"
 SHARE_CREATE_KIND = "SPORTYBET_SHARE_CODE_CREATE_V1"
+MAX_TERMINAL_RECEIPT_BYTES = 1_000_000
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _TRANSITIONS = {
     "QUEUED": {"RUNNING", "CANCELLED", "INTERRUPTED"},
@@ -94,6 +95,15 @@ def _sha(value):
     if type(value) is not str or re.fullmatch(r"[0-9a-f]{64}", value) is None:
         raise RunRepositoryError("digest must be lowercase SHA-256")
     return value
+
+
+def _read_bounded(path, maximum, label):
+    """Read at most one byte beyond a bounded retained evidence object."""
+    with path.open("rb") as stream:
+        raw = stream.read(maximum + 1)
+    if len(raw) > maximum:
+        raise RunRepositoryError(label + " exceeds its reviewed byte bound")
+    return raw
 
 
 class DurableRunRepository:
@@ -1121,8 +1131,9 @@ class DurableRunRepository:
                 "AND a.media_type='application/json' AND a.artifact_kind='RUN_RECEIPT' "
                 "AND a.evidence_class='RETAINED' "
                 "AND a.verification_policy_id='ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1' "
+                "AND a.byte_count BETWEEN 1 AND ? "
                 "ORDER BY a.created_at,l.run_id LIMIT ?",
-                (limit + 1,),
+                (MAX_TERMINAL_RECEIPT_BYTES, limit + 1),
             ).fetchall()
             if len(rows) > limit:
                 raise RunRepositoryError("pending receipt scan exceeds its bound")
@@ -1231,9 +1242,11 @@ class DurableRunRepository:
             artifact = conn.execute(
                 "SELECT logical_path,byte_sha256,byte_count FROM app_artifacts WHERE artifact_id=?",
                 (artifact_id,)).fetchone()
-            if artifact is None or artifact[1] != digest:
+            if (artifact is None or artifact[1] != digest
+                    or type(artifact[2]) is not int or not 1 <= artifact[2] <= MAX_TERMINAL_RECEIPT_BYTES):
                 raise RunRepositoryError("retained receipt artifact mismatch")
-            raw = contained(self._data_root, logical_locator(artifact[0])).read_bytes()
+            raw = _read_bounded(contained(self._data_root, logical_locator(artifact[0])),
+                                MAX_TERMINAL_RECEIPT_BYTES, "retained receipt")
             if hashlib.sha256(raw).hexdigest() != digest or len(raw) != artifact[2]:
                 raise RunRepositoryError("retained receipt bytes mismatch")
             value = json.loads(raw)
@@ -1288,6 +1301,8 @@ class DurableRunRepository:
         The pending database link is a lookup key only. The receipt verifier
         remains the sole terminal authority and a missing or invalid file blocks.
         """
+        if type(receipt_bytes) is not bytes or len(receipt_bytes) > MAX_TERMINAL_RECEIPT_BYTES:
+            raise RunRepositoryError("terminal receipt exceeds its reviewed byte bound")
         with self._operation(write=True) as conn:
             self._fence(conn, run_id, attempt_id, lease_token)
             receipt = RunReceipt.from_json_bytes(receipt_bytes)
@@ -1312,6 +1327,8 @@ class DurableRunRepository:
                      "attempt_id": attempt_id, "lease_token": lease_token,
                      "receipt": receipt.to_dict()}
             raw = canonical_json_bytes(value)
+            if len(raw) > MAX_TERMINAL_RECEIPT_BYTES:
+                raise RunRepositoryError("terminal receipt projection exceeds its reviewed byte bound")
             digest = hashlib.sha256(raw).hexdigest()
             artifact_id = "receipt-" + digest
             locator = "run-receipts/" + digest + ".json"
@@ -1349,7 +1366,10 @@ class DurableRunRepository:
         digest = _sha(receipt_sha256)
         locator = "run-receipts/" + digest + ".json"
         try:
-            raw = contained(self._data_root, locator).read_bytes()
+            raw = _read_bounded(contained(self._data_root, locator),
+                                MAX_TERMINAL_RECEIPT_BYTES, "terminal receipt projection")
+        except RunRepositoryError:
+            raise
         except (OSError, ValueError) as exc:
             raise TerminalEvidenceUnavailable("published receipt evidence is missing or unsafe") from exc
         if hashlib.sha256(raw).hexdigest() != digest:
