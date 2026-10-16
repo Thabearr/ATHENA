@@ -80,6 +80,10 @@ RUN_02A_CURRENT_SOURCE_PREDECESSORS = {
         "tests/fixtures/core_01d/run_02a_pre_historical/athena-job-service-pr463-base.py.txt",
         "d0291cc9a25b1372d86464e2fb54ac97f1fc7f98",
         "439c97a9b4d22e2e61724e349f20cad8e365787047f306af00f4d4690d60876d"),
+    "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py": (
+        "tests/fixtures/core_01d/run_02a_pre_historical/auth-worker-boundary-pr463-base.py.txt",
+        "8115c18631e445f825dee0b0fa78c1a7cd77e460",
+        "7b6532d9155f5a096c38c12ad003c6bd076e0f329cc0ee26898cf0b5b0b5e795"),
     "runtime/worker_entry.py": (
         "tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-pr463-base.py.txt",
         "113acdf1ece29ca2977e4e3d2d84576a31fe7828",
