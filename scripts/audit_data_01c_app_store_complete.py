@@ -358,6 +358,10 @@ def audit(latest=None):
                     "scripts/audit_core_01d_retained_workflow_status_v2.py",
                     "scripts/audit_p4_workflow_evolution_ledger.py",
                     "scripts/audit_run_01a_durable_admission.py",
+                    # E3 adds exactly its offline process-tree suite after the
+                    # retained D5 step; assert_prohibited_scope_unchanged()
+                    # authenticates the complete current workflow bytes.
+                    ".github/workflows/port-02c-native-runtime.yml",
                     "sitecustomize.py",
                     # RUN-02A adds a shallow-checkout negative regression for
                     # absent historical Git objects. D5 predecessor bytes stay
