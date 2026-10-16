@@ -187,6 +187,17 @@ RUN_02A_PRE_ADDITIVE_PATHS = {
     "tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-predecessor.py.txt",
     "tests/fixtures/core_01d/run_02a_pre_historical/direct-share-predecessor.py.txt",
     "tests/fixtures/core_01d/run_02a_pre_historical/auth-worker-boundary-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/run-repository-pr463-base.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/athena-job-service-pr463-base.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-pr463-base.py.txt",
+    "runtime/worker_startup_gate.py",
+    "services/worker_process_control.py",
+    "services/recovery_service.py",
+    "tests/native/test_run_02a_process_tree.py",
+    "tests/test_run_02a_recovery.py",
+    "tests/test_run_01a_durable_admission.py",
+    "tests/test_run_01b_worker_lifecycle.py",
+    "tests/test_worker_launcher.py",
     "tests/test_lg_a_worker_entry_historical_projection.py",
 }
 RUN_02A_PRE_PREDECESSOR_SOURCE_BLOBS = {

@@ -182,9 +182,7 @@ class AthenaJobService:
         return self._recovery_service.reconcile()
 
     def cancel_run(self, run_id: str) -> CancelIntentResult:
-        result = self.durable_read_service().request_cancel(run_id)
-        self._coordinator.notify_cancel(run_id)
-        return result
+        return self.durable_read_service().request_cancel(run_id)
 
     def admit(
         self,
@@ -287,7 +285,8 @@ class AthenaJobService:
         unavailable = AthenaReadService.unavailable()
         return AthenaReadService(
             run_repository=DurableRunReadAdapter(self._repository),
-            cancel_repository=DurableCancelAdapter(self._repository),
+            cancel_repository=DurableCancelAdapter(
+                self._repository, on_cancel_requested=self._coordinator.notify_cancel),
             fixture_index=unavailable.fixture_index,
             export_repository=unavailable.export_repository,
         )
@@ -500,10 +499,13 @@ class DurableRunReadAdapter:
 class DurableCancelAdapter:
     """D4-owned cooperative cancel-intent port; delegates atomically to repository."""
 
-    def __init__(self, repository: DurableRunRepository) -> None:
+    def __init__(self, repository: DurableRunRepository, *, on_cancel_requested=None) -> None:
         if type(repository) is not DurableRunRepository:
             raise ValueError("exact durable run repository is required")
+        if on_cancel_requested is not None and not callable(on_cancel_requested):
+            raise ValueError("cancel signal callback must be callable")
         self._repository = repository
+        self._on_cancel_requested = on_cancel_requested
 
     def request_cancel(self, run_id: str) -> CancelIntentResult | None:
         try:
@@ -513,6 +515,13 @@ class DurableCancelAdapter:
         if record is None:
             return None
         disposition, state, state_version = record
+        if disposition == "requested" and state == "CANCEL_REQUESTED" and self._on_cancel_requested:
+            try:
+                self._on_cancel_requested(run_id)
+            except Exception:
+                # Durable intent is authoritative; the owned monitor polls it
+                # if the best-effort cooperative signal cannot be delivered.
+                pass
         return CancelIntentResult(
             run_id=run_id,
             disposition=disposition,

@@ -36,6 +36,9 @@ from runtime.worker_launcher import (
     WorkerProcessHandle,
     build_offline_probe_documents,
 )
+from runtime.worker_startup_gate import FILENAME as STARTUP_GATE_FILENAME
+from runtime.worker_startup_gate import gate_bytes, publish_gate
+from services.worker_process_control import WorkerProcessControl, owner_identity
 
 _STAGE_KEYS = {
     "schema_version", "dataset_name", "stage", "stage_index", "observed_at",
@@ -129,6 +132,8 @@ class WorkerCoordinator:
         self._monotonic = monotonic
         self._sleep = sleeper
         self._owned: dict[str, WorkerProcessHandle] = {}
+        self._process_controls: dict[str, WorkerProcessControl] = {}
+        self._process_locators: dict[str, dict] = {}
         self._owned_lock = threading.Lock()
         self._attempt_to_run: dict[str, str] = {}
         self._run_to_attempt: dict[str, str] = {}
@@ -227,15 +232,37 @@ class WorkerCoordinator:
             self._attempt_to_run[attempt_id] = run_id
             self._run_to_attempt[run_id] = attempt_id
         locator_bound = False
-        locator = self._native_process_locator(handle.pid)
-        if locator is not None:
-            try:
-                self._repository.bind_process_locator(
-                    run_id, attempt_id, lease_token, locator,
-                )
-                locator_bound = True
-            except Exception:
-                locator_bound = False
+        owner = owner_identity(
+            run_id=run_id, attempt_id=attempt_id,
+            worker_instance_id=worker_instance_id, lease_token=lease_token,
+        )
+        process_control = WorkerProcessControl(handle, owner)
+        locator = None
+        try:
+            locator = process_control.bind()
+            self._repository.bind_process_locator(run_id, attempt_id, lease_token, locator)
+            with self._owned_lock:
+                self._process_controls[attempt_id] = process_control
+                self._process_locators[attempt_id] = locator
+            latest = self._repository.run_snapshot(run_id)
+            if latest is None or latest["state"] != "RUNNING":
+                raise RunStateConflict("cancellation won before worker startup gate")
+            gate_path = command.run_directory / STARTUP_GATE_FILENAME
+            publish_gate(gate_path, gate_bytes(
+                command=command, pid=handle.pid, owner={
+                    "attempt_id": attempt_id, "worker_instance_id": worker_instance_id,
+                    "lease_sha256": owner["lease_sha256"],
+                }, process_locator=locator,
+            ))
+            locator_bound = True
+        except Exception:
+            # The worker entry waits at the startup gate, so a failed identity
+            # bind can only abort this exact root and cannot begin business work.
+            with self._owned_lock:
+                self._process_controls.pop(attempt_id, None)
+                self._process_locators.pop(attempt_id, None)
+            process_control.abort_before_start()
+            process_control.close()
 
         try:
             self._discard_output(handle)
@@ -267,22 +294,15 @@ class WorkerCoordinator:
             attempt_id = self._run_to_attempt.get(run_id)
             if attempt_id is None:
                 return False
+            process_control = self._process_controls.get(attempt_id)
+            locator = self._process_locators.get(attempt_id)
             handle = self._owned.get(attempt_id)
-            if handle is None:
+            if handle is None or process_control is None or locator is None:
                 return False
         try:
-            handle.request_cancel()
-            return True
+            return process_control.request_cancel(locator)
         except Exception:
             return False
-
-    @staticmethod
-    def _native_process_locator(pid: object) -> dict[str, int | str] | None:
-        """Return only the exact bounded native process-group locator."""
-        if type(pid) is not int or pid <= 0:
-            return None
-        kind = "WINDOWS_PROCESS_GROUP" if os.name == "nt" else "POSIX_PROCESS_GROUP"
-        return {"kind": kind, "pid": pid}
 
     @staticmethod
     def _drain_output(stream) -> None:
@@ -621,12 +641,15 @@ class WorkerCoordinator:
 
     def _monitor(self, *, run_id, attempt_id, lease_token, request, envelope,
                  snapshot, command, handle, locator_bound):
+        with self._owned_lock:
+            process_control = self._process_controls.get(attempt_id)
         try:
             self._sleep(self._initial_poll_delay)
             last_heartbeat = self._monotonic()
             progress_invalid = False
             owner_valid = True
             cancel_requested_at: float | None = None
+            tree_tainted = False
             while True:
                 run_snap = self._repository.run_snapshot(run_id)
                 if run_snap is not None and run_snap["state"] in {"CANCEL_REQUESTED", "CANCELLED"}:
@@ -634,12 +657,18 @@ class WorkerCoordinator:
                     if cancel_requested_at is None:
                         cancel_requested_at = now
                         try:
-                            handle.request_cancel()
+                            if process_control is not None:
+                                locator = self._process_locators.get(attempt_id)
+                                if locator is not None:
+                                    process_control.request_cancel(locator)
                         except Exception:
                             pass
                     elif (now - cancel_requested_at) >= 2.0:
                         try:
-                            handle.kill_tree()
+                            if process_control is not None:
+                                locator = self._process_locators.get(attempt_id)
+                                if locator is not None:
+                                    process_control.force_terminate(locator)
                         except Exception:
                             pass
 
@@ -666,9 +695,42 @@ class WorkerCoordinator:
                     exit_code = None
                     owner_valid = False
                 if exit_code is not None:
-                    break
+                    if not locator_bound:
+                        # The missing gate means only the exact process root
+                        # could have run; the failed handoff aborts it directly.
+                        break
+                    state = (process_control.state_current()
+                             if process_control is not None else "UNKNOWN")
+                    if state == "DEAD":
+                        break
+                    if state == "ACTIVE" and process_control is not None:
+                        # Windows Job Objects prove the remaining members are
+                        # exact descendants. A POSIX orphan without its
+                        # authenticated leader remains UNKNOWN and is retained.
+                        try:
+                            process_control.force_terminate(self._process_locators[attempt_id])
+                        except Exception:
+                            pass
+                        deadline = self._monotonic() + 2.0
+                        while self._monotonic() < deadline:
+                            if process_control.state_current() == "DEAD":
+                                tree_tainted = True
+                                break
+                            self._sleep(min(self._poll_seconds, 0.05))
+                        if tree_tainted:
+                            break
+                    # Unknown ownership or an unproven surviving tree blocks
+                    # terminal projection and remains for startup reconciliation.
+                    return
                 self._sleep(self._poll_seconds)
             if type(exit_code) is not int or not owner_valid:
+                return
+            if tree_tainted:
+                self._repository.interrupt_worker_without_receipt(
+                    run_id, attempt_id, lease_token, exit_code=exit_code,
+                    diagnostic_id="WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT",
+                    last_proven_stage=(self._repository.latest_worker_progress(run_id) or {}).get("stage"),
+                )
                 return
             published_digest = None
             try:
@@ -747,11 +809,18 @@ class WorkerCoordinator:
                     # this worker is never automatically retried or replaced.
                     pass
         finally:
-            with self._owned_lock:
-                self._owned.pop(attempt_id, None)
-                self._attempt_to_run.pop(attempt_id, None)
-                if self._run_to_attempt.get(run_id) == attempt_id:
-                    self._run_to_attempt.pop(run_id, None)
+            owner_dead = (not locator_bound or process_control is None
+                          or process_control.state_current() == "DEAD")
+            if owner_dead:
+                with self._owned_lock:
+                    self._owned.pop(attempt_id, None)
+                    self._attempt_to_run.pop(attempt_id, None)
+                    self._process_controls.pop(attempt_id, None)
+                    self._process_locators.pop(attempt_id, None)
+                    if self._run_to_attempt.get(run_id) == attempt_id:
+                        self._run_to_attempt.pop(run_id, None)
+                if process_control is not None:
+                    process_control.close()
 
     def repair_published_projection(self, receipt_sha256: str) -> bool:
         """Explicit idempotent receipt-only repair; this never launches work."""

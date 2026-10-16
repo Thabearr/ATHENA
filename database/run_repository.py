@@ -296,8 +296,9 @@ class DurableRunRepository:
                     or value["envelope_sha256"] != row[3] or value["release_id"] != row[4]
                     or value["expected_version"] != state_version - 1):
                 raise TerminalEvidenceUnavailable("retained receipt wrapper bindings drift")
+            attempt_id = _identity(value["attempt_id"])
             attempt = conn.execute("SELECT lease_token FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
-                                   (run_id, _identity(value["attempt_id"]))).fetchone()
+                                   (run_id, attempt_id)).fetchone()
             if attempt is None or attempt[0] != value["lease_token"]:
                 raise TerminalEvidenceUnavailable("retained receipt attempt lease binding drift")
             receipt = RunReceipt.from_dict(value["receipt"])
@@ -305,7 +306,7 @@ class DurableRunRepository:
                     or receipt.authority_manifest != envelope.authority_manifest
                     or receipt.share_code_result is not None):
                 raise TerminalEvidenceUnavailable("retained receipt contract identity drift")
-            self._verify_receipt_producer(conn, run_id, receipt, envelope, row[4])
+            self._verify_receipt_producer(conn, run_id, receipt, envelope, row[4], attempt_id)
             events = conn.execute(
                 "SELECT sequence,state_version,payload_bytes,payload_sha256 FROM app_run_events "
                 "WHERE run_id=? AND event_type='RUN_TERMINAL'", (run_id,)).fetchall()
@@ -445,18 +446,35 @@ class DurableRunRepository:
     def bind_process_locator(self, run_id, attempt_id, lease_token, locator):
         """Bind the one exact OS process-group identity after launch returns."""
         expected_kind = "WINDOWS_PROCESS_GROUP" if os.name == "nt" else "POSIX_PROCESS_GROUP"
-        if (type(locator) is not dict or set(locator) != {"kind", "pid"}
+        common = {"kind", "pid", "run_id", "attempt_id", "worker_instance_id", "lease_sha256"}
+        platform_fields = ({"creation_time", "job_name"} if os.name == "nt"
+                           else {"pgid", "session_id", "start_ticks"})
+        if (type(locator) is not dict or set(locator) != common | platform_fields
                 or locator.get("kind") != expected_kind
-                or type(locator.get("pid")) is not int or locator["pid"] <= 0):
+                or type(locator.get("pid")) is not int or locator["pid"] <= 0
+                or type(locator.get("run_id")) is not str or locator["run_id"] != run_id
+                or type(locator.get("attempt_id")) is not str or locator["attempt_id"] != attempt_id
+                or type(locator.get("worker_instance_id")) is not str
+                or type(locator.get("lease_sha256")) is not str
+                or locator["lease_sha256"] != hashlib.sha256(lease_token.encode("utf-8")).hexdigest()):
             raise RunRepositoryError("process locator is outside the exact platform schema")
+        if os.name == "nt":
+            if (type(locator["creation_time"]) is not int or locator["creation_time"] <= 0
+                    or type(locator["job_name"]) is not str
+                    or not locator["job_name"].startswith("Local\\ATHENA-E3-")):
+                raise RunRepositoryError("Windows process locator identity is invalid")
+        elif (locator["pgid"] != locator["pid"] or locator["session_id"] != locator["pid"]
+              or type(locator["start_ticks"]) is not int or locator["start_ticks"] <= 0):
+            raise RunRepositoryError("POSIX process locator identity is invalid")
         raw = canonical_json_bytes(locator).decode("utf-8")
         with self._operation(write=True) as conn:
             self._fence(conn, run_id, attempt_id, lease_token)
             row = conn.execute(
-                "SELECT process_locator_json FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
+                "SELECT process_locator_json,worker_instance_id FROM app_run_attempts "
+                "WHERE run_id=? AND attempt_id=?",
                 (run_id, attempt_id),
             ).fetchone()
-            if row is None:
+            if row is None or row[1] != locator["worker_instance_id"]:
                 raise RunLeaseFenced("attempt locator owner is missing")
             try:
                 pending = json.loads(row[0])
@@ -464,7 +482,8 @@ class DurableRunRepository:
                 raise RunRepositoryError("pending process locator is invalid") from None
             if (type(pending) is not dict or set(pending) != {"kind", "label"}
                     or pending.get("kind") != "OFFLINE_TEST"
-                    or pending.get("label") != "offline-probe"):
+                    or type(pending.get("label")) is not str
+                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", pending["label"]) is None):
                 raise RunStateConflict("process locator was already bound or was not pending")
             conn.execute(
                 "UPDATE app_run_attempts SET process_locator_json=? WHERE run_id=? AND attempt_id=?",
@@ -1059,9 +1078,11 @@ class DurableRunRepository:
                 "a.worker_instance_id, a.process_locator_json, a.heartbeat_at, a.started_at, "
                 "r.state, r.state_version, r.request_sha256, r.envelope_sha256, r.release_id "
                 "FROM app_run_attempts a JOIN app_runs r ON r.run_id=a.run_id "
-                "WHERE a.finished_at IS NULL ORDER BY a.started_at"
+                "WHERE a.finished_at IS NULL ORDER BY a.started_at LIMIT 101"
             )
             rows = cursor.fetchall()
+            if len(rows) > 100:
+                raise RunRepositoryError("unfinished attempt scan exceeds its bound")
             return [
                 {
                     "attempt_id": row[0],
@@ -1078,6 +1099,36 @@ class DurableRunRepository:
                     "envelope_sha256": row[11],
                     "release_id": row[12],
                 }
+                for row in rows
+            ]
+
+    def list_pending_terminal_receipts(self, *, limit=100):
+        """Return only receipt identities already linked to an exact DB run/attempt."""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise RunRepositoryError("pending receipt page is outside its bound")
+        with self._operation() as conn:
+            rows = conn.execute(
+                "SELECT a.byte_sha256,l.run_id,t.attempt_id,t.lease_token "
+                "FROM app_run_artifacts l "
+                "JOIN app_artifacts a ON a.artifact_id=l.artifact_id "
+                "JOIN app_runs r ON r.run_id=l.run_id "
+                "JOIN app_run_attempts t ON t.run_id=l.run_id AND t.finished_at IS NULL "
+                "WHERE l.role='RUN_RECEIPT_PENDING' AND l.retained_root=1 "
+                "AND r.receipt_artifact_id IS NULL AND r.state IN ('RUNNING','CANCEL_REQUESTED') "
+                "AND a.artifact_id='receipt-'||a.byte_sha256 "
+                "AND a.canonical_sha256=a.byte_sha256 "
+                "AND a.logical_path='run-receipts/'||a.byte_sha256||'.json' "
+                "AND a.media_type='application/json' AND a.artifact_kind='RUN_RECEIPT' "
+                "AND a.evidence_class='RETAINED' "
+                "AND a.verification_policy_id='ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1' "
+                "ORDER BY a.created_at,l.run_id LIMIT ?",
+                (limit + 1,),
+            ).fetchall()
+            if len(rows) > limit:
+                raise RunRepositoryError("pending receipt scan exceeds its bound")
+            return [
+                {"receipt_sha256": row[0], "run_id": row[1],
+                 "attempt_id": row[2], "lease_token": row[3]}
                 for row in rows
             ]
 
@@ -1119,12 +1170,19 @@ class DurableRunRepository:
             )
             if current_state in {"QUEUED", "RUNNING", "CANCEL_REQUESTED"}:
                 latest_stage = None
-                try:
-                    prog = self.latest_worker_progress(run_id)
-                    if prog is not None:
-                        latest_stage = prog.get("stage")
-                except Exception:
-                    pass
+                progress_row = conn.execute(
+                    "SELECT payload_bytes,payload_sha256 FROM app_run_events "
+                    "WHERE run_id=? AND event_type='WORKER_PROGRESS_PROVEN' "
+                    "ORDER BY sequence DESC LIMIT 1", (run_id,),
+                ).fetchone()
+                if progress_row is not None:
+                    progress_raw, progress_digest = progress_row
+                    if (hashlib.sha256(progress_raw).hexdigest() != progress_digest
+                            or canonical_json_bytes(json.loads(progress_raw)) != progress_raw):
+                        raise RunRepositoryError("stored worker progress evidence drift")
+                    progress_value = json.loads(progress_raw)
+                    self._validate_worker_progress(progress_value)
+                    latest_stage = progress_value["stage"]
                 self._event(conn, run_id, row[1], "WORKER_INTERRUPTED", {
                     "diagnostic_id": diagnostic_id, "exit_code": exit_code,
                     "last_proven_stage": latest_stage,
@@ -1213,43 +1271,76 @@ class DurableRunRepository:
                 })
             return history
 
-    def _verify_receipt_producer(self, conn, run_id, receipt, envelope, release_id):
+    def _verify_receipt_producer(self, conn, run_id, receipt, envelope, release_id, attempt_id):
         provenance = self._verify_release(conn, release_id, envelope.source_identity)
         if envelope.source_identity.kind != "GIT_COMMIT" or provenance[1] is None:
             raise ReceiptProducerUnavailable("installed hash pin has no independently verified producer commit; named future dependency E2/PACKAGING_AUTHENTICATED_INSTALLED_PRODUCER_PROVENANCE remains open")
         if receipt.exact_commit_sha != provenance[1] or receipt.exact_commit_sha != envelope.source_identity.value:
             raise ReceiptProducerUnavailable("receipt producer commit differs from verified run source")
         expected = {"run_id": run_id, "execution_envelope_sha256": envelope.canonical_sha256,
-                    "release_id": release_id}
+                    "release_id": release_id, "worker_attempt_id": attempt_id}
         if any(receipt.evidence.get(key) != value for key, value in expected.items()):
-            raise ReceiptProducerUnavailable("receipt run/envelope/release producer binding mismatch")
+            raise ReceiptProducerUnavailable("receipt run/attempt/envelope/release producer binding mismatch")
 
     def publish_terminal_receipt(self, run_id, *, receipt_bytes, expected_version, attempt_id, lease_token):
-        """Publish immutable offline projection evidence BEFORE changing SQLite.
+        """Register the exact run/attempt receipt identity, then publish its bytes.
 
-        A successful publish followed by a crash is reconciled explicitly. This
-        is storage projection evidence, not executor completion authority.
+        The pending database link is a lookup key only. The receipt verifier
+        remains the sole terminal authority and a missing or invalid file blocks.
         """
-        with self._operation() as conn:
+        with self._operation(write=True) as conn:
             self._fence(conn, run_id, attempt_id, lease_token)
             receipt = RunReceipt.from_json_bytes(receipt_bytes)
-            row = conn.execute("SELECT request_sha256,envelope_sha256,release_id,state,state_version FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
+            row = conn.execute(
+                "SELECT request_sha256,envelope_sha256,release_id,state,state_version,receipt_artifact_id "
+                "FROM app_runs WHERE run_id=?", (run_id,),
+            ).fetchone()
             if row[3] not in {"RUNNING", "CANCEL_REQUESTED"} or row[4] != expected_version:
                 raise RunStateConflict("receipt state CAS rejected")
+            if row[5] is not None:
+                raise RunStateConflict("run already carries a terminal receipt")
             if receipt.request.canonical_sha256 != row[0] or receipt.share_code_result is not None:
                 raise RunRepositoryError("receipt request mismatch or disabled delivery result")
             envelope_raw = conn.execute("SELECT envelope_bytes FROM app_runs WHERE run_id=?", (run_id,)).fetchone()[0]
             envelope = ExecutionEnvelope.from_json_bytes(envelope_raw)
             if receipt.authority_manifest != envelope.authority_manifest:
                 raise RunRepositoryError("receipt authority mismatch")
-            self._verify_receipt_producer(conn, run_id, receipt, envelope, row[2])
+            self._verify_receipt_producer(conn, run_id, receipt, envelope, row[2], attempt_id)
             value = {"policy_id": "ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1",
                      "run_id": run_id, "request_sha256": row[0], "envelope_sha256": row[1],
                      "release_id": row[2], "expected_version": expected_version,
                      "attempt_id": attempt_id, "lease_token": lease_token,
                      "receipt": receipt.to_dict()}
-        raw = canonical_json_bytes(value)
-        digest = hashlib.sha256(raw).hexdigest()
+            raw = canonical_json_bytes(value)
+            digest = hashlib.sha256(raw).hexdigest()
+            artifact_id = "receipt-" + digest
+            locator = "run-receipts/" + digest + ".json"
+            stamp = _utc(self._clock())
+            conn.execute(
+                "INSERT OR IGNORE INTO app_artifacts VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (artifact_id, digest, digest, len(raw), "application/json", "RUN_RECEIPT",
+                 locator, "RETAINED", "ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1", None, stamp),
+            )
+            metadata = conn.execute(
+                "SELECT byte_sha256,canonical_sha256,byte_count,media_type,artifact_kind,"
+                "logical_path,evidence_class,verification_policy_id FROM app_artifacts "
+                "WHERE artifact_id=?", (artifact_id,),
+            ).fetchone()
+            if (metadata is None or metadata != (
+                    digest, digest, len(raw), "application/json", "RUN_RECEIPT", locator,
+                    "RETAINED", "ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1")):
+                raise RunRepositoryError("pending receipt artifact metadata conflicts")
+            links = conn.execute(
+                "SELECT run_id,role,retained_root FROM app_run_artifacts "
+                "WHERE artifact_id=?", (artifact_id,),
+            ).fetchall()
+            expected_link = (run_id, "RUN_RECEIPT_PENDING", 1)
+            if links and links != [expected_link]:
+                raise RunRepositoryError("pending receipt is linked to another run")
+            conn.execute(
+                "INSERT OR IGNORE INTO app_run_artifacts VALUES(?,?,?,1)",
+                (run_id, artifact_id, "RUN_RECEIPT_PENDING"),
+            )
         publish(self._data_root, "run-receipts/" + digest + ".json", raw)
         return digest
 
@@ -1284,17 +1375,38 @@ class DurableRunRepository:
                     or receipt.authority_manifest != envelope.authority_manifest
                     or receipt.share_code_result is not None):
                 raise RunRepositoryError("receipt contract identity mismatch")
-            self._verify_receipt_producer(conn, run_id, receipt, envelope, row[2])
+            self._verify_receipt_producer(conn, run_id, receipt, envelope, row[2], _identity(value["attempt_id"]))
             if row[3] == "TERMINAL" and row[5] == artifact_id:
                 return False
             self._fence(conn, run_id, value["attempt_id"], value["lease_token"])
             if row[3] not in {"RUNNING", "CANCEL_REQUESTED"} or row[4] != value["expected_version"]:
                 raise RunStateConflict("receipt projection CAS rejected")
+            metadata = conn.execute(
+                "SELECT byte_sha256,canonical_sha256,byte_count,media_type,artifact_kind,"
+                "logical_path,evidence_class,verification_policy_id FROM app_artifacts "
+                "WHERE artifact_id=?", (artifact_id,),
+            ).fetchone()
+            locator = "run-receipts/" + digest + ".json"
+            if (metadata is None or metadata != (
+                    digest, digest, len(raw), "application/json", "RUN_RECEIPT", locator,
+                    "RETAINED", "ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1")):
+                raise RunRepositoryError("receipt is not linked to exact retained publication metadata")
+            pending_links = conn.execute(
+                "SELECT run_id,role,retained_root FROM app_run_artifacts WHERE artifact_id=?",
+                (artifact_id,),
+            ).fetchall()
+            if pending_links != [(run_id, "RUN_RECEIPT_PENDING", 1)]:
+                raise RunRepositoryError("receipt pending link is missing or cross-run")
             stamp = _utc(self._clock())
-            conn.execute("INSERT INTO app_artifacts VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                         (artifact_id, digest, digest, len(raw), "application/json", "RUN_RECEIPT",
-                          locator, "RETAINED", value["policy_id"], stamp, stamp))
-            conn.execute("INSERT INTO app_run_artifacts VALUES(?,?,?,1)", (run_id, artifact_id, "RUN_RECEIPT"))
+            conn.execute(
+                "UPDATE app_artifacts SET verified_at=? WHERE artifact_id=?",
+                (stamp, artifact_id),
+            )
+            conn.execute(
+                "UPDATE app_run_artifacts SET role='RUN_RECEIPT' "
+                "WHERE run_id=? AND artifact_id=? AND role='RUN_RECEIPT_PENDING'",
+                (run_id, artifact_id),
+            )
             conn.execute("UPDATE app_runs SET state='TERMINAL',state_version=state_version+1,updated_at=?,receipt_artifact_id=? WHERE run_id=?",
                          (stamp, artifact_id, run_id))
             # Receipt publication is the prerequisite for terminal projection;

@@ -176,8 +176,15 @@ def execute_worker_command(
     development_root: Path | None = None,
     release_root: Path | None = None,
     trusted_manifest_sha256: str | None = None,
+    startup_gate_required: bool = False,
 ) -> int:
     command, _resolved_command_path = _read_command_file(command_file)
+    if startup_gate_required:
+        from runtime.worker_startup_gate import StartupGateError, wait_for_gate
+        try:
+            wait_for_gate(command)
+        except StartupGateError as exc:
+            raise WorkerEntryError("worker process ownership gate failed") from exc
     identity = _verify_source_identity(
         command,
         development_root=development_root,
@@ -213,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
             development_root=args.development_root,
             release_root=args.release_root,
             trusted_manifest_sha256=args.trusted_manifest_sha256,
+            startup_gate_required=True,
         )
     except WorkerEntryError as exc:
         print(f"ATHENA worker admission failed: {exc}", file=sys.stderr)

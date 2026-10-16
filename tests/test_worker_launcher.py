@@ -32,6 +32,9 @@ from runtime.worker_launcher import (
     build_offline_probe_documents,
     persist_worker_command,
 )
+from runtime.worker_startup_gate import FILENAME as STARTUP_GATE_FILENAME
+from runtime.worker_startup_gate import gate_bytes, publish_gate
+from services.worker_process_control import WorkerProcessControl, owner_identity
 from scripts import audit_port_02_worker_launch_boundary as port02b_audit
 
 
@@ -475,7 +478,25 @@ def test_development_offline_probe_is_a_real_zero_external_process(tmp_path: Pat
         operation="OFFLINE_IDENTITY_PROBE",
         identity_id=identity.head_commit_sha,
     )
-    result = WorkerLauncher.for_development(identity).launch(command).communicate()
+    handle = WorkerLauncher.for_development(identity).launch(command)
+    owner = owner_identity(
+        run_id="run-worker-launcher-test", attempt_id="attempt-worker-launcher-test",
+        worker_instance_id="worker-launcher-test", lease_token="lease-worker-launcher-test",
+    )
+    control = WorkerProcessControl(handle, owner)
+    locator = control.bind()
+    publish_gate(
+        command.run_directory / STARTUP_GATE_FILENAME,
+        gate_bytes(command=command, pid=handle.pid, owner={
+            "attempt_id": owner["attempt_id"],
+            "worker_instance_id": owner["worker_instance_id"],
+            "lease_sha256": owner["lease_sha256"],
+        }, process_locator=locator),
+    )
+    try:
+        result = handle.communicate()
+    finally:
+        control.close()
     assert result.returncode == 0
     semantic = (command.run_directory / WORKER_OFFLINE_PROBE_FILENAME).read_bytes()
     provenance = json.loads((command.run_directory / WORKER_PROVENANCE_FILENAME).read_bytes())

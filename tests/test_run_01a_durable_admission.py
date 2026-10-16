@@ -15,6 +15,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import time
 
 import pytest
 
@@ -137,9 +138,10 @@ class _FakeProcess:
     def __init__(self, returncode: int = 0):
         self.returncode = returncode
         self.pid = 1234
+        self._complete_at = time.monotonic() + 5.0
 
     def poll(self):
-        return self.returncode
+        return None if time.monotonic() < self._complete_at else self.returncode
 
     def communicate(self):
         return ("", "")
@@ -215,8 +217,47 @@ def _durable_job(resources, roots, clock, monkeypatch, *, launch_effect=None):
         return _FakeProcess(returncode=0)
 
     monkeypatch.setattr(worker_launcher, "_spawn_process", fake_spawn)
+    from services import worker_coordinator
+    monkeypatch.setattr(worker_coordinator, "WorkerProcessControl", _FakeProcessControl)
     job = AthenaJobService(preview, repository, launcher, roots)
     return job, repository, item, envelope_sha, calls
+
+
+class _FakeProcessControl:
+    def __init__(self, handle, owner):
+        self.handle = handle
+        self.owner = owner
+        self.locator = None
+
+    def bind(self):
+        pid = self.handle.pid
+        if os.name == "nt":
+            self.locator = {
+                "kind": "WINDOWS_PROCESS_GROUP", "pid": pid,
+                "creation_time": 1, "job_name": "Local\\ATHENA-E3-synthetic",
+                **self.owner,
+            }
+        else:
+            self.locator = {
+                "kind": "POSIX_PROCESS_GROUP", "pid": pid, "pgid": pid,
+                "session_id": pid, "start_ticks": 1, **self.owner,
+            }
+        return dict(self.locator)
+
+    def state_current(self):
+        return "DEAD" if self.handle.poll() is not None else "ACTIVE"
+
+    def request_cancel(self, locator):
+        return locator == self.locator and self.handle.poll() is None
+
+    def force_terminate(self, locator):
+        return locator == self.locator
+
+    def abort_before_start(self):
+        return None
+
+    def close(self):
+        return None
 
 
 def test_failed_commit_launches_no_worker(resources, roots, clock, monkeypatch):
@@ -341,13 +382,16 @@ def test_durable_reads_snapshot_events_history_and_cancel(resources, roots, cloc
     assert any(entry.run_id == run_id and entry.profile == "MAIN" for entry in history.items)
     main_only = reads.list_runs(cursor=None, limit=50, state=None, profile="MAIN")
     assert all(entry.profile == "MAIN" for entry in main_only.items)
-    from services.athena_read_service import ReadServiceError
-    before = repository.run_snapshot(run_id)
-    with pytest.raises(ReadServiceError) as blocked:
-        reads.request_cancel(run_id)
-    assert blocked.value.code == "CANCEL_STORE_UNAVAILABLE"
-    assert repository.run_snapshot(run_id) == before
-    assert reads.list_run_events(run_id, after_sequence=0, limit=50) == page
+    result = reads.request_cancel(run_id)
+    assert result.disposition == "requested" and result.state == "CANCEL_REQUESTED"
+    assert result.state_version == 2
+    after = repository.run_snapshot(run_id)
+    assert after["state"] == "CANCEL_REQUESTED" and after["state_version"] == 2
+    current_page = reads.list_run_events(run_id, after_sequence=0, limit=50)
+    assert [event.kind for event in current_page.events] == [
+        "STATE_CHANGED", "STATE_CHANGED", "STATE_CHANGED",
+    ]
+    assert len(page.events) == 2
 
 
 def test_capability_truth_follows_durable_wiring(resources, roots, clock, monkeypatch):
@@ -364,7 +408,7 @@ def test_capability_truth_follows_durable_wiring(resources, roots, clock, monkey
     durable_states = {row["capability_id"]: row["state"] for row in durable_caps["capabilities"]}
     assert durable_states["run_admission"] == "available"
     assert durable_states["run_history"] == "available"
-    assert durable_states["cancel_intent"] == "blocked_implementation"
+    assert durable_states["cancel_intent"] == "available"
     assert durable_caps["run_admission_authority"] is True
 
 
@@ -445,11 +489,13 @@ def test_http_job_admission_and_durable_reads(resources, roots, clock, monkeypat
         assert client.get("/api/v1/runs", headers=headers).status_code == 200
         before = repository.run_snapshot(run_id)
         events = repository.read_events(run_id)
-        blocked = client.post("/api/v1/runs/" + run_id + "/cancel", headers=headers)
-        assert blocked.status_code == 503
-        assert "CANCEL_STORE_UNAVAILABLE" in blocked.text
-        assert repository.run_snapshot(run_id) == before
-        assert repository.read_events(run_id) == events
+        cancelled = client.post("/api/v1/runs/" + run_id + "/cancel", headers=headers)
+        assert cancelled.status_code == 200
+        assert cancelled.json()["state"] == "CANCEL_REQUESTED"
+        after = repository.run_snapshot(run_id)
+        assert after["state"] == "CANCEL_REQUESTED"
+        assert after["state_version"] == before["state_version"] + 1
+        assert len(repository.read_events(run_id)) == len(events) + 1
     assert len(calls) == 1
 
 
