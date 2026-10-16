@@ -44,6 +44,7 @@ from services.athena_preview_service import (
     AdmissionCandidate,
     AthenaPreviewAdmissionService,
 )
+from services.athena_read_service import ReadBackendError
 from services.recovery_service import RecoveryService, RecoverySummary
 from services.worker_coordinator import WorkerCoordinator
 from services.worker_process_control import WorkerProcessControl, owner_identity
@@ -369,6 +370,64 @@ def test_recovery_service_repairs_from_published_receipt(tmp_path_factory, clock
     assert cancelled.state == "TERMINAL"
     assert repository.run_snapshot(run_id)["state_version"] == terminal_version
     assert repository.read_events(run_id) == terminal_events
+
+
+def test_cancel_and_terminal_receipt_publication_are_transactionally_ordered(
+    tmp_path, clock, monkeypatch,
+):
+    from test_run_01b_worker_lifecycle import _terminal_case
+
+    pending_root = tmp_path / "pending-first"
+    pending_root.mkdir()
+    coordinator, repository, run_id, envelope, monitor_info, _launches, command, _inner = _terminal_case(
+        pending_root, clock, monkeypatch,
+    )
+    _monitor, kwargs = monitor_info
+    receipt, _policy_path, _inner_path = coordinator._build_shadow_receipt(
+        run_id=run_id, attempt_id=kwargs["attempt_id"], request=kwargs["request"],
+        envelope=envelope, snapshot=kwargs["snapshot"], command=command,
+    )
+    digest = repository.publish_terminal_receipt(
+        run_id, receipt_bytes=canonical_json_bytes(receipt), expected_version=1,
+        attempt_id=kwargs["attempt_id"], lease_token=kwargs["lease_token"],
+    )
+    adapter = DurableCancelAdapter(repository)
+    before_events = repository.read_events(run_id)
+    with pytest.raises(ReadBackendError, match="CANCEL_STORE_UNAVAILABLE"):
+        adapter.request_cancel(run_id)
+    assert repository.run_snapshot(run_id)["state"] == "RUNNING"
+    assert repository.run_snapshot(run_id)["state_version"] == 1
+    assert repository.read_events(run_id) == before_events
+    assert repository.list_pending_terminal_receipts()[0]["receipt_sha256"] == digest
+    assert repository.project_terminal_receipt(digest) is True
+    terminal = adapter.request_cancel(run_id)
+    assert terminal.disposition == "already_terminal"
+    assert terminal.state == "TERMINAL"
+
+    cancel_first_root = tmp_path / "cancel-first"
+    cancel_first_root.mkdir()
+    coordinator, repository, run_id, envelope, monitor_info, _launches, command, _inner = _terminal_case(
+        cancel_first_root, clock, monkeypatch,
+    )
+    _monitor, kwargs = monitor_info
+    receipt, _policy_path, _inner_path = coordinator._build_shadow_receipt(
+        run_id=run_id, attempt_id=kwargs["attempt_id"], request=kwargs["request"],
+        envelope=envelope, snapshot=kwargs["snapshot"], command=command,
+    )
+    requested = DurableCancelAdapter(repository).request_cancel(run_id)
+    assert requested.disposition == "requested"
+    assert requested.state == "CANCEL_REQUESTED"
+    with pytest.raises(RunStateConflict, match="receipt state CAS rejected"):
+        repository.publish_terminal_receipt(
+            run_id, receipt_bytes=canonical_json_bytes(receipt), expected_version=1,
+            attempt_id=kwargs["attempt_id"], lease_token=kwargs["lease_token"],
+        )
+    assert repository.list_pending_terminal_receipts() == []
+    repository.interrupt_worker_without_receipt(
+        run_id, kwargs["attempt_id"], kwargs["lease_token"], exit_code=-15,
+        diagnostic_id="WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT", last_proven_stage=None,
+    )
+    assert repository.run_snapshot(run_id)["state"] == "CANCELLED"
 
 
 def test_terminal_receipt_attempt_binding_rejects_cross_attempt_identity(

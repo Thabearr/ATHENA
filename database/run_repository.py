@@ -666,6 +666,14 @@ class DurableRunRepository:
                 return ("already_requested", current_state, current_version)
             if current_state in {"CANCELLED", "TERMINAL", "INTERRUPTED"}:
                 return ("already_terminal", current_state, current_version)
+            if current_state == "RUNNING" and conn.execute(
+                "SELECT 1 FROM app_run_artifacts "
+                "WHERE run_id=? AND role='RUN_RECEIPT_PENDING' LIMIT 1",
+                (run_id,),
+            ).fetchone():
+                # Receipt registration wins this transaction race. Cancellation
+                # must not bump the version and strand a valid published receipt.
+                raise RunStateConflict("terminal receipt projection is pending")
             if expected_version is not None and current_version != expected_version:
                 raise RunStateConflict("cancellation CAS rejected")
             next_state = "CANCELLED" if current_state == "QUEUED" else "CANCEL_REQUESTED"
@@ -1310,7 +1318,7 @@ class DurableRunRepository:
                 "SELECT request_sha256,envelope_sha256,release_id,state,state_version,receipt_artifact_id "
                 "FROM app_runs WHERE run_id=?", (run_id,),
             ).fetchone()
-            if row[3] not in {"RUNNING", "CANCEL_REQUESTED"} or row[4] != expected_version:
+            if row[3] != "RUNNING" or row[4] != expected_version:
                 raise RunStateConflict("receipt state CAS rejected")
             if row[5] is not None:
                 raise RunStateConflict("run already carries a terminal receipt")
