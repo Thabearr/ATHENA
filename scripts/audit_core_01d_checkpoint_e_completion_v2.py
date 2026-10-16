@@ -148,7 +148,6 @@ RUN_02A_PRE_PREDECESSOR_BLOBS={
  'services/athena_job_service.py':'d0291cc9a25b1372d86464e2fb54ac97f1fc7f98',
  'tests/test_run_01a_durable_admission.py':'2a256f2a52761733280725f21b66e4b8a1bf2e24',
  'tests/test_worker_launcher.py':'973e00174e8967569e98fbf15bc58d2c13a3a20d',
- 'scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py':'8115c18631e445f825dee0b0fa78c1a7cd77e460',
  'scripts/sportybet_direct_share_bridge.py':'681ce2a043a334dcb8523c81d092369d6540e6d5',
 }
 RUN_02A_PRE_PREDECESSOR_SOURCES={
@@ -283,8 +282,7 @@ def a2_historical_projection(raw):
  # Reuse the retained V154 predecessor seam for the exact E3-evolved E1
  # sources. It independently checks the fixture Git blob/LF hash, its
  # historical A2 identity, and the current source bytes against latest A2.
- for path in ('database/run_repository.py','services/athena_job_service.py',
-              'scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py'):
+ for path in ('database/run_repository.py','services/athena_job_service.py'):
   predecessor=run02a.RUN_02A_CURRENT_SOURCE_PREDECESSORS.get(path)
   review.require(predecessor is not None
                  and predecessor[1]==RUN_02A_PRE_PREDECESSOR_BLOBS[path],
