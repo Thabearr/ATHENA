@@ -595,17 +595,19 @@ class DurableRunRepository:
                 "diagnostic_id": diagnostic_id, "exit_code": exit_code,
                 "last_proven_stage": last_proven_stage,
             }, stamp)
+            disposition = "CANCEL_REQUESTED_SETTLED" if row[0] == "CANCEL_REQUESTED" else "E2_NO_VERIFIED_RECEIPT"
             conn.execute(
                 "UPDATE app_run_attempts SET finished_at=?,exit_code=?,recovery_disposition=? "
                 "WHERE run_id=? AND attempt_id=?",
-                (stamp, exit_code, "E2_NO_VERIFIED_RECEIPT", run_id, attempt_id),
+                (stamp, exit_code, disposition, run_id, attempt_id),
             )
+            next_state = "CANCELLED" if row[0] == "CANCEL_REQUESTED" else "INTERRUPTED"
             conn.execute(
-                "UPDATE app_runs SET state='INTERRUPTED',state_version=state_version+1,updated_at=? "
+                "UPDATE app_runs SET state=?,state_version=state_version+1,updated_at=? "
                 "WHERE run_id=? AND state_version=?",
-                (stamp, run_id, row[1]),
+                (next_state, stamp, run_id, row[1]),
             )
-            self._event(conn, run_id, row[1] + 1, "RUN_INTERRUPTED", {}, stamp)
+            self._event(conn, run_id, row[1] + 1, "RUN_" + next_state, {}, stamp)
 
     def heartbeat(self, run_id, attempt_id, lease_token):
         with self._operation(write=True) as conn:
@@ -621,24 +623,39 @@ class DurableRunRepository:
             conn.execute("UPDATE app_run_attempts SET finished_at=?,exit_code=? WHERE attempt_id=?",
                          (_utc(self._clock()), exit_code, attempt_id))
 
-    def request_cancel(self, run_id, *, expected_version):
-        if type(expected_version) is not int or expected_version < 0:
+    def record_cancel_intent(self, run_id, *, expected_version=None):
+        _identity(run_id)
+        if expected_version is not None and (type(expected_version) is not int or expected_version < 0):
             raise RunStateConflict("invalid state version")
         with self._operation(write=True) as conn:
             row = conn.execute("SELECT state,state_version FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
             if row is None:
-                raise RunStateConflict("unknown run")
-            self._verify_run_identity(conn, run_id)
-            if row[0] in {"CANCEL_REQUESTED", "CANCELLED", "TERMINAL", "INTERRUPTED"}:
-                return row[1]
-            if row[1] != expected_version:
+                return None
+            self._verify_run_identity(conn, run_id, current=False)
+            current_state, current_version = row[0], row[1]
+            if current_state == "CANCEL_REQUESTED":
+                return ("already_requested", current_state, current_version)
+            if current_state in {"CANCELLED", "TERMINAL", "INTERRUPTED"}:
+                return ("already_terminal", current_state, current_version)
+            if expected_version is not None and current_version != expected_version:
                 raise RunStateConflict("cancellation CAS rejected")
-            state = "CANCELLED" if row[0] == "QUEUED" else "CANCEL_REQUESTED"
+            next_state = "CANCELLED" if current_state == "QUEUED" else "CANCEL_REQUESTED"
+            next_version = current_version + 1
             stamp = _utc(self._clock())
-            conn.execute("UPDATE app_runs SET state=?,state_version=state_version+1,updated_at=? WHERE run_id=? AND state_version=?",
-                         (state, stamp, run_id, expected_version))
-            self._event(conn, run_id, expected_version + 1, "RUN_" + state, {}, stamp)
-            return expected_version + 1
+            conn.execute(
+                "UPDATE app_runs SET state=?,state_version=?,updated_at=? WHERE run_id=? AND state_version=?",
+                (next_state, next_version, stamp, run_id, current_version),
+            )
+            self._event(conn, run_id, next_version, "RUN_" + next_state, {}, stamp)
+            return ("requested", next_state, next_version)
+
+    def request_cancel(self, run_id, *, expected_version):
+        if type(expected_version) is not int or expected_version < 0:
+            raise RunStateConflict("invalid state version")
+        result = self.record_cancel_intent(run_id, expected_version=expected_version)
+        if result is None:
+            raise RunStateConflict("unknown run")
+        return result[2]
 
     def read_events(self, run_id, *, after_sequence=0, limit=100):
         _identity(run_id)
@@ -1014,14 +1031,109 @@ class DurableRunRepository:
         with self._operation(write=True) as conn:
             self._fence(conn, run_id, attempt_id, lease_token)
             stamp = _utc(self._clock())
+            conn.execute(
+                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='SHARE_CREATE_NEVER_SENT' "
+                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' AND operation_kind=?",
+                (stamp, run_id, attempt_id, SHARE_CREATE_KIND),
+            )
+            conn.execute(
+                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='OFFLINE_RECOVERY' "
+                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' AND operation_kind<>?",
+                (stamp, run_id, attempt_id, SHARE_CREATE_KIND),
+            )
             conn.execute("UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='OFFLINE_RECOVERY' WHERE run_id=? AND attempt_id=? AND state='SENT'",
                          (stamp, run_id, attempt_id))
-            conn.execute("UPDATE app_run_attempts SET finished_at=?,recovery_disposition='OFFLINE_INTERRUPTED' WHERE attempt_id=?",
-                         (stamp, attempt_id))
             row = conn.execute("SELECT state,state_version FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
-            if row[0] in {"QUEUED", "RUNNING", "CANCEL_REQUESTED"}:
-                conn.execute("UPDATE app_runs SET state='INTERRUPTED',state_version=state_version+1,updated_at=? WHERE run_id=?", (stamp, run_id))
-                self._event(conn, run_id, row[1] + 1, "RUN_INTERRUPTED", {}, stamp)
+            disposition = "CANCEL_REQUESTED_SETTLED" if row is not None and row[0] == "CANCEL_REQUESTED" else "OFFLINE_INTERRUPTED"
+            conn.execute("UPDATE app_run_attempts SET finished_at=?,recovery_disposition=? WHERE attempt_id=?",
+                         (stamp, disposition, attempt_id))
+            if row is not None and row[0] in {"QUEUED", "RUNNING", "CANCEL_REQUESTED"}:
+                next_state = "CANCELLED" if row[0] == "CANCEL_REQUESTED" else "INTERRUPTED"
+                conn.execute("UPDATE app_runs SET state=?,state_version=state_version+1,updated_at=? WHERE run_id=?", (next_state, stamp, run_id))
+                self._event(conn, run_id, row[1] + 1, "RUN_" + next_state, {}, stamp)
+
+    def list_unfinished_attempts(self):
+        with self._operation() as conn:
+            cursor = conn.execute(
+                "SELECT a.attempt_id, a.run_id, a.attempt_number, a.lease_token, "
+                "a.worker_instance_id, a.process_locator_json, a.heartbeat_at, a.started_at, "
+                "r.state, r.state_version, r.request_sha256, r.envelope_sha256, r.release_id "
+                "FROM app_run_attempts a JOIN app_runs r ON r.run_id=a.run_id "
+                "WHERE a.finished_at IS NULL ORDER BY a.started_at"
+            )
+            rows = cursor.fetchall()
+            return [
+                {
+                    "attempt_id": row[0],
+                    "run_id": row[1],
+                    "attempt_number": row[2],
+                    "lease_token": row[3],
+                    "worker_instance_id": row[4],
+                    "process_locator": json.loads(row[5]),
+                    "heartbeat_at": row[6],
+                    "started_at": row[7],
+                    "run_state": row[8],
+                    "state_version": row[9],
+                    "request_sha256": row[10],
+                    "envelope_sha256": row[11],
+                    "release_id": row[12],
+                }
+                for row in rows
+            ]
+
+    def reconcile_dead_attempt(self, run_id, attempt_id, lease_token, *,
+                               diagnostic_id="WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT", exit_code=-1):
+        _identity(run_id)
+        _identity(attempt_id)
+        with self._operation(write=True) as conn:
+            self._fence(conn, run_id, attempt_id, lease_token)
+            row = conn.execute(
+                "SELECT state,state_version,receipt_artifact_id FROM app_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None or row[2] is not None:
+                raise RunStateConflict("run is not eligible for recovery")
+            stamp = _utc(self._clock())
+            conn.execute(
+                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='SHARE_CREATE_NEVER_SENT' "
+                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' AND operation_kind=?",
+                (stamp, run_id, attempt_id, SHARE_CREATE_KIND),
+            )
+            conn.execute(
+                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='OFFLINE_RECOVERY' "
+                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' AND operation_kind<>?",
+                (stamp, run_id, attempt_id, SHARE_CREATE_KIND),
+            )
+            conn.execute(
+                "UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='OFFLINE_RECOVERY' "
+                "WHERE run_id=? AND attempt_id=? AND state='SENT'",
+                (stamp, run_id, attempt_id),
+            )
+            current_state = row[0]
+            next_state = "CANCELLED" if current_state == "CANCEL_REQUESTED" else "INTERRUPTED"
+            disposition = "CANCEL_REQUESTED_SETTLED" if current_state == "CANCEL_REQUESTED" else "OFFLINE_INTERRUPTED"
+            conn.execute(
+                "UPDATE app_run_attempts SET finished_at=?,exit_code=?,recovery_disposition=? "
+                "WHERE run_id=? AND attempt_id=?",
+                (stamp, exit_code, disposition, run_id, attempt_id),
+            )
+            if current_state in {"QUEUED", "RUNNING", "CANCEL_REQUESTED"}:
+                latest_stage = None
+                try:
+                    prog = self.latest_worker_progress(run_id)
+                    if prog is not None:
+                        latest_stage = prog.get("stage")
+                except Exception:
+                    pass
+                self._event(conn, run_id, row[1], "WORKER_INTERRUPTED", {
+                    "diagnostic_id": diagnostic_id, "exit_code": exit_code,
+                    "last_proven_stage": latest_stage,
+                }, stamp)
+                conn.execute(
+                    "UPDATE app_runs SET state=?,state_version=state_version+1,updated_at=? WHERE run_id=? AND state_version=?",
+                    (next_state, stamp, run_id, row[1]),
+                )
+                self._event(conn, run_id, row[1] + 1, "RUN_" + next_state, {}, stamp)
 
     def run_snapshot(self, run_id):
         _identity(run_id)

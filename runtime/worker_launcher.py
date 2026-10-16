@@ -286,14 +286,67 @@ class WorkerProcessHandle:
 
         if self.poll() is not None:
             return False
+        pid = self.pid
+        if pid is None or pid <= 0:
+            return False
         try:
             if os.name == "nt":
                 self._process.send_signal(signal.CTRL_BREAK_EVENT)
             else:
-                self._process.send_signal(signal.SIGTERM)
+                try:
+                    pgid = os.getpgid(pid)
+                    os.killpg(pgid, signal.SIGTERM)
+                except (OSError, ProcessLookupError):
+                    self._process.send_signal(signal.SIGTERM)
         except (OSError, ValueError, AttributeError) as exc:
             raise WorkerLaunchError("worker cancellation signal could not be requested") from exc
         return True
+
+    def terminate_tree(self, *, timeout: float = 2.0) -> int | None:
+        """Cooperative cancel with escalation to terminate the process tree safely."""
+        if self.poll() is not None:
+            return self.poll()
+        self.request_cancel()
+        import time as _t
+        deadline = _t.monotonic() + max(0.1, float(timeout))
+        while _t.monotonic() < deadline:
+            rc = self.poll()
+            if rc is not None:
+                return rc
+            _t.sleep(0.05)
+        self.kill_tree()
+        return self.poll()
+
+    def kill_tree(self) -> None:
+        """Forcefully terminate the process tree without touching unrelated PIDs."""
+        if self.poll() is not None:
+            return
+        pid = self.pid
+        if pid is None or pid <= 0:
+            return
+        if os.name == "nt":
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+            except Exception:
+                pass
+            try:
+                self._process.kill()
+            except Exception:
+                pass
+        else:
+            try:
+                pgid = os.getpgid(pid)
+                os.killpg(pgid, signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                try:
+                    self._process.kill()
+                except Exception:
+                    pass
 
 
 def _spawn_process(argv: Sequence[str], *, cwd: Path, shell: bool, **kwargs: Any) -> Any:

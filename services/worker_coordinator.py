@@ -23,6 +23,7 @@ from database.run_repository import (
     DurableRunRepository,
     RunLeaseFenced,
     RunRepositoryError,
+    RunStateConflict,
 )
 from domain.execution_envelope import ExecutionEnvelope
 from domain.run_contracts import RunReceipt, RunRequest, canonical_json_bytes
@@ -129,6 +130,8 @@ class WorkerCoordinator:
         self._sleep = sleeper
         self._owned: dict[str, WorkerProcessHandle] = {}
         self._owned_lock = threading.Lock()
+        self._attempt_to_run: dict[str, str] = {}
+        self._run_to_attempt: dict[str, str] = {}
         self._pending_projection: dict[str, str] = {}
         self._output_drainers: list[threading.Thread] = []
 
@@ -147,7 +150,7 @@ class WorkerCoordinator:
         never waits for child completion.
         """
         snapshot = self._repository.run_snapshot(run_id)
-        if snapshot is None:
+        if snapshot is None or snapshot["state"] != "QUEUED":
             return False
         request_bytes = snapshot["request_bytes"]
         request = RunRequest.from_json_bytes(request_bytes)
@@ -158,9 +161,8 @@ class WorkerCoordinator:
                 worker_instance_id=worker_instance_id,
                 process_locator={"kind": "OFFLINE_TEST", "label": process_label},
             )
-        except RunLeaseFenced:
-            # A run that loses root-wide capacity remains QUEUED. There is no
-            # deferred drain when the current owner later finishes.
+        except (RunLeaseFenced, RunStateConflict):
+            # A run that loses root-wide capacity or is no longer eligible (e.g. cancelled) remains QUEUED or terminal.
             return False
         try:
             self._repository.transition_run(
@@ -222,6 +224,8 @@ class WorkerCoordinator:
 
         with self._owned_lock:
             self._owned[attempt_id] = handle
+            self._attempt_to_run[attempt_id] = run_id
+            self._run_to_attempt[run_id] = attempt_id
         locator_bound = False
         locator = self._native_process_locator(handle.pid)
         if locator is not None:
@@ -256,6 +260,21 @@ class WorkerCoordinator:
             # root or attempt a second launch; E3 owns restart reconciliation.
             return True
         return True
+
+    def notify_cancel(self, run_id: str) -> bool:
+        """Signal active worker process for run_id if currently owned."""
+        with self._owned_lock:
+            attempt_id = self._run_to_attempt.get(run_id)
+            if attempt_id is None:
+                return False
+            handle = self._owned.get(attempt_id)
+            if handle is None:
+                return False
+        try:
+            handle.request_cancel()
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def _native_process_locator(pid: object) -> dict[str, int | str] | None:
@@ -602,111 +621,137 @@ class WorkerCoordinator:
 
     def _monitor(self, *, run_id, attempt_id, lease_token, request, envelope,
                  snapshot, command, handle, locator_bound):
-        self._sleep(self._initial_poll_delay)
-        last_heartbeat = self._monotonic()
-        progress_invalid = False
-        owner_valid = True
-        while True:
-            if owner_valid and locator_bound:
-                try:
-                    self._observe_available_checkpoints(
-                        run_id=run_id, attempt_id=attempt_id, lease_token=lease_token,
-                        request=request, envelope=envelope, command=command,
-                    )
-                except (RunLeaseFenced, RunRepositoryError):
-                    owner_valid = False
-                except Exception:
-                    progress_invalid = True
-            now = self._monotonic()
-            if owner_valid and now - last_heartbeat >= self._heartbeat_seconds:
-                try:
-                    self._repository.heartbeat(run_id, attempt_id, lease_token)
-                    last_heartbeat = now
-                except Exception:
-                    owner_valid = False
-            try:
-                exit_code = handle.poll()
-            except Exception:
-                exit_code = None
-                owner_valid = False
-            if exit_code is not None:
-                break
-            self._sleep(self._poll_seconds)
-        if type(exit_code) is not int or not owner_valid:
-            with self._owned_lock:
-                self._owned.pop(attempt_id, None)
-            return
-        published_digest = None
         try:
-            if not locator_bound:
-                raise LookupError("locator")
-            if progress_invalid:
-                raise ValueError("progress")
-            if exit_code != 0:
-                self._repository.interrupt_worker_without_receipt(
-                    run_id, attempt_id, lease_token, exit_code=exit_code,
-                    diagnostic_id="WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT",
-                    last_proven_stage=(self._repository.latest_worker_progress(run_id) or {}).get("stage"),
-                )
+            self._sleep(self._initial_poll_delay)
+            last_heartbeat = self._monotonic()
+            progress_invalid = False
+            owner_valid = True
+            cancel_requested_at: float | None = None
+            while True:
+                run_snap = self._repository.run_snapshot(run_id)
+                if run_snap is not None and run_snap["state"] in {"CANCEL_REQUESTED", "CANCELLED"}:
+                    now = self._monotonic()
+                    if cancel_requested_at is None:
+                        cancel_requested_at = now
+                        try:
+                            handle.request_cancel()
+                        except Exception:
+                            pass
+                    elif (now - cancel_requested_at) >= 2.0:
+                        try:
+                            handle.kill_tree()
+                        except Exception:
+                            pass
+
+                if owner_valid and locator_bound:
+                    try:
+                        self._observe_available_checkpoints(
+                            run_id=run_id, attempt_id=attempt_id, lease_token=lease_token,
+                            request=request, envelope=envelope, command=command,
+                        )
+                    except (RunLeaseFenced, RunRepositoryError):
+                        owner_valid = False
+                    except Exception:
+                        progress_invalid = True
+                now = self._monotonic()
+                if owner_valid and now - last_heartbeat >= self._heartbeat_seconds:
+                    try:
+                        self._repository.heartbeat(run_id, attempt_id, lease_token)
+                        last_heartbeat = now
+                    except Exception:
+                        owner_valid = False
+                try:
+                    exit_code = handle.poll()
+                except Exception:
+                    exit_code = None
+                    owner_valid = False
+                if exit_code is not None:
+                    break
+                self._sleep(self._poll_seconds)
+            if type(exit_code) is not int or not owner_valid:
                 return
-            if command.operation != "CURRENT_SHADOW_REQUEST":
-                self._build_offline_probe_receipt(
-                    request=request, envelope=envelope, snapshot=snapshot,
-                    command=command, run_id=run_id,
-                )
-            receipt, _policy_path, _inner_path = self._build_shadow_receipt(
-                run_id=run_id, attempt_id=attempt_id, request=request, envelope=envelope,
-                snapshot=snapshot, command=command,
-            )
-            raw = canonical_json_bytes(receipt)
-            self._observe_terminal_receipt(
-                run_id=run_id, attempt_id=attempt_id, lease_token=lease_token,
-                receipt=receipt,
-            )
-            digest = self._repository.publish_terminal_receipt(
-                run_id, receipt_bytes=raw, expected_version=1,
-                attempt_id=attempt_id, lease_token=lease_token,
-            )
-            published_digest = digest
+            published_digest = None
             try:
-                self._repository.project_terminal_receipt(digest)
-            except Exception:
-                # The retained exact receipt is the only repair input. Never
-                # re-run the worker or create a second receipt.
-                self._repository.project_terminal_receipt(digest)
-        except LookupError:
-            try:
-                self._repository.interrupt_worker_without_receipt(
-                    run_id, attempt_id, lease_token, exit_code=exit_code,
-                    diagnostic_id="WORKER_PROCESS_LOCATOR_UNAVAILABLE",
-                    last_proven_stage=(self._repository.latest_worker_progress(run_id) or {}).get("stage"),
+                if not locator_bound:
+                    raise LookupError("locator")
+                if progress_invalid:
+                    raise ValueError("progress")
+                if exit_code != 0:
+                    self._repository.interrupt_worker_without_receipt(
+                        run_id, attempt_id, lease_token, exit_code=exit_code,
+                        diagnostic_id="WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT",
+                        last_proven_stage=(self._repository.latest_worker_progress(run_id) or {}).get("stage"),
+                    )
+                    return
+                current_snap = self._repository.run_snapshot(run_id)
+                if current_snap is not None and current_snap["state"] == "CANCEL_REQUESTED":
+                    self._repository.interrupt_worker_without_receipt(
+                        run_id, attempt_id, lease_token, exit_code=exit_code,
+                        diagnostic_id="WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT",
+                        last_proven_stage=(self._repository.latest_worker_progress(run_id) or {}).get("stage"),
+                    )
+                    return
+                if command.operation != "CURRENT_SHADOW_REQUEST":
+                    self._build_offline_probe_receipt(
+                        request=request, envelope=envelope, snapshot=snapshot,
+                        command=command, run_id=run_id,
+                    )
+                receipt, _policy_path, _inner_path = self._build_shadow_receipt(
+                    run_id=run_id, attempt_id=attempt_id, request=request, envelope=envelope,
+                    snapshot=snapshot, command=command,
                 )
-            except Exception:
-                pass
-        except Exception as error:
-            if published_digest is not None:
-                # Keep the fenced attempt/root occupied. The immutable receipt
-                # is the sole input for later explicit projection repair.
-                with self._owned_lock:
-                    self._pending_projection[run_id] = published_digest
-                return
-            diagnostic = "WORKER_RECEIPT_INVALID"
-            if isinstance(error, FileNotFoundError) or "receipt" in str(error).lower() and (
-                    "unavailable" in str(error).lower() or "not terminal" in str(error).lower()):
-                diagnostic = "WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT"
-            try:
-                self._repository.interrupt_worker_without_receipt(
-                    run_id, attempt_id, lease_token, exit_code=exit_code,
-                    diagnostic_id=diagnostic,
-                    last_proven_stage=(self._repository.latest_worker_progress(run_id) or {}).get("stage"),
+                raw = canonical_json_bytes(receipt)
+                self._observe_terminal_receipt(
+                    run_id=run_id, attempt_id=attempt_id, lease_token=lease_token,
+                    receipt=receipt,
                 )
-            except Exception:
-                # A failed durable finalization remains inspectable and fenced;
-                # this worker is never automatically retried or replaced.
-                pass
+                digest = self._repository.publish_terminal_receipt(
+                    run_id, receipt_bytes=raw, expected_version=1,
+                    attempt_id=attempt_id, lease_token=lease_token,
+                )
+                published_digest = digest
+                try:
+                    self._repository.project_terminal_receipt(digest)
+                except Exception:
+                    # The retained exact receipt is the only repair input. Never
+                    # re-run the worker or create a second receipt.
+                    self._repository.project_terminal_receipt(digest)
+            except LookupError:
+                try:
+                    self._repository.interrupt_worker_without_receipt(
+                        run_id, attempt_id, lease_token, exit_code=exit_code,
+                        diagnostic_id="WORKER_PROCESS_LOCATOR_UNAVAILABLE",
+                        last_proven_stage=(self._repository.latest_worker_progress(run_id) or {}).get("stage"),
+                    )
+                except Exception:
+                    pass
+            except Exception as error:
+                if published_digest is not None:
+                    # Keep the fenced attempt/root occupied. The immutable receipt
+                    # is the sole input for later explicit projection repair.
+                    with self._owned_lock:
+                        self._pending_projection[run_id] = published_digest
+                    return
+                diagnostic = "WORKER_RECEIPT_INVALID"
+                if isinstance(error, FileNotFoundError) or "receipt" in str(error).lower() and (
+                        "unavailable" in str(error).lower() or "not terminal" in str(error).lower()):
+                    diagnostic = "WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT"
+                try:
+                    self._repository.interrupt_worker_without_receipt(
+                        run_id, attempt_id, lease_token, exit_code=exit_code,
+                        diagnostic_id=diagnostic,
+                        last_proven_stage=(self._repository.latest_worker_progress(run_id) or {}).get("stage"),
+                    )
+                except Exception:
+                    # A failed durable finalization remains inspectable and fenced;
+                    # this worker is never automatically retried or replaced.
+                    pass
         finally:
             with self._owned_lock:
                 self._owned.pop(attempt_id, None)
+                self._attempt_to_run.pop(attempt_id, None)
+                if self._run_to_attempt.get(run_id) == attempt_id:
+                    self._run_to_attempt.pop(run_id, None)
 
     def repair_published_projection(self, receipt_sha256: str) -> bool:
         """Explicit idempotent receipt-only repair; this never launches work."""
