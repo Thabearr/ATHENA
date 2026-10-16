@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -410,6 +411,63 @@ def _clean_process_pair() -> tuple[dict[str, Any], bytes, bytes]:
     return replay, outputs[0], outputs[1]
 
 
+def _worker_entry_predecessor_binding() -> tuple[bytes, dict[str, Any]]:
+    """Bind the retained A5 replay to exact pre-E3 worker-entry bytes.
+
+    RUN-02A adds a startup ownership gate to the current worker entry. The
+    retained A5 replay predates that gate, so it executes the authenticated
+    V154 predecessor while A2 independently authenticates the current E3
+    source. No historical artifact or replay hash is regenerated.
+    """
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_run_02a_pre_durable_share_send as run02a
+
+    path = "runtime/worker_entry.py"
+    latest = a2.authenticate_inventory()
+    raw = run02a.historical_prerequisite_source_bytes(path, latest=latest)
+    fixture, predecessor_blob, predecessor_sha256 = (
+        run02a.RUN_02A_CURRENT_SOURCE_PREDECESSORS[path]
+    )
+    current_sources = {
+        row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]
+    }
+    current_sha256 = current_sources.get(path)
+    if current_sha256 is None:
+        raise AssertionError("current worker entry is absent from authenticated A2")
+    return raw, {
+        "path": path,
+        "current_a2_generation": latest["generation"],
+        "current_lf_source_sha256": current_sha256,
+        "historical_replay_predecessor": fixture,
+        "historical_replay_predecessor_git_blob_sha1": predecessor_blob,
+        "historical_replay_predecessor_lf_sha256": predecessor_sha256,
+        "historical_replay_predecessor_rewritten": False,
+    }
+
+
+def _install_worker_entry_predecessor_for_historical_replay() -> dict[str, Any]:
+    """Load only the authenticated predecessor module into this replay process."""
+    module_name = "runtime.worker_entry"
+    if module_name in sys.modules:
+        raise AssertionError("historical worker-entry projection must precede runtime imports")
+    raw, binding = _worker_entry_predecessor_binding()
+    runtime_package = __import__("runtime")
+    source_path = REPOSITORY_ROOT / "runtime/worker_entry.py"
+    spec = importlib.util.spec_from_file_location(module_name, source_path)
+    if spec is None:
+        raise AssertionError("worker-entry module spec is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    setattr(runtime_package, "worker_entry", module)
+    try:
+        exec(compile(raw, str(source_path), "exec"), module.__dict__)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        delattr(runtime_package, "worker_entry")
+        raise
+    return binding
+
+
 def _verify_replay(replay: dict[str, Any], current_head: str) -> None:
     worker = replay["worker_boundary"]
     command = worker["command"]
@@ -477,6 +535,7 @@ def check_artifact() -> dict[str, Any]:
     if predecessor != expected_predecessor:
         raise AssertionError("current evidence historical predecessor pins changed")
     current_head = _current_head_sha()
+    _, worker_entry_binding = _worker_entry_predecessor_binding()
     replay, forward, reverse = _clean_process_pair()
     _verify_replay(replay, current_head)
     projection = _semantic_continuity_projection(replay)
@@ -489,6 +548,7 @@ def check_artifact() -> dict[str, Any]:
         "result": "PASS",
         "policy_id": POLICY_ID,
         "historical_predecessor_integrity": "PASS",
+        "worker_entry_source_binding": worker_entry_binding,
         "current_head_sha": current_head,
         "current_run_receipt_sha256": replay["canonical_run_receipt"]["canonical_bytes_sha256"],
         "current_full_replay_sha256": _sha256(forward),
@@ -539,6 +599,7 @@ def _write_artifact() -> dict[str, Any]:
 def _replay_json(import_order: str) -> int:
     _worker_boundary_static_checks()
     current_head = _current_head_sha()
+    _install_worker_entry_predecessor_for_historical_replay()
     replay = historical_audit._build_replay(import_order, exact_release_sha=current_head)
     _verify_replay(replay, current_head)
     sys.stdout.buffer.write(_canonical(replay))
