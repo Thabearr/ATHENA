@@ -128,6 +128,7 @@ RUN_02A_PRE_ADDITIVE_PATHS={
  'tests/fixtures/core_01d/run_02a_pre_historical/run-repository-pr463-base.py.txt',
  'tests/fixtures/core_01d/run_02a_pre_historical/athena-job-service-pr463-base.py.txt',
  'tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-pr463-base.py.txt',
+ 'tests/fixtures/core_01d/run_02a_pre_historical/test-worker-launcher-pr463-base.py.txt',
  'tests/fixtures/core_01d/run_01a_historical/pr463/run-desktop-predecessor.py.txt',
  'tests/fixtures/core_01d/run_01a_historical/pr463/test-run-01a-durable-admission-predecessor.py.txt',
  'runtime/worker_startup_gate.py',
@@ -137,7 +138,6 @@ RUN_02A_PRE_ADDITIVE_PATHS={
  'tests/test_run_02a_recovery.py',
  'tests/test_run_02a_pre_durable_share_send.py',
  'tests/test_run_01b_worker_lifecycle.py',
- 'tests/test_worker_launcher.py',
 }
 RUN_02A_PRE_PREDECESSOR_BLOBS={
  'scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py':'07ce59ed824d40ef1be12686537c4e355e565c30',
@@ -146,7 +146,15 @@ RUN_02A_PRE_PREDECESSOR_BLOBS={
  'database/run_repository.py':'103bcbf4e06a90ef768a122408235b9d9267fe6b',
  'services/athena_job_service.py':'d0291cc9a25b1372d86464e2fb54ac97f1fc7f98',
  'tests/test_run_01a_durable_admission.py':'2a256f2a52761733280725f21b66e4b8a1bf2e24',
+ 'tests/test_worker_launcher.py':'973e00174e8967569e98fbf15bc58d2c13a3a20d',
  'scripts/sportybet_direct_share_bridge.py':'681ce2a043a334dcb8523c81d092369d6540e6d5',
+}
+RUN_02A_PRE_PREDECESSOR_SOURCES={
+ 'tests/test_worker_launcher.py':(
+  'tests/fixtures/core_01d/run_02a_pre_historical/test-worker-launcher-pr463-base.py.txt',
+  '973e00174e8967569e98fbf15bc58d2c13a3a20d',
+  'bbcaeef0bab1e60aa6a8e74ccdacedad87fe83295825041ce47a8a81c25802f4',
+ ),
 }
 PR459_HISTORICAL_SOURCE_FORWARD_PATHS={
  'tests/fixtures/core_01d/pr459_live_trigger_incident/test-p4-3d-retirement-audit-extensibility-predecessor.py.txt',
@@ -285,6 +293,28 @@ def a2_historical_projection(raw):
  predecessor_blob=hashlib.sha1(b'blob '+str(len(predecessor)).encode()+b'\0'+predecessor).hexdigest()
  review.require(predecessor_blob==RUN_02A_PRE_PREDECESSOR_BLOBS[path],
                 'E3 Pass-A E1 test predecessor differs from its authenticated fixture')
+ # tests/test_worker_launcher.py is an existing Pass-A path evolved by E3,
+ # not a newly admitted test path. Preserve its exact V216/base bytes in the
+ # historical tree while A2 independently authenticates the current source.
+ path='tests/test_worker_launcher.py'
+ fixture,blob,digest=RUN_02A_PRE_PREDECESSOR_SOURCES[path]
+ review.require(RUN_02A_PRE_PREDECESSOR_BLOBS[path]==blob,
+                'E3 Pass-A worker-launcher predecessor blob map disagrees')
+ for logical in (path,fixture):
+  candidate=ROOT/logical
+  review.require(candidate.is_file() and not any(p.is_symlink() for p in (candidate,*candidate.parents)),
+                 'E3 Pass-A worker-launcher predecessor requires regular source/fixture')
+ current_sources={row['path']:row['lf_source_sha256'] for row in latest['source_identities']}
+ current_bytes=a2.lf((ROOT/path).read_bytes())
+ review.require(hashlib.sha256(current_bytes).hexdigest()==current_sources.get(path),
+                'current E3 worker-launcher test differs from authenticated A2')
+ retained=a2.read_generation(a2.inventory_generation_path(216))
+ retained_sources={row['path']:row['lf_source_sha256'] for row in retained['source_identities']}
+ predecessor_bytes=a2.lf((ROOT/fixture).read_bytes())
+ predecessor_blob=hashlib.sha1(b'blob '+str(len(predecessor_bytes)).encode()+b'\0'+predecessor_bytes).hexdigest()
+ review.require(hashlib.sha256(predecessor_bytes).hexdigest()==digest
+                and predecessor_blob==blob and retained_sources.get(path)==digest,
+                'E3 Pass-A worker-launcher predecessor differs from authenticated V216 fixture')
  v1.authenticate_fresh_holdout_20261015_evidence()
  from scripts import audit_core_01d_pr459_live_trigger_incident as incident
  incident.historical_incident_source()
