@@ -677,7 +677,7 @@ def resolve_p43a_historical_workflow_source(
 
 
 def _exact_pr119_historical_source_context(evolution_ledger, head_tree):
-    """Permit the authenticated D5 current-source successor over the P4.3A base."""
+    """Permit only exact D5/E3 current-source trees over the P4.3A base."""
     if (
         evolution_ledger.get("canonical_sha256") != CORE01D_PR119_LEDGER_SHA256
         or canonical_sha256(evolution_ledger) != CORE01D_PR119_LEDGER_SHA256
@@ -692,9 +692,14 @@ def _exact_pr119_historical_source_context(evolution_ledger, head_tree):
     from scripts import audit_data_01c_restore_portability as d5
     try:
         _successor_identity, successor_tree = d5.authenticate_workflow()
+        # authenticate_workflow proves that HEAD is precisely the D5+E3
+        # PORT-02C successor after projecting only the independently pinned
+        # B4 direct-share predecessors. Accept that authenticated raw tree as
+        # a current-source view while retaining the D5-only projected tree.
+        current_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
     except (OSError, ValueError):
         return False
-    if head_tree == successor_tree:
+    if head_tree in {successor_tree, current_tree}:
         return True
     if head_tree == PR459_OFFLINE_WORKFLOW_TREE_SHA1:
         for path, (_before, after) in PR459_OFFLINE_WORKFLOW_FORWARD.items():
