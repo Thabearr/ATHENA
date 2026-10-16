@@ -127,6 +127,8 @@ RUN_02A_PRE_ADDITIVE_PATHS={
  'tests/fixtures/core_01d/run_02a_pre_historical/run-repository-pr463-base.py.txt',
  'tests/fixtures/core_01d/run_02a_pre_historical/athena-job-service-pr463-base.py.txt',
  'tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-pr463-base.py.txt',
+ 'tests/fixtures/core_01d/run_01a_historical/pr463/run-desktop-predecessor.py.txt',
+ 'tests/fixtures/core_01d/run_01a_historical/pr463/test-run-01a-durable-admission-predecessor.py.txt',
  'runtime/worker_startup_gate.py',
  'services/worker_process_control.py',
  'services/recovery_service.py',
