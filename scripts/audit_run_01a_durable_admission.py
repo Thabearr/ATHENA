@@ -17,7 +17,6 @@ SOURCES = (
     "scripts/audit_run_01a_durable_admission.py",
     "tests/test_run_01a_durable_admission.py",
     "tests/test_data_01c_app_storage.py",
-    "services/athena_capability_service.py",
     "tests/test_core_01d_exact_pr_trigger_disposition_b1.py",
     "scripts/audit_checkpoint_e_workflows.py",
     "scripts/audit_data_01c_restore_portability.py",
