@@ -419,14 +419,16 @@ def main():
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
-    value = build_receipt()
-    raw = canonical(value)
-    target = ROOT / RECEIPT
+    latest = boundary.authenticate_inventory()
     if args.write:
+        if latest["generation"] >= 116:
+            raise AssertionError("D5 historical source receipt is immutable after A2 V116")
+        raw = canonical(build_receipt(latest=latest))
+        target = ROOT / RECEIPT
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(raw)
-    elif target.read_bytes() != raw:
-        raise AssertionError("D5 source receipt drift")
+    else:
+        audit(latest=latest)
     print("DATA_01C_SOURCE_RECEIPT_OK")
 
 

@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import sys
 import zipfile
 
 import pytest
@@ -484,6 +485,37 @@ def test_d5_successor_authenticates_exact_sources_and_historical_seams():
     assert "scripts/port_02c_build_config.py" not in paths
     assert "runtime/workflows/ledgers/history" not in paths
     assert "tests/unreviewed-d5-source.json" not in paths
+
+
+def test_d5_cli_check_uses_forward_audit_for_immutable_receipt(monkeypatch, capsys):
+    from scripts import audit_data_01c_app_store_complete as data01c
+
+    latest = {"generation": 240}
+    audit_calls = []
+    monkeypatch.setattr(data01c.boundary, "authenticate_inventory", lambda: latest)
+    monkeypatch.setattr(data01c, "audit", lambda latest=None: audit_calls.append(latest))
+    monkeypatch.setattr(sys, "argv", ["audit_data_01c_app_store_complete", "--check"])
+
+    data01c.main()
+
+    assert audit_calls == [latest]
+    assert capsys.readouterr().out == "DATA_01C_SOURCE_RECEIPT_OK\n"
+
+
+def test_d5_cli_write_refuses_to_overwrite_immutable_receipt(monkeypatch, tmp_path):
+    from scripts import audit_data_01c_app_store_complete as data01c
+
+    target = tmp_path / "d5-receipt.json"
+    target.write_bytes(b"immutable historical receipt\n")
+    monkeypatch.setattr(data01c.boundary, "authenticate_inventory", lambda: {"generation": 240})
+    monkeypatch.setattr(data01c, "ROOT", tmp_path)
+    monkeypatch.setattr(data01c, "RECEIPT", target.name)
+    monkeypatch.setattr(sys, "argv", ["audit_data_01c_app_store_complete", "--write"])
+
+    with pytest.raises(AssertionError, match="immutable after A2 V116"):
+        data01c.main()
+
+    assert target.read_bytes() == b"immutable historical receipt\n"
 
 
 def test_d5_prohibited_scope_guard_is_base_independent_for_shallow_ci(monkeypatch):
