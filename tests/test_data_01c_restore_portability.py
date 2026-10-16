@@ -237,6 +237,9 @@ def test_second_successor_retains_exact_predecessor_and_rejects_future(mutation)
     after, tree = audit.successor_context()
     derived = {path: dict(evolution.PORT02C_REPLAY_WORKFLOW_BEFORE)}
     observed = {path: dict(after)}
+    for name, (before, current) in evolution.PR459_OFFLINE_WORKFLOW_FORWARD.items():
+        derived[name] = dict(before)
+        observed[name] = dict(current)
     for name, (before, current) in evolution.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD.items():
         derived[name] = dict(before)
         observed[name] = dict(current)

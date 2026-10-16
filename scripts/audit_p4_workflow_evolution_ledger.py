@@ -1008,9 +1008,25 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
         except ValueError as exc:
             raise WorkflowEvolutionError("workflow tree differs without exact PORT-02C D5/E3 successor") from exc
         predecessor_observed = dict(observed)
+        direct_share_successors = []
+        for path, (before, after) in PR459_OFFLINE_WORKFLOW_FORWARD.items():
+            if derived.get(path) != before:
+                raise WorkflowEvolutionError(
+                    "PR459 direct-share predecessor differs from exact D5/E3 workflow view: " + path
+                )
+            current = observed.get(path)
+            if current == after:
+                predecessor_observed[path] = dict(before)
+                direct_share_successors.append((path, after))
+            elif current != before:
+                raise WorkflowEvolutionError(
+                    "PR459 direct-share workflow differs from exact D5/E3 successor: " + path
+                )
         predecessor_observed[PORT02C_REPLAY_WORKFLOW_PATH] = dict(PORT02C_REPLAY_WORKFLOW_AFTER)
         result = _port02c_current_source_forward(derived, predecessor_observed,
             head_tree=CORE01D_PR119_WORKFLOW_TREE_SHA1, ledger_sha=ledger_sha)
+        for path, after in direct_share_successors:
+            result[path] = dict(after)
         result[PORT02C_REPLAY_WORKFLOW_PATH] = dict(successor_identity)
         return result
     reviewed_contexts = {
