@@ -356,6 +356,10 @@ class _SyntheticProcessControl:
     def state_current(self):
         return "DEAD" if self.handle.poll() is not None else "ACTIVE"
 
+    @staticmethod
+    def state(locator, owner):
+        return "ACTIVE" if all(locator.get(key) == value for key, value in owner.items()) else "UNKNOWN"
+
     def request_cancel(self, locator):
         if locator != self.locator or self.cancel_count:
             return False
@@ -497,7 +501,9 @@ def test_http_returns_with_one_owned_worker_and_root_capacity_is_durable(
         first_id = first.json()["run_id"]
         assert repository.run_snapshot(first_id)["state"] == "RUNNING"
         first_events = repository.read_events(first_id)
-        assert [row[2] for row in first_events] == ["RUN_QUEUED", "RUN_RUNNING"]
+        assert [row[2] for row in first_events] == [
+            "RUN_QUEUED", "RUN_RUNNING", "WORKER_STARTUP_GATE_PUBLISHED",
+        ]
         assert children[0].poll() is None
 
         with repository._operation() as conn:

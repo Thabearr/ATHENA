@@ -9,8 +9,10 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import base64
+import hmac
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import uuid
@@ -19,7 +21,7 @@ from database.app_migration_evidence import contained, publish
 from database.app_root_lock import app_root_lock
 from database.app_repository import release_provenance, logical_locator
 from database.app_migrations import (
-    app_store_path, connect_app_store, expected_schema_structure,
+    APP_STORE_FILENAME, app_store_path, connect_app_store, expected_schema_structure,
     read_app_migrations, verify_app_schema,
 )
 from domain.run_contracts import canonical_json_bytes, RunRequest, RunReceipt
@@ -118,6 +120,29 @@ class DurableRunRepository:
         self._structure = expected_schema_structure(migrations)
         self._identities = [(version, digest) for version, _, _, digest in migrations]
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+
+    @classmethod
+    def for_worker_data_root(cls, resources, data_root):
+        """Open the one admitted product store from a verified worker context."""
+        from runtime.resources import ResourceResolver
+
+        if type(resources) is not ResourceResolver:
+            raise RunRepositoryError("verified worker resources are required")
+        if not isinstance(data_root, os.PathLike) or not Path(data_root).is_absolute():
+            raise RunRepositoryError("worker data root must be an absolute path")
+        root = Path(data_root)
+        if root.is_symlink() or not root.is_dir():
+            raise RunRepositoryError("worker data root is not a regular directory")
+        repository = cls.__new__(cls)
+        repository._path = root.resolve(strict=True) / APP_STORE_FILENAME
+        repository._resources = resources
+        repository._data_root = root.resolve(strict=True)
+        repository.verified_identity = resources.identity
+        migrations = read_app_migrations(resources)
+        repository._structure = expected_schema_structure(migrations)
+        repository._identities = [(version, digest) for version, _, _, digest in migrations]
+        repository._clock = lambda: datetime.now(timezone.utc)
+        return repository
 
     @contextmanager
     def _operation(self, *, write=False):
@@ -479,6 +504,9 @@ class DurableRunRepository:
         raw = canonical_json_bytes(locator).decode("utf-8")
         with self._operation(write=True) as conn:
             self._fence(conn, run_id, attempt_id, lease_token)
+            state = conn.execute("SELECT state FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
+            if state is None or state[0] != "RUNNING":
+                raise RunStateConflict("process locator binding requires an active RUNNING request")
             row = conn.execute(
                 "SELECT process_locator_json,worker_instance_id FROM app_run_attempts "
                 "WHERE run_id=? AND attempt_id=?",
@@ -499,6 +527,219 @@ class DurableRunRepository:
                 "UPDATE app_run_attempts SET process_locator_json=? WHERE run_id=? AND attempt_id=?",
                 (raw, run_id, attempt_id),
             )
+
+    def publish_worker_startup_gate(
+        self, *, command, run_id, attempt_id, lease_token, worker_instance_id,
+        envelope_sha256, process_locator,
+    ):
+        """Publish an authenticated gate in the same DB order as cancellation."""
+        from runtime.worker_launcher import WorkerCommand
+        from runtime.worker_startup_gate import gate_bytes, publish_gate
+        from services.worker_process_control import owner_identity
+
+        if (type(command) is not WorkerCommand or type(run_id) is not str
+                or type(attempt_id) is not str or type(lease_token) is not str
+                or type(worker_instance_id) is not str):
+            raise RunRepositoryError("exact product worker owner is required")
+        expected_run_directory = self._data_root / "runs" / run_id / command.request_artifact_id
+        if command.run_directory != expected_run_directory:
+            raise RunRepositoryError("worker command is outside the exact product run directory")
+        owner = owner_identity(
+            run_id=run_id, attempt_id=attempt_id,
+            worker_instance_id=worker_instance_id, lease_token=lease_token,
+        )
+        if (type(process_locator) is not dict
+                or any(process_locator.get(key) != value for key, value in owner.items())):
+            raise RunRepositoryError("process locator differs from the exact attempt owner")
+        gate_raw = gate_bytes(
+            command=command, pid=process_locator.get("pid"), owner={
+                "attempt_id": attempt_id,
+                "worker_instance_id": worker_instance_id,
+                "lease_sha256": owner["lease_sha256"],
+            },
+            process_locator=process_locator,
+            lease_token=lease_token,
+            envelope_sha256=envelope_sha256,
+        )
+        from runtime.worker_startup_gate import FILENAME
+
+        gate_path = command.run_directory / FILENAME
+        gate_digest = hashlib.sha256(gate_raw).hexdigest()
+        process_digest = hashlib.sha256(canonical_json_bytes(process_locator)).hexdigest()
+        event_payload = {
+            "attempt_id": attempt_id,
+            "worker_instance_id": worker_instance_id,
+            "lease_sha256": owner["lease_sha256"],
+            "command_sha256": hashlib.sha256(command.canonical_bytes).hexdigest(),
+            "process_locator_sha256": process_digest,
+            "gate_sha256": gate_digest,
+        }
+        with self._operation(write=True) as conn:
+            self._fence(conn, run_id, attempt_id, lease_token)
+            run = conn.execute(
+                "SELECT state,request_sha256,envelope_sha256 FROM app_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if (run is None or run[0] != "RUNNING"
+                    or run[1] != command.request_artifact_id
+                    or run[2] != envelope_sha256):
+                raise RunStateConflict("cancel or request identity won before startup gate publication")
+            attempt = conn.execute(
+                "SELECT worker_instance_id,process_locator_json FROM app_run_attempts "
+                "WHERE run_id=? AND attempt_id=? AND lease_token=? AND finished_at IS NULL",
+                (run_id, attempt_id, lease_token),
+            ).fetchone()
+            if (attempt is None or attempt[0] != worker_instance_id
+                    or attempt[1] != canonical_json_bytes(process_locator).decode("utf-8")):
+                raise RunLeaseFenced("startup gate process owner is not durably bound")
+            if conn.execute(
+                "SELECT 1 FROM app_run_events WHERE run_id=? AND event_type='WORKER_STARTUP_GATE_PUBLISHED'",
+                (run_id,),
+            ).fetchone():
+                raise RunStateConflict("startup gate publication is single-use")
+            self._event(conn, run_id, conn.execute(
+                "SELECT state_version FROM app_runs WHERE run_id=?", (run_id,),
+            ).fetchone()[0], "WORKER_STARTUP_GATE_PUBLISHED", event_payload, _utc(self._clock()))
+        # Make the authenticated document visible only after its matching
+        # durable event commits. A child that observes the file can then
+        # always validate one committed owner/event pair. Cancellation may
+        # commit between these steps; the child rechecks RUNNING and fails
+        # closed before starting work.
+        publish_gate(gate_path, gate_raw)
+        return gate_path
+
+    def _verify_worker_startup_gate_conn(self, conn, *, command, gate, gate_bytes):
+        from runtime.worker_launcher import WorkerCommand
+        from runtime.worker_startup_gate import POLICY_ID, _GATE_FIELDS
+        from services.worker_process_control import WorkerProcessControl, owner_identity
+
+        if (type(command) is not WorkerCommand or type(gate) is not dict
+                or set(gate) != _GATE_FIELDS or type(gate_bytes) is not bytes
+                or canonical_json_bytes(gate) != gate_bytes):
+            raise RunRepositoryError("startup gate bytes are not the exact typed document")
+        if (gate["policy_id"] != POLICY_ID
+                or type(gate["envelope_sha256"]) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", gate["envelope_sha256"]) is None
+                or gate["request_sha256"] != command.request_artifact_id
+                or gate["command_sha256"] != hashlib.sha256(command.canonical_bytes).hexdigest()
+                or gate["operation"] != command.operation or gate["mode"] != command.mode
+                or gate["release_identity_kind"] != command.release_identity_kind
+                or gate["release_identity_id"] != command.release_identity_id
+                or gate["run_id"] != command.run_directory.parent.name
+                or gate["pid"] != os.getpid()
+                or type(gate["attempt_id"]) is not str or not gate["attempt_id"]
+                or type(gate["worker_instance_id"]) is not str or not gate["worker_instance_id"]
+                or type(gate["lease_sha256"]) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", gate["lease_sha256"]) is None):
+            raise RunRepositoryError("startup gate differs from the exact worker command")
+        expected_directory = self._data_root / "runs" / gate["run_id"] / command.request_artifact_id
+        if command.run_directory != expected_directory:
+            raise RunRepositoryError("startup gate is cross-run or outside the admitted data root")
+        run_id = _identity(gate["run_id"])
+        self._verify_run_identity(conn, run_id)
+        run = conn.execute(
+            "SELECT state,request_bytes,request_sha256,envelope_bytes,envelope_sha256 "
+            "FROM app_runs WHERE run_id=?", (run_id,),
+        ).fetchone()
+        if (run is None or run[0] != "RUNNING"
+                or hashlib.sha256(run[1]).hexdigest() != run[2]
+                or run[2] != command.request_artifact_id
+                or run[4] != gate["envelope_sha256"]):
+            raise RunStateConflict("durable RUNNING request no longer authorizes worker startup")
+        request = RunRequest.from_json_bytes(run[1])
+        envelope = ExecutionEnvelope.from_json_bytes(run[3])
+        expected_operation = (
+            "CURRENT_SHADOW_REQUEST"
+            if (request.authority_profile == "SHADOW"
+                and request.mode == "research_shadow"
+                and envelope.requested_operations.acquire_sources is True
+                and envelope.authority_manifest.provider_acquisition is True)
+            else "OFFLINE_IDENTITY_PROBE"
+        )
+        if (command.operation != expected_operation
+                or envelope.canonical_sha256 != gate["envelope_sha256"]
+                or (command.operation == "CURRENT_SHADOW_REQUEST"
+                    and (command.release_identity_kind != "DEVELOPMENT_CHECKOUT"
+                         or envelope.source_identity.kind != "GIT_COMMIT"
+                         or command.release_identity_id != envelope.source_identity.value))):
+            raise RunRepositoryError("worker operation exceeds the exact admitted envelope")
+        attempt = conn.execute(
+            "SELECT attempt_number,lease_token,worker_instance_id,process_locator_json,finished_at "
+            "FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
+            (run_id, gate["attempt_id"]),
+        ).fetchone()
+        latest_attempt = conn.execute(
+            "SELECT MAX(attempt_number) FROM app_run_attempts WHERE run_id=?", (run_id,),
+        ).fetchone()[0]
+        if (attempt is None or attempt[0] != latest_attempt or attempt[4] is not None
+                or attempt[2] != gate["worker_instance_id"]
+                or hashlib.sha256(attempt[1].encode("utf-8")).hexdigest() != gate["lease_sha256"]
+                or type(gate["process_locator"]) is not dict
+                or attempt[3] != canonical_json_bytes(gate["process_locator"]).decode("utf-8")):
+            raise RunLeaseFenced("startup gate does not bind the current owner lease and locator")
+        owner = owner_identity(
+            run_id=run_id, attempt_id=gate["attempt_id"],
+            worker_instance_id=gate["worker_instance_id"], lease_token=attempt[1],
+        )
+        locator = gate["process_locator"]
+        if (not all(locator.get(key) == value for key, value in owner.items())
+                or locator.get("pid") != os.getpid()
+                or WorkerProcessControl.state(locator, owner) != "ACTIVE"):
+            raise RunRepositoryError("startup gate process identity is stale or unowned")
+        payload = dict(gate)
+        authenticator = payload.pop("authenticator_sha256")
+        expected_authenticator = hmac.new(
+            attempt[1].encode("utf-8"), canonical_json_bytes(payload), hashlib.sha256,
+        ).hexdigest()
+        if (type(authenticator) is not str
+                or not hmac.compare_digest(authenticator, expected_authenticator)):
+            raise RunRepositoryError("startup gate authenticator does not match the durable lease")
+        event_payload = {
+            "attempt_id": gate["attempt_id"],
+            "worker_instance_id": gate["worker_instance_id"],
+            "lease_sha256": gate["lease_sha256"],
+            "command_sha256": gate["command_sha256"],
+            "process_locator_sha256": hashlib.sha256(canonical_json_bytes(locator)).hexdigest(),
+            "gate_sha256": hashlib.sha256(gate_bytes).hexdigest(),
+        }
+        events = conn.execute(
+            "SELECT payload_bytes,payload_sha256 FROM app_run_events "
+            "WHERE run_id=? AND event_type='WORKER_STARTUP_GATE_PUBLISHED'",
+            (run_id,),
+        ).fetchall()
+        if (len(events) != 1 or events[0][0] != canonical_json_bytes(event_payload)
+                or hashlib.sha256(events[0][0]).hexdigest() != events[0][1]):
+            raise RunRepositoryError("startup gate has no matching durable publication")
+        return event_payload
+
+    def verify_worker_startup_gate(self, *, command, gate, gate_bytes):
+        with self._operation() as conn:
+            return self._verify_worker_startup_gate_conn(
+                conn, command=command, gate=gate, gate_bytes=gate_bytes,
+            )
+
+    def authorize_worker_start(self, *, command, gate, gate_bytes, effect=None):
+        """Linearize a single worker start against durable cancellation."""
+        if effect is not None and not callable(effect):
+            raise RunRepositoryError("worker effect must be callable")
+        with self._operation(write=True) as conn:
+            payload = self._verify_worker_startup_gate_conn(
+                conn, command=command, gate=gate, gate_bytes=gate_bytes,
+            )
+            run_id = gate["run_id"]
+            prior = conn.execute(
+                "SELECT 1 FROM app_run_events WHERE run_id=? AND event_type='WORKER_STARTUP_EFFECT_STARTED'",
+                (run_id,),
+            ).fetchone()
+            if prior is not None:
+                raise RunStateConflict("product worker start was already consumed")
+            version = conn.execute(
+                "SELECT state_version FROM app_runs WHERE run_id=?", (run_id,),
+            ).fetchone()[0]
+            self._event(conn, run_id, version, "WORKER_STARTUP_EFFECT_STARTED", payload, _utc(self._clock()))
+            if effect is not None:
+                effect()
+        return True
 
     @staticmethod
     def _validate_worker_progress(payload):

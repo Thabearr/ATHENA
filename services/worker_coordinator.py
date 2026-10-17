@@ -36,8 +36,6 @@ from runtime.worker_launcher import (
     WorkerProcessHandle,
     build_offline_probe_documents,
 )
-from runtime.worker_startup_gate import FILENAME as STARTUP_GATE_FILENAME
-from runtime.worker_startup_gate import gate_bytes, publish_gate
 from services.worker_process_control import WorkerProcessControl, owner_identity
 
 _STAGE_KEYS = {
@@ -257,20 +255,18 @@ class WorkerCoordinator:
             with self._owned_lock:
                 self._process_controls[attempt_id] = process_control
                 self._process_locators[attempt_id] = locator
-            latest = self._repository.run_snapshot(run_id)
-            if latest is None or latest["state"] != "RUNNING":
-                raise RunStateConflict("cancellation won before worker startup gate")
-            gate_path = command.run_directory / STARTUP_GATE_FILENAME
-            publish_gate(gate_path, gate_bytes(
-                command=command, pid=handle.pid, owner={
-                    "attempt_id": attempt_id, "worker_instance_id": worker_instance_id,
-                    "lease_sha256": owner["lease_sha256"],
-                }, process_locator=locator,
-            ))
+            if process_control.state(locator, owner) != "ACTIVE":
+                raise RunStateConflict("worker process identity was not active before gate publication")
+            self._repository.publish_worker_startup_gate(
+                command=command, run_id=run_id, attempt_id=attempt_id,
+                lease_token=lease_token, worker_instance_id=worker_instance_id,
+                envelope_sha256=envelope.canonical_sha256,
+                process_locator=locator,
+            )
             locator_bound = True
         except Exception:
-            # The worker entry waits at the startup gate, so a failed identity
-            # bind can only abort this exact root and cannot begin business work.
+            # Every product worker operation waits for the authenticated gate.
+            # A failed DB/process publication aborts this exact Popen root.
             with self._owned_lock:
                 self._process_controls.pop(attempt_id, None)
                 self._process_locators.pop(attempt_id, None)

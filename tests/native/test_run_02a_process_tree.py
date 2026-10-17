@@ -7,10 +7,21 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 
 import pytest
 
-from runtime.worker_launcher import WorkerProcessHandle, _process_group_options, _spawn_process
+from runtime.worker_launcher import (
+    WORKER_OFFLINE_PROBE_FILENAME,
+    WORKER_PROVENANCE_FILENAME,
+    WORKER_REQUEST_FILENAME,
+    WorkerCommand,
+    WorkerProcessHandle,
+    _process_group_options,
+    _spawn_process,
+    persist_worker_command,
+)
+from domain.run_contracts import RunRequest
 from services.recovery_service import RecoveryService, _is_pid_active
 from services.worker_process_control import ProcessControlError, WorkerProcessControl, owner_identity
 
@@ -142,6 +153,82 @@ def test_native_orphan_descendant_is_not_mistaken_for_dead_owner(tmp_path):
             child_pid = int(marker.read_text(encoding="ascii"))
             os.kill(child_pid, signal.SIGKILL)  # exact child created by this test
     finally:
+        control.close()
+
+
+def test_native_cancelled_product_probe_is_killed_before_gate_effect(tmp_path):
+    """Exercise a real Windows Job Object / POSIX group at the product gate."""
+    from test_run_01b_worker_lifecycle import _development_shadow_run
+    from test_run_02a_recovery import _admit_run
+
+    identity, roots, repository, item, envelope = _development_shadow_run(
+        tmp_path, lambda: datetime(2030, 1, 1, 22, 59, tzinfo=timezone.utc),
+    )
+    run_id = _admit_run(repository, item, envelope, "native-gate-cancel")
+    attempt_id, lease_token, _number = repository.claim_attempt(
+        run_id, worker_instance_id="native-gate-worker",
+        process_locator={"kind": "OFFLINE_TEST", "label": "native-gate"},
+    )
+    repository.transition_run(
+        run_id, expected_version=0, state="RUNNING",
+        attempt_id=attempt_id, lease_token=lease_token,
+    )
+    request = RunRequest.from_json_bytes(item.request_bytes)
+    run_directory = roots.data_root / "runs" / run_id / request.canonical_sha256
+    run_directory.mkdir(parents=True)
+    (run_directory / WORKER_REQUEST_FILENAME).write_bytes(item.request_bytes)
+    command = WorkerCommand(
+        operation="OFFLINE_IDENTITY_PROBE", mode="offline_identity_probe",
+        run_directory=run_directory, request_artifact_id=request.canonical_sha256,
+        envelope_artifact_id=None, release_identity_kind=identity.identity_kind,
+        release_identity_id=identity.head_commit_sha,
+    )
+    command_path = persist_worker_command(command)
+    ready_path = tmp_path / "worker-reached-product-gate.txt"
+    wrapper = (
+        "import pathlib,sys; "
+        "from runtime import worker_entry,worker_startup_gate; "
+        "original=worker_startup_gate.wait_for_gate; "
+        "worker_startup_gate.wait_for_gate=lambda command,**kwargs: "
+        "(pathlib.Path(sys.argv[1]).write_text('ready',encoding='ascii'), "
+        "original(command,**kwargs))[1]; "
+        "raise SystemExit(worker_entry.main(sys.argv[2:]))"
+    )
+    process = _spawn_process(
+        [sys.executable, "-c", wrapper, os.fspath(ready_path),
+         "--command-file", os.fspath(command_path),
+         "--development-root", os.fspath(identity.repository_root)],
+        cwd=identity.repository_root,
+        shell=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        **_process_group_options(),
+    )
+    handle = WorkerProcessHandle(process)
+    owner = owner_identity(
+        run_id=run_id, attempt_id=attempt_id,
+        worker_instance_id="native-gate-worker", lease_token=lease_token,
+    )
+    control = WorkerProcessControl(handle, owner)
+    locator = control.bind()
+    repository.bind_process_locator(run_id, attempt_id, lease_token, locator)
+    try:
+        assert _wait_for(ready_path.is_file), "native product child did not reach its gate barrier"
+        assert not (run_directory / WORKER_OFFLINE_PROBE_FILENAME).exists()
+        assert not (run_directory / WORKER_PROVENANCE_FILENAME).exists()
+        repository.record_cancel_intent(run_id)
+        control.abort_before_start()
+        process.communicate(timeout=10)
+        assert repository.run_snapshot(run_id)["state"] == "CANCEL_REQUESTED"
+        assert not (run_directory / WORKER_OFFLINE_PROBE_FILENAME).exists()
+        assert not (run_directory / WORKER_PROVENANCE_FILENAME).exists()
+        assert repository.run_snapshot(run_id)["receipt_artifact_id"] is None
+    finally:
+        if process.poll() is None:
+            control.abort_before_start()
+            process.communicate(timeout=10)
         control.close()
 
 

@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import os
 from pathlib import Path
+import stat
 import time
 from typing import Any
 
@@ -14,6 +17,12 @@ from runtime.worker_launcher import WorkerCommand
 POLICY_ID = "ATHENA_E3_WORKER_STARTUP_GATE_V1"
 FILENAME = "athena-worker-startup-gate.json"
 _OWNER_KEYS = {"attempt_id", "worker_instance_id", "lease_sha256"}
+_GATE_FIELDS = {
+    "policy_id", "run_id", "request_sha256", "envelope_sha256",
+    "command_sha256", "operation", "mode", "release_identity_kind",
+    "release_identity_id", "pid", "attempt_id", "worker_instance_id",
+    "lease_sha256", "process_locator", "authenticator_sha256",
+}
 
 
 class StartupGateError(ValueError):
@@ -21,23 +30,41 @@ class StartupGateError(ValueError):
 
 
 def gate_bytes(*, command: WorkerCommand, pid: int, owner: dict[str, str],
-               process_locator: dict[str, Any]) -> bytes:
+               process_locator: dict[str, Any], lease_token: str,
+               envelope_sha256: str) -> bytes:
     if type(command) is not WorkerCommand or type(pid) is not int or pid <= 0:
         raise StartupGateError("exact worker command and positive PID are required")
     if type(owner) is not dict or set(owner) != _OWNER_KEYS:
         raise StartupGateError("worker owner identity is not exact")
     if any(type(owner[key]) is not str or not owner[key] for key in owner):
         raise StartupGateError("worker owner identity is invalid")
-    if type(process_locator) is not dict or process_locator.get("pid") != pid:
+    if (type(lease_token) is not str or not lease_token
+            or hashlib.sha256(lease_token.encode("utf-8")).hexdigest() != owner["lease_sha256"]):
+        raise StartupGateError("worker startup lease authenticator is invalid")
+    if (type(envelope_sha256) is not str or len(envelope_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in envelope_sha256)):
+        raise StartupGateError("worker startup envelope identity is invalid")
+    if (type(process_locator) is not dict or process_locator.get("pid") != pid
+            or process_locator.get("attempt_id") != owner["attempt_id"]
+            or process_locator.get("worker_instance_id") != owner["worker_instance_id"]
+            or process_locator.get("lease_sha256") != owner["lease_sha256"]):
         raise StartupGateError("process locator does not bind the launched PID")
-    return canonical_json_bytes({
+    payload = {
         "policy_id": POLICY_ID,
         "run_id": _run_id_from_path(command.run_directory),
         "request_sha256": command.request_artifact_id,
+        "envelope_sha256": envelope_sha256,
+        "command_sha256": hashlib.sha256(command.canonical_bytes).hexdigest(),
+        "operation": command.operation,
+        "mode": command.mode,
+        "release_identity_kind": command.release_identity_kind,
+        "release_identity_id": command.release_identity_id,
         "pid": pid,
         **owner,
         "process_locator": process_locator,
-    })
+    }
+    mac = hmac.new(lease_token.encode("utf-8"), canonical_json_bytes(payload), hashlib.sha256).hexdigest()
+    return canonical_json_bytes({**payload, "authenticator_sha256": mac})
 
 
 def publish_gate(path: Path, raw: bytes) -> None:
@@ -57,34 +84,56 @@ def publish_gate(path: Path, raw: bytes) -> None:
         raise
 
 
-def wait_for_gate(command: WorkerCommand, *, timeout: float = 20.0,
+def wait_for_gate(command: WorkerCommand, *, resources: Any,
+                  timeout: float = 20.0,
                   sleeper=time.sleep, monotonic=time.monotonic) -> dict[str, Any]:
-    """Block worker authority until the parent has durably bound its process."""
-    if type(command) is not WorkerCommand or type(timeout) not in {int, float} or not 0 < timeout <= 60:
+    """Block product work until the exact DB owner and process gate authenticate."""
+    from runtime.resources import ResourceResolver
+
+    if (type(command) is not WorkerCommand or type(resources) is not ResourceResolver
+            or type(timeout) not in {int, float} or not 0 < timeout <= 60):
         raise StartupGateError("startup gate arguments are outside the bounded contract")
     path = command.run_directory / FILENAME
     deadline = monotonic() + timeout
     while monotonic() < deadline:
-        if path.is_symlink():
+        if path.is_symlink() or bool(getattr(path, "is_junction", lambda: False)()):
             raise StartupGateError("startup gate must not be a link")
         try:
-            raw = path.read_bytes()
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(path, flags)
+            try:
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    raise StartupGateError("startup gate must be a regular file")
+                with os.fdopen(descriptor, "rb") as stream:
+                    descriptor = -1
+                    raw = stream.read(65537)
+                if len(raw) > 65536:
+                    raise StartupGateError("startup gate exceeds its reviewed byte bound")
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
         except FileNotFoundError:
             sleeper(0.05)
             continue
+        except StartupGateError:
+            raise
         except OSError as exc:
             raise StartupGateError("startup gate could not be read safely") from exc
         try:
             value = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise StartupGateError("startup gate JSON is invalid") from exc
-        keys = {"policy_id", "run_id", "request_sha256", "pid", "attempt_id",
-                "worker_instance_id", "lease_sha256", "process_locator"}
-        if (type(value) is not dict or set(value) != keys
+        if (type(value) is not dict or set(value) != _GATE_FIELDS
                 or canonical_json_bytes(value) != raw
                 or value["policy_id"] != POLICY_ID
                 or value["run_id"] != _run_id_from_path(command.run_directory)
                 or value["request_sha256"] != command.request_artifact_id
+                or value["command_sha256"] != hashlib.sha256(command.canonical_bytes).hexdigest()
+                or value["operation"] != command.operation
+                or value["mode"] != command.mode
+                or value["release_identity_kind"] != command.release_identity_kind
+                or value["release_identity_id"] != command.release_identity_id
                 or value["pid"] != os.getpid()
                 or type(value["attempt_id"]) is not str or not value["attempt_id"]
                 or type(value["worker_instance_id"]) is not str or not value["worker_instance_id"]
@@ -97,15 +146,13 @@ def wait_for_gate(command: WorkerCommand, *, timeout: float = 20.0,
                 or value["process_locator"].get("worker_instance_id") != value["worker_instance_id"]
                 or value["process_locator"].get("lease_sha256") != value["lease_sha256"]):
             raise StartupGateError("startup gate does not bind this worker and request")
-        from services.worker_process_control import WorkerProcessControl
-        owner = {
-            "run_id": value["run_id"],
-            "attempt_id": value["attempt_id"],
-            "worker_instance_id": value["worker_instance_id"],
-            "lease_sha256": value["lease_sha256"],
-        }
-        if WorkerProcessControl.state(value["process_locator"], owner) != "ACTIVE":
-            raise StartupGateError("startup gate process identity is stale or unowned")
+        from database.run_repository import DurableRunRepository
+        try:
+            data_root = _data_root_from_path(command.run_directory)
+            repository = DurableRunRepository.for_worker_data_root(resources, data_root)
+            repository.verify_worker_startup_gate(command=command, gate=value, gate_bytes=raw)
+        except Exception as exc:
+            raise StartupGateError("startup gate owner or durable admission is invalid") from exc
         return value
     raise StartupGateError("process ownership was not bound before worker startup timeout")
 
@@ -116,6 +163,17 @@ def _run_id_from_path(path: Path) -> str:
     if not run_id or run_id in {".", ".."} or "/" in run_id or "\\" in run_id:
         raise StartupGateError("worker run directory has no exact run identity")
     return run_id
+
+
+def _data_root_from_path(path: Path) -> Path:
+    """Resolve only the reviewed <data-root>/runs/<run-id>/<request-sha> shape."""
+    if (not isinstance(path, Path) or len(path.parents) < 3
+            or path.parent.parent.name != "runs"):
+        raise StartupGateError("worker run directory is outside the product data-root layout")
+    root = path.parents[2]
+    if not root.is_absolute() or root.is_symlink() or not root.is_dir():
+        raise StartupGateError("worker data root is not a regular directory")
+    return root
 
 
 __all__ = ["FILENAME", "POLICY_ID", "StartupGateError", "gate_bytes", "publish_gate", "wait_for_gate"]

@@ -295,7 +295,7 @@ class WorkerProcessControl:
         return True
 
     def abort_before_start(self) -> None:
-        """Without the startup gate only this exact Popen root can execute."""
+        """Abort this exact Popen root when its authenticated startup gate fails."""
         try:
             process = getattr(self.process_handle, "_process", None)
             if process is not None and process.poll() is None:
