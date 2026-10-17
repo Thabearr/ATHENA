@@ -57,7 +57,8 @@ INVENTORY_V2_PATH = INVENTORY_DIRECTORY + "/" + INVENTORY_PREFIX + "v2.json"
 # predecessor fixture is evidence only; it is never imported or packaged.
 SOURCE_FORWARD_PREDECESSOR_GENERATION = 273
 SOURCE_FORWARD_PREDECESSOR_SHA256 = "9d9ad9404d659c7548b89aec6a795ee3d511fdca23f4d8673550d1f2c569e809"
-SOURCE_FORWARD_CURRENT_GENERATION = 274
+SOURCE_FORWARD_AUTHORIZATION_GENERATION = 274
+SOURCE_FORWARD_AUTHORIZATION_SHA256 = "0655816adeb22f4ec5dcdb1012ee15af5c98c08c95c0b98286d451216e5377fc"
 SOURCE_FORWARD_TRANSITIONS = {
     "domain/sportybet_live_event_quote_evidence.py": {
         "predecessor_fixture": (
@@ -68,7 +69,7 @@ SOURCE_FORWARD_TRANSITIONS = {
         "predecessor_lf_source_sha256": "5d64143321e12313bb239b6d3973c8b5da5fb28855649e9890194f233ff0b48f",
         "successor_git_blob_sha1": "13e83b15e4d01cdaa95b83d4aeb5a465a63322d2",
         "successor_lf_source_sha256": "4c316538ac87c8f8e6151c0f9dae37e58e349e6c84b7e01eaeb29b4bc36f66bb",
-        "a2_generation": SOURCE_FORWARD_CURRENT_GENERATION,
+        "a2_generation": SOURCE_FORWARD_AUTHORIZATION_GENERATION,
         "reason_type": "E3_RUN_02A_DURABLE_CANCELLATION_OPERATION_AUTHORIZATION",
         "reason": (
             "E3 RUN-02A durable cancellation/operation-authorization boundary for "
@@ -620,7 +621,7 @@ def read_authenticated_forward_predecessor(path):
         "successor_git_blob_sha1", "successor_lf_source_sha256", "a2_generation",
         "reason_type", "reason",
     }, "A2 source-forward declaration shape drift")
-    require(transition["a2_generation"] == SOURCE_FORWARD_CURRENT_GENERATION
+    require(transition["a2_generation"] == SOURCE_FORWARD_AUTHORIZATION_GENERATION
             and transition["reason_type"] == "E3_RUN_02A_DURABLE_CANCELLATION_OPERATION_AUTHORIZATION"
             and transition["reason"] == (
                 "E3 RUN-02A durable cancellation/operation-authorization boundary for "
@@ -678,22 +679,35 @@ def read_authenticated_forward_predecessor(path):
     # Validate the chain only after cheap exact-source and fixture checks, so
     # rejected bytes never incur a full historical inventory parse.
     chain = load_inventory_generations()
-    require(len(chain) == SOURCE_FORWARD_CURRENT_GENERATION
-            and chain[-2][0] == inventory_generation_path(SOURCE_FORWARD_PREDECESSOR_GENERATION)
-            and chain[-2][1].get("canonical_sha256") == SOURCE_FORWARD_PREDECESSOR_SHA256,
+    require(len(chain) >= SOURCE_FORWARD_AUTHORIZATION_GENERATION
+            and chain[SOURCE_FORWARD_PREDECESSOR_GENERATION - 1][0]
+                == inventory_generation_path(SOURCE_FORWARD_PREDECESSOR_GENERATION)
+            and chain[SOURCE_FORWARD_PREDECESSOR_GENERATION - 1][1].get("canonical_sha256")
+                == SOURCE_FORWARD_PREDECESSOR_SHA256,
             "A2 source-forward transition does not extend the authenticated V"
             + str(SOURCE_FORWARD_PREDECESSOR_GENERATION) + " chain")
-    latest_path, latest = chain[-1]
-    predecessor = latest.get("predecessor_inventory")
-    require(latest_path == inventory_generation_path(SOURCE_FORWARD_CURRENT_GENERATION)
-            and latest.get("generation") == SOURCE_FORWARD_CURRENT_GENERATION
-            and latest.get("schema_version") == SOURCE_FORWARD_CURRENT_GENERATION
-            and latest.get("policy_id") == INVENTORY_POLICY_PREFIX + "_V" + str(SOURCE_FORWARD_CURRENT_GENERATION)
-            and type(predecessor) is dict
-            and predecessor == {
+    authorization_path, authorization = chain[SOURCE_FORWARD_AUTHORIZATION_GENERATION - 1]
+    require(authorization_path == inventory_generation_path(SOURCE_FORWARD_AUTHORIZATION_GENERATION)
+            and authorization.get("generation") == SOURCE_FORWARD_AUTHORIZATION_GENERATION
+            and authorization.get("canonical_sha256") == SOURCE_FORWARD_AUTHORIZATION_SHA256
+            and authorization.get("predecessor_inventory") == {
                 "path": inventory_generation_path(SOURCE_FORWARD_PREDECESSOR_GENERATION),
                 "canonical_sha256": SOURCE_FORWARD_PREDECESSOR_SHA256,
                 "generation": SOURCE_FORWARD_PREDECESSOR_GENERATION,
+                "rewritten": False,
+            }, "A2 source-forward authorization generation identity drift")
+    latest_path, latest = chain[-1]
+    latest_generation = len(chain)
+    latest_predecessor = latest.get("predecessor_inventory")
+    require(latest_path == inventory_generation_path(latest_generation)
+            and latest.get("generation") == latest_generation
+            and latest.get("schema_version") == latest_generation
+            and latest.get("policy_id") == INVENTORY_POLICY_PREFIX + "_V" + str(latest_generation)
+            and type(latest_predecessor) is dict
+            and latest_predecessor == {
+                "path": inventory_generation_path(latest_generation - 1),
+                "canonical_sha256": chain[-2][1]["canonical_sha256"],
+                "generation": latest_generation - 1,
                 "rewritten": False,
             }, "A2 source-forward transition latest-generation binding drift")
 

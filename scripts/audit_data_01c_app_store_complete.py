@@ -389,7 +389,12 @@ def audit(latest=None):
                         # E3 updates the existing durable-run test receipts to bind
                         # their live attempt identity; the historical D5 test bytes
                         # remain frozen in the retained source receipt above.
-                        "tests/test_data_01b_durable_run_state.py"}
+                        "tests/test_data_01b_durable_run_state.py",
+                        # RUN-02A's narrow B4/B6 source-forward regressions prove
+                        # the retained historical identity and current E3 successor.
+                        # Their committed bytes are bound by the latest A2 inventory.
+                        "tests/test_core_01d_sportybet_current_trigger_authority_b4.py",
+                        "tests/test_core_01d_port02c_trigger_authority_b6.py"}
         inventory = boundary.authenticate_inventory()
         identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
         if (set(current) != set(frozen)
