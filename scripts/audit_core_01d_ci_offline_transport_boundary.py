@@ -55,9 +55,9 @@ INVENTORY_V2_PATH = INVENTORY_DIRECTORY + "/" + INVENTORY_PREFIX + "v2.json"
 # This single forward-source exception preserves the B4/B6 historical source
 # identity while authenticating the E3 product successor independently.  The
 # predecessor fixture is evidence only; it is never imported or packaged.
-SOURCE_FORWARD_PREDECESSOR_GENERATION = 272
-SOURCE_FORWARD_PREDECESSOR_SHA256 = "e43def5a4af3217b4dfe9536292c7aafb729033b7d4026e384340eebbade4be0"
-SOURCE_FORWARD_CURRENT_GENERATION = 273
+SOURCE_FORWARD_PREDECESSOR_GENERATION = 273
+SOURCE_FORWARD_PREDECESSOR_SHA256 = "9d9ad9404d659c7548b89aec6a795ee3d511fdca23f4d8673550d1f2c569e809"
+SOURCE_FORWARD_CURRENT_GENERATION = 274
 SOURCE_FORWARD_TRANSITIONS = {
     "domain/sportybet_live_event_quote_evidence.py": {
         "predecessor_fixture": (

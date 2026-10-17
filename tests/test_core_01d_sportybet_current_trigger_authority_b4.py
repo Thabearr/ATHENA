@@ -316,7 +316,7 @@ def test_e3_forward_source_policy_is_single_path_and_rejects_forged_inventory_ro
         chain[-1] = (latest_path, latest)
         return chain
     monkeypatch.setattr(a2, "load_inventory_generations", forged_current_row)
-    with pytest.raises(AssertionError, match="current successor identity mismatch"):
+    with pytest.raises(AssertionError, match="current successor row differs from authenticated latest inventory"):
         a2.read_authenticated_forward_predecessor(path)
 
 
