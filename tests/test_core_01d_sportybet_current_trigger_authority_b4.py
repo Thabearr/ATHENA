@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -178,6 +179,147 @@ def test_source_inventory_mutations_and_workflow_source_drift_fail_closed():
     with pytest.raises(AssertionError):
         b4.validate_source_inventory(mutant)
     assert b4.validate_source_inventory(inventory)["source_count"] == len(b4.SOURCE_PINS)
+
+
+def test_e3_event_detail_forward_source_preserves_exact_b4_identity():
+    path = "domain/sportybet_live_event_quote_evidence.py"
+    predecessor = b4.boundary.read_authenticated_forward_predecessor(path)
+    expected_blob, expected_sha = b4.SOURCE_PINS[path]
+    assert hashlib.sha1(b"blob " + str(len(predecessor)).encode() + b"\0" + predecessor).hexdigest() == expected_blob
+    assert hashlib.sha256(predecessor.replace(b"\r\n", b"\n").replace(b"\r", b"\n")).hexdigest() == expected_sha
+    assert b4._identity(path) == {
+        "path": path,
+        "git_blob_sha1": expected_blob,
+        "normalized_source_sha256": expected_sha,
+        "role": b4.ROLES[path],
+        "discovery_edges": b4.EDGE_MAP.get(path, []),
+    }
+    inventory = b4.validate_source_inventory()
+    assert inventory["canonical_sha256"] == "a66f9917d3b50e4422237369304659b58c6fdec81daac614f8e83088fcf87d66"
+    receipt = b4.validate_receipt()
+    assert receipt["canonical_sha256"] == "9b630ef065318eb83333ce86ab7b121a790d44c8ce6ad5c0f4f5bac527905e3c"
+
+
+def test_e3_forward_source_rejects_fixture_mutation_deletion_and_symlink(monkeypatch):
+    path = "domain/sportybet_live_event_quote_evidence.py"
+    fixture = b4.ROOT / b4.boundary.SOURCE_FORWARD_TRANSITIONS[path]["predecessor_fixture"]
+    original_read_bytes = Path.read_bytes
+    original_lstat = Path.lstat
+    original_is_symlink = Path.is_symlink
+
+    def tampered_bytes(candidate):
+        raw = original_read_bytes(candidate)
+        if candidate == fixture:
+            return bytes([raw[0] ^ 1]) + raw[1:]
+        return raw
+
+    monkeypatch.setattr(Path, "read_bytes", tampered_bytes)
+    with pytest.raises(AssertionError, match="predecessor fixture identity mismatch"):
+        b4.boundary.read_authenticated_forward_predecessor(path)
+    monkeypatch.setattr(Path, "read_bytes", original_read_bytes)
+
+    def invalid_encoding(candidate):
+        raw = original_read_bytes(candidate)
+        if candidate == fixture:
+            return b"\xff" + raw[1:]
+        return raw
+
+    monkeypatch.setattr(Path, "read_bytes", invalid_encoding)
+    with pytest.raises(AssertionError, match="fixture encoding is invalid"):
+        b4.boundary.read_authenticated_forward_predecessor(path)
+    monkeypatch.setattr(Path, "read_bytes", original_read_bytes)
+
+    def missing_fixture(candidate):
+        if candidate == fixture:
+            raise FileNotFoundError("deterministic missing-fixture simulation")
+        return original_lstat(candidate)
+
+    monkeypatch.setattr(Path, "lstat", missing_fixture)
+    with pytest.raises(AssertionError, match="fixture is unavailable"):
+        b4.boundary.read_authenticated_forward_predecessor(path)
+    monkeypatch.setattr(Path, "lstat", original_lstat)
+
+    def linked_fixture(candidate):
+        if candidate == fixture:
+            return True
+        return original_is_symlink(candidate)
+
+    monkeypatch.setattr(Path, "is_symlink", linked_fixture)
+    with pytest.raises(AssertionError, match="not a regular file"):
+        b4.boundary.read_authenticated_forward_predecessor(path)
+
+
+@pytest.mark.parametrize("mutation", [
+    "unauthorized_current", "wrong_previous_generation", "wrong_successor_blob",
+    "wrong_successor_digest", "wrong_fixture_path", "wrong_reason",
+])
+def test_e3_forward_source_rejects_unapproved_successor_or_a2_lineage(monkeypatch, mutation):
+    a2 = b4.boundary
+    path = "domain/sportybet_live_event_quote_evidence.py"
+    original_read = a2.read_tracked_head_blob
+    original_chain = a2.load_inventory_generations
+
+    if mutation == "unauthorized_current":
+        def altered_current(root, candidate, **kwargs):
+            raw, identity = original_read(root, candidate, **kwargs)
+            if candidate == path:
+                raw += b"# unauthenticated source edit\n"
+            return raw, identity
+        monkeypatch.setattr(a2, "read_tracked_head_blob", altered_current)
+    elif mutation == "wrong_previous_generation":
+        def altered_chain():
+            chain = original_chain()
+            previous_path, previous = chain[-2]
+            previous = deepcopy(previous)
+            previous["canonical_sha256"] = "0" * 64
+            chain[-2] = (previous_path, previous)
+            return chain
+        monkeypatch.setattr(a2, "load_inventory_generations", altered_chain)
+    elif mutation in {"wrong_successor_blob", "wrong_successor_digest", "wrong_fixture_path", "wrong_reason"}:
+        transition = deepcopy(a2.SOURCE_FORWARD_TRANSITIONS[path])
+        if mutation == "wrong_successor_blob":
+            transition["successor_git_blob_sha1"] = "0" * 40
+        elif mutation == "wrong_successor_digest":
+            transition["successor_lf_source_sha256"] = "0" * 64
+        elif mutation == "wrong_fixture_path":
+            transition["predecessor_fixture"] = "tests/fixtures/core_01d/another-predecessor.py.txt"
+        else:
+            transition["reason_type"] = "GENERIC_SOURCE_BYPASS"
+        monkeypatch.setattr(a2, "SOURCE_FORWARD_TRANSITIONS", {path: transition})
+
+    with pytest.raises(AssertionError):
+        a2.read_authenticated_forward_predecessor(path)
+
+
+def test_e3_forward_source_policy_is_single_path_and_rejects_forged_inventory_rows(monkeypatch):
+    a2 = b4.boundary
+    path = "domain/sportybet_live_event_quote_evidence.py"
+    original_chain = a2.load_inventory_generations
+    with pytest.raises(AssertionError, match="unreviewed A2 source-forward path"):
+        a2.read_authenticated_forward_predecessor("domain/another_module.py")
+
+    def second_path():
+        return {**a2.SOURCE_FORWARD_TRANSITIONS, "domain/another_module.py":
+                a2.SOURCE_FORWARD_TRANSITIONS[path]}
+    monkeypatch.setattr(a2, "SOURCE_FORWARD_TRANSITIONS", second_path())
+    with pytest.raises(AssertionError, match="unreviewed A2 source-forward path"):
+        a2.read_authenticated_forward_predecessor(path)
+    monkeypatch.setattr(a2, "SOURCE_FORWARD_TRANSITIONS", {
+        path: b4.boundary.SOURCE_FORWARD_TRANSITIONS[path]
+    })
+
+    def forged_current_row():
+        chain = original_chain()
+        latest_path, latest = chain[-1]
+        latest = deepcopy(latest)
+        for row in latest["source_identities"]:
+            if row["path"] == path:
+                row["lf_source_sha256"] = "0" * 64
+        chain[-1] = (latest_path, latest)
+        return chain
+    monkeypatch.setattr(a2, "load_inventory_generations", forged_current_row)
+    with pytest.raises(AssertionError, match="current successor identity mismatch"):
+        a2.read_authenticated_forward_predecessor(path)
 
 
 def test_audit_does_not_require_the_base_commit_object(monkeypatch):

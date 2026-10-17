@@ -59,6 +59,44 @@ def test_depth_one_pr_checkout_uses_pinned_base_inventory_without_fetch(monkeypa
     assert inventory == boundary.read(b6.SOURCE_INVENTORY_PATH)
 
 
+def test_full_history_mode_reconstructs_pinned_base_source_identity(monkeypatch):
+    original_git = b6._git
+    pinned = boundary.read(b6.SOURCE_INVENTORY_PATH)
+    checkout = b6._checkout_tree_entries()
+    rows = []
+    for row in pinned["source_identities"]:
+        mode = checkout[row["path"]][0]
+        rows.append(f"{mode} blob {row['git_blob_sha1']}\t{row['path']}\0".encode("utf-8"))
+    synthetic_base_tree = b"".join(rows)
+
+    def full_history_git(*args):
+        if args == ("ls-tree", "-r", "-z", b6.BASE_MAIN):
+            return synthetic_base_tree
+        return original_git(*args)
+
+    b6._base_tree_entries.cache_clear()
+    monkeypatch.setattr(b6, "_git", full_history_git)
+    try:
+        inventory = b6.build_source_inventory()
+    finally:
+        b6._base_tree_entries.cache_clear()
+
+    assert inventory == pinned
+    event = next(row for row in inventory["source_identities"]
+                 if row["path"] == "domain/sportybet_live_event_quote_evidence.py")
+    assert event["git_blob_sha1"] == "096d54fe7493f6d81cdf3c4af7c4a9333c75fadc"
+    assert event["normalized_source_sha256"] == "5d64143321e12313bb239b6d3973c8b5da5fb28855649e9890194f233ff0b48f"
+    assert event["byte_size"] == 56007
+
+
+def test_e3_event_detail_forward_source_preserves_exact_b6_inventory_and_receipt():
+    inventory = b6.build_source_inventory()
+    assert inventory == boundary.read(b6.SOURCE_INVENTORY_PATH)
+    assert inventory["canonical_sha256"] == "f0e3bbd523c0a75d47215d2b4f6cd732409c559f080d9391a6ae7520387368c6"
+    receipt = b6.validate_receipt()
+    assert receipt["canonical_sha256"] == "b9efafc34139a26de58da6cd2421dd43a174e375cabd0a2ccecdd5f21cb04966"
+
+
 def test_depth_one_workflow_invariance_uses_pinned_checked_out_subtree(monkeypatch):
     original_git = b6._git
 

@@ -273,6 +273,8 @@ def _canonical(value: Any) -> bytes:
 
 
 def _reviewed_source(path: str, historical: dict[str, Any]) -> bytes:
+    if path in boundary.SOURCE_FORWARD_TRANSITIONS:
+        return boundary.read_authenticated_forward_predecessor(path)
     if path == "runtime/worker_entry.py":
         from scripts import audit_run_02a_pre_durable_share_send as prerequisite
         return prerequisite.historical_transport_bytes(path, root=ROOT)
@@ -295,6 +297,14 @@ def _reviewed_source(path: str, historical: dict[str, Any]) -> bytes:
 
 
 def _reviewed_git_source(path: str, blob: str, historical: dict[str, Any]) -> bytes:
+    if path in boundary.SOURCE_FORWARD_TRANSITIONS:
+        transition = boundary.SOURCE_FORWARD_TRANSITIONS[path]
+        require(blob == transition["predecessor_git_blob_sha1"],
+                "B6 source-forward base blob differs from the pinned predecessor: " + path)
+        raw = boundary.read_authenticated_forward_predecessor(path)
+        require(hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest() == blob,
+                "B6 source-forward predecessor fixture differs from its base Git blob: " + path)
+        return raw
     if path == "runtime/worker_entry.py":
         from scripts import audit_run_02a_pre_durable_share_send as prerequisite
         raw = prerequisite.historical_transport_bytes(path, root=ROOT)
@@ -387,7 +397,11 @@ def _base_tree_entries() -> dict[str, tuple[str, str, str]]:
                     and mode_kind_blob[0] in {"100644", "100755"},
                     "required B6 source is not a checked-out regular Git blob: " + path)
             mode, _kind, blob = mode_kind_blob
-            if (
+            if path in boundary.SOURCE_FORWARD_TRANSITIONS:
+                require(mode == "100644", "B6 source-forward successor is not a regular source file: " + path)
+                boundary.read_authenticated_forward_predecessor(path)
+                blob = row.get("git_blob_sha1")
+            elif (
                 path in app01a.HISTORICAL_RUNTIME_PATHS
                 or path in {"scripts/port_02c_build_config.py", PORT_WORKFLOW, INCIDENT_20261010_PC_RUNTIME,
                             "runtime/worker_entry.py"}

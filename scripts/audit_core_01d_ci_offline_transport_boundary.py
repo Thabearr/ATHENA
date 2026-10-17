@@ -29,6 +29,8 @@ import subprocess
 import tokenize
 import yaml
 
+from runtime.source_identity import read_tracked_head_blob, validate_repository_relative_path
+
 ROOT = Path(__file__).resolve().parents[1]
 BASE_MAIN = "86ffc41205d83f5e4b37d20d35d73f9f97f3b23f"
 BASE_TREE = "1fd395339f09fa3726b1c633399c3ee79d7dfb4e"
@@ -50,6 +52,30 @@ INVENTORY_V1_SHA256 = "ca8c07c071538298ffb293027e7a0be1c5766e8a943b3d2b605627f9f
 V1_SOURCE_IDENTITY_COUNT = 1150
 V1_OBLIGATION_COUNT = 1693
 INVENTORY_V2_PATH = INVENTORY_DIRECTORY + "/" + INVENTORY_PREFIX + "v2.json"
+# This single forward-source exception preserves the B4/B6 historical source
+# identity while authenticating the E3 product successor independently.  The
+# predecessor fixture is evidence only; it is never imported or packaged.
+SOURCE_FORWARD_PREDECESSOR_GENERATION = 270
+SOURCE_FORWARD_PREDECESSOR_SHA256 = "8b6aae5aa0c55bcebe337047dee711762d2be69d05b39ba5dd31ab922933b57e"
+SOURCE_FORWARD_CURRENT_GENERATION = 271
+SOURCE_FORWARD_TRANSITIONS = {
+    "domain/sportybet_live_event_quote_evidence.py": {
+        "predecessor_fixture": (
+            "tests/fixtures/core_01d/sportybet_event_detail_e3_forward/"
+            "original-b4-b6-sportybet-live-event-quote-evidence.py.txt"
+        ),
+        "predecessor_git_blob_sha1": "096d54fe7493f6d81cdf3c4af7c4a9333c75fadc",
+        "predecessor_lf_source_sha256": "5d64143321e12313bb239b6d3973c8b5da5fb28855649e9890194f233ff0b48f",
+        "successor_git_blob_sha1": "13e83b15e4d01cdaa95b83d4aeb5a465a63322d2",
+        "successor_lf_source_sha256": "4c316538ac87c8f8e6151c0f9dae37e58e349e6c84b7e01eaeb29b4bc36f66bb",
+        "a2_generation": SOURCE_FORWARD_CURRENT_GENERATION,
+        "reason_type": "E3_RUN_02A_DURABLE_CANCELLATION_OPERATION_AUTHORIZATION",
+        "reason": (
+            "E3 RUN-02A durable cancellation/operation-authorization boundary for "
+            "product SportyBet event-detail GET and bounded evidence publication"
+        ),
+    },
+}
 # Frozen repository location: a successor's predecessor binding always names the
 # canonical committed path, whichever isolated directory the chain is checked in.
 INVENTORY_CANONICAL_DIRECTORY = INVENTORY_DIRECTORY
@@ -574,6 +600,124 @@ def load_inventory_generations(directory=None):
             require(predecessor.get("rewritten") is False, "predecessor rewrite claim: " + path)
         chain.append((path, value))
     return chain
+
+
+def read_authenticated_forward_predecessor(path):
+    """Return the one byte-pinned B4/B6 predecessor after authenticating E3.
+
+    This primitive is deliberately independent of B4/B6 and their callers:
+    it validates the append-only A2 chain, the exact current committed source,
+    the current A2 source identity, and the evidence-only predecessor fixture.
+    It accepts no caller-provided digest, fixture path, generation, or bypass.
+    """
+    require(type(path) is str and set(SOURCE_FORWARD_TRANSITIONS) == {
+        "domain/sportybet_live_event_quote_evidence.py"
+    } and path in SOURCE_FORWARD_TRANSITIONS,
+        "unreviewed A2 source-forward path: " + repr(path))
+    transition = SOURCE_FORWARD_TRANSITIONS[path]
+    require(set(transition) == {
+        "predecessor_fixture", "predecessor_git_blob_sha1", "predecessor_lf_source_sha256",
+        "successor_git_blob_sha1", "successor_lf_source_sha256", "a2_generation",
+        "reason_type", "reason",
+    }, "A2 source-forward declaration shape drift")
+    require(transition["a2_generation"] == SOURCE_FORWARD_CURRENT_GENERATION
+            and transition["reason_type"] == "E3_RUN_02A_DURABLE_CANCELLATION_OPERATION_AUTHORIZATION"
+            and transition["reason"] == (
+                "E3 RUN-02A durable cancellation/operation-authorization boundary for "
+                "product SportyBet event-detail GET and bounded evidence publication"
+            ), "A2 source-forward declaration is not the reviewed E3 transition")
+
+    chain = load_inventory_generations()
+    require(len(chain) == SOURCE_FORWARD_CURRENT_GENERATION
+            and chain[-2][0] == inventory_generation_path(SOURCE_FORWARD_PREDECESSOR_GENERATION)
+            and chain[-2][1].get("canonical_sha256") == SOURCE_FORWARD_PREDECESSOR_SHA256,
+            "A2 source-forward transition does not extend the authenticated V"
+            + str(SOURCE_FORWARD_PREDECESSOR_GENERATION) + " chain")
+    latest_path, latest = chain[-1]
+    predecessor = latest.get("predecessor_inventory")
+    require(latest_path == inventory_generation_path(SOURCE_FORWARD_CURRENT_GENERATION)
+            and latest.get("generation") == SOURCE_FORWARD_CURRENT_GENERATION
+            and latest.get("schema_version") == SOURCE_FORWARD_CURRENT_GENERATION
+            and latest.get("policy_id") == INVENTORY_POLICY_PREFIX + "_V" + str(SOURCE_FORWARD_CURRENT_GENERATION)
+            and type(predecessor) is dict
+            and predecessor == {
+                "path": inventory_generation_path(SOURCE_FORWARD_PREDECESSOR_GENERATION),
+                "canonical_sha256": SOURCE_FORWARD_PREDECESSOR_SHA256,
+                "generation": SOURCE_FORWARD_PREDECESSOR_GENERATION,
+                "rewritten": False,
+            }, "A2 source-forward transition latest-generation binding drift")
+
+    rows = latest.get("source_identities")
+    require(type(rows) is list and all(
+        type(row) is dict and type(row.get("path")) is str
+        and type(row.get("lf_source_sha256")) is str
+        and re.fullmatch(r"[0-9a-f]{64}", row["lf_source_sha256"])
+        for row in rows
+    ), "A2 source-forward latest inventory rows are malformed")
+    row_paths = [row["path"] for row in rows]
+    require(row_paths == sorted(row_paths) and len(row_paths) == len(set(row_paths)),
+            "A2 source-forward latest inventory rows are not uniquely path ordered")
+    by_path = {row["path"]: row["lf_source_sha256"] for row in rows}
+
+    current, current_identity = read_tracked_head_blob(ROOT, path)
+    current_lf = current.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    require(current_identity.git_blob_sha1 == transition["successor_git_blob_sha1"]
+            and hashlib.sha256(current_lf).hexdigest() == transition["successor_lf_source_sha256"]
+            and by_path.get(path) == transition["successor_lf_source_sha256"],
+            "A2 source-forward current successor identity mismatch: " + path)
+    worktree_path = ROOT / path
+    worktree_lf = worktree_path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    require(hashlib.sha256(worktree_lf).hexdigest() == transition["successor_lf_source_sha256"],
+            "A2 source-forward current worktree differs from the approved successor: " + path)
+
+    a2_path = Path(__file__).resolve().relative_to(ROOT).as_posix()
+    a2_source, a2_identity = read_tracked_head_blob(ROOT, a2_path)
+    a2_lf = a2_source.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    a2_worktree_lf = (ROOT / a2_path).read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    a2_digest = hashlib.sha256(a2_lf).hexdigest()
+    require(a2_digest == hashlib.sha256(a2_worktree_lf).hexdigest()
+            and by_path.get(a2_path) == a2_digest
+            and a2_identity.git_blob_sha1,
+            "A2 source-forward inventory does not authenticate its current primitive")
+
+    fixture = transition["predecessor_fixture"]
+    fixture = validate_repository_relative_path(fixture)
+    fixture_path = ROOT / fixture
+    try:
+        resolved_root = ROOT.resolve(strict=True)
+        resolved_fixture = fixture_path.resolve(strict=True)
+        resolved_fixture.relative_to(resolved_root)
+        fixture_stat = fixture_path.lstat()
+    except (OSError, ValueError) as error:
+        raise AssertionError("A2 source-forward predecessor fixture is unavailable or escapes scope") from error
+    import stat
+    require(stat.S_ISREG(fixture_stat.st_mode) and not fixture_path.is_symlink(),
+            "A2 source-forward predecessor fixture is not a regular file")
+    fixture_raw = fixture_path.read_bytes()
+    require(len(fixture_raw) == 56007, "A2 source-forward predecessor fixture size mismatch")
+    try:
+        fixture_raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise AssertionError("A2 source-forward predecessor fixture encoding is invalid") from error
+    fixture_lf = fixture_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    fixture_blob = hashlib.sha1(b"blob " + str(len(fixture_raw)).encode("ascii") + b"\0" + fixture_raw).hexdigest()
+    require(fixture_blob == transition["predecessor_git_blob_sha1"]
+            and hashlib.sha256(fixture_lf).hexdigest() == transition["predecessor_lf_source_sha256"],
+            "A2 source-forward predecessor fixture identity mismatch")
+
+    # When the evidence fixture is committed (all hosted/check-out use), bind
+    # both its tree mode and object bytes. Before the first commit, the same
+    # hardcoded blob and normalized digest still authenticate the working file.
+    entry = git("ls-tree", "-z", "HEAD", "--", fixture)
+    if entry:
+        metadata, tree_path = entry.rstrip(b"\0").split(b"\t", 1)
+        mode, kind, blob = metadata.decode("ascii").split(" ")
+        committed = git("cat-file", "blob", blob.decode("ascii"))
+        require(tree_path.decode("utf-8") == fixture and mode == "100644" and kind == "blob"
+                and blob.decode("ascii") == transition["predecessor_git_blob_sha1"]
+                and committed == fixture_raw,
+                "A2 source-forward committed predecessor fixture identity mismatch")
+    return fixture_raw
 
 
 def inventory_document(template, corpus=None):
