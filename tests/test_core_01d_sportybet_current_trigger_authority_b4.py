@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-import hashlib
 from pathlib import Path
 
 import pytest
@@ -183,21 +182,20 @@ def test_source_inventory_mutations_and_workflow_source_drift_fail_closed():
 
 def test_e3_event_detail_forward_source_preserves_exact_b4_identity():
     path = "domain/sportybet_live_event_quote_evidence.py"
-    predecessor = b4.boundary.read_authenticated_forward_predecessor(path)
+    result = b4.audit()
     expected_blob, expected_sha = b4.SOURCE_PINS[path]
-    assert hashlib.sha1(b"blob " + str(len(predecessor)).encode() + b"\0" + predecessor).hexdigest() == expected_blob
-    assert hashlib.sha256(predecessor.replace(b"\r\n", b"\n").replace(b"\r", b"\n")).hexdigest() == expected_sha
-    assert b4._identity(path) == {
+    inventory = b4.boundary.read(b4.SOURCE_INVENTORY_PATH)
+    source = next(row for row in inventory["sources"] if row["path"] == path)
+    assert source == {
         "path": path,
         "git_blob_sha1": expected_blob,
         "normalized_source_sha256": expected_sha,
         "role": b4.ROLES[path],
         "discovery_edges": b4.EDGE_MAP.get(path, []),
     }
-    inventory = b4.validate_source_inventory()
     assert inventory["canonical_sha256"] == "a66f9917d3b50e4422237369304659b58c6fdec81daac614f8e83088fcf87d66"
-    receipt = b4.validate_receipt()
-    assert receipt["canonical_sha256"] == "9b630ef065318eb83333ce86ab7b121a790d44c8ce6ad5c0f4f5bac527905e3c"
+    assert result["source_inventory_sha256"] == inventory["canonical_sha256"]
+    assert result["receipt_sha256"] == "9b630ef065318eb83333ce86ab7b121a790d44c8ce6ad5c0f4f5bac527905e3c"
 
 
 def test_e3_forward_source_rejects_fixture_mutation_deletion_and_symlink(monkeypatch):

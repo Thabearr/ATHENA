@@ -55,9 +55,9 @@ INVENTORY_V2_PATH = INVENTORY_DIRECTORY + "/" + INVENTORY_PREFIX + "v2.json"
 # This single forward-source exception preserves the B4/B6 historical source
 # identity while authenticating the E3 product successor independently.  The
 # predecessor fixture is evidence only; it is never imported or packaged.
-SOURCE_FORWARD_PREDECESSOR_GENERATION = 271
-SOURCE_FORWARD_PREDECESSOR_SHA256 = "e558a9f66597e687bcf019ecd553aea270927ac52a8f606600c96d7e81a0eb57"
-SOURCE_FORWARD_CURRENT_GENERATION = 272
+SOURCE_FORWARD_PREDECESSOR_GENERATION = 272
+SOURCE_FORWARD_PREDECESSOR_SHA256 = "e43def5a4af3217b4dfe9536292c7aafb729033b7d4026e384340eebbade4be0"
+SOURCE_FORWARD_CURRENT_GENERATION = 273
 SOURCE_FORWARD_TRANSITIONS = {
     "domain/sportybet_live_event_quote_evidence.py": {
         "predecessor_fixture": (
@@ -627,58 +627,15 @@ def read_authenticated_forward_predecessor(path):
                 "product SportyBet event-detail GET and bounded evidence publication"
             ), "A2 source-forward declaration is not the reviewed E3 transition")
 
-    chain = load_inventory_generations()
-    require(len(chain) == SOURCE_FORWARD_CURRENT_GENERATION
-            and chain[-2][0] == inventory_generation_path(SOURCE_FORWARD_PREDECESSOR_GENERATION)
-            and chain[-2][1].get("canonical_sha256") == SOURCE_FORWARD_PREDECESSOR_SHA256,
-            "A2 source-forward transition does not extend the authenticated V"
-            + str(SOURCE_FORWARD_PREDECESSOR_GENERATION) + " chain")
-    latest_path, latest = chain[-1]
-    predecessor = latest.get("predecessor_inventory")
-    require(latest_path == inventory_generation_path(SOURCE_FORWARD_CURRENT_GENERATION)
-            and latest.get("generation") == SOURCE_FORWARD_CURRENT_GENERATION
-            and latest.get("schema_version") == SOURCE_FORWARD_CURRENT_GENERATION
-            and latest.get("policy_id") == INVENTORY_POLICY_PREFIX + "_V" + str(SOURCE_FORWARD_CURRENT_GENERATION)
-            and type(predecessor) is dict
-            and predecessor == {
-                "path": inventory_generation_path(SOURCE_FORWARD_PREDECESSOR_GENERATION),
-                "canonical_sha256": SOURCE_FORWARD_PREDECESSOR_SHA256,
-                "generation": SOURCE_FORWARD_PREDECESSOR_GENERATION,
-                "rewritten": False,
-            }, "A2 source-forward transition latest-generation binding drift")
-
-    rows = latest.get("source_identities")
-    require(type(rows) is list and all(
-        type(row) is dict and type(row.get("path")) is str
-        and type(row.get("lf_source_sha256")) is str
-        and re.fullmatch(r"[0-9a-f]{64}", row["lf_source_sha256"])
-        for row in rows
-    ), "A2 source-forward latest inventory rows are malformed")
-    row_paths = [row["path"] for row in rows]
-    require(row_paths == sorted(row_paths) and len(row_paths) == len(set(row_paths)),
-            "A2 source-forward latest inventory rows are not uniquely path ordered")
-    by_path = {row["path"]: row["lf_source_sha256"] for row in rows}
-
     current, current_identity = read_tracked_head_blob(ROOT, path)
     current_lf = current.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     require(current_identity.git_blob_sha1 == transition["successor_git_blob_sha1"]
-            and hashlib.sha256(current_lf).hexdigest() == transition["successor_lf_source_sha256"]
-            and by_path.get(path) == transition["successor_lf_source_sha256"],
+            and hashlib.sha256(current_lf).hexdigest() == transition["successor_lf_source_sha256"],
             "A2 source-forward current successor identity mismatch: " + path)
     worktree_path = ROOT / path
     worktree_lf = worktree_path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     require(hashlib.sha256(worktree_lf).hexdigest() == transition["successor_lf_source_sha256"],
             "A2 source-forward current worktree differs from the approved successor: " + path)
-
-    a2_path = Path(__file__).resolve().relative_to(ROOT).as_posix()
-    a2_source, a2_identity = read_tracked_head_blob(ROOT, a2_path)
-    a2_lf = a2_source.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    a2_worktree_lf = (ROOT / a2_path).read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    a2_digest = hashlib.sha256(a2_lf).hexdigest()
-    require(a2_digest == hashlib.sha256(a2_worktree_lf).hexdigest()
-            and by_path.get(a2_path) == a2_digest
-            and a2_identity.git_blob_sha1,
-            "A2 source-forward inventory does not authenticate its current primitive")
 
     fixture = transition["predecessor_fixture"]
     fixture = validate_repository_relative_path(fixture)
@@ -717,6 +674,52 @@ def read_authenticated_forward_predecessor(path):
                 and blob == transition["predecessor_git_blob_sha1"]
                 and committed == fixture_raw,
                 "A2 source-forward committed predecessor fixture identity mismatch")
+
+    # Validate the chain only after cheap exact-source and fixture checks, so
+    # rejected bytes never incur a full historical inventory parse.
+    chain = load_inventory_generations()
+    require(len(chain) == SOURCE_FORWARD_CURRENT_GENERATION
+            and chain[-2][0] == inventory_generation_path(SOURCE_FORWARD_PREDECESSOR_GENERATION)
+            and chain[-2][1].get("canonical_sha256") == SOURCE_FORWARD_PREDECESSOR_SHA256,
+            "A2 source-forward transition does not extend the authenticated V"
+            + str(SOURCE_FORWARD_PREDECESSOR_GENERATION) + " chain")
+    latest_path, latest = chain[-1]
+    predecessor = latest.get("predecessor_inventory")
+    require(latest_path == inventory_generation_path(SOURCE_FORWARD_CURRENT_GENERATION)
+            and latest.get("generation") == SOURCE_FORWARD_CURRENT_GENERATION
+            and latest.get("schema_version") == SOURCE_FORWARD_CURRENT_GENERATION
+            and latest.get("policy_id") == INVENTORY_POLICY_PREFIX + "_V" + str(SOURCE_FORWARD_CURRENT_GENERATION)
+            and type(predecessor) is dict
+            and predecessor == {
+                "path": inventory_generation_path(SOURCE_FORWARD_PREDECESSOR_GENERATION),
+                "canonical_sha256": SOURCE_FORWARD_PREDECESSOR_SHA256,
+                "generation": SOURCE_FORWARD_PREDECESSOR_GENERATION,
+                "rewritten": False,
+            }, "A2 source-forward transition latest-generation binding drift")
+
+    rows = latest.get("source_identities")
+    require(type(rows) is list and all(
+        type(row) is dict and type(row.get("path")) is str
+        and type(row.get("lf_source_sha256")) is str
+        and re.fullmatch(r"[0-9a-f]{64}", row["lf_source_sha256"])
+        for row in rows
+    ), "A2 source-forward latest inventory rows are malformed")
+    row_paths = [row["path"] for row in rows]
+    require(row_paths == sorted(row_paths) and len(row_paths) == len(set(row_paths)),
+            "A2 source-forward latest inventory rows are not uniquely path ordered")
+    by_path = {row["path"]: row["lf_source_sha256"] for row in rows}
+    require(by_path.get(path) == transition["successor_lf_source_sha256"],
+            "A2 source-forward current successor row differs from authenticated latest inventory")
+
+    a2_path = Path(__file__).resolve().relative_to(ROOT).as_posix()
+    a2_source, a2_identity = read_tracked_head_blob(ROOT, a2_path)
+    a2_lf = a2_source.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    a2_worktree_lf = (ROOT / a2_path).read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    a2_digest = hashlib.sha256(a2_lf).hexdigest()
+    require(a2_digest == hashlib.sha256(a2_worktree_lf).hexdigest()
+            and by_path.get(a2_path) == a2_digest
+            and a2_identity.git_blob_sha1,
+            "A2 source-forward inventory does not authenticate its current primitive")
     return fixture_raw
 
 
