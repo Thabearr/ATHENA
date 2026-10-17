@@ -55,9 +55,9 @@ INVENTORY_V2_PATH = INVENTORY_DIRECTORY + "/" + INVENTORY_PREFIX + "v2.json"
 # This single forward-source exception preserves the B4/B6 historical source
 # identity while authenticating the E3 product successor independently.  The
 # predecessor fixture is evidence only; it is never imported or packaged.
-SOURCE_FORWARD_PREDECESSOR_GENERATION = 270
-SOURCE_FORWARD_PREDECESSOR_SHA256 = "8b6aae5aa0c55bcebe337047dee711762d2be69d05b39ba5dd31ab922933b57e"
-SOURCE_FORWARD_CURRENT_GENERATION = 271
+SOURCE_FORWARD_PREDECESSOR_GENERATION = 271
+SOURCE_FORWARD_PREDECESSOR_SHA256 = "e558a9f66597e687bcf019ecd553aea270927ac52a8f606600c96d7e81a0eb57"
+SOURCE_FORWARD_CURRENT_GENERATION = 272
 SOURCE_FORWARD_TRANSITIONS = {
     "domain/sportybet_live_event_quote_evidence.py": {
         "predecessor_fixture": (
@@ -712,9 +712,9 @@ def read_authenticated_forward_predecessor(path):
     if entry:
         metadata, tree_path = entry.rstrip(b"\0").split(b"\t", 1)
         mode, kind, blob = metadata.decode("ascii").split(" ")
-        committed = git("cat-file", "blob", blob.decode("ascii"))
+        committed = git("cat-file", "blob", blob)
         require(tree_path.decode("utf-8") == fixture and mode == "100644" and kind == "blob"
-                and blob.decode("ascii") == transition["predecessor_git_blob_sha1"]
+                and blob == transition["predecessor_git_blob_sha1"]
                 and committed == fixture_raw,
                 "A2 source-forward committed predecessor fixture identity mismatch")
     return fixture_raw
