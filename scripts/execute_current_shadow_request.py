@@ -39,6 +39,8 @@ WORKER_ENV = "ATHENA_CURRENT_SHADOW_REQUEST_WORKER"
 WORKER_MODULE = "scripts.execute_current_shadow_request"
 REQUEST_POLICY_FILENAME = "current-shadow-request-policy.json"
 XG_DIAGNOSTIC_FILENAME = "current-shadow-current-asof-xg-diagnostic.json"
+PRODUCT_CONTEXT_ARGUMENT = "--product-context-file"
+STANDALONE_RESEARCH_WORKER_ARGUMENT = "--standalone-research-worker"
 
 
 def _fixture_dates(value: str) -> tuple[str, ...]:
@@ -73,6 +75,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         type=Path,
         default=Path("artifacts/current-shadow-all-market"),
+    )
+    parser.add_argument(
+        PRODUCT_CONTEXT_ARGUMENT,
+        type=Path,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        STANDALONE_RESEARCH_WORKER_ARGUMENT,
+        action="store_true",
+        default=False,
+        help=argparse.SUPPRESS,
     )
     return parser
 
@@ -149,7 +163,6 @@ def _restore_reconciliation_compatibility(proxy: Any, previous: dict[str, Any]) 
 
 
 def _write_request_policy(args: argparse.Namespace) -> None:
-    args.output_dir.mkdir(parents=True, exist_ok=True)
     selected = None
     if args.fixture_dates is not None:
         selected = list(
@@ -200,7 +213,7 @@ def _write_xg_diagnostic(args: argparse.Namespace) -> bool:
     return True
 
 
-def _execute_worker(args: argparse.Namespace) -> int:
+def _execute_worker(args: argparse.Namespace, *, product_authority: Any = None) -> int:
     original_issuer = runner._issue_current_fixture_sources
     original_scope_count = daily.SCOPE_DAY_COUNT[args.fixture_scope]
     proxy = None
@@ -244,8 +257,27 @@ def _execute_worker(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if os.environ.get(WORKER_ENV) == "1":
+    worker_selected = os.environ.get(WORKER_ENV) == "1"
+    if args.product_context_file is not None:
+        if not worker_selected or args.standalone_research_worker:
+            raise RuntimeError("product context requires the fixed product child selector")
+        authority = _authenticate_product_child(args)
+        from runtime.current_shadow_operation_authority import (
+            install_product_authority, reset_product_authority,
+        )
+        token = install_product_authority(authority)
+        try:
+            return _execute_worker(args, product_authority=authority)
+        finally:
+            reset_product_authority(token)
+    if worker_selected:
+        if not args.standalone_research_worker:
+            raise RuntimeError(
+                "nested worker selector requires authenticated product context or explicit standalone intent"
+            )
         return _execute_worker(args)
+    if args.standalone_research_worker:
+        raise RuntimeError("standalone worker intent is valid only at the fixed wrapper boundary")
 
     env = dict(os.environ)
     env[WORKER_ENV] = "1"
@@ -261,6 +293,7 @@ def main(argv: list[str] | None = None) -> int:
         str(args.output_dir),
         "--create-share-code",
         runner.create_share_code_cli_text(args.create_share_code),
+        STANDALONE_RESEARCH_WORKER_ARGUMENT,
     ]
     if args.fixture_dates is not None:
         command.extend(("--fixture-dates", ",".join(args.fixture_dates)))
@@ -280,6 +313,130 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
         return 0
     return completed.returncode
+
+
+def _authenticate_product_child(args: argparse.Namespace):
+    """Consume the one-use parent pipe and authenticate the nested worker."""
+    from runtime.current_shadow_operation_authority import (
+        CurrentShadowOperationAuthority, ProductOperationAuthorityError,
+        context_path, read_context,
+    )
+    from runtime.release_identity import verify_development_checkout
+    from runtime.resources import ResourceResolver
+    from runtime.worker_entry import _read_command_file
+    from runtime.worker_launcher import read_bound_request
+    from runtime.worker_startup_gate import read_gate_document, _data_root_from_path
+    from database.run_repository import DurableRunRepository
+
+    try:
+        # Do not inspect or use the capability until the owner commits the
+        # exact child PID/context event and releases this one-byte pipe.
+        ready = sys.stdin.buffer.read(1)
+        if ready != b"\x01" or sys.stdin.buffer.read(1) != b"":
+            raise ProductOperationAuthorityError("nested supervisor handshake is missing or replayed")
+        command_path = args.product_context_file.parent / "athena-worker-command.json"
+        command, _ = _read_command_file(command_path)
+        if args.product_context_file != context_path(command):
+            raise ProductOperationAuthorityError("product context selector is not the fixed run path")
+        if command.release_identity_kind != "DEVELOPMENT_CHECKOUT":
+            raise ProductOperationAuthorityError("Current Shadow product child requires the admitted source release")
+        identity = verify_development_checkout(Path(__file__).resolve().parents[1])
+        if identity.head_commit_sha != command.release_identity_id:
+            raise ProductOperationAuthorityError("nested Current Shadow source release changed")
+        resources = ResourceResolver.for_development(identity)
+        request = read_bound_request(command)
+        context, context_bytes = read_context(args.product_context_file, command=command)
+        gate, gate_bytes = read_gate_document(
+            command.run_directory / "athena-worker-startup-gate.json"
+        )
+        data_root = _data_root_from_path(command.run_directory)
+        repository = DurableRunRepository.for_worker_data_root(resources, data_root)
+        expected_dates = tuple(day.strftime("%Y%m%d") for day in request.dates)
+        if (command.operation != "CURRENT_SHADOW_REQUEST"
+                or request.authority_profile != "SHADOW"
+                or request.mode != "research_shadow"
+                or request.create_share_code is not False or request.place_wager is not False
+                or args.target_size != request.target_legs
+                or args.fixture_scope != daily.SCOPE_TODAY
+                or args.fixture_dates != expected_dates
+                or args.output_dir != command.run_directory / "current-shadow"
+                or args.create_share_code is not False):
+            raise ProductOperationAuthorityError("nested supervisor arguments differ from the admitted request")
+        return CurrentShadowOperationAuthority._from_authenticated_child(
+            repository=repository, command=command, gate=gate,
+            gate_bytes=gate_bytes, context=context, context_bytes=context_bytes,
+        )
+    except Exception as exc:
+        raise RuntimeError("nested Current Shadow context authentication failed") from exc
+
+
+def _launch_product_child(args: argparse.Namespace, context_file: Path):
+    """Launch only this fixed worker module with its stdin authority gate closed."""
+    env = dict(os.environ)
+    env[WORKER_ENV] = "1"
+    command = [
+        sys.executable, "-m", WORKER_MODULE,
+        "--target-size", str(args.target_size),
+        "--fixture-scope", args.fixture_scope,
+        "--fixture-dates", ",".join(args.fixture_dates),
+        "--output-dir", os.fspath(args.output_dir),
+        "--create-share-code", "false",
+        PRODUCT_CONTEXT_ARGUMENT, os.fspath(context_file),
+    ]
+    return subprocess.Popen(
+        command,
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        shell=False,
+        stdin=subprocess.PIPE,
+        stdout=None,
+        stderr=None,
+        text=True,
+    )
+
+
+def run_authenticated_product_worker(
+    argv: list[str], *, repository: Any, command: Any,
+    gate: dict[str, Any], gate_bytes: bytes,
+) -> int:
+    """Keep the existing bounded 75-minute supervisor under a DB start fence."""
+    from runtime.current_shadow_operation_authority import worker_executable_identity
+
+    args = build_parser().parse_args(argv)
+    if (args.product_context_file is not None or args.create_share_code is not False
+            or args.fixture_dates is None):
+        raise RuntimeError("authenticated product supervisor arguments are outside policy")
+    executable_path, executable_sha256 = worker_executable_identity()
+    process = repository.launch_current_shadow_supervisor(
+        command=command, gate=gate, gate_bytes=gate_bytes,
+        launch=lambda context_file: _launch_product_child(args, context_file),
+        worker_executable_path=executable_path,
+        worker_executable_sha256=executable_sha256,
+    )
+    try:
+        process.stdin.write("\x01")
+        process.stdin.flush()
+        process.stdin.close()
+    except (BrokenPipeError, OSError) as exc:
+        try:
+            process.kill()
+            process.communicate(timeout=5)
+        except Exception:
+            pass
+        raise RuntimeError("authenticated nested supervisor handshake failed") from exc
+    try:
+        process.wait(timeout=bound._supervisor_timeout_seconds())
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        result = bound._write_timeout_receipt(
+            target_size=args.target_size,
+            output_dir=args.output_dir,
+            create_share_code=False,
+        )
+        print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
+        return 0
+    return process.returncode
 
 
 if __name__ == "__main__":

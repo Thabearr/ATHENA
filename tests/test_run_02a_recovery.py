@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -91,21 +92,25 @@ def _admit_run(repository, item, envelope, run_label="test-run"):
 
 def _product_offline_handoff(
     tmp_path, clock, monkeypatch, *, on_bind=None, before_publish=None,
-    bind_failure=False,
+    bind_failure=False, acquire_sources=False,
 ):
     """Run the real product entry behind deterministic parent/child barriers."""
     from runtime import worker_entry, worker_startup_gate
     from services import worker_coordinator, worker_process_control
     from runtime.worker_launcher import WorkerProcessHandle
 
-    identity, writable, repository, item, envelope = _development_shadow_run(tmp_path, clock)
+    identity, writable, repository, item, envelope = _development_shadow_run(
+        tmp_path, clock, acquire_sources=acquire_sources,
+    )
     run_id = _admit_run(repository, item, envelope, "startup-gate-run")
     request = RunRequest.from_json_bytes(item.request_bytes)
     run_directory = writable.data_root / "runs" / run_id / request.canonical_sha256
     run_directory.mkdir(parents=True)
     (run_directory / WORKER_REQUEST_FILENAME).write_bytes(item.request_bytes)
+    operation = "CURRENT_SHADOW_REQUEST" if acquire_sources else "OFFLINE_IDENTITY_PROBE"
     command = WorkerCommand(
-        operation="OFFLINE_IDENTITY_PROBE", mode="offline_identity_probe",
+        operation=operation,
+        mode="research_shadow" if acquire_sources else "offline_identity_probe",
         run_directory=run_directory, request_artifact_id=request.canonical_sha256,
         envelope_artifact_id=None, release_identity_kind=identity.identity_kind,
         release_identity_id=identity.head_commit_sha,
@@ -264,6 +269,99 @@ def _assert_no_offline_worker_evidence(case):
     assert not (directory / WORKER_OFFLINE_PROBE_FILENAME).exists()
     assert not (directory / WORKER_PROVENANCE_FILENAME).exists()
     assert case["repository"].run_snapshot(case["run_id"])["receipt_artifact_id"] is None
+
+
+def _run_authenticated_product_authority_case(
+    tmp_path, clock, monkeypatch, action, *, release_gate=True, wait=True,
+):
+    """Build a real admitted gate/context and replace only the child transport."""
+    from runtime.current_shadow_operation_authority import (
+        CurrentShadowOperationAuthority, context_path, install_product_authority,
+        read_context, reset_product_authority, worker_executable_identity,
+    )
+    from runtime.worker_startup_gate import read_gate_document
+    from scripts import execute_current_shadow_request
+
+    case = _product_offline_handoff(
+        tmp_path, clock, monkeypatch, acquire_sources=True,
+    )
+    captured = {}
+
+    class BlockedSyntheticChild:
+        def __init__(self):
+            self.pid = os.getpid()
+            self.stdin = io.BytesIO()
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            return None
+
+        def wait(self, timeout=None):
+            return 0
+
+    def run_authenticated(_argv, *, repository, command, gate, gate_bytes):
+        # The subprocess seam is synthetic, so model the child's PPID as the
+        # owning process while retaining this process's actual creation identity.
+        monkeypatch.setattr(os, "getppid", lambda: gate["pid"])
+        executable, executable_sha = worker_executable_identity()
+        process = repository.launch_current_shadow_supervisor(
+            command=command,
+            gate=gate,
+            gate_bytes=gate_bytes,
+            launch=lambda _context_path: BlockedSyntheticChild(),
+            worker_executable_path=executable,
+            worker_executable_sha256=executable_sha,
+        )
+        context_file = context_path(command)
+        context, context_bytes = read_context(context_file, command=command)
+        stored_gate, stored_gate_bytes = read_gate_document(case["gate_path"])
+        assert stored_gate == gate and stored_gate_bytes == gate_bytes
+        authority = CurrentShadowOperationAuthority._from_authenticated_child(
+            repository=repository, command=command, gate=gate,
+            gate_bytes=gate_bytes, context=context, context_bytes=context_bytes,
+        )
+        captured.update(process=process, context=context, authority=authority)
+        token = install_product_authority(authority)
+        try:
+            try:
+                captured["result"] = action(authority, repository, command, gate)
+            except BaseException as exc:
+                captured["error"] = exc
+        finally:
+            reset_product_authority(token)
+        return 0
+
+    monkeypatch.setattr(
+        execute_current_shadow_request, "run_authenticated_product_worker", run_authenticated,
+    )
+    if release_gate:
+        case["release_gate"].set()
+    if wait:
+        assert case["worker_finished"].wait(10)
+        assert case["worker_errors"] == []
+        assert "authority" in captured
+        assert "CURRENT_SHADOW_SUPERVISOR_STARTED" in [
+            event[2] for event in case["repository"].read_events(case["run_id"])
+        ]
+    return case, captured
+
+
+def _fotmob_get(authority, request_date):
+    from domain.fotmob_data_matches_capture import MAX_RESPONSE_BYTES
+    from scripts.capture_fotmob_data_matches import (
+        REQUEST_HEADERS, REQUEST_TIMEOUT_SECONDS, request_target,
+    )
+
+    return authority.perform_get(
+        provider="FOTMOB_DATA_MATCHES",
+        request_target=request_target(request_date, "UTC", "NGA"),
+        logical_id=request_date,
+        headers=tuple(REQUEST_HEADERS),
+        timeout_seconds=REQUEST_TIMEOUT_SECONDS,
+        maximum_bytes=MAX_RESPONSE_BYTES,
+    )
 
 
 def test_cancel_queued_run_settles_immediately(tmp_path, clock, monkeypatch):
@@ -426,6 +524,57 @@ def test_cancel_after_locator_binding_before_gate_publication_fails_closed(
     assert "WORKER_STARTUP_EFFECT_STARTED" not in event_types
 
 
+def test_cancel_after_gate_commit_before_gate_file_publication_cannot_start_worker(
+    tmp_path, clock, monkeypatch,
+):
+    from runtime import worker_startup_gate
+
+    gate_event_committed = threading.Event()
+    cancel_committed = threading.Event()
+    allow_gate_file = threading.Event()
+    original_publish_gate = worker_startup_gate.publish_gate
+
+    def pause_after_gate_event(path, raw):
+        gate_event_committed.set()
+        if not allow_gate_file.wait(10):
+            raise AssertionError("gate-file publication barrier was not released")
+        return original_publish_gate(path, raw)
+
+    monkeypatch.setattr(worker_startup_gate, "publish_gate", pause_after_gate_event)
+
+    def cancel_after_gate_event(repository, run_id):
+        cancel_repository = DurableRunRepository.for_worker_data_root(
+            ResourceResolver.for_development(repository.verified_identity), repository._data_root,
+        )
+
+        def commit_cancel():
+            if not gate_event_committed.wait(10):
+                raise AssertionError("startup gate event did not reach the file boundary")
+            cancel_repository.record_cancel_intent(run_id)
+            cancel_committed.set()
+            allow_gate_file.set()
+
+        threading.Thread(target=commit_cancel, name="cancel-after-gate-event-test").start()
+
+    case = _product_offline_handoff(
+        tmp_path, clock, monkeypatch, before_publish=cancel_after_gate_event,
+    )
+
+    assert cancel_committed.is_set()
+    assert case["repository"].run_snapshot(case["run_id"])["state"] == "CANCEL_REQUESTED"
+    # The gate file may become visible after cancellation. Its matching durable
+    # event is not a start permit; the child's DB start transaction must reject it.
+    assert case["gate_path"].is_file()
+    case["release_gate"].set()
+    assert case["worker_finished"].wait(10)
+    assert len(case["worker_errors"]) == 1
+    assert isinstance(case["worker_errors"][0], worker_entry_error_type())
+    _assert_no_offline_worker_evidence(case)
+    event_types = [event[2] for event in case["repository"].read_events(case["run_id"])]
+    assert "WORKER_STARTUP_GATE_PUBLISHED" in event_types
+    assert "WORKER_STARTUP_EFFECT_STARTED" not in event_types
+
+
 def test_locator_bind_failure_aborts_spawned_probe_without_receipt_or_relaunch(
     tmp_path, clock, monkeypatch,
 ):
@@ -470,6 +619,724 @@ def test_cancel_after_gate_read_before_atomic_start_revalidation_blocks_probe(
     assert "WORKER_STARTUP_EFFECT_STARTED" not in [
         event[2] for event in case["repository"].read_events(case["run_id"])
     ]
+
+
+def test_current_shadow_cancel_after_startup_commit_blocks_supervisor_start(
+    tmp_path, clock, monkeypatch,
+):
+    """Cancellation after startup authorization prevents the nested Popen boundary."""
+    from scripts import execute_current_shadow_request
+
+    case = _product_offline_handoff(
+        tmp_path, clock, monkeypatch, acquire_sources=True,
+    )
+    startup_committed = threading.Event()
+    release_supervisor = threading.Event()
+    supervisor_starts = []
+    original_authorize = DurableRunRepository.authorize_worker_start
+
+    def pause_after_startup_commit(repository, **kwargs):
+        result = original_authorize(repository, **kwargs)
+        if (repository._data_root == case["roots"].data_root
+                and kwargs["command"].operation == "CURRENT_SHADOW_REQUEST"):
+            startup_committed.set()
+            if not release_supervisor.wait(10):
+                raise AssertionError("deterministic supervisor barrier was not released")
+        return result
+
+    monkeypatch.setattr(
+        DurableRunRepository, "authorize_worker_start", pause_after_startup_commit,
+    )
+    original_popen = execute_current_shadow_request.subprocess.Popen
+
+    def record_supervisor_popen(*args, **kwargs):
+        argv = args[0] if args else kwargs.get("args", ())
+        if (type(argv) in {list, tuple}
+                and "-m" in argv
+                and execute_current_shadow_request.WORKER_MODULE in argv):
+            supervisor_starts.append((args, kwargs))
+        return original_popen(*args, **kwargs)
+
+    monkeypatch.setattr(execute_current_shadow_request.subprocess, "Popen", record_supervisor_popen)
+    case["release_gate"].set()
+    assert startup_committed.wait(10)
+
+    # A distinct repository instance ensures cancellation commits through an
+    # independent SQLite connection while the worker is paused post-commit.
+    cancel_repository = DurableRunRepository.for_worker_data_root(
+        ResourceResolver.for_development(case["identity"]), case["roots"].data_root,
+    )
+    disposition, state, _version = cancel_repository.record_cancel_intent(case["run_id"])
+    assert disposition == "requested"
+    assert state == "CANCEL_REQUESTED"
+    release_supervisor.set()
+
+    assert case["worker_finished"].wait(10)
+    assert len(case["worker_errors"]) == 1
+    assert isinstance(case["worker_errors"][0], worker_entry_error_type())
+    assert supervisor_starts == []
+    assert not (case["command"].run_directory / "athena-current-shadow-operation-context.json").exists()
+    assert "CURRENT_SHADOW_SUPERVISOR_STARTED" not in [
+        event[2] for event in case["repository"].read_events(case["run_id"])
+    ]
+    assert "CURRENT_SHADOW_GET_SENT" not in [
+        event[2] for event in case["repository"].read_events(case["run_id"])
+    ]
+
+
+def test_product_worker_selector_without_context_fails_closed_but_explicit_research_route_remains(
+    tmp_path, monkeypatch,
+):
+    from scripts import execute_current_shadow_request
+
+    monkeypatch.setenv(execute_current_shadow_request.WORKER_ENV, "1")
+    argv = ["--target-size", "3", "--create-share-code", "false",
+            "--output-dir", str(tmp_path / "legacy")]
+    with pytest.raises(RuntimeError, match="requires authenticated product context"):
+        execute_current_shadow_request.main(argv)
+
+    seen = []
+    monkeypatch.setattr(
+        execute_current_shadow_request, "_execute_worker",
+        lambda args, **kwargs: seen.append((args, kwargs)) or 17,
+    )
+    assert execute_current_shadow_request.main(
+        argv + [execute_current_shadow_request.STANDALONE_RESEARCH_WORKER_ARGUMENT]
+    ) == 17
+    assert len(seen) == 1
+    assert seen[0][1] == {}
+
+
+def test_product_provider_get_rejects_cancel_before_prepared_and_out_of_request_date(
+    tmp_path, clock, monkeypatch,
+):
+    from runtime.current_shadow_operation_authority import ProductOperationAuthorityError
+    from runtime.resources import ResourceResolver
+    from database.run_repository import DurableRunRepository
+
+    calls = []
+    monkeypatch.setattr(
+        "runtime.current_shadow_operation_authority._fixed_provider_get",
+        lambda intent: calls.append(intent),
+    )
+
+    def cancel_then_get(authority, repository, _command, gate):
+        cancel_repository = DurableRunRepository.for_worker_data_root(
+            ResourceResolver.for_development(repository.verified_identity), repository._data_root,
+        )
+        cancel_repository.record_cancel_intent(gate["run_id"])
+        return _fotmob_get(authority, "20300101")
+
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch, cancel_then_get,
+    )
+    assert isinstance(captured.get("error"), RunStateConflict)
+    assert calls == []
+    types = [event[2] for event in case["repository"].read_events(case["run_id"])]
+    assert "CURRENT_SHADOW_GET_PREPARED" not in types
+    assert "CURRENT_SHADOW_GET_SENT" not in types
+
+    def wrong_date(authority, _repository, _command, _gate):
+        return _fotmob_get(authority, "20300102")
+
+    case2, captured2 = _run_authenticated_product_authority_case(
+        tmp_path / "wrong-date", clock, monkeypatch, wrong_date,
+    )
+    assert isinstance(captured2.get("error"), ProductOperationAuthorityError)
+    assert calls == []
+    assert "CURRENT_SHADOW_GET_PREPARED" not in [
+        event[2] for event in case2["repository"].read_events(case2["run_id"])
+    ]
+
+
+def test_duplicate_product_logical_get_cannot_gain_a_second_permit(
+    tmp_path, clock, monkeypatch,
+):
+    from runtime.current_shadow_operation_authority import ProviderGetResponse
+
+    calls = []
+    monkeypatch.setattr(
+        "runtime.current_shadow_operation_authority._fixed_provider_get",
+        lambda intent: calls.append(intent) or ProviderGetResponse(
+            body=b"{}", status=200, observed_at="2030-01-01T00:00:00.000000Z",
+            content_type="application/json", content_length=2, content_length_header="2",
+        ),
+    )
+
+    def duplicate(authority, *_args):
+        first = _fotmob_get(authority, "20300101")
+        with pytest.raises(ExternalOperationViolation, match="already consumed"):
+            _fotmob_get(authority, "20300101")
+        return first
+
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch, duplicate,
+    )
+    assert captured["result"].body == b"{}"
+    assert len(calls) == 1
+    event_types = [event[2] for event in case["repository"].read_events(case["run_id"])]
+    assert event_types.count("CURRENT_SHADOW_GET_PREPARED") == 1
+    assert event_types.count("CURRENT_SHADOW_GET_SENT") == 1
+
+
+def test_product_github_artifact_redirect_is_a_second_secret_free_get_permit(
+    tmp_path, clock, monkeypatch,
+):
+    from runtime import current_shadow_operation_authority as authority_module
+    from runtime.current_shadow_operation_authority import ProviderGetResponse
+
+    signed_location = (
+        "https://release-assets.githubusercontent.com/download/object.zip"
+        "?sig=private-signed-query"
+    )
+    raw_zip = b"synthetic-github-artifact-zip"
+    redirect = ProviderGetResponse(
+        body=b"", status=302, observed_at="2030-01-01T00:00:00.000000Z",
+        content_type="application/json", content_length=0,
+        content_length_header="0", location=signed_location,
+    )
+    transport_calls = []
+    requests = []
+    headers_seen = []
+
+    class SyntheticResponse:
+        status = 200
+
+        def __init__(self):
+            self._body = io.BytesIO(raw_zip)
+
+        def read(self, count=-1):
+            return self._body.read(count)
+
+        def getheader(self, name):
+            return {
+                "Content-Type": "application/octet-stream",
+                "Content-Length": str(len(raw_zip)),
+                "Location": None,
+            }.get(name)
+
+    class SyntheticConnection:
+        def __init__(self, host, port, timeout):
+            self.host = host
+            self.port = port
+            self.timeout = timeout
+
+        def putrequest(self, method, target, **kwargs):
+            requests.append((self.host, method, target, kwargs))
+
+        def putheader(self, name, value):
+            headers_seen.append((name, value))
+
+        def endheaders(self):
+            return None
+
+        def getresponse(self):
+            return SyntheticResponse()
+
+        def close(self):
+            return None
+
+    original_transport = authority_module._fixed_provider_get
+
+    def synthetic_transport(intent, **kwargs):
+        transport_calls.append((intent["provider"], kwargs.get("transport_target")))
+        if intent["provider"] == authority_module.GITHUB_LINEAGE_ARTIFACT_ZIP:
+            return redirect
+        return original_transport(intent, **kwargs)
+
+    monkeypatch.setenv("GH_TOKEN", "local-github-token-must-not-be-retained")
+    monkeypatch.setattr(authority_module, "_fixed_provider_get", synthetic_transport)
+    monkeypatch.setattr(authority_module.http.client, "HTTPSConnection", SyntheticConnection)
+
+    def download(authority, *_args):
+        return authority.github_lineage_binary(
+            request_target="/repos/Thabearr/ATHENA/actions/artifacts/123/zip",
+            accept="application/vnd.github+json",
+        )
+
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch, download,
+    )
+
+    assert captured["result"] == raw_zip
+    assert [provider for provider, _target in transport_calls] == [
+        authority_module.GITHUB_LINEAGE_ARTIFACT_ZIP,
+        authority_module.GITHUB_LINEAGE_REDIRECT_BINARY,
+    ]
+    assert requests == [(
+        "release-assets.githubusercontent.com", "GET",
+        "/download/object.zip?sig=private-signed-query",
+        {"skip_accept_encoding": True},
+    )]
+    assert not any(name.casefold() == "authorization" for name, _value in headers_seen)
+    with case["repository"]._operation() as conn:
+        operations = conn.execute(
+            "SELECT state FROM app_external_operations WHERE run_id=? ORDER BY prepared_at,operation_id",
+            (case["run_id"],),
+        ).fetchall()
+        artifact_paths = conn.execute(
+            "SELECT a.logical_path FROM app_artifacts a JOIN app_run_artifacts r "
+            "ON r.artifact_id=a.artifact_id WHERE r.run_id=?",
+            (case["run_id"],),
+        ).fetchall()
+    assert [row[0] for row in operations] == ["CONFIRMED", "CONFIRMED"]
+    retained = b"\n".join(
+        (case["roots"].data_root / row[0]).read_bytes() for row in artifact_paths
+    )
+    assert signed_location.encode("ascii") not in retained
+    assert b"private-signed-query" not in retained
+    assert b"local-github-token-must-not-be-retained" not in retained
+
+
+def test_product_github_redirect_cancellation_blocks_the_followup_get(
+    tmp_path, clock, monkeypatch,
+):
+    from runtime import current_shadow_operation_authority as authority_module
+    from runtime.current_shadow_operation_authority import ProviderGetResponse
+    from runtime.resources import ResourceResolver
+    from database.run_repository import DurableRunRepository
+
+    transport_calls = []
+    owner = {}
+    redirect = ProviderGetResponse(
+        body=b"", status=302, observed_at="2030-01-01T00:00:00.000000Z",
+        content_type="application/json", content_length=0,
+        content_length_header="0",
+        location=("https://release-assets.githubusercontent.com/download/object.zip"
+                  "?sig=cancelled-query"),
+    )
+
+    def cancel_after_parent_get(intent):
+        transport_calls.append(intent["provider"])
+        assert intent["provider"] == authority_module.GITHUB_LINEAGE_ARTIFACT_ZIP
+        cancel_repository = DurableRunRepository.for_worker_data_root(
+            ResourceResolver.for_development(owner["identity"]), owner["data_root"],
+        )
+        cancel_repository.record_cancel_intent(owner["run_id"])
+        return redirect
+
+    monkeypatch.setenv("GH_TOKEN", "local-github-token")
+    monkeypatch.setattr(
+        authority_module, "_fixed_provider_get", cancel_after_parent_get,
+    )
+
+    def cancel_between_hops(authority, repository, _command, gate):
+        owner.update(
+            identity=repository.verified_identity,
+            data_root=repository._data_root,
+            run_id=gate["run_id"],
+        )
+        return authority.github_lineage_binary(
+            request_target="/repos/Thabearr/ATHENA/actions/artifacts/123/zip",
+            accept="application/vnd.github+json",
+        )
+
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch, cancel_between_hops,
+    )
+
+    assert isinstance(captured.get("error"), RunStateConflict)
+    assert transport_calls == [authority_module.GITHUB_LINEAGE_ARTIFACT_ZIP]
+    assert case["repository"].run_snapshot(case["run_id"])["state"] == "CANCEL_REQUESTED"
+    with case["repository"]._operation() as conn:
+        rows = conn.execute(
+            "SELECT state FROM app_external_operations WHERE run_id=?",
+            (case["run_id"],),
+        ).fetchall()
+    assert rows == [("CONFIRMED",)]
+    event_types = [event[2] for event in case["repository"].read_events(case["run_id"])]
+    assert event_types.count("CURRENT_SHADOW_GET_PREPARED") == 1
+    assert event_types.count("CURRENT_SHADOW_GET_SENT") == 1
+    assert "CURRENT_SHADOW_GET_RESPONSE_RETAINED" in event_types
+
+
+def test_product_github_unapproved_redirect_host_is_never_contacted(
+    tmp_path, clock, monkeypatch,
+):
+    from runtime import current_shadow_operation_authority as authority_module
+    from runtime.current_shadow_operation_authority import (
+        ProductOperationAuthorityError, ProviderGetResponse,
+    )
+
+    transport_calls = []
+
+    def fake_github_response(intent):
+        transport_calls.append(intent["provider"])
+        return ProviderGetResponse(
+            body=b"", status=302, observed_at="2030-01-01T00:00:00.000000Z",
+            content_type="application/json", content_length=0,
+            content_length_header="0",
+            location="https://unapproved.example/download.zip?sig=private-query",
+        )
+
+    monkeypatch.setenv("GH_TOKEN", "local-github-token")
+    monkeypatch.setattr(
+        authority_module, "_fixed_provider_get", fake_github_response,
+    )
+
+    def attempt_download(authority, *_args):
+        with pytest.raises(ProductOperationAuthorityError):
+            authority.github_lineage_binary(
+                request_target="/repos/Thabearr/ATHENA/actions/artifacts/123/zip",
+                accept="application/vnd.github+json",
+            )
+
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch, attempt_download,
+    )
+
+    assert captured["result"] is None
+    assert transport_calls == [authority_module.GITHUB_LINEAGE_ARTIFACT_ZIP]
+    with case["repository"]._operation() as conn:
+        rows = conn.execute(
+            "SELECT state,error_code FROM app_external_operations WHERE run_id=?",
+            (case["run_id"],),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == "OUTCOME_UNKNOWN"
+    assert "unapproved.example" not in b"".join(
+        path.read_bytes() for path in case["roots"].data_root.rglob("*")
+        if path.is_file()
+    ).decode("latin-1")
+
+
+def test_product_fotmob_pc_upcoming_and_event_sources_share_the_get_port(
+    tmp_path, clock, monkeypatch,
+):
+    from runtime import current_shadow_operation_authority as authority_module
+    from runtime.current_shadow_operation_authority import ProviderGetResponse
+    from domain import current_shadow_sportybet_pc_upcoming_discovery as pc_source
+    from domain import sportybet_live_event_quote_evidence as event_source
+    from scripts import capture_fotmob_data_matches as fotmob_source
+    from datetime import datetime, timezone
+
+    calls = []
+
+    def synthetic_transport(intent):
+        calls.append(intent)
+        return ProviderGetResponse(
+            body=b"{}", status=200, observed_at="2030-01-01T00:00:00.000000Z",
+            content_type="application/json", content_length=2,
+            content_length_header="2",
+        )
+
+    monkeypatch.setattr(
+        authority_module, "_fixed_provider_get", synthetic_transport,
+    )
+
+    def acquire_through_sources(authority, *_args):
+        date = authority._context["allowed_dates"][0]
+        fotmob_source.fetch_fotmob_data_matches(
+            request_date=date, timezone="UTC", ccode3="NGA",
+        )
+        nonce = int(datetime.now(timezone.utc).timestamp() * 1000)
+        pc_source._fetch_page(1, nonce, operation_epoch=1)
+        event_source._network_fetch("sr:match:123456789")
+        return tuple(call["provider"] for call in calls)
+
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch, acquire_through_sources,
+    )
+
+    assert captured["result"] == (
+        "FOTMOB_DATA_MATCHES", "SPORTYBET_PC_UPCOMING", "SPORTYBET_EVENT_DETAIL",
+    )
+    with case["repository"]._operation() as conn:
+        operations = conn.execute(
+            "SELECT state FROM app_external_operations WHERE run_id=?",
+            (case["run_id"],),
+        ).fetchall()
+    assert operations == [("CONFIRMED",), ("CONFIRMED",), ("CONFIRMED",)]
+    events = [event[2] for event in case["repository"].read_events(case["run_id"])]
+    assert events.count("CURRENT_SHADOW_GET_PREPARED") == 3
+    assert events.count("CURRENT_SHADOW_GET_SENT") == 3
+    assert events.count("CURRENT_SHADOW_GET_RESPONSE_RETAINED") == 3
+
+
+def test_product_pr151_lineage_readers_route_every_github_get_through_authority(
+    tmp_path, clock, monkeypatch,
+):
+    from runtime import current_shadow_operation_authority as authority_module
+    from runtime.current_shadow_operation_authority import (
+        ProductOperationAuthorityError, ProviderGetResponse,
+    )
+    from domain import current_fotmob_latest_durable_fresh_history as history
+
+    calls = []
+
+    def synthetic_transport(intent):
+        calls.append((intent["provider"], intent["request_target"]))
+        body = b"github-artifact-bytes" if intent["provider"] in {
+            authority_module.GITHUB_LINEAGE_ARTIFACT_ZIP,
+            authority_module.GITHUB_LINEAGE_RELEASE_ASSET,
+        } else b"{}"
+        return ProviderGetResponse(
+            body=body, status=200, observed_at="2030-01-01T00:00:00.000000Z",
+            content_type="application/json", content_length=len(body),
+            content_length_header=str(len(body)),
+        )
+
+    def call_all_readers(**kwargs):
+        result = {
+            "main": kwargs["get_main_ref"](),
+            "runs": kwargs["get_runs_page"](1, 100),
+            "run": kwargs["get_run_by_id"](123),
+            "artifacts": kwargs["get_run_artifacts"](123),
+            "jobs": kwargs["get_run_jobs"](123),
+            "artifact_zip": kwargs["download_artifact_zip"](456),
+            "release": kwargs["get_release"]("PR-119"),
+            "release_asset": kwargs["download_release_asset"](789),
+        }
+        return result
+
+    monkeypatch.setenv("GH_TOKEN", "local-github-token-must-not-be-retained")
+    monkeypatch.setattr(
+        authority_module, "_fixed_provider_get", synthetic_transport,
+    )
+    monkeypatch.setattr(history, "_build_with_readers", call_all_readers)
+
+    def build_history(authority, *_args):
+        result = history.build_current_fotmob_latest_durable_fresh_history_handoff(
+            current_bootstrap={}, source_raw_json=b"{}", source_manifest={},
+            legacy_bootstrap_projection_raw=b"{}", expected_main_sha="a" * 40,
+        )
+        with pytest.raises(ProductOperationAuthorityError):
+            authority.github_lineage_json(request_target="/repos/Thabearr/ATHENA/issues")
+        return result
+
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch, build_history, wait=False,
+    )
+    assert case["worker_finished"].wait(30)
+    assert case["worker_errors"] == []
+    assert "authority" in captured
+
+    assert set(captured["result"]) == {
+        "main", "runs", "run", "artifacts", "jobs", "artifact_zip", "release",
+        "release_asset",
+    }
+    assert len(calls) == 8
+    assert {provider for provider, _target in calls} == {
+        authority_module.GITHUB_LINEAGE_JSON,
+        authority_module.GITHUB_LINEAGE_ARTIFACT_ZIP,
+        authority_module.GITHUB_LINEAGE_RELEASE_ASSET,
+    }
+    with case["repository"]._operation() as conn:
+        operations = conn.execute(
+            "SELECT state FROM app_external_operations WHERE run_id=?",
+            (case["run_id"],),
+        ).fetchall()
+    assert operations == [("CONFIRMED",)] * 8
+    assert "/repos/Thabearr/ATHENA/issues" not in {
+        target for _provider, target in calls
+    }
+
+
+def test_product_runner_evidence_writer_is_cancel_fenced(
+    tmp_path, clock, monkeypatch,
+):
+    from runtime.resources import ResourceResolver
+    from database.run_repository import DurableRunRepository
+    from domain import current_shadow_all_market_runner as runner
+    from scripts import execute_current_shadow_request
+    from types import SimpleNamespace
+
+    output = tmp_path / "cancelled-product-output.json"
+    policy_directory = tmp_path / "cancelled-request-policy"
+
+    def cancel_then_write(_authority, repository, command, gate):
+        cancel_repository = DurableRunRepository.for_worker_data_root(
+            ResourceResolver.for_development(repository.verified_identity), repository._data_root,
+        )
+        cancel_repository.record_cancel_intent(gate["run_id"])
+        with pytest.raises(RunStateConflict):
+            runner._write(output, {"must_not_publish": True})
+        with pytest.raises(RunStateConflict):
+            execute_current_shadow_request._write_request_policy(SimpleNamespace(
+                output_dir=policy_directory, fixture_dates=None,
+                fixture_scope="today", create_share_code=False,
+            ))
+        return None
+
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch, cancel_then_write,
+    )
+
+    assert captured["result"] is None
+    assert not output.exists()
+    assert not policy_directory.exists()
+    assert case["repository"].run_snapshot(case["run_id"])["state"] == "CANCEL_REQUESTED"
+    assert "CURRENT_SHADOW_EVIDENCE_PUBLISHED" not in [
+        event[2] for event in case["repository"].read_events(case["run_id"])
+    ]
+
+
+@pytest.mark.parametrize("phase", ["PREPARED", "SENT"])
+def test_provider_get_recovery_preserves_never_sent_vs_unknown_crash_boundary(
+    tmp_path, clock, monkeypatch, phase,
+):
+    from runtime.current_shadow_operation_authority import (
+        _build_provider_get_intent, provider_get_idempotency_key,
+    )
+    from scripts.capture_fotmob_data_matches import (
+        REQUEST_HEADERS, REQUEST_TIMEOUT_SECONDS, request_target,
+    )
+    from domain.fotmob_data_matches_capture import MAX_RESPONSE_BYTES
+    from runtime.resources import ResourceResolver
+    from database.run_repository import DurableRunRepository
+
+    monkeypatch.setattr(
+        "runtime.current_shadow_operation_authority._fixed_provider_get",
+        lambda _intent: pytest.fail("recovery fixture must never call a provider"),
+    )
+
+    def stop_at_boundary(authority, repository, command, gate):
+        context = authority._context
+        intent = _build_provider_get_intent(
+            context, provider="FOTMOB_DATA_MATCHES",
+            request_target=request_target("20300101", "UTC", "NGA"),
+            logical_id="20300101", headers=tuple(REQUEST_HEADERS),
+            timeout_seconds=REQUEST_TIMEOUT_SECONDS, maximum_bytes=MAX_RESPONSE_BYTES,
+            sequence=1,
+        )
+        intent_bytes = canonical_json_bytes(intent)
+        operation_id = repository.prepare_current_shadow_provider_get(
+            context=context, command=command, gate=gate,
+            gate_bytes=canonical_json_bytes(gate), intent=intent,
+            intent_bytes=intent_bytes,
+            idempotency_key=provider_get_idempotency_key(context, intent),
+        )
+        if phase == "SENT":
+            assert repository.authorize_current_shadow_provider_get_sent(
+                context=context, command=command, gate=gate,
+                gate_bytes=canonical_json_bytes(gate), operation_id=operation_id,
+            ) is True
+        return operation_id
+
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch, stop_at_boundary,
+    )
+    assert "error" not in captured
+    case["repository"].record_cancel_intent(case["run_id"])
+    with case["repository"]._operation() as conn:
+        lease_token = conn.execute(
+            "SELECT lease_token FROM app_run_attempts WHERE attempt_id=?",
+            (captured["context"]["attempt_id"],),
+        ).fetchone()[0]
+    case["repository"].reconcile_dead_attempt(
+        case["run_id"], captured["context"]["attempt_id"], lease_token,
+    )
+    with case["repository"]._operation() as conn:
+        state, error_code = conn.execute(
+            "SELECT state,error_code FROM app_external_operations WHERE run_id=?",
+            (case["run_id"],),
+        ).fetchone()
+    expected = (
+        ("FAILED", "PROVIDER_GET_NEVER_SENT") if phase == "PREPARED"
+        else ("OUTCOME_UNKNOWN", "PROVIDER_GET_OUTCOME_UNKNOWN")
+    )
+    assert (state, error_code) == expected
+    event_types = [event[2] for event in case["repository"].read_events(case["run_id"])]
+    if phase == "PREPARED":
+        assert "CURRENT_SHADOW_GET_NEVER_SENT" in event_types
+    else:
+        assert "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN" in event_types
+    assert case["repository"].run_snapshot(case["run_id"])["state"] == "CANCELLED"
+
+
+def test_product_get_sent_permit_can_settle_after_cancel_but_cannot_start_next_get(
+    tmp_path, clock, monkeypatch,
+):
+    from runtime.current_shadow_operation_authority import (
+        ProductOperationAuthorityError, ProviderGetResponse,
+    )
+    from runtime.resources import ResourceResolver
+    from database.run_repository import DurableRunRepository
+    from domain import current_shadow_sportybet_pc_upcoming_discovery as pc_source
+    import time
+
+    entered_transport = threading.Event()
+    release_transport = threading.Event()
+    cancel_committed = threading.Event()
+    physical_attempts = []
+    response = ProviderGetResponse(
+        body=b"{}", status=200, observed_at="2030-01-01T00:00:00.000000Z",
+        content_type="application/json", content_length=2, content_length_header="2",
+    )
+
+    def fake_transport(_intent):
+        entered_transport.set()
+        if not release_transport.wait(10):
+            raise AssertionError("SENT/transport barrier was not released")
+        physical_attempts.append(cancel_committed.is_set())
+        return response
+
+    monkeypatch.setattr(
+        "runtime.current_shadow_operation_authority._fixed_provider_get", fake_transport,
+    )
+
+    def get_pc_page(authority, page_num):
+        nonce = int(time.time() * 1000)
+        return authority.perform_get(
+            provider="SPORTYBET_PC_UPCOMING",
+            request_target=pc_source.request_target(page_num, nonce),
+            logical_id=f"epoch:1:page:{page_num}", headers=tuple(pc_source.REQUEST_HEADERS),
+            timeout_seconds=pc_source.REQUEST_TIMEOUT_SECONDS,
+            maximum_bytes=pc_source.MAX_RESPONSE_BYTES,
+        )
+
+    def settle_then_attempt_second(authority, _repository, _command, _gate):
+        first = get_pc_page(authority, 1)
+        try:
+            from runtime.current_shadow_operation_authority import current_product_authority
+            assert current_product_authority() is authority
+            get_pc_page(authority, 2)
+        except BaseException as exc:
+            return first, exc
+        return first, None
+
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch, settle_then_attempt_second,
+        release_gate=False, wait=False,
+    )
+    case["release_gate"].set()
+    assert entered_transport.wait(10)
+    cancel_repository = DurableRunRepository.for_worker_data_root(
+        ResourceResolver.for_development(case["identity"]), case["roots"].data_root,
+    )
+    cancel_finished = threading.Event()
+
+    def cancel_during_get():
+        cancel_repository.record_cancel_intent(case["run_id"])
+        cancel_committed.set()
+        cancel_finished.set()
+
+    cancellation_thread = threading.Thread(target=cancel_during_get, name="cancel-while-get-test")
+    cancellation_thread.start()
+    if not cancel_finished.wait(5):
+        release_transport.set()
+        cancellation_thread.join(5)
+        pytest.fail("provider transport held the DB or app-root lock across the GET")
+    release_transport.set()
+    assert case["worker_finished"].wait(10)
+    assert case["worker_errors"] == []
+    assert physical_attempts == [True]
+    first, denied = captured["result"]
+    assert first.body == b"{}"
+    assert isinstance(denied, (ProductOperationAuthorityError, RunStateConflict))
+    event_types = [event[2] for event in case["repository"].read_events(case["run_id"])]
+    assert event_types.count("CURRENT_SHADOW_GET_PREPARED") == 1
+    assert event_types.count("CURRENT_SHADOW_GET_SENT") == 1
+    assert event_types.index("CURRENT_SHADOW_GET_SENT") < event_types.index("RUN_CANCEL_REQUESTED")
+    assert event_types.index("RUN_CANCEL_REQUESTED") < event_types.index(
+        "CURRENT_SHADOW_GET_RESPONSE_RETAINED"
+    )
+    with case["repository"]._operation() as conn:
+        row = conn.execute(
+            "SELECT state FROM app_external_operations WHERE run_id=?",
+            (case["run_id"],),
+        ).fetchone()
+    assert row == ("CONFIRMED",)
 
 
 def test_atomic_offline_effect_start_orders_before_a_concurrent_cancel_fence(

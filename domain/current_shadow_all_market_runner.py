@@ -229,12 +229,41 @@ def _legacy_bootstrap_bytes() -> bytes:
 
 
 def _write(path: Path, payload: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    raw = _canonical(dict(payload))
-    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as handle:
-        handle.write(raw)
-        temporary = Path(handle.name)
-    os.replace(temporary, path)
+    def publish() -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        raw = _canonical(dict(payload))
+        with tempfile.NamedTemporaryFile(
+            dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False,
+        ) as handle:
+            handle.write(raw)
+            temporary = Path(handle.name)
+        os.replace(temporary, path)
+
+    from runtime.current_shadow_operation_authority import current_product_authority
+
+    authority = current_product_authority()
+    if authority is None:
+        publish()
+    else:
+        labels = {
+            "current-shadow-request-policy.json": "REQUEST_POLICY",
+            RUN_STAGE_FILENAME: "RUN_STAGE",
+            RUN_PROGRESS_FILENAME: "RUN_PROGRESS",
+            RUN_RECEIPT_FILENAME: "RUN_RECEIPT",
+            "current-shadow-current-asof-xg-diagnostic.json": "MODEL_DIAGNOSTIC",
+        }
+        authority.publish_evidence(
+            evidence_kind=labels.get(path.name, "CURRENT_SHADOW_OUTPUT"),
+            publish=publish,
+        )
+
+
+def _ensure_output_directory(path: Path, *, evidence_kind: str = "CURRENT_SHADOW_OUTPUT_DIRECTORY") -> None:
+    from runtime.current_shadow_operation_authority import publish_product_evidence
+    publish_product_evidence(
+        evidence_kind=evidence_kind,
+        publish=lambda: path.mkdir(parents=True, exist_ok=True),
+    )
 
 
 def _checkpoint_stage(
@@ -1247,7 +1276,7 @@ def write_current_shadow_timeout_receipt(
         raise CurrentShadowAllMarketRunnerError("create_share_code must be exact bool")
     repository_root = Path(__file__).resolve().parents[1]
     exact_commit_sha = _git_head(repository_root)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_output_directory(output_dir, evidence_kind="TIMEOUT_OUTPUT_DIRECTORY")
     progress = _read_progress_checkpoint(
         output_dir=output_dir,
         exact_commit_sha=exact_commit_sha,
@@ -1310,7 +1339,7 @@ def _execute_current_shadow_all_market_with_bindings(
     runtime_bindings._validate_self()
     exact_commit_sha = _git_head(repository_root)
     lineage_main_sha = _expected_lineage_main_sha()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_output_directory(output_dir)
     receipt_path = output_dir / RUN_RECEIPT_FILENAME
     sources: CurrentShadowRunnerSourceBundle | None = None
     portfolio: portfolio_module.ShadowPortfolioOptimization | None = None

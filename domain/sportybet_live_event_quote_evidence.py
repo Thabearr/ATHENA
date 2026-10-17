@@ -33,7 +33,7 @@ import types
 from typing import Any, Iterable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from domain.sportybet_lite_source_capture import (
     SportyBetLiteCaptureError,
@@ -592,7 +592,11 @@ def _evidence_root(repository_root: Path, *, create: bool) -> Path:
     try:
         _reject_symlink_components(root, "live event quote evidence root")
         if create:
-            _ensure_directory_tree_durable(root, boundary=repository)
+            from runtime.current_shadow_operation_authority import publish_product_evidence
+            publish_product_evidence(
+                evidence_kind="EVENT_DETAIL_CAPTURE_ROOT",
+                publish=lambda: _ensure_directory_tree_durable(root, boundary=repository),
+            )
         else:
             resolved = root.resolve(strict=True)
             resolved.relative_to(repository)
@@ -610,20 +614,24 @@ def _evidence_root(repository_root: Path, *, create: bool) -> Path:
 
 
 def _write_exclusive(path: Path, content: bytes) -> None:
-    try:
-        with path.open("xb") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        _sync_directory(path.parent)
-    except FileExistsError as exc:
-        raise SportyBetLiveEventQuoteEvidenceError(
-            f"refusing to overwrite {path.name}"
-        ) from exc
-    except OSError as exc:
-        raise SportyBetLiveEventQuoteEvidenceError(
-            f"could not durably write {path.name}"
-        ) from exc
+    def publish() -> None:
+        try:
+            with path.open("xb") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            _sync_directory(path.parent)
+        except FileExistsError as exc:
+            raise SportyBetLiveEventQuoteEvidenceError(
+                f"refusing to overwrite {path.name}"
+            ) from exc
+        except OSError as exc:
+            raise SportyBetLiveEventQuoteEvidenceError(
+                f"could not durably write {path.name}"
+            ) from exc
+
+    from runtime.current_shadow_operation_authority import publish_product_evidence
+    publish_product_evidence(evidence_kind="EVENT_DETAIL_CAPTURE", publish=publish)
 
 
 def _build_manifest(
@@ -660,6 +668,30 @@ def _network_fetch(event_id: str) -> tuple[bytes, int, datetime]:
     request = Request(
         request_url(event_id), method="GET", headers=dict(REQUEST_HEADERS)
     )
+    from runtime.current_shadow_operation_authority import (
+        current_product_authority,
+    )
+
+    authority = current_product_authority()
+    if authority is not None:
+        result = authority.perform_get(
+            provider="SPORTYBET_EVENT_DETAIL",
+            request_target=request_target(event_id),
+            logical_id="event:" + event_id,
+            headers=tuple(REQUEST_HEADERS), timeout_seconds=45,
+            maximum_bytes=MAX_RESPONSE_BYTES,
+        )
+        observed_at = parse_utc_timestamp(result.observed_at, "provider observed_at")
+        if len(result.body) > MAX_RESPONSE_BYTES:
+            raise SportyBetLiveEventQuoteEvidenceError(
+                "SportyBet event response exceeds byte bound"
+            )
+        if result.status != 200:
+            raise SportyBetLiveEventQuoteEvidenceError(
+                f"SportyBet event returned HTTP {result.status}"
+            )
+        return result.body, result.status, observed_at
+
     try:
         with urlopen(request, timeout=45) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
@@ -712,7 +744,11 @@ def capture_live_event_quote_evidence(
             raise SportyBetLiveEventQuoteEvidenceError("capture identity collision")
         return directory, existing
     try:
-        directory.mkdir(exist_ok=False)
+        from runtime.current_shadow_operation_authority import publish_product_evidence
+        publish_product_evidence(
+            evidence_kind="EVENT_DETAIL_CAPTURE_DIRECTORY",
+            publish=lambda: directory.mkdir(exist_ok=False),
+        )
         _sync_directory(root)
         _sync_directory(directory)
     except OSError as exc:

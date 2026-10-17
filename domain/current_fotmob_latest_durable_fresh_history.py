@@ -971,37 +971,52 @@ def build_current_fotmob_latest_durable_fresh_history_handoff(
     """Fixed read-only GitHub issuer for the reviewed ATHENA PR151 campaign."""
     if not os.environ.get("GH_TOKEN"):
         raise _error("GH_TOKEN is required for fixed GitHub PR151 lineage acquisition")
+    from runtime.current_shadow_operation_authority import current_product_authority
+
+    product_authority = current_product_authority()
+
+    def github_json(endpoint: str) -> Mapping[str, Any]:
+        if product_authority is None:
+            return lineage_audit._gh_json(endpoint)
+        raw = product_authority.github_lineage_json(request_target=endpoint)
+        return lineage_audit._parse_json(raw, f"GitHub API response {endpoint}")
 
     def get_main_ref() -> Mapping[str, Any]:
-        return lineage_audit._gh_json(f"/repos/{REPOSITORY}/git/ref/heads/main")
+        return github_json(f"/repos/{REPOSITORY}/git/ref/heads/main")
 
     def get_runs_page(page: int, per_page: int) -> Mapping[str, Any]:
-        return lineage_audit._gh_json(
+        return github_json(
             f"/repos/{REPOSITORY}/actions/workflows/"
             f"fotmob-utc-native-xg-fresh-holdout.yml/runs?per_page={per_page}&page={page}"
         )
 
     def get_run_by_id(run_id: int) -> Mapping[str, Any]:
-        return lineage_audit._gh_json(f"/repos/{REPOSITORY}/actions/runs/{run_id}")
+        return github_json(f"/repos/{REPOSITORY}/actions/runs/{run_id}")
 
     def get_run_artifacts(run_id: int) -> Mapping[str, Any]:
-        return lineage_audit._gh_json(f"/repos/{REPOSITORY}/actions/runs/{run_id}/artifacts")
+        return github_json(f"/repos/{REPOSITORY}/actions/runs/{run_id}/artifacts")
 
     def download_artifact_zip(artifact_id: int) -> bytes:
-        return pr175_projection._gh_download_compatible(
-            f"/repos/{REPOSITORY}/actions/artifacts/{artifact_id}/zip"
+        endpoint = f"/repos/{REPOSITORY}/actions/artifacts/{artifact_id}/zip"
+        if product_authority is None:
+            return pr175_projection._gh_download_compatible(endpoint)
+        return product_authority.github_lineage_binary(
+            request_target=endpoint, accept="application/vnd.github+json",
         )
 
     def get_release(tag: str) -> Mapping[str, Any]:
-        return lineage_audit._gh_json(f"/repos/{REPOSITORY}/releases/tags/{tag}")
+        return github_json(f"/repos/{REPOSITORY}/releases/tags/{tag}")
 
     def download_release_asset(asset_id: int) -> bytes:
-        return pr175_projection._gh_download_compatible(
-            f"/repos/{REPOSITORY}/releases/assets/{asset_id}"
+        endpoint = f"/repos/{REPOSITORY}/releases/assets/{asset_id}"
+        if product_authority is None:
+            return pr175_projection._gh_download_compatible(endpoint)
+        return product_authority.github_lineage_binary(
+            request_target=endpoint, accept="application/octet-stream",
         )
 
     def get_run_jobs(run_id: int) -> Mapping[str, Any]:
-        return lineage_audit._gh_json(
+        return github_json(
             f"/repos/{REPOSITORY}/actions/runs/{run_id}/jobs?filter=latest&per_page=100"
         )
 

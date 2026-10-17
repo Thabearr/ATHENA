@@ -608,7 +608,10 @@ class DurableRunRepository:
         publish_gate(gate_path, gate_raw)
         return gate_path
 
-    def _verify_worker_startup_gate_conn(self, conn, *, command, gate, gate_bytes):
+    def _verify_worker_startup_gate_conn(
+        self, conn, *, command, gate, gate_bytes, expected_pid=None,
+        allowed_run_states=("RUNNING",),
+    ):
         from runtime.worker_launcher import WorkerCommand
         from runtime.worker_startup_gate import POLICY_ID, _GATE_FIELDS
         from services.worker_process_control import WorkerProcessControl, owner_identity
@@ -617,6 +620,13 @@ class DurableRunRepository:
                 or set(gate) != _GATE_FIELDS or type(gate_bytes) is not bytes
                 or canonical_json_bytes(gate) != gate_bytes):
             raise RunRepositoryError("startup gate bytes are not the exact typed document")
+        if expected_pid is None:
+            expected_pid = os.getpid()
+        if (type(expected_pid) is not int or expected_pid <= 0
+                or type(allowed_run_states) is not tuple
+                or not allowed_run_states
+                or any(state not in {"RUNNING", "CANCEL_REQUESTED"} for state in allowed_run_states)):
+            raise RunRepositoryError("startup gate process/state validation mode is invalid")
         if (gate["policy_id"] != POLICY_ID
                 or type(gate["envelope_sha256"]) is not str
                 or re.fullmatch(r"[0-9a-f]{64}", gate["envelope_sha256"]) is None
@@ -626,7 +636,7 @@ class DurableRunRepository:
                 or gate["release_identity_kind"] != command.release_identity_kind
                 or gate["release_identity_id"] != command.release_identity_id
                 or gate["run_id"] != command.run_directory.parent.name
-                or gate["pid"] != os.getpid()
+                or gate["pid"] != expected_pid
                 or type(gate["attempt_id"]) is not str or not gate["attempt_id"]
                 or type(gate["worker_instance_id"]) is not str or not gate["worker_instance_id"]
                 or type(gate["lease_sha256"]) is not str
@@ -641,7 +651,7 @@ class DurableRunRepository:
             "SELECT state,request_bytes,request_sha256,envelope_bytes,envelope_sha256 "
             "FROM app_runs WHERE run_id=?", (run_id,),
         ).fetchone()
-        if (run is None or run[0] != "RUNNING"
+        if (run is None or run[0] not in allowed_run_states
                 or hashlib.sha256(run[1]).hexdigest() != run[2]
                 or run[2] != command.request_artifact_id
                 or run[4] != gate["envelope_sha256"]):
@@ -683,7 +693,7 @@ class DurableRunRepository:
         )
         locator = gate["process_locator"]
         if (not all(locator.get(key) == value for key, value in owner.items())
-                or locator.get("pid") != os.getpid()
+                or locator.get("pid") != expected_pid
                 or WorkerProcessControl.state(locator, owner) != "ACTIVE"):
             raise RunRepositoryError("startup gate process identity is stale or unowned")
         payload = dict(gate)
@@ -740,6 +750,604 @@ class DurableRunRepository:
             if effect is not None:
                 effect()
         return True
+
+    def launch_current_shadow_supervisor(
+        self, *, command, gate, gate_bytes, launch, worker_executable_path,
+        worker_executable_sha256,
+    ):
+        """Spawn one blocked nested supervisor while cancellation is serialized.
+
+        The child receives no release byte until the exact child identity and
+        immutable context file are committed with this event. Cancellation
+        before this transaction prevents Popen; cancellation after commit is
+        rechecked by the child and at every provider/evidence boundary.
+        """
+        from runtime.current_shadow_operation_authority import (
+            CONTEXT_FILENAME, build_context_document, context_path, publish_context,
+        )
+        from runtime.worker_launcher import WorkerCommand
+        from services.worker_process_control import process_creation_identity
+
+        if (type(command) is not WorkerCommand or command.operation != "CURRENT_SHADOW_REQUEST"
+                or not callable(launch) or type(worker_executable_path) is not str
+                or type(worker_executable_sha256) is not str):
+            raise RunRepositoryError("exact Current Shadow supervisor launch is required")
+        path = context_path(command)
+        if path.name != CONTEXT_FILENAME:
+            raise RunRepositoryError("nested supervisor context path is not fixed")
+        process = None
+        try:
+            with self._operation(write=True) as conn:
+                gate_payload = self._verify_worker_startup_gate_conn(
+                    conn, command=command, gate=gate, gate_bytes=gate_bytes,
+                )
+                run = conn.execute(
+                    "SELECT state,request_sha256,envelope_sha256,request_bytes,envelope_bytes "
+                    "FROM app_runs WHERE run_id=?", (gate["run_id"],),
+                ).fetchone()
+                if (run is None or run[0] != "RUNNING"
+                        or run[1] != command.request_artifact_id
+                        or run[2] != gate["envelope_sha256"]):
+                    raise RunStateConflict("cancellation won before nested supervisor launch")
+                request = RunRequest.from_json_bytes(run[3])
+                envelope = ExecutionEnvelope.from_json_bytes(run[4])
+                if (request.authority_profile != "SHADOW" or request.mode != "research_shadow"
+                        or request.create_share_code is not False or request.place_wager is not False
+                        or envelope.requested_operations.acquire_sources is not True
+                        or envelope.requested_operations.create_share_code is not False
+                        or envelope.authority_manifest.provider_acquisition is not True
+                        or envelope.authority_manifest.share_code_generation is not False):
+                    raise RunRepositoryError("nested supervisor exceeds admitted Current Shadow intent")
+                started = conn.execute(
+                    "SELECT payload_bytes,payload_sha256 FROM app_run_events WHERE run_id=? "
+                    "AND event_type='WORKER_STARTUP_EFFECT_STARTED'",
+                    (gate["run_id"],),
+                ).fetchall()
+                if (len(started) != 1 or started[0][0] != canonical_json_bytes(gate_payload)
+                        or hashlib.sha256(started[0][0]).hexdigest() != started[0][1]):
+                    raise RunRepositoryError("nested launch lacks the exact consumed startup gate")
+                if (path.exists() or path.is_symlink()
+                        or conn.execute(
+                            "SELECT 1 FROM app_run_events WHERE run_id=? "
+                            "AND event_type='CURRENT_SHADOW_SUPERVISOR_STARTED'",
+                            (gate["run_id"],),
+                        ).fetchone()):
+                    raise RunStateConflict("nested supervisor launch is single-use")
+                process = launch(path)
+                child_pid = getattr(process, "pid", None)
+                if (type(child_pid) is not int or child_pid <= 0
+                        or getattr(process, "stdin", None) is None):
+                    raise RunRepositoryError("nested supervisor must start blocked on its exact handshake pipe")
+                child_identity = process_creation_identity(child_pid)
+                context = build_context_document(
+                    command=command, gate=gate, gate_bytes=gate_bytes,
+                    data_root=self._data_root, child_pid=child_pid,
+                    child_process_identity=child_identity,
+                    worker_executable_path=worker_executable_path,
+                    worker_executable_sha256=worker_executable_sha256,
+                    source_identity_sha256=hashlib.sha256(
+                        canonical_json_bytes(envelope.source_identity)
+                    ).hexdigest(),
+                    allowed_dates=tuple(value.strftime("%Y%m%d") for value in request.dates),
+                )
+                context_raw = publish_context(path, context)
+                event_payload = {
+                    "attempt_id": gate["attempt_id"],
+                    "worker_instance_id": gate["worker_instance_id"],
+                    "lease_sha256": gate["lease_sha256"],
+                    "request_sha256": command.request_artifact_id,
+                    "envelope_sha256": gate["envelope_sha256"],
+                    "command_sha256": hashlib.sha256(command.canonical_bytes).hexdigest(),
+                    "gate_sha256": hashlib.sha256(gate_bytes).hexdigest(),
+                    "context_sha256": hashlib.sha256(context_raw).hexdigest(),
+                    "parent_pid": gate["pid"],
+                    "child_pid": child_pid,
+                    "child_process_identity": child_identity,
+                    "worker_executable_sha256": worker_executable_sha256,
+                }
+                version = conn.execute(
+                    "SELECT state_version FROM app_runs WHERE run_id=?", (gate["run_id"],),
+                ).fetchone()[0]
+                self._event(
+                    conn, gate["run_id"], version, "CURRENT_SHADOW_SUPERVISOR_STARTED",
+                    event_payload, _utc(self._clock()),
+                )
+            return process
+        except BaseException:
+            if process is not None:
+                try:
+                    stream = getattr(process, "stdin", None)
+                    if stream is not None:
+                        stream.close()
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=5)
+                except Exception:
+                    pass
+            raise
+
+    def _verify_current_shadow_context_conn(
+        self, conn, *, context, context_bytes, command, gate, gate_bytes,
+        allowed_run_states=("RUNNING",),
+    ):
+        """Re-authenticate supervisor, parent and source identity for each DB action."""
+        from runtime.current_shadow_operation_authority import (
+            CONTEXT_FILENAME, POLICY_ID, MAX_CONTEXT_BYTES, context_path,
+            read_context, worker_executable_identity,
+        )
+        from runtime.worker_startup_gate import FILENAME as STARTUP_GATE_FILENAME, read_gate_document
+        from runtime.worker_launcher import WorkerCommand
+        from services.worker_process_control import process_creation_identity
+
+        if (type(context) is not dict or set(context) != {
+                "schema_version", "policy_id", "run_id", "attempt_id", "worker_instance_id",
+                "lease_sha256", "request_sha256", "envelope_sha256", "command_sha256",
+                "gate_sha256", "source_identity_sha256", "allowed_dates", "release_identity_kind",
+                "release_identity_id", "source_revision",
+                "operation", "mode", "profile", "intent_id", "data_root", "parent_pid",
+                "parent_process_locator", "child_pid", "child_process_identity",
+                "worker_executable_path", "worker_executable_sha256",
+            } or type(context_bytes) is not bytes or len(context_bytes) > MAX_CONTEXT_BYTES
+                or canonical_json_bytes(context) != context_bytes
+                or type(command) is not WorkerCommand
+                or command.operation != "CURRENT_SHADOW_REQUEST"
+                or context.get("schema_version") != 1 or context.get("policy_id") != POLICY_ID
+                or context.get("operation") != "CURRENT_SHADOW_REQUEST"
+                or context.get("mode") != "research_shadow" or context.get("profile") != "SHADOW"
+                or context.get("intent_id") != "CURRENT_SHADOW_SOURCE_ACQUISITION_V1"
+                or context.get("data_root") != os.fspath(self._data_root)
+                or context.get("request_sha256") != command.request_artifact_id
+                or context.get("command_sha256") != hashlib.sha256(command.canonical_bytes).hexdigest()
+                or context.get("gate_sha256") != hashlib.sha256(gate_bytes).hexdigest()
+                or context.get("run_id") != gate.get("run_id")
+                or context.get("release_identity_kind") != command.release_identity_kind
+                or context.get("release_identity_id") != command.release_identity_id
+                or context.get("source_revision") != command.release_identity_id
+                or type(context.get("parent_pid")) is not int
+                or context.get("parent_pid") != gate.get("pid")
+                or context.get("child_pid") != os.getpid()
+                or os.getppid() != context.get("parent_pid")
+                or type(context.get("parent_process_locator")) is not dict
+                or context.get("parent_process_locator") != gate.get("process_locator")):
+            raise RunRepositoryError("nested Current Shadow context differs from this exact process")
+        if context_path(command).name != CONTEXT_FILENAME:
+            raise RunRepositoryError("nested context path is not fixed")
+        stored_context, stored_raw = read_context(context_path(command), command=command)
+        if stored_context != context or stored_raw != context_bytes:
+            raise RunRepositoryError("nested context file changed after authentication")
+        stored_gate, stored_gate_raw = read_gate_document(
+            command.run_directory / STARTUP_GATE_FILENAME
+        )
+        if stored_gate != gate or stored_gate_raw != gate_bytes:
+            raise RunRepositoryError("parent startup gate file changed after authentication")
+        try:
+            executable_path, executable_sha = worker_executable_identity()
+            child_identity = process_creation_identity(os.getpid())
+        except Exception as exc:
+            raise RunRepositoryError("nested process or executable identity is unavailable") from exc
+        if (executable_path != context.get("worker_executable_path")
+                or executable_sha != context.get("worker_executable_sha256")
+                or child_identity != context.get("child_process_identity")):
+            raise RunRepositoryError("nested worker executable or PID creation identity changed")
+        gate_event = self._verify_worker_startup_gate_conn(
+            conn, command=command, gate=gate, gate_bytes=gate_bytes,
+            expected_pid=context["parent_pid"], allowed_run_states=allowed_run_states,
+        )
+        if (context.get("attempt_id") != gate.get("attempt_id")
+                or context.get("worker_instance_id") != gate.get("worker_instance_id")
+                or context.get("lease_sha256") != gate.get("lease_sha256")
+                or context.get("envelope_sha256") != gate.get("envelope_sha256")):
+            raise RunLeaseFenced("nested worker differs from parent attempt lease")
+        request = RunRequest.from_json_bytes(
+            conn.execute("SELECT request_bytes FROM app_runs WHERE run_id=?",
+                         (context["run_id"],)).fetchone()[0]
+        )
+        envelope = ExecutionEnvelope.from_json_bytes(
+            conn.execute("SELECT envelope_bytes FROM app_runs WHERE run_id=?",
+                         (context["run_id"],)).fetchone()[0]
+        )
+        if (request.authority_profile != "SHADOW" or request.mode != "research_shadow"
+                or request.create_share_code is not False or request.place_wager is not False
+                or context.get("source_identity_sha256")
+                != hashlib.sha256(canonical_json_bytes(envelope.source_identity)).hexdigest()
+                or context.get("allowed_dates") != [value.strftime("%Y%m%d") for value in request.dates]
+                or envelope.requested_operations.acquire_sources is not True
+                or envelope.requested_operations.create_share_code is not False
+                or envelope.authority_manifest.provider_acquisition is not True
+                or envelope.authority_manifest.share_code_generation is not False):
+            raise RunRepositoryError("nested worker exceeds the exact product operation intent")
+        event_payload = {
+            "attempt_id": gate["attempt_id"],
+            "worker_instance_id": gate["worker_instance_id"],
+            "lease_sha256": gate["lease_sha256"],
+            "request_sha256": command.request_artifact_id,
+            "envelope_sha256": gate["envelope_sha256"],
+            "command_sha256": hashlib.sha256(command.canonical_bytes).hexdigest(),
+            "gate_sha256": hashlib.sha256(gate_bytes).hexdigest(),
+            "context_sha256": hashlib.sha256(context_bytes).hexdigest(),
+            "parent_pid": gate["pid"],
+            "child_pid": os.getpid(),
+            "child_process_identity": child_identity,
+            "worker_executable_sha256": executable_sha,
+        }
+        rows = conn.execute(
+            "SELECT payload_bytes,payload_sha256 FROM app_run_events WHERE run_id=? "
+            "AND event_type='CURRENT_SHADOW_SUPERVISOR_STARTED'",
+            (context["run_id"],),
+        ).fetchall()
+        if (len(rows) != 1 or rows[0][0] != canonical_json_bytes(event_payload)
+                or hashlib.sha256(rows[0][0]).hexdigest() != rows[0][1]):
+            raise RunRepositoryError("nested context lacks the exact committed child-start event")
+        return gate_event
+
+    def verify_current_shadow_supervisor_context(
+        self, *, context, context_bytes, command, gate, gate_bytes,
+    ):
+        with self._operation() as conn:
+            return self._verify_current_shadow_context_conn(
+                conn, context=context, context_bytes=context_bytes, command=command,
+                gate=gate, gate_bytes=gate_bytes,
+            )
+
+    def prepare_current_shadow_provider_get(
+        self, *, context, command, gate, gate_bytes, intent, intent_bytes, idempotency_key,
+    ):
+        from runtime.current_shadow_operation_authority import (
+            OPERATION_KIND, _build_provider_get_intent, provider_get_idempotency_key,
+        )
+
+        if type(intent) is not dict or type(intent_bytes) is not bytes:
+            raise ExternalOperationViolation("provider GET intent must be canonical typed bytes")
+        expected = _build_provider_get_intent(
+            context, provider=intent.get("provider"),
+            request_target=intent.get("request_target"), logical_id=intent.get("logical_id"),
+            headers=tuple(tuple(row) for row in intent.get("headers", ())),
+            timeout_seconds=intent.get("timeout_seconds"),
+            maximum_bytes=intent.get("maximum_bytes"), sequence=intent.get("sequence"),
+            origin=intent.get("origin"),
+            redirect_parent_operation_id=intent.get("redirect_parent_operation_id"),
+            redirect_target_sha256=intent.get("redirect_target_sha256"),
+        )
+        if canonical_json_bytes(expected) != intent_bytes or canonical_json_bytes(intent) != intent_bytes:
+            raise ExternalOperationViolation("provider GET request intent is not exact allowlisted authority")
+        intent_sha = hashlib.sha256(intent_bytes).hexdigest()
+        authority_sha = hashlib.sha256(canonical_json_bytes(context)).hexdigest()
+        if (idempotency_key != provider_get_idempotency_key(context, intent)
+                or intent.get("operation_kind") != OPERATION_KIND):
+            raise ExternalOperationViolation("provider GET idempotency/operation identity mismatch")
+        with self._operation(write=True) as conn:
+            self._verify_current_shadow_context_conn(
+                conn, context=context, context_bytes=canonical_json_bytes(context),
+                command=command, gate=gate, gate_bytes=gate_bytes,
+            )
+            run_id, attempt_id = context["run_id"], context["attempt_id"]
+            if conn.execute("SELECT state FROM app_runs WHERE run_id=?", (run_id,)).fetchone()[0] != "RUNNING":
+                raise ExternalOperationViolation("durable cancellation blocks a new provider GET")
+            if intent["provider"] == "GITHUB_LINEAGE_REDIRECT_BINARY":
+                parent = conn.execute(
+                    "SELECT attempt_id,operation_kind,state,response_artifact_id,input_artifact_id,intent_sha256 "
+                    "FROM app_external_operations WHERE run_id=? AND operation_id=?",
+                    (run_id, intent["redirect_parent_operation_id"]),
+                ).fetchone()
+                if (parent is None or parent[0] != attempt_id
+                        or parent[1] != OPERATION_KIND
+                        or parent[2] != "CONFIRMED" or parent[3] is None
+                        or parent[4] is None):
+                    raise ExternalOperationViolation("GitHub redirect lacks its exact confirmed parent response")
+                input_row = conn.execute(
+                    "SELECT logical_path,byte_sha256,byte_count FROM app_artifacts WHERE artifact_id=?",
+                    (parent[4],),
+                ).fetchone()
+                if input_row is None:
+                    raise ExternalOperationViolation("GitHub redirect parent intent artifact is absent")
+                input_raw = _read_bounded(
+                    contained(self._data_root, logical_locator(input_row[0])),
+                    min(input_row[2], 65_536),
+                    "GitHub lineage redirect parent intent",
+                )
+                if hashlib.sha256(input_raw).hexdigest() != input_row[1]:
+                    raise ExternalOperationViolation("GitHub redirect parent intent bytes changed")
+                try:
+                    parent_intent = json.loads(input_raw)
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise ExternalOperationViolation("GitHub redirect parent intent is malformed") from exc
+                if (type(parent_intent) is not dict
+                        or hashlib.sha256(input_raw).hexdigest() != parent[5]
+                        or parent_intent.get("provider") not in {
+                            "GITHUB_LINEAGE_ARTIFACT_ZIP", "GITHUB_LINEAGE_RELEASE_ASSET",
+                        }):
+                    raise ExternalOperationViolation("GitHub redirect parent is not one exact binary artifact GET")
+                parent_artifact = conn.execute(
+                    "SELECT logical_path,byte_sha256,byte_count FROM app_artifacts WHERE artifact_id=?",
+                    (parent[3],),
+                ).fetchone()
+                if parent_artifact is None:
+                    raise ExternalOperationViolation("GitHub redirect parent response artifact is absent")
+                parent_raw = _read_bounded(
+                    contained(self._data_root, logical_locator(parent_artifact[0])),
+                    min(parent_artifact[2], 24 * 1024 * 1024),
+                    "GitHub lineage redirect parent response",
+                )
+                if hashlib.sha256(parent_raw).hexdigest() != parent_artifact[1]:
+                    raise ExternalOperationViolation("GitHub redirect parent response bytes changed")
+                try:
+                    parent_response = json.loads(parent_raw)
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise ExternalOperationViolation("GitHub redirect parent response is malformed") from exc
+                if (type(parent_response) is not dict
+                        or parent_response.get("operation_id") != intent["redirect_parent_operation_id"]
+                        or parent_response.get("intent_sha256") != parent[5]
+                        or parent_response.get("redirect_target_sha256")
+                            != intent["redirect_target_sha256"]
+                        or parent_response.get("status") not in {301, 302, 303, 307, 308}):
+                    raise ExternalOperationViolation("GitHub signed redirect hash differs from its parent response")
+            if conn.execute(
+                "SELECT 1 FROM app_external_operations WHERE run_id=? AND operation_kind=? AND idempotency_key=?",
+                (run_id, OPERATION_KIND, idempotency_key),
+            ).fetchone():
+                raise ExternalOperationViolation("provider GET operation identity was already consumed")
+            prior_prepared = conn.execute(
+                "SELECT payload_bytes FROM app_run_events WHERE run_id=? "
+                "AND event_type='CURRENT_SHADOW_GET_PREPARED' ORDER BY sequence",
+                (run_id,),
+            ).fetchall()
+            if intent["sequence"] != len(prior_prepared) + 1:
+                raise ExternalOperationViolation("provider GET sequence is not the next durable operation")
+            if conn.execute(
+                "SELECT 1 FROM app_external_operations WHERE run_id=? AND attempt_id=? "
+                "AND operation_kind=? AND state IN ('PREPARED','SENT','OUTCOME_UNKNOWN')",
+                (run_id, attempt_id, OPERATION_KIND),
+            ).fetchone():
+                raise ExternalOperationViolation("prior provider GET has not reached a known settled state")
+            operation_id = "provider-get-" + hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()
+            input_artifact_id = "provider-get-input-" + intent_sha
+            locator = f"external-operation-evidence/{operation_id}-input.json"
+            stamp = _utc(self._clock())
+            publish(self._data_root, locator, intent_bytes)
+            conn.execute(
+                "INSERT INTO app_artifacts VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (input_artifact_id, intent_sha, intent_sha, len(intent_bytes),
+                 "application/json", "EXTERNAL_INPUT", locator, "RETAINED",
+                 OPERATION_KIND, stamp, stamp),
+            )
+            conn.execute(
+                "INSERT INTO app_run_artifacts VALUES(?,?,?,1)",
+                (run_id, input_artifact_id, "EXTERNAL_INPUT"),
+            )
+            conn.execute(
+                "INSERT INTO app_external_operations(operation_id,run_id,attempt_id,operation_kind,intent_sha256,authority_sha256,input_artifact_id,idempotency_key,state,prepared_at) "
+                "VALUES(?,?,?,?,?,?,?,?,'PREPARED',?)",
+                (operation_id, run_id, attempt_id, OPERATION_KIND, intent_sha,
+                 authority_sha, input_artifact_id, idempotency_key, stamp),
+            )
+            version = conn.execute("SELECT state_version FROM app_runs WHERE run_id=?", (run_id,)).fetchone()[0]
+            self._event(conn, run_id, version, "CURRENT_SHADOW_GET_PREPARED", {
+                "operation_id": operation_id, "operation_kind": OPERATION_KIND,
+                "intent_sha256": intent_sha, "authority_sha256": authority_sha,
+                "input_artifact_id": input_artifact_id,
+                "idempotency_key_sha256": hashlib.sha256(idempotency_key.encode("ascii")).hexdigest(),
+                "sequence": intent["sequence"], "provider": intent["provider"],
+            }, stamp)
+            return operation_id
+
+    def authorize_current_shadow_provider_get_sent(
+        self, *, context, command, gate, gate_bytes, operation_id,
+    ):
+        from runtime.current_shadow_operation_authority import OPERATION_KIND
+
+        with self._operation(write=True) as conn:
+            self._verify_current_shadow_context_conn(
+                conn, context=context, context_bytes=canonical_json_bytes(context),
+                command=command, gate=gate, gate_bytes=gate_bytes,
+                allowed_run_states=("RUNNING", "CANCEL_REQUESTED"),
+            )
+            row = conn.execute(
+                "SELECT attempt_id,state,operation_kind,intent_sha256 FROM app_external_operations "
+                "WHERE run_id=? AND operation_id=?",
+                (context["run_id"], operation_id),
+            ).fetchone()
+            if row is None or row[0] != context["attempt_id"] or row[1] != "PREPARED" or row[2] != OPERATION_KIND:
+                raise ExternalOperationViolation("provider GET PREPARED owner/state mismatch")
+            state = conn.execute("SELECT state,state_version FROM app_runs WHERE run_id=?", (context["run_id"],)).fetchone()
+            stamp = _utc(self._clock())
+            if state[0] != "RUNNING":
+                conn.execute(
+                    "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='PROVIDER_GET_NEVER_SENT' "
+                    "WHERE operation_id=? AND state='PREPARED'",
+                    (stamp, operation_id),
+                )
+                self._event(conn, context["run_id"], state[1], "CURRENT_SHADOW_GET_NEVER_SENT", {
+                    "operation_id": operation_id, "intent_sha256": row[3],
+                    "reason": "CANCEL_REQUESTED_BEFORE_SENT",
+                }, stamp)
+                return False
+            cursor = conn.execute(
+                "UPDATE app_external_operations SET state='SENT',sent_at=? "
+                "WHERE operation_id=? AND state='PREPARED'",
+                (stamp, operation_id),
+            )
+            if cursor.rowcount != 1:
+                raise ExternalOperationViolation("provider GET SENT transition was not consumed")
+            self._event(conn, context["run_id"], state[1], "CURRENT_SHADOW_GET_SENT", {
+                "operation_id": operation_id, "intent_sha256": row[3],
+                "linearization": "ONE_IN_FLIGHT_GET_PERMIT",
+            }, stamp)
+            return True
+
+    def _retain_current_shadow_get_artifact(self, conn, *, run_id, operation_id, role, raw):
+        digest = hashlib.sha256(raw).hexdigest()
+        artifact_id = f"provider-get-{role.lower()}-{hashlib.sha256(operation_id.encode('ascii')).hexdigest()}"
+        locator = f"external-operation-evidence/{operation_id}-{role.lower()}.json"
+        stamp = _utc(self._clock())
+        publish(self._data_root, locator, raw)
+        conn.execute(
+            "INSERT INTO app_artifacts VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (artifact_id, digest, digest, len(raw), "application/json", role,
+             locator, "RETAINED", "CURRENT_SHADOW_PROVIDER_GET_V1", stamp, stamp),
+        )
+        conn.execute(
+            "INSERT INTO app_run_artifacts VALUES(?,?,?,1)",
+            (run_id, artifact_id, role),
+        )
+        self._require_artifact_role(conn, run_id, artifact_id, role)
+        return artifact_id, digest
+
+    def confirm_current_shadow_provider_get(
+        self, *, context, command, gate, gate_bytes, operation_id, intent, response,
+    ):
+        from runtime.current_shadow_operation_authority import (
+            OPERATION_KIND, ProviderGetResponse, _build_provider_get_intent,
+        )
+
+        if type(response) is not ProviderGetResponse:
+            raise ExternalOperationViolation("provider response is not the exact typed observation")
+        if type(intent) is not dict:
+            raise ExternalOperationViolation("provider response intent is not an exact object")
+        expected_intent = _build_provider_get_intent(
+            context, provider=intent.get("provider"),
+            request_target=intent.get("request_target"), logical_id=intent.get("logical_id"),
+            headers=tuple(tuple(row) for row in intent.get("headers", ())),
+            timeout_seconds=intent.get("timeout_seconds"),
+            maximum_bytes=intent.get("maximum_bytes"), sequence=intent.get("sequence"),
+            origin=intent.get("origin"),
+            redirect_parent_operation_id=intent.get("redirect_parent_operation_id"),
+            redirect_target_sha256=intent.get("redirect_target_sha256"),
+        )
+        if (canonical_json_bytes(expected_intent) != canonical_json_bytes(intent)
+                or len(response.body) > intent["maximum_bytes"]):
+            raise ExternalOperationViolation("provider response differs from the exact bounded intent")
+        redirect_target_sha256 = None
+        if response.location is not None:
+            from runtime.current_shadow_operation_authority import (
+                GITHUB_LINEAGE_ARTIFACT_ZIP, GITHUB_LINEAGE_RELEASE_ASSET,
+                _validated_github_redirect_location,
+            )
+            if (intent.get("provider") not in {
+                    GITHUB_LINEAGE_ARTIFACT_ZIP, GITHUB_LINEAGE_RELEASE_ASSET,
+            } or response.status not in {301, 302, 303, 307, 308}):
+                raise ExternalOperationViolation("only an exact GitHub artifact response may name a redirect")
+            redirect_target_sha256 = _validated_github_redirect_location(response.location)
+        response_payload = {
+            "schema_version": 1, "operation_kind": OPERATION_KIND,
+            "operation_id": operation_id,
+            "intent_sha256": hashlib.sha256(canonical_json_bytes(intent)).hexdigest(),
+            "status": response.status, "observed_at": response.observed_at,
+            "content_type": response.content_type, "content_length": response.content_length,
+            "content_length_header": response.content_length_header,
+            "redirect_target_sha256": redirect_target_sha256,
+            "raw_sha256": hashlib.sha256(response.body).hexdigest(),
+            "raw_size": len(response.body),
+            "raw_base64": base64.b64encode(response.body).decode("ascii"),
+        }
+        response_raw = canonical_json_bytes(response_payload)
+        if len(response_raw) > 24 * 1024 * 1024:
+            raise ExternalOperationViolation("retained provider response exceeds its fixed evidence bound")
+        with self._operation(write=True) as conn:
+            self._verify_current_shadow_context_conn(
+                conn, context=context, context_bytes=canonical_json_bytes(context),
+                command=command, gate=gate, gate_bytes=gate_bytes,
+                allowed_run_states=("RUNNING", "CANCEL_REQUESTED"),
+            )
+            row = conn.execute(
+                "SELECT attempt_id,state,operation_kind,intent_sha256,input_artifact_id "
+                "FROM app_external_operations WHERE run_id=? AND operation_id=?",
+                (context["run_id"], operation_id),
+            ).fetchone()
+            if (row is None or row[0] != context["attempt_id"] or row[1] != "SENT"
+                    or row[2] != OPERATION_KIND
+                    or row[3] != hashlib.sha256(canonical_json_bytes(intent)).hexdigest()):
+                raise ExternalOperationViolation("provider response does not settle one exact SENT operation")
+            input_raw = _read_bounded(
+                contained(self._data_root, logical_locator(
+                    conn.execute("SELECT logical_path FROM app_artifacts WHERE artifact_id=?", (row[4],)).fetchone()[0]
+                )),
+                65_536,
+                "provider GET intent artifact",
+            )
+            if input_raw != canonical_json_bytes(intent):
+                raise ExternalOperationViolation("provider response request lineage changed")
+            artifact_id, artifact_sha = self._retain_current_shadow_get_artifact(
+                conn, run_id=context["run_id"], operation_id=operation_id,
+                role="EXTERNAL_RESPONSE", raw=response_raw,
+            )
+            stamp = _utc(self._clock())
+            conn.execute(
+                "UPDATE app_external_operations SET state='CONFIRMED',completed_at=?,response_artifact_id=? "
+                "WHERE run_id=? AND operation_id=? AND state='SENT'",
+                (stamp, artifact_id, context["run_id"], operation_id),
+            )
+            version = conn.execute("SELECT state_version FROM app_runs WHERE run_id=?", (context["run_id"],)).fetchone()[0]
+            self._event(conn, context["run_id"], version, "CURRENT_SHADOW_GET_RESPONSE_RETAINED", {
+                "operation_id": operation_id, "response_artifact_id": artifact_id,
+                "response_artifact_sha256": artifact_sha,
+                "raw_sha256": response_payload["raw_sha256"],
+                "raw_size": response_payload["raw_size"],
+                "status": response.status, "observed_at": response.observed_at,
+                "content_type": response.content_type,
+                "content_length": response.content_length,
+                "redirect_target_sha256": redirect_target_sha256,
+                "run_state_at_retention": conn.execute(
+                    "SELECT state FROM app_runs WHERE run_id=?", (context["run_id"],),
+                ).fetchone()[0],
+            }, stamp)
+
+    def mark_current_shadow_provider_get_unknown(
+        self, *, context, command, gate, gate_bytes, operation_id, error_code,
+    ):
+        from runtime.current_shadow_operation_authority import OPERATION_KIND
+
+        if error_code not in {"PROVIDER_GET_TRANSPORT_UNKNOWN"}:
+            raise ExternalOperationViolation("provider GET uncertainty code is outside vocabulary")
+        with self._operation(write=True) as conn:
+            self._verify_current_shadow_context_conn(
+                conn, context=context, context_bytes=canonical_json_bytes(context),
+                command=command, gate=gate, gate_bytes=gate_bytes,
+                allowed_run_states=("RUNNING", "CANCEL_REQUESTED"),
+            )
+            row = conn.execute(
+                "SELECT state,operation_kind,intent_sha256 FROM app_external_operations "
+                "WHERE run_id=? AND operation_id=? AND attempt_id=?",
+                (context["run_id"], operation_id, context["attempt_id"]),
+            ).fetchone()
+            if row is None or row[:2] != ("SENT", OPERATION_KIND):
+                raise ExternalOperationViolation("only exact SENT provider GET can become uncertain")
+            stamp = _utc(self._clock())
+            conn.execute(
+                "UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code=? "
+                "WHERE operation_id=? AND state='SENT'",
+                (stamp, error_code, operation_id),
+            )
+            version = conn.execute("SELECT state_version FROM app_runs WHERE run_id=?", (context["run_id"],)).fetchone()[0]
+            self._event(conn, context["run_id"], version, "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN", {
+                "operation_id": operation_id, "intent_sha256": row[2],
+                "error_code": error_code,
+            }, stamp)
+
+    def publish_current_shadow_evidence(
+        self, *, context, command, gate, gate_bytes, evidence_kind, sequence, publish,
+    ):
+        """Serialize one bounded file publication against durable cancellation."""
+        if type(sequence) is not int or sequence <= 0 or not callable(publish):
+            raise RunRepositoryError("product evidence publication sequence/callback is invalid")
+        with self._operation(write=True) as conn:
+            self._verify_current_shadow_context_conn(
+                conn, context=context, context_bytes=canonical_json_bytes(context),
+                command=command, gate=gate, gate_bytes=gate_bytes,
+            )
+            state, version = conn.execute(
+                "SELECT state,state_version FROM app_runs WHERE run_id=?", (context["run_id"],),
+            ).fetchone()
+            if state != "RUNNING":
+                raise RunStateConflict("durable cancellation blocks new product evidence publication")
+            result = publish()
+            self._event(conn, context["run_id"], version, "CURRENT_SHADOW_EVIDENCE_PUBLISHED", {
+                "attempt_id": context["attempt_id"],
+                "child_pid": context["child_pid"],
+                "context_sha256": hashlib.sha256(canonical_json_bytes(context)).hexdigest(),
+                "evidence_kind": evidence_kind,
+                "publication_sequence": sequence,
+            }, _utc(self._clock()))
+            return result
 
     @staticmethod
     def _validate_worker_progress(payload):
@@ -1309,6 +1917,42 @@ class DurableRunRepository:
         with self._operation(write=True) as conn:
             self._fence(conn, run_id, attempt_id, lease_token)
             stamp = _utc(self._clock())
+            state_version = conn.execute(
+                "SELECT state,state_version FROM app_runs WHERE run_id=?", (run_id,),
+            ).fetchone()[1]
+            provider_prepared = conn.execute(
+                "SELECT operation_id,intent_sha256 FROM app_external_operations "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' "
+                "AND state='PREPARED' ORDER BY operation_id",
+                (run_id, attempt_id),
+            ).fetchall()
+            provider_sent = conn.execute(
+                "SELECT operation_id,intent_sha256 FROM app_external_operations "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' "
+                "AND state='SENT' ORDER BY operation_id",
+                (run_id, attempt_id),
+            ).fetchall()
+            conn.execute(
+                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='PROVIDER_GET_NEVER_SENT' "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' AND state='PREPARED'",
+                (stamp, run_id, attempt_id),
+            )
+            for operation_id, intent_sha256 in provider_prepared:
+                self._event(conn, run_id, state_version, "CURRENT_SHADOW_GET_NEVER_SENT", {
+                    "operation_id": operation_id, "intent_sha256": intent_sha256,
+                    "reason": "RECOVERY_FOUND_PREPARED_WITHOUT_SENT",
+                }, stamp)
+            for operation_id, intent_sha256 in provider_sent:
+                self._event(conn, run_id, state_version, "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN", {
+                    "operation_id": operation_id, "intent_sha256": intent_sha256,
+                    "error_code": "PROVIDER_GET_OUTCOME_UNKNOWN",
+                    "reason": "RECOVERY_FOUND_SENT_WITHOUT_PROVEN_RESPONSE",
+                }, stamp)
+            conn.execute(
+                "UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='PROVIDER_GET_OUTCOME_UNKNOWN' "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' AND state='SENT'",
+                (stamp, run_id, attempt_id),
+            )
             conn.execute(
                 "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='SHARE_CREATE_NEVER_SENT' "
                 "WHERE run_id=? AND attempt_id=? AND state='PREPARED' AND operation_kind=?",
@@ -1316,11 +1960,15 @@ class DurableRunRepository:
             )
             conn.execute(
                 "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='OFFLINE_RECOVERY' "
-                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' AND operation_kind<>?",
+                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' "
+                "AND operation_kind NOT IN (?, 'CURRENT_SHADOW_PROVIDER_GET_V1')",
                 (stamp, run_id, attempt_id, SHARE_CREATE_KIND),
             )
-            conn.execute("UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='OFFLINE_RECOVERY' WHERE run_id=? AND attempt_id=? AND state='SENT'",
-                         (stamp, run_id, attempt_id))
+            conn.execute(
+                "UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='OFFLINE_RECOVERY' "
+                "WHERE run_id=? AND attempt_id=? AND state='SENT' AND operation_kind<>'CURRENT_SHADOW_PROVIDER_GET_V1'",
+                (stamp, run_id, attempt_id),
+            )
             row = conn.execute("SELECT state,state_version FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
             disposition = "CANCEL_REQUESTED_SETTLED" if row is not None and row[0] == "CANCEL_REQUESTED" else "OFFLINE_INTERRUPTED"
             conn.execute("UPDATE app_run_attempts SET finished_at=?,recovery_disposition=? WHERE attempt_id=?",
@@ -1405,6 +2053,39 @@ class DurableRunRepository:
             if row is None or row[2] is not None:
                 raise RunStateConflict("run is not eligible for recovery")
             stamp = _utc(self._clock())
+            provider_prepared = conn.execute(
+                "SELECT operation_id,intent_sha256 FROM app_external_operations "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' "
+                "AND state='PREPARED' ORDER BY operation_id",
+                (run_id, attempt_id),
+            ).fetchall()
+            provider_sent = conn.execute(
+                "SELECT operation_id,intent_sha256 FROM app_external_operations "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' "
+                "AND state='SENT' ORDER BY operation_id",
+                (run_id, attempt_id),
+            ).fetchall()
+            conn.execute(
+                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='PROVIDER_GET_NEVER_SENT' "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' AND state='PREPARED'",
+                (stamp, run_id, attempt_id),
+            )
+            for operation_id, intent_sha256 in provider_prepared:
+                self._event(conn, run_id, row[1], "CURRENT_SHADOW_GET_NEVER_SENT", {
+                    "operation_id": operation_id, "intent_sha256": intent_sha256,
+                    "reason": "RECOVERY_FOUND_PREPARED_WITHOUT_SENT",
+                }, stamp)
+            for operation_id, intent_sha256 in provider_sent:
+                self._event(conn, run_id, row[1], "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN", {
+                    "operation_id": operation_id, "intent_sha256": intent_sha256,
+                    "error_code": "PROVIDER_GET_OUTCOME_UNKNOWN",
+                    "reason": "RECOVERY_FOUND_SENT_WITHOUT_PROVEN_RESPONSE",
+                }, stamp)
+            conn.execute(
+                "UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='PROVIDER_GET_OUTCOME_UNKNOWN' "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' AND state='SENT'",
+                (stamp, run_id, attempt_id),
+            )
             conn.execute(
                 "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='SHARE_CREATE_NEVER_SENT' "
                 "WHERE run_id=? AND attempt_id=? AND state='PREPARED' AND operation_kind=?",
@@ -1412,12 +2093,14 @@ class DurableRunRepository:
             )
             conn.execute(
                 "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='OFFLINE_RECOVERY' "
-                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' AND operation_kind<>?",
+                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' "
+                "AND operation_kind NOT IN (?, 'CURRENT_SHADOW_PROVIDER_GET_V1')",
                 (stamp, run_id, attempt_id, SHARE_CREATE_KIND),
             )
             conn.execute(
                 "UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='OFFLINE_RECOVERY' "
-                "WHERE run_id=? AND attempt_id=? AND state='SENT'",
+                "WHERE run_id=? AND attempt_id=? AND state='SENT' "
+                "AND operation_kind<>'CURRENT_SHADOW_PROVIDER_GET_V1'",
                 (stamp, run_id, attempt_id),
             )
             current_state = row[0]

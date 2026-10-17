@@ -29,6 +29,40 @@ class StartupGateError(ValueError):
     """The exact E3 worker handoff gate is missing or contradictory."""
 
 
+def read_gate_document(path: Path) -> tuple[dict[str, Any], bytes]:
+    """Read one bounded canonical gate without following links or junctions."""
+    if not isinstance(path, Path) or path.name != FILENAME:
+        raise StartupGateError("startup gate path is not the fixed filename")
+    if path.is_symlink() or bool(getattr(path, "is_junction", lambda: False)()):
+        raise StartupGateError("startup gate must not be a link")
+    descriptor = -1
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise StartupGateError("startup gate must be a regular file")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            raw = stream.read(65537)
+    except StartupGateError:
+        raise
+    except OSError as exc:
+        raise StartupGateError("startup gate could not be read safely") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if len(raw) > 65536:
+        raise StartupGateError("startup gate exceeds its reviewed byte bound")
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise StartupGateError("startup gate JSON is invalid") from exc
+    if (type(value) is not dict or set(value) != _GATE_FIELDS
+            or canonical_json_bytes(value) != raw):
+        raise StartupGateError("startup gate bytes are not one canonical document")
+    return value, raw
+
+
 def gate_bytes(*, command: WorkerCommand, pid: int, owner: dict[str, str],
                process_locator: dict[str, Any], lease_token: str,
                envelope_sha256: str) -> bytes:
@@ -176,4 +210,7 @@ def _data_root_from_path(path: Path) -> Path:
     return root
 
 
-__all__ = ["FILENAME", "POLICY_ID", "StartupGateError", "gate_bytes", "publish_gate", "wait_for_gate"]
+__all__ = [
+    "FILENAME", "POLICY_ID", "StartupGateError", "gate_bytes", "publish_gate",
+    "read_gate_document", "wait_for_gate",
+]

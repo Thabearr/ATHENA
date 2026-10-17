@@ -156,6 +156,58 @@ def test_native_orphan_descendant_is_not_mistaken_for_dead_owner(tmp_path):
         control.close()
 
 
+def test_native_authenticated_supervisor_launch_stays_in_root_process_owner(tmp_path):
+    """The exact nested Current Shadow Popen remains inside the root owner."""
+    marker = tmp_path / "nested-supervisor.pid"
+    context_file = tmp_path / "athena-current-shadow-operation-context.json"
+    output_directory = tmp_path / "current-shadow"
+    wrapper = (
+        "import pathlib,sys,time; "
+        "from pathlib import Path; from types import SimpleNamespace; "
+        "from scripts.execute_current_shadow_request import _launch_product_child; "
+        "args=SimpleNamespace(target_size=3,fixture_scope='today',"
+        "fixture_dates=('20300101',),output_dir=Path(sys.argv[2]),create_share_code=False); "
+        "child=_launch_product_child(args,Path(sys.argv[3])); "
+        "Path(sys.argv[1]).write_text(str(child.pid),encoding='ascii'); "
+        "time.sleep(60)"
+    )
+    process = _spawn_process(
+        [sys.executable, "-c", wrapper, os.fspath(marker),
+         os.fspath(output_directory), os.fspath(context_file)],
+        cwd=Path.cwd(), shell=False, stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        **_process_group_options(),
+    )
+    handle = WorkerProcessHandle(process)
+    control = WorkerProcessControl(handle, _owner("nested-supervisor"))
+    locator = control.bind()
+    try:
+        assert _wait_for(marker.is_file), "root worker did not spawn its blocked nested supervisor"
+        child_pid = int(marker.read_text(encoding="ascii"))
+        assert child_pid > 0 and _wait_for(lambda: _is_pid_active(child_pid))
+        if os.name == "posix":
+            assert os.getpgid(child_pid) == locator["pgid"]
+            assert os.getsid(child_pid) == locator["session_id"]
+        assert control.state_current() == "ACTIVE"
+        assert control.force_terminate(locator) is True
+        process.wait(timeout=10)
+        assert _wait_for(lambda: control.state_current() in {"DEAD", "UNKNOWN"})
+        if os.name == "nt":
+            assert control.state_current() == "DEAD"
+            assert _wait_for(lambda: not _is_pid_active(child_pid))
+        else:
+            assert _wait_for(lambda: _linux_process_state(child_pid) in (None, "Z", "X"))
+            if control.state_current() == "UNKNOWN":
+                assert _linux_process_state(child_pid) in (None, "Z", "X")
+    finally:
+        if control.state_current() != "DEAD":
+            try:
+                control.force_terminate(locator)
+            except ProcessControlError:
+                pass
+        control.close()
+
+
 def test_native_cancelled_product_probe_is_killed_before_gate_effect(tmp_path):
     """Exercise a real Windows Job Object / POSIX group at the product gate."""
     from test_run_01b_worker_lifecycle import _development_shadow_run

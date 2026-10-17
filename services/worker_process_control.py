@@ -101,6 +101,35 @@ def _windows_creation_time(process_handle: Any) -> int:
     return _filetime_value(created)
 
 
+def process_creation_identity(pid: int) -> dict[str, int | str]:
+    """Return the current process creation identity for a positive PID.
+
+    This value is a correlation key, never authority on its own. Product
+    nested-worker validation combines it with the parent startup gate and the
+    matching DB event so PID reuse cannot replay a supervisor capability.
+    """
+    if type(pid) is not int or pid <= 0:
+        raise ProcessControlError("process identity requires a positive PID")
+    if os.name == "posix":
+        value = _linux_stat(pid)
+        if value is None:
+            raise ProcessControlError("process creation identity is unavailable")
+        return {"kind": "POSIX_START_TICKS", "pid": pid, "start_ticks": value[2]}
+    if os.name == "nt":
+        handle = _open_windows_process(pid)
+        if handle is None:
+            raise ProcessControlError("process creation identity is unavailable")
+        try:
+            return {
+                "kind": "WINDOWS_CREATION_TIME",
+                "pid": pid,
+                "creation_time": _windows_creation_time(handle),
+            }
+        finally:
+            _windows_api()[1].CloseHandle(handle)
+    raise ProcessControlError("process identity platform is unsupported")
+
+
 def _open_job(name: str):
     wintypes, kernel = _windows_api()
     access = 0x0004  # JOB_OBJECT_QUERY; restart reconciliation never terminates.
@@ -319,4 +348,7 @@ def _open_windows_process(pid: int):
     return handle
 
 
-__all__ = ["ProcessControlError", "ProcessState", "WorkerProcessControl", "owner_identity"]
+__all__ = [
+    "ProcessControlError", "ProcessState", "WorkerProcessControl",
+    "owner_identity", "process_creation_identity",
+]

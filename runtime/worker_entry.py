@@ -170,7 +170,10 @@ def _run_offline_probe(command: WorkerCommand, identity: Any) -> int:
     return 0
 
 
-def _run_current_shadow(command: WorkerCommand, request: Any) -> int:
+def _run_current_shadow(
+    command: WorkerCommand, request: Any, *, repository=None, gate=None,
+    gate_bytes: bytes | None = None,
+) -> int:
     if request.create_share_code is True:
         raise WorkerEntryError("product delivery requires reviewed durable transport context")
     if command.operation != "CURRENT_SHADOW_REQUEST":
@@ -211,13 +214,18 @@ def _run_current_shadow(command: WorkerCommand, request: Any) -> int:
     # timeout and finalization behavior.
     from scripts import execute_current_shadow_request
 
-    worker_env = execute_current_shadow_request.WORKER_ENV
-    inherited = os.environ.pop(worker_env, None)
+    if (repository is None or type(gate) is not dict or type(gate_bytes) is not bytes):
+        raise WorkerEntryError("Current Shadow supervisor requires the exact product startup owner")
     try:
-        return execute_current_shadow_request.main(args)
-    finally:
-        if inherited is not None:
-            os.environ[worker_env] = inherited
+        return execute_current_shadow_request.run_authenticated_product_worker(
+            args,
+            repository=repository,
+            command=command,
+            gate=gate,
+            gate_bytes=gate_bytes,
+        )
+    except Exception as exc:
+        raise WorkerEntryError("Current Shadow nested supervisor start was not authorized") from exc
 
 
 def execute_worker_command(
@@ -279,7 +287,10 @@ def execute_worker_command(
             )
         except Exception as exc:
             raise WorkerEntryError("worker startup effect was not authorized") from exc
-        return _run_current_shadow(command, request)
+        return _run_current_shadow(
+            command, request, repository=repository, gate=gate,
+            gate_bytes=canonical_json_bytes(gate),
+        )
     raise WorkerEntryError("worker operation is outside the allowlist")
 
 

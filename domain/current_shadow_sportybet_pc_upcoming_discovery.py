@@ -41,6 +41,7 @@ REQUEST_NONCE_MAX_SKEW_MS = 120_000
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
 REQUEST_TIMEOUT_SECONDS = 45
+MAX_PRODUCT_CAPTURE_EPOCHS = 4
 REQUEST_HEADERS = (
     ("Accept", "application/json"),
     ("Accept-Language", "en-NG,en;q=0.9"),
@@ -843,9 +844,35 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def _fetch_page(page_num: int, nonce: int) -> tuple[bytes, datetime]:
+def _fetch_page(
+    page_num: int, nonce: int, *, operation_epoch: int | None = None,
+) -> tuple[bytes, datetime]:
     request = Request(request_url(page_num, nonce), method="GET", headers=dict(REQUEST_HEADERS))
     opener = build_opener(_NoRedirect())
+    from runtime.current_shadow_operation_authority import (
+        ProductOperationAuthorityError, current_product_authority,
+    )
+
+    authority = current_product_authority()
+    if authority is not None:
+        if type(operation_epoch) is not int or not 1 <= operation_epoch <= MAX_PRODUCT_CAPTURE_EPOCHS:
+            raise ProductOperationAuthorityError(
+                "product pcUpcoming GET lacks its exact bounded capture epoch"
+            )
+        result = authority.perform_get(
+            provider="SPORTYBET_PC_UPCOMING",
+            request_target=request_target(page_num, nonce),
+            logical_id=f"epoch:{operation_epoch}:page:{page_num}",
+            headers=tuple(REQUEST_HEADERS), timeout_seconds=REQUEST_TIMEOUT_SECONDS,
+            maximum_bytes=MAX_RESPONSE_BYTES,
+        )
+        observed = _parse_utc_text(result.observed_at, "provider observed_at")
+        if result.status != 200:
+            raise PcUpcomingDiscoveryError(f"provider returned HTTP {result.status}")
+        if len(result.body) > MAX_RESPONSE_BYTES:
+            raise PcUpcomingDiscoveryError("provider response exceeds the fixed byte bound")
+        return result.body, observed
+
     try:
         with opener.open(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
             status = int(getattr(response, "status", 200))
@@ -864,19 +891,27 @@ def _fetch_page(page_num: int, nonce: int) -> tuple[bytes, datetime]:
 
 
 def _write_exclusive(path: Path, raw: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with path.open("xb") as handle:
-            handle.write(raw)
-            handle.flush()
-    except OSError as exc:
-        raise PcUpcomingDiscoveryError("could not persist non-overwriting source evidence") from exc
+    def publish() -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with path.open("xb") as handle:
+                handle.write(raw)
+                handle.flush()
+        except OSError as exc:
+            raise PcUpcomingDiscoveryError(
+                "could not persist non-overwriting source evidence"
+            ) from exc
+
+    from runtime.current_shadow_operation_authority import publish_product_evidence
+
+    publish_product_evidence(evidence_kind="PC_UPCOMING_SOURCE", publish=publish)
 
 
 def _capture_current_pc_upcoming_discovery_once(
     *,
     evidence_root: str | Path,
     execute_live_network: bool,
+    operation_epoch: int | None = None,
     raw_response_observer: Callable[..., None] | None = None,
     page_observer: Callable[[PcUpcomingPageEvidence], None] | None = None,
 ) -> PcUpcomingDiscoveryManifest:
@@ -887,7 +922,11 @@ def _capture_current_pc_upcoming_discovery_once(
     if root.exists():
         raise PcUpcomingDiscoveryError("refusing to overwrite an existing evidence capture")
     try:
-        root.mkdir(parents=True, exist_ok=False)
+        from runtime.current_shadow_operation_authority import publish_product_evidence
+        publish_product_evidence(
+            evidence_kind="PC_UPCOMING_CAPTURE_ROOT",
+            publish=lambda: root.mkdir(parents=True, exist_ok=False),
+        )
     except OSError as exc:
         raise PcUpcomingDiscoveryError("could not create non-overwriting source evidence root") from exc
     pages: list[PcUpcomingPageEvidence] = []
@@ -896,7 +935,9 @@ def _capture_current_pc_upcoming_discovery_once(
         if required_pages is not None and page_num > required_pages:
             break
         nonce = int(time.time() * 1000)
-        raw, observed = _fetch_page(page_num, nonce)
+        raw, observed = _fetch_page(
+            page_num, nonce, operation_epoch=operation_epoch,
+        )
         target = request_target(page_num, nonce)
         raw_ancestry = {
             "page_num": page_num,

@@ -443,20 +443,24 @@ def _normalize_directory(
 
 
 def _write_exclusive(path: Path, content: bytes) -> None:
-    try:
-        with path.open("xb") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        _sync_directory(path.parent)
-    except FileExistsError as exc:
-        raise ReviewedFixtureCatalogAdmissionSourceReplayError(
-            f"refusing to overwrite {path.name}"
-        ) from exc
-    except (OSError, SportyBetLiteCaptureError) as exc:
-        raise ReviewedFixtureCatalogAdmissionSourceReplayError(
-            f"could not durably write {path.name}"
-        ) from exc
+    def publish() -> None:
+        try:
+            with path.open("xb") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            _sync_directory(path.parent)
+        except FileExistsError as exc:
+            raise ReviewedFixtureCatalogAdmissionSourceReplayError(
+                f"refusing to overwrite {path.name}"
+            ) from exc
+        except (OSError, SportyBetLiteCaptureError) as exc:
+            raise ReviewedFixtureCatalogAdmissionSourceReplayError(
+                f"could not durably write {path.name}"
+            ) from exc
+
+    from runtime.current_shadow_operation_authority import publish_product_evidence
+    publish_product_evidence(evidence_kind="FOTMOB_CATALOG_ADMISSION", publish=publish)
 
 
 def _read_directory_payloads(directory: Path) -> tuple[bytes, bytes]:
@@ -585,7 +589,11 @@ def _store_semantic_admission(
         repository_root=repository_root,
     )
     try:
-        _ensure_directory_tree_durable(root, boundary=repository)
+        from runtime.current_shadow_operation_authority import publish_product_evidence
+        publish_product_evidence(
+            evidence_kind="FOTMOB_CATALOG_ADMISSION_ROOT",
+            publish=lambda: _ensure_directory_tree_durable(root, boundary=repository),
+        )
     except SportyBetLiteCaptureError as exc:
         raise ReviewedFixtureCatalogAdmissionSourceReplayError(str(exc)) from exc
 
@@ -607,7 +615,11 @@ def _store_semantic_admission(
 
     created = False
     try:
-        directory.mkdir(exist_ok=False)
+        from runtime.current_shadow_operation_authority import publish_product_evidence
+        publish_product_evidence(
+            evidence_kind="FOTMOB_CATALOG_ADMISSION_DIRECTORY",
+            publish=lambda: directory.mkdir(exist_ok=False),
+        )
         created = True
         _sync_directory(root)
         _sync_directory(directory)
@@ -626,7 +638,17 @@ def _store_semantic_admission(
     except Exception as exc:
         if created:
             try:
-                _cleanup_partial(directory, root)
+                from runtime.current_shadow_operation_authority import (
+                    ProductOperationAuthorityError, publish_product_evidence,
+                )
+                try:
+                    publish_product_evidence(
+                        evidence_kind="FOTMOB_CATALOG_ADMISSION_CLEANUP",
+                        publish=lambda: _cleanup_partial(directory, root),
+                    )
+                except ProductOperationAuthorityError:
+                    # A cancellation fence preserves partial evidence for inspection.
+                    pass
             except Exception as cleanup_exc:
                 raise ReviewedFixtureCatalogAdmissionSourceReplayError(
                     "catalog admission replay write failed and cleanup also failed"
