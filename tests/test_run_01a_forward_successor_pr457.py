@@ -91,6 +91,10 @@ def test_all_exact_predecessor_fixtures_match_frozen_e1_source_identities():
         "database/run_repository.py",
         "scripts/audit_data_01b_durable_run_state.py",
         "scripts/audit_data_01c_restore_portability.py",
+        "run_desktop.py",
+        "tests/test_run_01a_durable_admission.py",
+        "tests/test_data_01c_app_storage.py",
+        "services/athena_capability_service.py",
     }
 
     for source, entry in e1.FORWARD_EVOLVED_SOURCES.items():

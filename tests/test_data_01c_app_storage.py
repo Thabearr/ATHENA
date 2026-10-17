@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import sys
 import zipfile
 
 import pytest
@@ -484,6 +485,59 @@ def test_d5_successor_authenticates_exact_sources_and_historical_seams():
     assert "scripts/port_02c_build_config.py" not in paths
     assert "runtime/workflows/ledgers/history" not in paths
     assert "tests/unreviewed-d5-source.json" not in paths
+
+
+def test_d5_cli_check_uses_forward_audit_for_immutable_receipt(monkeypatch, capsys):
+    from scripts import audit_data_01c_app_store_complete as data01c
+
+    latest = {"generation": 240}
+    audit_calls = []
+    monkeypatch.setattr(data01c.boundary, "authenticate_inventory", lambda: latest)
+    monkeypatch.setattr(data01c, "audit", lambda latest=None: audit_calls.append(latest))
+    monkeypatch.setattr(sys, "argv", ["audit_data_01c_app_store_complete", "--check"])
+
+    data01c.main()
+
+    assert audit_calls == [latest]
+    assert capsys.readouterr().out == "DATA_01C_SOURCE_RECEIPT_OK\n"
+
+
+def test_d5_cli_write_refuses_to_overwrite_immutable_receipt(monkeypatch, tmp_path):
+    from scripts import audit_data_01c_app_store_complete as data01c
+
+    target = tmp_path / "d5-receipt.json"
+    target.write_bytes(b"immutable historical receipt\n")
+    monkeypatch.setattr(data01c.boundary, "authenticate_inventory", lambda: {"generation": 240})
+    monkeypatch.setattr(data01c, "ROOT", tmp_path)
+    monkeypatch.setattr(data01c, "RECEIPT", target.name)
+    monkeypatch.setattr(sys, "argv", ["audit_data_01c_app_store_complete", "--write"])
+
+    with pytest.raises(AssertionError, match="immutable after A2 V116"):
+        data01c.main()
+
+    assert target.read_bytes() == b"immutable historical receipt\n"
+
+
+def test_later_a2_generation_cannot_hide_e1_predecessor_fixture_tamper(monkeypatch):
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    from scripts import audit_run_01a_durable_admission as e1
+
+    latest = boundary.authenticate_inventory()
+    fixture = e1.ROOT / e1.FORWARD_EVOLVED_SOURCES[
+        "tests/test_data_01c_app_storage.py"]["predecessor_fixture"]
+    original_read_bytes = Path.read_bytes
+
+    def read_tampered_predecessor(path):
+        raw = original_read_bytes(path)
+        if path == fixture:
+            return raw + b"\n# tampered after a later A2 generation\n"
+        return raw
+
+    monkeypatch.setattr(boundary, "authenticate_inventory", lambda: latest)
+    monkeypatch.setattr(Path, "read_bytes", read_tampered_predecessor)
+
+    with pytest.raises(AssertionError, match="E1 predecessor fixture identity drift"):
+        e1.authenticate_successor()
 
 
 def test_d5_prohibited_scope_guard_is_base_independent_for_shallow_ci(monkeypatch):

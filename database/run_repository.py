@@ -9,8 +9,10 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import base64
+import hmac
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import uuid
@@ -19,7 +21,7 @@ from database.app_migration_evidence import contained, publish
 from database.app_root_lock import app_root_lock
 from database.app_repository import release_provenance, logical_locator
 from database.app_migrations import (
-    app_store_path, connect_app_store, expected_schema_structure,
+    APP_STORE_FILENAME, app_store_path, connect_app_store, expected_schema_structure,
     read_app_migrations, verify_app_schema,
 )
 from domain.run_contracts import canonical_json_bytes, RunRequest, RunReceipt
@@ -36,6 +38,7 @@ from services.athena_preview_service import (
 
 LOCAL_PROFILE_ID = "local-default"
 SHARE_CREATE_KIND = "SPORTYBET_SHARE_CODE_CREATE_V1"
+MAX_TERMINAL_RECEIPT_BYTES = 1_000_000
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _TRANSITIONS = {
     "QUEUED": {"RUNNING", "CANCELLED", "INTERRUPTED"},
@@ -96,6 +99,15 @@ def _sha(value):
     return value
 
 
+def _read_bounded(path, maximum, label):
+    """Read at most one byte beyond a bounded retained evidence object."""
+    with path.open("rb") as stream:
+        raw = stream.read(maximum + 1)
+    if len(raw) > maximum:
+        raise RunRepositoryError(label + " exceeds its reviewed byte bound")
+    return raw
+
+
 class DurableRunRepository:
     """Explicit offline seam. Does not migrate or wire production admission."""
 
@@ -108,6 +120,29 @@ class DurableRunRepository:
         self._structure = expected_schema_structure(migrations)
         self._identities = [(version, digest) for version, _, _, digest in migrations]
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+
+    @classmethod
+    def for_worker_data_root(cls, resources, data_root):
+        """Open the one admitted product store from a verified worker context."""
+        from runtime.resources import ResourceResolver
+
+        if type(resources) is not ResourceResolver:
+            raise RunRepositoryError("verified worker resources are required")
+        if not isinstance(data_root, os.PathLike) or not Path(data_root).is_absolute():
+            raise RunRepositoryError("worker data root must be an absolute path")
+        root = Path(data_root)
+        if root.is_symlink() or not root.is_dir():
+            raise RunRepositoryError("worker data root is not a regular directory")
+        repository = cls.__new__(cls)
+        repository._path = root.resolve(strict=True) / APP_STORE_FILENAME
+        repository._resources = resources
+        repository._data_root = root.resolve(strict=True)
+        repository.verified_identity = resources.identity
+        migrations = read_app_migrations(resources)
+        repository._structure = expected_schema_structure(migrations)
+        repository._identities = [(version, digest) for version, _, _, digest in migrations]
+        repository._clock = lambda: datetime.now(timezone.utc)
+        return repository
 
     @contextmanager
     def _operation(self, *, write=False):
@@ -296,8 +331,9 @@ class DurableRunRepository:
                     or value["envelope_sha256"] != row[3] or value["release_id"] != row[4]
                     or value["expected_version"] != state_version - 1):
                 raise TerminalEvidenceUnavailable("retained receipt wrapper bindings drift")
+            attempt_id = _identity(value["attempt_id"])
             attempt = conn.execute("SELECT lease_token FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
-                                   (run_id, _identity(value["attempt_id"]))).fetchone()
+                                   (run_id, attempt_id)).fetchone()
             if attempt is None or attempt[0] != value["lease_token"]:
                 raise TerminalEvidenceUnavailable("retained receipt attempt lease binding drift")
             receipt = RunReceipt.from_dict(value["receipt"])
@@ -305,7 +341,7 @@ class DurableRunRepository:
                     or receipt.authority_manifest != envelope.authority_manifest
                     or receipt.share_code_result is not None):
                 raise TerminalEvidenceUnavailable("retained receipt contract identity drift")
-            self._verify_receipt_producer(conn, run_id, receipt, envelope, row[4])
+            self._verify_receipt_producer(conn, run_id, receipt, envelope, row[4], attempt_id)
             events = conn.execute(
                 "SELECT sequence,state_version,payload_bytes,payload_sha256 FROM app_run_events "
                 "WHERE run_id=? AND event_type='RUN_TERMINAL'", (run_id,)).fetchall()
@@ -445,18 +481,38 @@ class DurableRunRepository:
     def bind_process_locator(self, run_id, attempt_id, lease_token, locator):
         """Bind the one exact OS process-group identity after launch returns."""
         expected_kind = "WINDOWS_PROCESS_GROUP" if os.name == "nt" else "POSIX_PROCESS_GROUP"
-        if (type(locator) is not dict or set(locator) != {"kind", "pid"}
+        common = {"kind", "pid", "run_id", "attempt_id", "worker_instance_id", "lease_sha256"}
+        platform_fields = ({"creation_time", "job_name"} if os.name == "nt"
+                           else {"pgid", "session_id", "start_ticks"})
+        if (type(locator) is not dict or set(locator) != common | platform_fields
                 or locator.get("kind") != expected_kind
-                or type(locator.get("pid")) is not int or locator["pid"] <= 0):
+                or type(locator.get("pid")) is not int or locator["pid"] <= 0
+                or type(locator.get("run_id")) is not str or locator["run_id"] != run_id
+                or type(locator.get("attempt_id")) is not str or locator["attempt_id"] != attempt_id
+                or type(locator.get("worker_instance_id")) is not str
+                or type(locator.get("lease_sha256")) is not str
+                or locator["lease_sha256"] != hashlib.sha256(lease_token.encode("utf-8")).hexdigest()):
             raise RunRepositoryError("process locator is outside the exact platform schema")
+        if os.name == "nt":
+            if (type(locator["creation_time"]) is not int or locator["creation_time"] <= 0
+                    or type(locator["job_name"]) is not str
+                    or not locator["job_name"].startswith("Local\\ATHENA-E3-")):
+                raise RunRepositoryError("Windows process locator identity is invalid")
+        elif (locator["pgid"] != locator["pid"] or locator["session_id"] != locator["pid"]
+              or type(locator["start_ticks"]) is not int or locator["start_ticks"] <= 0):
+            raise RunRepositoryError("POSIX process locator identity is invalid")
         raw = canonical_json_bytes(locator).decode("utf-8")
         with self._operation(write=True) as conn:
             self._fence(conn, run_id, attempt_id, lease_token)
+            state = conn.execute("SELECT state FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
+            if state is None or state[0] != "RUNNING":
+                raise RunStateConflict("process locator binding requires an active RUNNING request")
             row = conn.execute(
-                "SELECT process_locator_json FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
+                "SELECT process_locator_json,worker_instance_id FROM app_run_attempts "
+                "WHERE run_id=? AND attempt_id=?",
                 (run_id, attempt_id),
             ).fetchone()
-            if row is None:
+            if row is None or row[1] != locator["worker_instance_id"]:
                 raise RunLeaseFenced("attempt locator owner is missing")
             try:
                 pending = json.loads(row[0])
@@ -464,12 +520,834 @@ class DurableRunRepository:
                 raise RunRepositoryError("pending process locator is invalid") from None
             if (type(pending) is not dict or set(pending) != {"kind", "label"}
                     or pending.get("kind") != "OFFLINE_TEST"
-                    or pending.get("label") != "offline-probe"):
+                    or type(pending.get("label")) is not str
+                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", pending["label"]) is None):
                 raise RunStateConflict("process locator was already bound or was not pending")
             conn.execute(
                 "UPDATE app_run_attempts SET process_locator_json=? WHERE run_id=? AND attempt_id=?",
                 (raw, run_id, attempt_id),
             )
+
+    def publish_worker_startup_gate(
+        self, *, command, run_id, attempt_id, lease_token, worker_instance_id,
+        envelope_sha256, process_locator,
+    ):
+        """Publish an authenticated gate in the same DB order as cancellation."""
+        from runtime.worker_launcher import WorkerCommand
+        from runtime.worker_startup_gate import gate_bytes, publish_gate
+        from services.worker_process_control import owner_identity
+
+        if (type(command) is not WorkerCommand or type(run_id) is not str
+                or type(attempt_id) is not str or type(lease_token) is not str
+                or type(worker_instance_id) is not str):
+            raise RunRepositoryError("exact product worker owner is required")
+        expected_run_directory = self._data_root / "runs" / run_id / command.request_artifact_id
+        if command.run_directory != expected_run_directory:
+            raise RunRepositoryError("worker command is outside the exact product run directory")
+        owner = owner_identity(
+            run_id=run_id, attempt_id=attempt_id,
+            worker_instance_id=worker_instance_id, lease_token=lease_token,
+        )
+        if (type(process_locator) is not dict
+                or any(process_locator.get(key) != value for key, value in owner.items())):
+            raise RunRepositoryError("process locator differs from the exact attempt owner")
+        gate_raw = gate_bytes(
+            command=command, pid=process_locator.get("pid"), owner={
+                "attempt_id": attempt_id,
+                "worker_instance_id": worker_instance_id,
+                "lease_sha256": owner["lease_sha256"],
+            },
+            process_locator=process_locator,
+            lease_token=lease_token,
+            envelope_sha256=envelope_sha256,
+        )
+        from runtime.worker_startup_gate import FILENAME
+
+        gate_path = command.run_directory / FILENAME
+        gate_digest = hashlib.sha256(gate_raw).hexdigest()
+        process_digest = hashlib.sha256(canonical_json_bytes(process_locator)).hexdigest()
+        event_payload = {
+            "attempt_id": attempt_id,
+            "worker_instance_id": worker_instance_id,
+            "lease_sha256": owner["lease_sha256"],
+            "command_sha256": hashlib.sha256(command.canonical_bytes).hexdigest(),
+            "process_locator_sha256": process_digest,
+            "gate_sha256": gate_digest,
+        }
+        with self._operation(write=True) as conn:
+            self._fence(conn, run_id, attempt_id, lease_token)
+            run = conn.execute(
+                "SELECT state,request_sha256,envelope_sha256 FROM app_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if (run is None or run[0] != "RUNNING"
+                    or run[1] != command.request_artifact_id
+                    or run[2] != envelope_sha256):
+                raise RunStateConflict("cancel or request identity won before startup gate publication")
+            attempt = conn.execute(
+                "SELECT worker_instance_id,process_locator_json FROM app_run_attempts "
+                "WHERE run_id=? AND attempt_id=? AND lease_token=? AND finished_at IS NULL",
+                (run_id, attempt_id, lease_token),
+            ).fetchone()
+            if (attempt is None or attempt[0] != worker_instance_id
+                    or attempt[1] != canonical_json_bytes(process_locator).decode("utf-8")):
+                raise RunLeaseFenced("startup gate process owner is not durably bound")
+            if conn.execute(
+                "SELECT 1 FROM app_run_events WHERE run_id=? AND event_type='WORKER_STARTUP_GATE_PUBLISHED'",
+                (run_id,),
+            ).fetchone():
+                raise RunStateConflict("startup gate publication is single-use")
+            self._event(conn, run_id, conn.execute(
+                "SELECT state_version FROM app_runs WHERE run_id=?", (run_id,),
+            ).fetchone()[0], "WORKER_STARTUP_GATE_PUBLISHED", event_payload, _utc(self._clock()))
+        # Make the authenticated document visible only after its matching
+        # durable event commits. A child that observes the file can then
+        # always validate one committed owner/event pair. Cancellation may
+        # commit between these steps; the child rechecks RUNNING and fails
+        # closed before starting work.
+        publish_gate(gate_path, gate_raw)
+        return gate_path
+
+    def _verify_worker_startup_gate_conn(
+        self, conn, *, command, gate, gate_bytes, expected_pid=None,
+        allowed_run_states=("RUNNING",),
+    ):
+        from runtime.worker_launcher import WorkerCommand
+        from runtime.worker_startup_gate import POLICY_ID, _GATE_FIELDS
+        from services.worker_process_control import WorkerProcessControl, owner_identity
+
+        if (type(command) is not WorkerCommand or type(gate) is not dict
+                or set(gate) != _GATE_FIELDS or type(gate_bytes) is not bytes
+                or canonical_json_bytes(gate) != gate_bytes):
+            raise RunRepositoryError("startup gate bytes are not the exact typed document")
+        if expected_pid is None:
+            expected_pid = os.getpid()
+        if (type(expected_pid) is not int or expected_pid <= 0
+                or type(allowed_run_states) is not tuple
+                or not allowed_run_states
+                or any(state not in {"RUNNING", "CANCEL_REQUESTED"} for state in allowed_run_states)):
+            raise RunRepositoryError("startup gate process/state validation mode is invalid")
+        if (gate["policy_id"] != POLICY_ID
+                or type(gate["envelope_sha256"]) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", gate["envelope_sha256"]) is None
+                or gate["request_sha256"] != command.request_artifact_id
+                or gate["command_sha256"] != hashlib.sha256(command.canonical_bytes).hexdigest()
+                or gate["operation"] != command.operation or gate["mode"] != command.mode
+                or gate["release_identity_kind"] != command.release_identity_kind
+                or gate["release_identity_id"] != command.release_identity_id
+                or gate["run_id"] != command.run_directory.parent.name
+                or gate["pid"] != expected_pid
+                or type(gate["attempt_id"]) is not str or not gate["attempt_id"]
+                or type(gate["worker_instance_id"]) is not str or not gate["worker_instance_id"]
+                or type(gate["lease_sha256"]) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", gate["lease_sha256"]) is None):
+            raise RunRepositoryError("startup gate differs from the exact worker command")
+        expected_directory = self._data_root / "runs" / gate["run_id"] / command.request_artifact_id
+        if command.run_directory != expected_directory:
+            raise RunRepositoryError("startup gate is cross-run or outside the admitted data root")
+        run_id = _identity(gate["run_id"])
+        self._verify_run_identity(conn, run_id)
+        run = conn.execute(
+            "SELECT state,request_bytes,request_sha256,envelope_bytes,envelope_sha256 "
+            "FROM app_runs WHERE run_id=?", (run_id,),
+        ).fetchone()
+        if (run is None or run[0] not in allowed_run_states
+                or hashlib.sha256(run[1]).hexdigest() != run[2]
+                or run[2] != command.request_artifact_id
+                or run[4] != gate["envelope_sha256"]):
+            raise RunStateConflict("durable RUNNING request no longer authorizes worker startup")
+        request = RunRequest.from_json_bytes(run[1])
+        envelope = ExecutionEnvelope.from_json_bytes(run[3])
+        expected_operation = (
+            "CURRENT_SHADOW_REQUEST"
+            if (request.authority_profile == "SHADOW"
+                and request.mode == "research_shadow"
+                and envelope.requested_operations.acquire_sources is True
+                and envelope.authority_manifest.provider_acquisition is True)
+            else "OFFLINE_IDENTITY_PROBE"
+        )
+        if (command.operation != expected_operation
+                or envelope.canonical_sha256 != gate["envelope_sha256"]
+                or (command.operation == "CURRENT_SHADOW_REQUEST"
+                    and (command.release_identity_kind != "DEVELOPMENT_CHECKOUT"
+                         or envelope.source_identity.kind != "GIT_COMMIT"
+                         or command.release_identity_id != envelope.source_identity.value))):
+            raise RunRepositoryError("worker operation exceeds the exact admitted envelope")
+        attempt = conn.execute(
+            "SELECT attempt_number,lease_token,worker_instance_id,process_locator_json,finished_at "
+            "FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
+            (run_id, gate["attempt_id"]),
+        ).fetchone()
+        latest_attempt = conn.execute(
+            "SELECT MAX(attempt_number) FROM app_run_attempts WHERE run_id=?", (run_id,),
+        ).fetchone()[0]
+        if (attempt is None or attempt[0] != latest_attempt or attempt[4] is not None
+                or attempt[2] != gate["worker_instance_id"]
+                or hashlib.sha256(attempt[1].encode("utf-8")).hexdigest() != gate["lease_sha256"]
+                or type(gate["process_locator"]) is not dict
+                or attempt[3] != canonical_json_bytes(gate["process_locator"]).decode("utf-8")):
+            raise RunLeaseFenced("startup gate does not bind the current owner lease and locator")
+        owner = owner_identity(
+            run_id=run_id, attempt_id=gate["attempt_id"],
+            worker_instance_id=gate["worker_instance_id"], lease_token=attempt[1],
+        )
+        locator = gate["process_locator"]
+        if (not all(locator.get(key) == value for key, value in owner.items())
+                or locator.get("pid") != expected_pid
+                or WorkerProcessControl.state(locator, owner) != "ACTIVE"):
+            raise RunRepositoryError("startup gate process identity is stale or unowned")
+        payload = dict(gate)
+        authenticator = payload.pop("authenticator_sha256")
+        expected_authenticator = hmac.new(
+            attempt[1].encode("utf-8"), canonical_json_bytes(payload), hashlib.sha256,
+        ).hexdigest()
+        if (type(authenticator) is not str
+                or not hmac.compare_digest(authenticator, expected_authenticator)):
+            raise RunRepositoryError("startup gate authenticator does not match the durable lease")
+        event_payload = {
+            "attempt_id": gate["attempt_id"],
+            "worker_instance_id": gate["worker_instance_id"],
+            "lease_sha256": gate["lease_sha256"],
+            "command_sha256": gate["command_sha256"],
+            "process_locator_sha256": hashlib.sha256(canonical_json_bytes(locator)).hexdigest(),
+            "gate_sha256": hashlib.sha256(gate_bytes).hexdigest(),
+        }
+        events = conn.execute(
+            "SELECT payload_bytes,payload_sha256 FROM app_run_events "
+            "WHERE run_id=? AND event_type='WORKER_STARTUP_GATE_PUBLISHED'",
+            (run_id,),
+        ).fetchall()
+        if (len(events) != 1 or events[0][0] != canonical_json_bytes(event_payload)
+                or hashlib.sha256(events[0][0]).hexdigest() != events[0][1]):
+            raise RunRepositoryError("startup gate has no matching durable publication")
+        return event_payload
+
+    def verify_worker_startup_gate(self, *, command, gate, gate_bytes):
+        with self._operation() as conn:
+            return self._verify_worker_startup_gate_conn(
+                conn, command=command, gate=gate, gate_bytes=gate_bytes,
+            )
+
+    def authorize_worker_start(self, *, command, gate, gate_bytes, effect=None):
+        """Linearize a single worker start against durable cancellation."""
+        if effect is not None and not callable(effect):
+            raise RunRepositoryError("worker effect must be callable")
+        with self._operation(write=True) as conn:
+            payload = self._verify_worker_startup_gate_conn(
+                conn, command=command, gate=gate, gate_bytes=gate_bytes,
+            )
+            run_id = gate["run_id"]
+            prior = conn.execute(
+                "SELECT 1 FROM app_run_events WHERE run_id=? AND event_type='WORKER_STARTUP_EFFECT_STARTED'",
+                (run_id,),
+            ).fetchone()
+            if prior is not None:
+                raise RunStateConflict("product worker start was already consumed")
+            version = conn.execute(
+                "SELECT state_version FROM app_runs WHERE run_id=?", (run_id,),
+            ).fetchone()[0]
+            self._event(conn, run_id, version, "WORKER_STARTUP_EFFECT_STARTED", payload, _utc(self._clock()))
+            if effect is not None:
+                effect()
+        return True
+
+    def launch_current_shadow_supervisor(
+        self, *, command, gate, gate_bytes, launch, worker_executable_path,
+        worker_executable_sha256,
+    ):
+        """Spawn one blocked nested supervisor while cancellation is serialized.
+
+        The child receives no release byte until the exact child identity and
+        immutable context file are committed with this event. Cancellation
+        before this transaction prevents Popen; cancellation after commit is
+        rechecked by the child and at every provider/evidence boundary.
+        """
+        from runtime.current_shadow_operation_authority import (
+            CONTEXT_FILENAME, build_context_document, context_path, publish_context,
+        )
+        from runtime.worker_launcher import WorkerCommand
+        from services.worker_process_control import process_creation_identity
+
+        if (type(command) is not WorkerCommand or command.operation != "CURRENT_SHADOW_REQUEST"
+                or not callable(launch) or type(worker_executable_path) is not str
+                or type(worker_executable_sha256) is not str):
+            raise RunRepositoryError("exact Current Shadow supervisor launch is required")
+        path = context_path(command)
+        if path.name != CONTEXT_FILENAME:
+            raise RunRepositoryError("nested supervisor context path is not fixed")
+        process = None
+        try:
+            with self._operation(write=True) as conn:
+                gate_payload = self._verify_worker_startup_gate_conn(
+                    conn, command=command, gate=gate, gate_bytes=gate_bytes,
+                )
+                run = conn.execute(
+                    "SELECT state,request_sha256,envelope_sha256,request_bytes,envelope_bytes "
+                    "FROM app_runs WHERE run_id=?", (gate["run_id"],),
+                ).fetchone()
+                if (run is None or run[0] != "RUNNING"
+                        or run[1] != command.request_artifact_id
+                        or run[2] != gate["envelope_sha256"]):
+                    raise RunStateConflict("cancellation won before nested supervisor launch")
+                request = RunRequest.from_json_bytes(run[3])
+                envelope = ExecutionEnvelope.from_json_bytes(run[4])
+                if (request.authority_profile != "SHADOW" or request.mode != "research_shadow"
+                        or request.create_share_code is not False or request.place_wager is not False
+                        or envelope.requested_operations.acquire_sources is not True
+                        or envelope.requested_operations.create_share_code is not False
+                        or envelope.authority_manifest.provider_acquisition is not True
+                        or envelope.authority_manifest.share_code_generation is not False):
+                    raise RunRepositoryError("nested supervisor exceeds admitted Current Shadow intent")
+                started = conn.execute(
+                    "SELECT payload_bytes,payload_sha256 FROM app_run_events WHERE run_id=? "
+                    "AND event_type='WORKER_STARTUP_EFFECT_STARTED'",
+                    (gate["run_id"],),
+                ).fetchall()
+                if (len(started) != 1 or started[0][0] != canonical_json_bytes(gate_payload)
+                        or hashlib.sha256(started[0][0]).hexdigest() != started[0][1]):
+                    raise RunRepositoryError("nested launch lacks the exact consumed startup gate")
+                if (path.exists() or path.is_symlink()
+                        or conn.execute(
+                            "SELECT 1 FROM app_run_events WHERE run_id=? "
+                            "AND event_type='CURRENT_SHADOW_SUPERVISOR_STARTED'",
+                            (gate["run_id"],),
+                        ).fetchone()):
+                    raise RunStateConflict("nested supervisor launch is single-use")
+                process = launch(path)
+                child_pid = getattr(process, "pid", None)
+                if (type(child_pid) is not int or child_pid <= 0
+                        or getattr(process, "stdin", None) is None):
+                    raise RunRepositoryError("nested supervisor must start blocked on its exact handshake pipe")
+                child_identity = process_creation_identity(child_pid)
+                context = build_context_document(
+                    command=command, gate=gate, gate_bytes=gate_bytes,
+                    data_root=self._data_root, child_pid=child_pid,
+                    child_process_identity=child_identity,
+                    worker_executable_path=worker_executable_path,
+                    worker_executable_sha256=worker_executable_sha256,
+                    source_identity_sha256=hashlib.sha256(
+                        canonical_json_bytes(envelope.source_identity)
+                    ).hexdigest(),
+                    allowed_dates=tuple(value.strftime("%Y%m%d") for value in request.dates),
+                )
+                context_raw = publish_context(path, context)
+                event_payload = {
+                    "attempt_id": gate["attempt_id"],
+                    "worker_instance_id": gate["worker_instance_id"],
+                    "lease_sha256": gate["lease_sha256"],
+                    "request_sha256": command.request_artifact_id,
+                    "envelope_sha256": gate["envelope_sha256"],
+                    "command_sha256": hashlib.sha256(command.canonical_bytes).hexdigest(),
+                    "gate_sha256": hashlib.sha256(gate_bytes).hexdigest(),
+                    "context_sha256": hashlib.sha256(context_raw).hexdigest(),
+                    "parent_pid": gate["pid"],
+                    "child_pid": child_pid,
+                    "child_process_identity": child_identity,
+                    "worker_executable_sha256": worker_executable_sha256,
+                }
+                version = conn.execute(
+                    "SELECT state_version FROM app_runs WHERE run_id=?", (gate["run_id"],),
+                ).fetchone()[0]
+                self._event(
+                    conn, gate["run_id"], version, "CURRENT_SHADOW_SUPERVISOR_STARTED",
+                    event_payload, _utc(self._clock()),
+                )
+            return process
+        except BaseException:
+            if process is not None:
+                try:
+                    stream = getattr(process, "stdin", None)
+                    if stream is not None:
+                        stream.close()
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=5)
+                except Exception:
+                    pass
+            raise
+
+    def _verify_current_shadow_context_conn(
+        self, conn, *, context, context_bytes, command, gate, gate_bytes,
+        allowed_run_states=("RUNNING",),
+    ):
+        """Re-authenticate supervisor, parent and source identity for each DB action."""
+        from runtime.current_shadow_operation_authority import (
+            CONTEXT_FILENAME, POLICY_ID, MAX_CONTEXT_BYTES, context_path,
+            read_context, worker_executable_identity,
+        )
+        from runtime.worker_startup_gate import FILENAME as STARTUP_GATE_FILENAME, read_gate_document
+        from runtime.worker_launcher import WorkerCommand
+        from services.worker_process_control import process_creation_identity
+
+        if (type(context) is not dict or set(context) != {
+                "schema_version", "policy_id", "run_id", "attempt_id", "worker_instance_id",
+                "lease_sha256", "request_sha256", "envelope_sha256", "command_sha256",
+                "gate_sha256", "source_identity_sha256", "allowed_dates", "release_identity_kind",
+                "release_identity_id", "source_revision",
+                "operation", "mode", "profile", "intent_id", "data_root", "parent_pid",
+                "parent_process_locator", "child_pid", "child_process_identity",
+                "worker_executable_path", "worker_executable_sha256",
+            } or type(context_bytes) is not bytes or len(context_bytes) > MAX_CONTEXT_BYTES
+                or canonical_json_bytes(context) != context_bytes
+                or type(command) is not WorkerCommand
+                or command.operation != "CURRENT_SHADOW_REQUEST"
+                or context.get("schema_version") != 1 or context.get("policy_id") != POLICY_ID
+                or context.get("operation") != "CURRENT_SHADOW_REQUEST"
+                or context.get("mode") != "research_shadow" or context.get("profile") != "SHADOW"
+                or context.get("intent_id") != "CURRENT_SHADOW_SOURCE_ACQUISITION_V1"
+                or context.get("data_root") != os.fspath(self._data_root)
+                or context.get("request_sha256") != command.request_artifact_id
+                or context.get("command_sha256") != hashlib.sha256(command.canonical_bytes).hexdigest()
+                or context.get("gate_sha256") != hashlib.sha256(gate_bytes).hexdigest()
+                or context.get("run_id") != gate.get("run_id")
+                or context.get("release_identity_kind") != command.release_identity_kind
+                or context.get("release_identity_id") != command.release_identity_id
+                or context.get("source_revision") != command.release_identity_id
+                or type(context.get("parent_pid")) is not int
+                or context.get("parent_pid") != gate.get("pid")
+                or context.get("child_pid") != os.getpid()
+                or os.getppid() != context.get("parent_pid")
+                or type(context.get("parent_process_locator")) is not dict
+                or context.get("parent_process_locator") != gate.get("process_locator")):
+            raise RunRepositoryError("nested Current Shadow context differs from this exact process")
+        if context_path(command).name != CONTEXT_FILENAME:
+            raise RunRepositoryError("nested context path is not fixed")
+        stored_context, stored_raw = read_context(context_path(command), command=command)
+        if stored_context != context or stored_raw != context_bytes:
+            raise RunRepositoryError("nested context file changed after authentication")
+        stored_gate, stored_gate_raw = read_gate_document(
+            command.run_directory / STARTUP_GATE_FILENAME
+        )
+        if stored_gate != gate or stored_gate_raw != gate_bytes:
+            raise RunRepositoryError("parent startup gate file changed after authentication")
+        try:
+            executable_path, executable_sha = worker_executable_identity()
+            child_identity = process_creation_identity(os.getpid())
+        except Exception as exc:
+            raise RunRepositoryError("nested process or executable identity is unavailable") from exc
+        if (executable_path != context.get("worker_executable_path")
+                or executable_sha != context.get("worker_executable_sha256")
+                or child_identity != context.get("child_process_identity")):
+            raise RunRepositoryError("nested worker executable or PID creation identity changed")
+        gate_event = self._verify_worker_startup_gate_conn(
+            conn, command=command, gate=gate, gate_bytes=gate_bytes,
+            expected_pid=context["parent_pid"], allowed_run_states=allowed_run_states,
+        )
+        if (context.get("attempt_id") != gate.get("attempt_id")
+                or context.get("worker_instance_id") != gate.get("worker_instance_id")
+                or context.get("lease_sha256") != gate.get("lease_sha256")
+                or context.get("envelope_sha256") != gate.get("envelope_sha256")):
+            raise RunLeaseFenced("nested worker differs from parent attempt lease")
+        request = RunRequest.from_json_bytes(
+            conn.execute("SELECT request_bytes FROM app_runs WHERE run_id=?",
+                         (context["run_id"],)).fetchone()[0]
+        )
+        envelope = ExecutionEnvelope.from_json_bytes(
+            conn.execute("SELECT envelope_bytes FROM app_runs WHERE run_id=?",
+                         (context["run_id"],)).fetchone()[0]
+        )
+        if (request.authority_profile != "SHADOW" or request.mode != "research_shadow"
+                or request.create_share_code is not False or request.place_wager is not False
+                or context.get("source_identity_sha256")
+                != hashlib.sha256(canonical_json_bytes(envelope.source_identity)).hexdigest()
+                or context.get("allowed_dates") != [value.strftime("%Y%m%d") for value in request.dates]
+                or envelope.requested_operations.acquire_sources is not True
+                or envelope.requested_operations.create_share_code is not False
+                or envelope.authority_manifest.provider_acquisition is not True
+                or envelope.authority_manifest.share_code_generation is not False):
+            raise RunRepositoryError("nested worker exceeds the exact product operation intent")
+        event_payload = {
+            "attempt_id": gate["attempt_id"],
+            "worker_instance_id": gate["worker_instance_id"],
+            "lease_sha256": gate["lease_sha256"],
+            "request_sha256": command.request_artifact_id,
+            "envelope_sha256": gate["envelope_sha256"],
+            "command_sha256": hashlib.sha256(command.canonical_bytes).hexdigest(),
+            "gate_sha256": hashlib.sha256(gate_bytes).hexdigest(),
+            "context_sha256": hashlib.sha256(context_bytes).hexdigest(),
+            "parent_pid": gate["pid"],
+            "child_pid": os.getpid(),
+            "child_process_identity": child_identity,
+            "worker_executable_sha256": executable_sha,
+        }
+        rows = conn.execute(
+            "SELECT payload_bytes,payload_sha256 FROM app_run_events WHERE run_id=? "
+            "AND event_type='CURRENT_SHADOW_SUPERVISOR_STARTED'",
+            (context["run_id"],),
+        ).fetchall()
+        if (len(rows) != 1 or rows[0][0] != canonical_json_bytes(event_payload)
+                or hashlib.sha256(rows[0][0]).hexdigest() != rows[0][1]):
+            raise RunRepositoryError("nested context lacks the exact committed child-start event")
+        return gate_event
+
+    def verify_current_shadow_supervisor_context(
+        self, *, context, context_bytes, command, gate, gate_bytes,
+    ):
+        with self._operation() as conn:
+            return self._verify_current_shadow_context_conn(
+                conn, context=context, context_bytes=context_bytes, command=command,
+                gate=gate, gate_bytes=gate_bytes,
+            )
+
+    def prepare_current_shadow_provider_get(
+        self, *, context, command, gate, gate_bytes, intent, intent_bytes, idempotency_key,
+    ):
+        from runtime.current_shadow_operation_authority import (
+            OPERATION_KIND, _build_provider_get_intent, provider_get_idempotency_key,
+        )
+
+        if type(intent) is not dict or type(intent_bytes) is not bytes:
+            raise ExternalOperationViolation("provider GET intent must be canonical typed bytes")
+        expected = _build_provider_get_intent(
+            context, provider=intent.get("provider"),
+            request_target=intent.get("request_target"), logical_id=intent.get("logical_id"),
+            headers=tuple(tuple(row) for row in intent.get("headers", ())),
+            timeout_seconds=intent.get("timeout_seconds"),
+            maximum_bytes=intent.get("maximum_bytes"), sequence=intent.get("sequence"),
+            origin=intent.get("origin"),
+            redirect_parent_operation_id=intent.get("redirect_parent_operation_id"),
+            redirect_target_sha256=intent.get("redirect_target_sha256"),
+        )
+        if canonical_json_bytes(expected) != intent_bytes or canonical_json_bytes(intent) != intent_bytes:
+            raise ExternalOperationViolation("provider GET request intent is not exact allowlisted authority")
+        intent_sha = hashlib.sha256(intent_bytes).hexdigest()
+        authority_sha = hashlib.sha256(canonical_json_bytes(context)).hexdigest()
+        if (idempotency_key != provider_get_idempotency_key(context, intent)
+                or intent.get("operation_kind") != OPERATION_KIND):
+            raise ExternalOperationViolation("provider GET idempotency/operation identity mismatch")
+        with self._operation(write=True) as conn:
+            self._verify_current_shadow_context_conn(
+                conn, context=context, context_bytes=canonical_json_bytes(context),
+                command=command, gate=gate, gate_bytes=gate_bytes,
+            )
+            run_id, attempt_id = context["run_id"], context["attempt_id"]
+            if conn.execute("SELECT state FROM app_runs WHERE run_id=?", (run_id,)).fetchone()[0] != "RUNNING":
+                raise ExternalOperationViolation("durable cancellation blocks a new provider GET")
+            if intent["provider"] == "GITHUB_LINEAGE_REDIRECT_BINARY":
+                parent = conn.execute(
+                    "SELECT attempt_id,operation_kind,state,response_artifact_id,input_artifact_id,intent_sha256 "
+                    "FROM app_external_operations WHERE run_id=? AND operation_id=?",
+                    (run_id, intent["redirect_parent_operation_id"]),
+                ).fetchone()
+                if (parent is None or parent[0] != attempt_id
+                        or parent[1] != OPERATION_KIND
+                        or parent[2] != "CONFIRMED" or parent[3] is None
+                        or parent[4] is None):
+                    raise ExternalOperationViolation("GitHub redirect lacks its exact confirmed parent response")
+                input_row = conn.execute(
+                    "SELECT logical_path,byte_sha256,byte_count FROM app_artifacts WHERE artifact_id=?",
+                    (parent[4],),
+                ).fetchone()
+                if input_row is None:
+                    raise ExternalOperationViolation("GitHub redirect parent intent artifact is absent")
+                input_raw = _read_bounded(
+                    contained(self._data_root, logical_locator(input_row[0])),
+                    min(input_row[2], 65_536),
+                    "GitHub lineage redirect parent intent",
+                )
+                if hashlib.sha256(input_raw).hexdigest() != input_row[1]:
+                    raise ExternalOperationViolation("GitHub redirect parent intent bytes changed")
+                try:
+                    parent_intent = json.loads(input_raw)
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise ExternalOperationViolation("GitHub redirect parent intent is malformed") from exc
+                if (type(parent_intent) is not dict
+                        or hashlib.sha256(input_raw).hexdigest() != parent[5]
+                        or parent_intent.get("provider") not in {
+                            "GITHUB_LINEAGE_ARTIFACT_ZIP", "GITHUB_LINEAGE_RELEASE_ASSET",
+                        }):
+                    raise ExternalOperationViolation("GitHub redirect parent is not one exact binary artifact GET")
+                parent_artifact = conn.execute(
+                    "SELECT logical_path,byte_sha256,byte_count FROM app_artifacts WHERE artifact_id=?",
+                    (parent[3],),
+                ).fetchone()
+                if parent_artifact is None:
+                    raise ExternalOperationViolation("GitHub redirect parent response artifact is absent")
+                parent_raw = _read_bounded(
+                    contained(self._data_root, logical_locator(parent_artifact[0])),
+                    min(parent_artifact[2], 24 * 1024 * 1024),
+                    "GitHub lineage redirect parent response",
+                )
+                if hashlib.sha256(parent_raw).hexdigest() != parent_artifact[1]:
+                    raise ExternalOperationViolation("GitHub redirect parent response bytes changed")
+                try:
+                    parent_response = json.loads(parent_raw)
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise ExternalOperationViolation("GitHub redirect parent response is malformed") from exc
+                if (type(parent_response) is not dict
+                        or parent_response.get("operation_id") != intent["redirect_parent_operation_id"]
+                        or parent_response.get("intent_sha256") != parent[5]
+                        or parent_response.get("redirect_target_sha256")
+                            != intent["redirect_target_sha256"]
+                        or parent_response.get("status") not in {301, 302, 303, 307, 308}):
+                    raise ExternalOperationViolation("GitHub signed redirect hash differs from its parent response")
+            if conn.execute(
+                "SELECT 1 FROM app_external_operations WHERE run_id=? AND operation_kind=? AND idempotency_key=?",
+                (run_id, OPERATION_KIND, idempotency_key),
+            ).fetchone():
+                raise ExternalOperationViolation("provider GET operation identity was already consumed")
+            prior_prepared = conn.execute(
+                "SELECT payload_bytes FROM app_run_events WHERE run_id=? "
+                "AND event_type='CURRENT_SHADOW_GET_PREPARED' ORDER BY sequence",
+                (run_id,),
+            ).fetchall()
+            if intent["sequence"] != len(prior_prepared) + 1:
+                raise ExternalOperationViolation("provider GET sequence is not the next durable operation")
+            if conn.execute(
+                "SELECT 1 FROM app_external_operations WHERE run_id=? AND attempt_id=? "
+                "AND operation_kind=? AND state IN ('PREPARED','SENT','OUTCOME_UNKNOWN')",
+                (run_id, attempt_id, OPERATION_KIND),
+            ).fetchone():
+                raise ExternalOperationViolation("prior provider GET has not reached a known settled state")
+            operation_id = "provider-get-" + hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()
+            input_artifact_id = "provider-get-input-" + intent_sha
+            locator = f"external-operation-evidence/{operation_id}-input.json"
+            stamp = _utc(self._clock())
+            publish(self._data_root, locator, intent_bytes)
+            conn.execute(
+                "INSERT INTO app_artifacts VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (input_artifact_id, intent_sha, intent_sha, len(intent_bytes),
+                 "application/json", "EXTERNAL_INPUT", locator, "RETAINED",
+                 OPERATION_KIND, stamp, stamp),
+            )
+            conn.execute(
+                "INSERT INTO app_run_artifacts VALUES(?,?,?,1)",
+                (run_id, input_artifact_id, "EXTERNAL_INPUT"),
+            )
+            conn.execute(
+                "INSERT INTO app_external_operations(operation_id,run_id,attempt_id,operation_kind,intent_sha256,authority_sha256,input_artifact_id,idempotency_key,state,prepared_at) "
+                "VALUES(?,?,?,?,?,?,?,?,'PREPARED',?)",
+                (operation_id, run_id, attempt_id, OPERATION_KIND, intent_sha,
+                 authority_sha, input_artifact_id, idempotency_key, stamp),
+            )
+            version = conn.execute("SELECT state_version FROM app_runs WHERE run_id=?", (run_id,)).fetchone()[0]
+            self._event(conn, run_id, version, "CURRENT_SHADOW_GET_PREPARED", {
+                "operation_id": operation_id, "operation_kind": OPERATION_KIND,
+                "intent_sha256": intent_sha, "authority_sha256": authority_sha,
+                "input_artifact_id": input_artifact_id,
+                "idempotency_key_sha256": hashlib.sha256(idempotency_key.encode("ascii")).hexdigest(),
+                "sequence": intent["sequence"], "provider": intent["provider"],
+            }, stamp)
+            return operation_id
+
+    def authorize_current_shadow_provider_get_sent(
+        self, *, context, command, gate, gate_bytes, operation_id,
+    ):
+        from runtime.current_shadow_operation_authority import OPERATION_KIND
+
+        with self._operation(write=True) as conn:
+            self._verify_current_shadow_context_conn(
+                conn, context=context, context_bytes=canonical_json_bytes(context),
+                command=command, gate=gate, gate_bytes=gate_bytes,
+                allowed_run_states=("RUNNING", "CANCEL_REQUESTED"),
+            )
+            row = conn.execute(
+                "SELECT attempt_id,state,operation_kind,intent_sha256 FROM app_external_operations "
+                "WHERE run_id=? AND operation_id=?",
+                (context["run_id"], operation_id),
+            ).fetchone()
+            if row is None or row[0] != context["attempt_id"] or row[1] != "PREPARED" or row[2] != OPERATION_KIND:
+                raise ExternalOperationViolation("provider GET PREPARED owner/state mismatch")
+            state = conn.execute("SELECT state,state_version FROM app_runs WHERE run_id=?", (context["run_id"],)).fetchone()
+            stamp = _utc(self._clock())
+            if state[0] != "RUNNING":
+                conn.execute(
+                    "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='PROVIDER_GET_NEVER_SENT' "
+                    "WHERE operation_id=? AND state='PREPARED'",
+                    (stamp, operation_id),
+                )
+                self._event(conn, context["run_id"], state[1], "CURRENT_SHADOW_GET_NEVER_SENT", {
+                    "operation_id": operation_id, "intent_sha256": row[3],
+                    "reason": "CANCEL_REQUESTED_BEFORE_SENT",
+                }, stamp)
+                return False
+            cursor = conn.execute(
+                "UPDATE app_external_operations SET state='SENT',sent_at=? "
+                "WHERE operation_id=? AND state='PREPARED'",
+                (stamp, operation_id),
+            )
+            if cursor.rowcount != 1:
+                raise ExternalOperationViolation("provider GET SENT transition was not consumed")
+            self._event(conn, context["run_id"], state[1], "CURRENT_SHADOW_GET_SENT", {
+                "operation_id": operation_id, "intent_sha256": row[3],
+                "linearization": "ONE_IN_FLIGHT_GET_PERMIT",
+            }, stamp)
+            return True
+
+    def _retain_current_shadow_get_artifact(self, conn, *, run_id, operation_id, role, raw):
+        digest = hashlib.sha256(raw).hexdigest()
+        artifact_id = f"provider-get-{role.lower()}-{hashlib.sha256(operation_id.encode('ascii')).hexdigest()}"
+        locator = f"external-operation-evidence/{operation_id}-{role.lower()}.json"
+        stamp = _utc(self._clock())
+        publish(self._data_root, locator, raw)
+        conn.execute(
+            "INSERT INTO app_artifacts VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (artifact_id, digest, digest, len(raw), "application/json", role,
+             locator, "RETAINED", "CURRENT_SHADOW_PROVIDER_GET_V1", stamp, stamp),
+        )
+        conn.execute(
+            "INSERT INTO app_run_artifacts VALUES(?,?,?,1)",
+            (run_id, artifact_id, role),
+        )
+        self._require_artifact_role(conn, run_id, artifact_id, role)
+        return artifact_id, digest
+
+    def confirm_current_shadow_provider_get(
+        self, *, context, command, gate, gate_bytes, operation_id, intent, response,
+    ):
+        from runtime.current_shadow_operation_authority import (
+            OPERATION_KIND, ProviderGetResponse, _build_provider_get_intent,
+        )
+
+        if type(response) is not ProviderGetResponse:
+            raise ExternalOperationViolation("provider response is not the exact typed observation")
+        if type(intent) is not dict:
+            raise ExternalOperationViolation("provider response intent is not an exact object")
+        expected_intent = _build_provider_get_intent(
+            context, provider=intent.get("provider"),
+            request_target=intent.get("request_target"), logical_id=intent.get("logical_id"),
+            headers=tuple(tuple(row) for row in intent.get("headers", ())),
+            timeout_seconds=intent.get("timeout_seconds"),
+            maximum_bytes=intent.get("maximum_bytes"), sequence=intent.get("sequence"),
+            origin=intent.get("origin"),
+            redirect_parent_operation_id=intent.get("redirect_parent_operation_id"),
+            redirect_target_sha256=intent.get("redirect_target_sha256"),
+        )
+        if (canonical_json_bytes(expected_intent) != canonical_json_bytes(intent)
+                or len(response.body) > intent["maximum_bytes"]):
+            raise ExternalOperationViolation("provider response differs from the exact bounded intent")
+        redirect_target_sha256 = None
+        if response.location is not None:
+            from runtime.current_shadow_operation_authority import (
+                GITHUB_LINEAGE_ARTIFACT_ZIP, GITHUB_LINEAGE_RELEASE_ASSET,
+                _validated_github_redirect_location,
+            )
+            if (intent.get("provider") not in {
+                    GITHUB_LINEAGE_ARTIFACT_ZIP, GITHUB_LINEAGE_RELEASE_ASSET,
+            } or response.status not in {301, 302, 303, 307, 308}):
+                raise ExternalOperationViolation("only an exact GitHub artifact response may name a redirect")
+            redirect_target_sha256 = _validated_github_redirect_location(response.location)
+        response_payload = {
+            "schema_version": 1, "operation_kind": OPERATION_KIND,
+            "operation_id": operation_id,
+            "intent_sha256": hashlib.sha256(canonical_json_bytes(intent)).hexdigest(),
+            "status": response.status, "observed_at": response.observed_at,
+            "content_type": response.content_type, "content_length": response.content_length,
+            "content_length_header": response.content_length_header,
+            "redirect_target_sha256": redirect_target_sha256,
+            "raw_sha256": hashlib.sha256(response.body).hexdigest(),
+            "raw_size": len(response.body),
+            "raw_base64": base64.b64encode(response.body).decode("ascii"),
+        }
+        response_raw = canonical_json_bytes(response_payload)
+        if len(response_raw) > 24 * 1024 * 1024:
+            raise ExternalOperationViolation("retained provider response exceeds its fixed evidence bound")
+        with self._operation(write=True) as conn:
+            self._verify_current_shadow_context_conn(
+                conn, context=context, context_bytes=canonical_json_bytes(context),
+                command=command, gate=gate, gate_bytes=gate_bytes,
+                allowed_run_states=("RUNNING", "CANCEL_REQUESTED"),
+            )
+            row = conn.execute(
+                "SELECT attempt_id,state,operation_kind,intent_sha256,input_artifact_id "
+                "FROM app_external_operations WHERE run_id=? AND operation_id=?",
+                (context["run_id"], operation_id),
+            ).fetchone()
+            if (row is None or row[0] != context["attempt_id"] or row[1] != "SENT"
+                    or row[2] != OPERATION_KIND
+                    or row[3] != hashlib.sha256(canonical_json_bytes(intent)).hexdigest()):
+                raise ExternalOperationViolation("provider response does not settle one exact SENT operation")
+            input_raw = _read_bounded(
+                contained(self._data_root, logical_locator(
+                    conn.execute("SELECT logical_path FROM app_artifacts WHERE artifact_id=?", (row[4],)).fetchone()[0]
+                )),
+                65_536,
+                "provider GET intent artifact",
+            )
+            if input_raw != canonical_json_bytes(intent):
+                raise ExternalOperationViolation("provider response request lineage changed")
+            artifact_id, artifact_sha = self._retain_current_shadow_get_artifact(
+                conn, run_id=context["run_id"], operation_id=operation_id,
+                role="EXTERNAL_RESPONSE", raw=response_raw,
+            )
+            stamp = _utc(self._clock())
+            conn.execute(
+                "UPDATE app_external_operations SET state='CONFIRMED',completed_at=?,response_artifact_id=? "
+                "WHERE run_id=? AND operation_id=? AND state='SENT'",
+                (stamp, artifact_id, context["run_id"], operation_id),
+            )
+            version = conn.execute("SELECT state_version FROM app_runs WHERE run_id=?", (context["run_id"],)).fetchone()[0]
+            self._event(conn, context["run_id"], version, "CURRENT_SHADOW_GET_RESPONSE_RETAINED", {
+                "operation_id": operation_id, "response_artifact_id": artifact_id,
+                "response_artifact_sha256": artifact_sha,
+                "raw_sha256": response_payload["raw_sha256"],
+                "raw_size": response_payload["raw_size"],
+                "status": response.status, "observed_at": response.observed_at,
+                "content_type": response.content_type,
+                "content_length": response.content_length,
+                "redirect_target_sha256": redirect_target_sha256,
+                "run_state_at_retention": conn.execute(
+                    "SELECT state FROM app_runs WHERE run_id=?", (context["run_id"],),
+                ).fetchone()[0],
+            }, stamp)
+
+    def mark_current_shadow_provider_get_unknown(
+        self, *, context, command, gate, gate_bytes, operation_id, error_code,
+    ):
+        from runtime.current_shadow_operation_authority import OPERATION_KIND
+
+        if error_code not in {"PROVIDER_GET_TRANSPORT_UNKNOWN"}:
+            raise ExternalOperationViolation("provider GET uncertainty code is outside vocabulary")
+        with self._operation(write=True) as conn:
+            self._verify_current_shadow_context_conn(
+                conn, context=context, context_bytes=canonical_json_bytes(context),
+                command=command, gate=gate, gate_bytes=gate_bytes,
+                allowed_run_states=("RUNNING", "CANCEL_REQUESTED"),
+            )
+            row = conn.execute(
+                "SELECT state,operation_kind,intent_sha256 FROM app_external_operations "
+                "WHERE run_id=? AND operation_id=? AND attempt_id=?",
+                (context["run_id"], operation_id, context["attempt_id"]),
+            ).fetchone()
+            if row is None or row[:2] != ("SENT", OPERATION_KIND):
+                raise ExternalOperationViolation("only exact SENT provider GET can become uncertain")
+            stamp = _utc(self._clock())
+            conn.execute(
+                "UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code=? "
+                "WHERE operation_id=? AND state='SENT'",
+                (stamp, error_code, operation_id),
+            )
+            version = conn.execute("SELECT state_version FROM app_runs WHERE run_id=?", (context["run_id"],)).fetchone()[0]
+            self._event(conn, context["run_id"], version, "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN", {
+                "operation_id": operation_id, "intent_sha256": row[2],
+                "error_code": error_code,
+            }, stamp)
+
+    def publish_current_shadow_evidence(
+        self, *, context, command, gate, gate_bytes, evidence_kind, sequence, publish,
+    ):
+        """Serialize one bounded file publication against durable cancellation."""
+        if type(sequence) is not int or sequence <= 0 or not callable(publish):
+            raise RunRepositoryError("product evidence publication sequence/callback is invalid")
+        with self._operation(write=True) as conn:
+            self._verify_current_shadow_context_conn(
+                conn, context=context, context_bytes=canonical_json_bytes(context),
+                command=command, gate=gate, gate_bytes=gate_bytes,
+            )
+            state, version = conn.execute(
+                "SELECT state,state_version FROM app_runs WHERE run_id=?", (context["run_id"],),
+            ).fetchone()
+            if state != "RUNNING":
+                raise RunStateConflict("durable cancellation blocks new product evidence publication")
+            result = publish()
+            self._event(conn, context["run_id"], version, "CURRENT_SHADOW_EVIDENCE_PUBLISHED", {
+                "attempt_id": context["attempt_id"],
+                "child_pid": context["child_pid"],
+                "context_sha256": hashlib.sha256(canonical_json_bytes(context)).hexdigest(),
+                "evidence_kind": evidence_kind,
+                "publication_sequence": sequence,
+            }, _utc(self._clock()))
+            return result
 
     @staticmethod
     def _validate_worker_progress(payload):
@@ -595,17 +1473,19 @@ class DurableRunRepository:
                 "diagnostic_id": diagnostic_id, "exit_code": exit_code,
                 "last_proven_stage": last_proven_stage,
             }, stamp)
+            disposition = "CANCEL_REQUESTED_SETTLED" if row[0] == "CANCEL_REQUESTED" else "E2_NO_VERIFIED_RECEIPT"
             conn.execute(
                 "UPDATE app_run_attempts SET finished_at=?,exit_code=?,recovery_disposition=? "
                 "WHERE run_id=? AND attempt_id=?",
-                (stamp, exit_code, "E2_NO_VERIFIED_RECEIPT", run_id, attempt_id),
+                (stamp, exit_code, disposition, run_id, attempt_id),
             )
+            next_state = "CANCELLED" if row[0] == "CANCEL_REQUESTED" else "INTERRUPTED"
             conn.execute(
-                "UPDATE app_runs SET state='INTERRUPTED',state_version=state_version+1,updated_at=? "
+                "UPDATE app_runs SET state=?,state_version=state_version+1,updated_at=? "
                 "WHERE run_id=? AND state_version=?",
-                (stamp, run_id, row[1]),
+                (next_state, stamp, run_id, row[1]),
             )
-            self._event(conn, run_id, row[1] + 1, "RUN_INTERRUPTED", {}, stamp)
+            self._event(conn, run_id, row[1] + 1, "RUN_" + next_state, {}, stamp)
 
     def heartbeat(self, run_id, attempt_id, lease_token):
         with self._operation(write=True) as conn:
@@ -621,24 +1501,47 @@ class DurableRunRepository:
             conn.execute("UPDATE app_run_attempts SET finished_at=?,exit_code=? WHERE attempt_id=?",
                          (_utc(self._clock()), exit_code, attempt_id))
 
-    def request_cancel(self, run_id, *, expected_version):
-        if type(expected_version) is not int or expected_version < 0:
+    def record_cancel_intent(self, run_id, *, expected_version=None):
+        _identity(run_id)
+        if expected_version is not None and (type(expected_version) is not int or expected_version < 0):
             raise RunStateConflict("invalid state version")
         with self._operation(write=True) as conn:
             row = conn.execute("SELECT state,state_version FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
             if row is None:
-                raise RunStateConflict("unknown run")
-            self._verify_run_identity(conn, run_id)
-            if row[0] in {"CANCEL_REQUESTED", "CANCELLED", "TERMINAL", "INTERRUPTED"}:
-                return row[1]
-            if row[1] != expected_version:
+                return None
+            self._verify_run_identity(conn, run_id, current=False)
+            current_state, current_version = row[0], row[1]
+            if current_state == "CANCEL_REQUESTED":
+                return ("already_requested", current_state, current_version)
+            if current_state in {"CANCELLED", "TERMINAL", "INTERRUPTED"}:
+                return ("already_terminal", current_state, current_version)
+            if current_state == "RUNNING" and conn.execute(
+                "SELECT 1 FROM app_run_artifacts "
+                "WHERE run_id=? AND role='RUN_RECEIPT_PENDING' LIMIT 1",
+                (run_id,),
+            ).fetchone():
+                # Receipt registration wins this transaction race. Cancellation
+                # must not bump the version and strand a valid published receipt.
+                raise RunStateConflict("terminal receipt projection is pending")
+            if expected_version is not None and current_version != expected_version:
                 raise RunStateConflict("cancellation CAS rejected")
-            state = "CANCELLED" if row[0] == "QUEUED" else "CANCEL_REQUESTED"
+            next_state = "CANCELLED" if current_state == "QUEUED" else "CANCEL_REQUESTED"
+            next_version = current_version + 1
             stamp = _utc(self._clock())
-            conn.execute("UPDATE app_runs SET state=?,state_version=state_version+1,updated_at=? WHERE run_id=? AND state_version=?",
-                         (state, stamp, run_id, expected_version))
-            self._event(conn, run_id, expected_version + 1, "RUN_" + state, {}, stamp)
-            return expected_version + 1
+            conn.execute(
+                "UPDATE app_runs SET state=?,state_version=?,updated_at=? WHERE run_id=? AND state_version=?",
+                (next_state, next_version, stamp, run_id, current_version),
+            )
+            self._event(conn, run_id, next_version, "RUN_" + next_state, {}, stamp)
+            return ("requested", next_state, next_version)
+
+    def request_cancel(self, run_id, *, expected_version):
+        if type(expected_version) is not int or expected_version < 0:
+            raise RunStateConflict("invalid state version")
+        result = self.record_cancel_intent(run_id, expected_version=expected_version)
+        if result is None:
+            raise RunStateConflict("unknown run")
+        return result[2]
 
     def read_events(self, run_id, *, after_sequence=0, limit=100):
         _identity(run_id)
@@ -1014,14 +1917,224 @@ class DurableRunRepository:
         with self._operation(write=True) as conn:
             self._fence(conn, run_id, attempt_id, lease_token)
             stamp = _utc(self._clock())
-            conn.execute("UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='OFFLINE_RECOVERY' WHERE run_id=? AND attempt_id=? AND state='SENT'",
-                         (stamp, run_id, attempt_id))
-            conn.execute("UPDATE app_run_attempts SET finished_at=?,recovery_disposition='OFFLINE_INTERRUPTED' WHERE attempt_id=?",
-                         (stamp, attempt_id))
+            state_version = conn.execute(
+                "SELECT state,state_version FROM app_runs WHERE run_id=?", (run_id,),
+            ).fetchone()[1]
+            provider_prepared = conn.execute(
+                "SELECT operation_id,intent_sha256 FROM app_external_operations "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' "
+                "AND state='PREPARED' ORDER BY operation_id",
+                (run_id, attempt_id),
+            ).fetchall()
+            provider_sent = conn.execute(
+                "SELECT operation_id,intent_sha256 FROM app_external_operations "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' "
+                "AND state='SENT' ORDER BY operation_id",
+                (run_id, attempt_id),
+            ).fetchall()
+            conn.execute(
+                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='PROVIDER_GET_NEVER_SENT' "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' AND state='PREPARED'",
+                (stamp, run_id, attempt_id),
+            )
+            for operation_id, intent_sha256 in provider_prepared:
+                self._event(conn, run_id, state_version, "CURRENT_SHADOW_GET_NEVER_SENT", {
+                    "operation_id": operation_id, "intent_sha256": intent_sha256,
+                    "reason": "RECOVERY_FOUND_PREPARED_WITHOUT_SENT",
+                }, stamp)
+            for operation_id, intent_sha256 in provider_sent:
+                self._event(conn, run_id, state_version, "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN", {
+                    "operation_id": operation_id, "intent_sha256": intent_sha256,
+                    "error_code": "PROVIDER_GET_OUTCOME_UNKNOWN",
+                    "reason": "RECOVERY_FOUND_SENT_WITHOUT_PROVEN_RESPONSE",
+                }, stamp)
+            conn.execute(
+                "UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='PROVIDER_GET_OUTCOME_UNKNOWN' "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' AND state='SENT'",
+                (stamp, run_id, attempt_id),
+            )
+            conn.execute(
+                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='SHARE_CREATE_NEVER_SENT' "
+                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' AND operation_kind=?",
+                (stamp, run_id, attempt_id, SHARE_CREATE_KIND),
+            )
+            conn.execute(
+                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='OFFLINE_RECOVERY' "
+                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' "
+                "AND operation_kind NOT IN (?, 'CURRENT_SHADOW_PROVIDER_GET_V1')",
+                (stamp, run_id, attempt_id, SHARE_CREATE_KIND),
+            )
+            conn.execute(
+                "UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='OFFLINE_RECOVERY' "
+                "WHERE run_id=? AND attempt_id=? AND state='SENT' AND operation_kind<>'CURRENT_SHADOW_PROVIDER_GET_V1'",
+                (stamp, run_id, attempt_id),
+            )
             row = conn.execute("SELECT state,state_version FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
-            if row[0] in {"QUEUED", "RUNNING", "CANCEL_REQUESTED"}:
-                conn.execute("UPDATE app_runs SET state='INTERRUPTED',state_version=state_version+1,updated_at=? WHERE run_id=?", (stamp, run_id))
-                self._event(conn, run_id, row[1] + 1, "RUN_INTERRUPTED", {}, stamp)
+            disposition = "CANCEL_REQUESTED_SETTLED" if row is not None and row[0] == "CANCEL_REQUESTED" else "OFFLINE_INTERRUPTED"
+            conn.execute("UPDATE app_run_attempts SET finished_at=?,recovery_disposition=? WHERE attempt_id=?",
+                         (stamp, disposition, attempt_id))
+            if row is not None and row[0] in {"QUEUED", "RUNNING", "CANCEL_REQUESTED"}:
+                next_state = "CANCELLED" if row[0] == "CANCEL_REQUESTED" else "INTERRUPTED"
+                conn.execute("UPDATE app_runs SET state=?,state_version=state_version+1,updated_at=? WHERE run_id=?", (next_state, stamp, run_id))
+                self._event(conn, run_id, row[1] + 1, "RUN_" + next_state, {}, stamp)
+
+    def list_unfinished_attempts(self):
+        with self._operation() as conn:
+            cursor = conn.execute(
+                "SELECT a.attempt_id, a.run_id, a.attempt_number, a.lease_token, "
+                "a.worker_instance_id, a.process_locator_json, a.heartbeat_at, a.started_at, "
+                "r.state, r.state_version, r.request_sha256, r.envelope_sha256, r.release_id "
+                "FROM app_run_attempts a JOIN app_runs r ON r.run_id=a.run_id "
+                "WHERE a.finished_at IS NULL ORDER BY a.started_at LIMIT 101"
+            )
+            rows = cursor.fetchall()
+            if len(rows) > 100:
+                raise RunRepositoryError("unfinished attempt scan exceeds its bound")
+            return [
+                {
+                    "attempt_id": row[0],
+                    "run_id": row[1],
+                    "attempt_number": row[2],
+                    "lease_token": row[3],
+                    "worker_instance_id": row[4],
+                    "process_locator": json.loads(row[5]),
+                    "heartbeat_at": row[6],
+                    "started_at": row[7],
+                    "run_state": row[8],
+                    "state_version": row[9],
+                    "request_sha256": row[10],
+                    "envelope_sha256": row[11],
+                    "release_id": row[12],
+                }
+                for row in rows
+            ]
+
+    def list_pending_terminal_receipts(self, *, limit=100):
+        """Return only receipt identities already linked to an exact DB run/attempt."""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise RunRepositoryError("pending receipt page is outside its bound")
+        with self._operation() as conn:
+            rows = conn.execute(
+                "SELECT a.byte_sha256,l.run_id,t.attempt_id,t.lease_token "
+                "FROM app_run_artifacts l "
+                "JOIN app_artifacts a ON a.artifact_id=l.artifact_id "
+                "JOIN app_runs r ON r.run_id=l.run_id "
+                "JOIN app_run_attempts t ON t.run_id=l.run_id AND t.finished_at IS NULL "
+                "WHERE l.role='RUN_RECEIPT_PENDING' AND l.retained_root=1 "
+                "AND r.receipt_artifact_id IS NULL AND r.state IN ('RUNNING','CANCEL_REQUESTED') "
+                "AND a.artifact_id='receipt-'||a.byte_sha256 "
+                "AND a.canonical_sha256=a.byte_sha256 "
+                "AND a.logical_path='run-receipts/'||a.byte_sha256||'.json' "
+                "AND a.media_type='application/json' AND a.artifact_kind='RUN_RECEIPT' "
+                "AND a.evidence_class='RETAINED' "
+                "AND a.verification_policy_id='ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1' "
+                "AND a.byte_count BETWEEN 1 AND ? "
+                "ORDER BY a.created_at,l.run_id LIMIT ?",
+                (MAX_TERMINAL_RECEIPT_BYTES, limit + 1),
+            ).fetchall()
+            if len(rows) > limit:
+                raise RunRepositoryError("pending receipt scan exceeds its bound")
+            return [
+                {"receipt_sha256": row[0], "run_id": row[1],
+                 "attempt_id": row[2], "lease_token": row[3]}
+                for row in rows
+            ]
+
+    def reconcile_dead_attempt(self, run_id, attempt_id, lease_token, *,
+                               diagnostic_id="WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT", exit_code=-1):
+        _identity(run_id)
+        _identity(attempt_id)
+        with self._operation(write=True) as conn:
+            self._fence(conn, run_id, attempt_id, lease_token)
+            row = conn.execute(
+                "SELECT state,state_version,receipt_artifact_id FROM app_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None or row[2] is not None:
+                raise RunStateConflict("run is not eligible for recovery")
+            stamp = _utc(self._clock())
+            provider_prepared = conn.execute(
+                "SELECT operation_id,intent_sha256 FROM app_external_operations "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' "
+                "AND state='PREPARED' ORDER BY operation_id",
+                (run_id, attempt_id),
+            ).fetchall()
+            provider_sent = conn.execute(
+                "SELECT operation_id,intent_sha256 FROM app_external_operations "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' "
+                "AND state='SENT' ORDER BY operation_id",
+                (run_id, attempt_id),
+            ).fetchall()
+            conn.execute(
+                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='PROVIDER_GET_NEVER_SENT' "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' AND state='PREPARED'",
+                (stamp, run_id, attempt_id),
+            )
+            for operation_id, intent_sha256 in provider_prepared:
+                self._event(conn, run_id, row[1], "CURRENT_SHADOW_GET_NEVER_SENT", {
+                    "operation_id": operation_id, "intent_sha256": intent_sha256,
+                    "reason": "RECOVERY_FOUND_PREPARED_WITHOUT_SENT",
+                }, stamp)
+            for operation_id, intent_sha256 in provider_sent:
+                self._event(conn, run_id, row[1], "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN", {
+                    "operation_id": operation_id, "intent_sha256": intent_sha256,
+                    "error_code": "PROVIDER_GET_OUTCOME_UNKNOWN",
+                    "reason": "RECOVERY_FOUND_SENT_WITHOUT_PROVEN_RESPONSE",
+                }, stamp)
+            conn.execute(
+                "UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='PROVIDER_GET_OUTCOME_UNKNOWN' "
+                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' AND state='SENT'",
+                (stamp, run_id, attempt_id),
+            )
+            conn.execute(
+                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='SHARE_CREATE_NEVER_SENT' "
+                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' AND operation_kind=?",
+                (stamp, run_id, attempt_id, SHARE_CREATE_KIND),
+            )
+            conn.execute(
+                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='OFFLINE_RECOVERY' "
+                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' "
+                "AND operation_kind NOT IN (?, 'CURRENT_SHADOW_PROVIDER_GET_V1')",
+                (stamp, run_id, attempt_id, SHARE_CREATE_KIND),
+            )
+            conn.execute(
+                "UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='OFFLINE_RECOVERY' "
+                "WHERE run_id=? AND attempt_id=? AND state='SENT' "
+                "AND operation_kind<>'CURRENT_SHADOW_PROVIDER_GET_V1'",
+                (stamp, run_id, attempt_id),
+            )
+            current_state = row[0]
+            next_state = "CANCELLED" if current_state == "CANCEL_REQUESTED" else "INTERRUPTED"
+            disposition = "CANCEL_REQUESTED_SETTLED" if current_state == "CANCEL_REQUESTED" else "OFFLINE_INTERRUPTED"
+            conn.execute(
+                "UPDATE app_run_attempts SET finished_at=?,exit_code=?,recovery_disposition=? "
+                "WHERE run_id=? AND attempt_id=?",
+                (stamp, exit_code, disposition, run_id, attempt_id),
+            )
+            if current_state in {"QUEUED", "RUNNING", "CANCEL_REQUESTED"}:
+                latest_stage = None
+                progress_row = conn.execute(
+                    "SELECT payload_bytes,payload_sha256 FROM app_run_events "
+                    "WHERE run_id=? AND event_type='WORKER_PROGRESS_PROVEN' "
+                    "ORDER BY sequence DESC LIMIT 1", (run_id,),
+                ).fetchone()
+                if progress_row is not None:
+                    progress_raw, progress_digest = progress_row
+                    if (hashlib.sha256(progress_raw).hexdigest() != progress_digest
+                            or canonical_json_bytes(json.loads(progress_raw)) != progress_raw):
+                        raise RunRepositoryError("stored worker progress evidence drift")
+                    progress_value = json.loads(progress_raw)
+                    self._validate_worker_progress(progress_value)
+                    latest_stage = progress_value["stage"]
+                self._event(conn, run_id, row[1], "WORKER_INTERRUPTED", {
+                    "diagnostic_id": diagnostic_id, "exit_code": exit_code,
+                    "last_proven_stage": latest_stage,
+                }, stamp)
+                conn.execute(
+                    "UPDATE app_runs SET state=?,state_version=state_version+1,updated_at=? WHERE run_id=? AND state_version=?",
+                    (next_state, stamp, run_id, row[1]),
+                )
+                self._event(conn, run_id, row[1] + 1, "RUN_" + next_state, {}, stamp)
 
     def run_snapshot(self, run_id):
         _identity(run_id)
@@ -1061,9 +2174,11 @@ class DurableRunRepository:
             artifact = conn.execute(
                 "SELECT logical_path,byte_sha256,byte_count FROM app_artifacts WHERE artifact_id=?",
                 (artifact_id,)).fetchone()
-            if artifact is None or artifact[1] != digest:
+            if (artifact is None or artifact[1] != digest
+                    or type(artifact[2]) is not int or not 1 <= artifact[2] <= MAX_TERMINAL_RECEIPT_BYTES):
                 raise RunRepositoryError("retained receipt artifact mismatch")
-            raw = contained(self._data_root, logical_locator(artifact[0])).read_bytes()
+            raw = _read_bounded(contained(self._data_root, logical_locator(artifact[0])),
+                                MAX_TERMINAL_RECEIPT_BYTES, "retained receipt")
             if hashlib.sha256(raw).hexdigest() != digest or len(raw) != artifact[2]:
                 raise RunRepositoryError("retained receipt bytes mismatch")
             value = json.loads(raw)
@@ -1101,43 +2216,80 @@ class DurableRunRepository:
                 })
             return history
 
-    def _verify_receipt_producer(self, conn, run_id, receipt, envelope, release_id):
+    def _verify_receipt_producer(self, conn, run_id, receipt, envelope, release_id, attempt_id):
         provenance = self._verify_release(conn, release_id, envelope.source_identity)
         if envelope.source_identity.kind != "GIT_COMMIT" or provenance[1] is None:
             raise ReceiptProducerUnavailable("installed hash pin has no independently verified producer commit; named future dependency E2/PACKAGING_AUTHENTICATED_INSTALLED_PRODUCER_PROVENANCE remains open")
         if receipt.exact_commit_sha != provenance[1] or receipt.exact_commit_sha != envelope.source_identity.value:
             raise ReceiptProducerUnavailable("receipt producer commit differs from verified run source")
         expected = {"run_id": run_id, "execution_envelope_sha256": envelope.canonical_sha256,
-                    "release_id": release_id}
+                    "release_id": release_id, "worker_attempt_id": attempt_id}
         if any(receipt.evidence.get(key) != value for key, value in expected.items()):
-            raise ReceiptProducerUnavailable("receipt run/envelope/release producer binding mismatch")
+            raise ReceiptProducerUnavailable("receipt run/attempt/envelope/release producer binding mismatch")
 
     def publish_terminal_receipt(self, run_id, *, receipt_bytes, expected_version, attempt_id, lease_token):
-        """Publish immutable offline projection evidence BEFORE changing SQLite.
+        """Register the exact run/attempt receipt identity, then publish its bytes.
 
-        A successful publish followed by a crash is reconciled explicitly. This
-        is storage projection evidence, not executor completion authority.
+        The pending database link is a lookup key only. The receipt verifier
+        remains the sole terminal authority and a missing or invalid file blocks.
         """
-        with self._operation() as conn:
+        if type(receipt_bytes) is not bytes or len(receipt_bytes) > MAX_TERMINAL_RECEIPT_BYTES:
+            raise RunRepositoryError("terminal receipt exceeds its reviewed byte bound")
+        with self._operation(write=True) as conn:
             self._fence(conn, run_id, attempt_id, lease_token)
             receipt = RunReceipt.from_json_bytes(receipt_bytes)
-            row = conn.execute("SELECT request_sha256,envelope_sha256,release_id,state,state_version FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
-            if row[3] not in {"RUNNING", "CANCEL_REQUESTED"} or row[4] != expected_version:
+            row = conn.execute(
+                "SELECT request_sha256,envelope_sha256,release_id,state,state_version,receipt_artifact_id "
+                "FROM app_runs WHERE run_id=?", (run_id,),
+            ).fetchone()
+            if row[3] != "RUNNING" or row[4] != expected_version:
                 raise RunStateConflict("receipt state CAS rejected")
+            if row[5] is not None:
+                raise RunStateConflict("run already carries a terminal receipt")
             if receipt.request.canonical_sha256 != row[0] or receipt.share_code_result is not None:
                 raise RunRepositoryError("receipt request mismatch or disabled delivery result")
             envelope_raw = conn.execute("SELECT envelope_bytes FROM app_runs WHERE run_id=?", (run_id,)).fetchone()[0]
             envelope = ExecutionEnvelope.from_json_bytes(envelope_raw)
             if receipt.authority_manifest != envelope.authority_manifest:
                 raise RunRepositoryError("receipt authority mismatch")
-            self._verify_receipt_producer(conn, run_id, receipt, envelope, row[2])
+            self._verify_receipt_producer(conn, run_id, receipt, envelope, row[2], attempt_id)
             value = {"policy_id": "ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1",
                      "run_id": run_id, "request_sha256": row[0], "envelope_sha256": row[1],
                      "release_id": row[2], "expected_version": expected_version,
                      "attempt_id": attempt_id, "lease_token": lease_token,
                      "receipt": receipt.to_dict()}
-        raw = canonical_json_bytes(value)
-        digest = hashlib.sha256(raw).hexdigest()
+            raw = canonical_json_bytes(value)
+            if len(raw) > MAX_TERMINAL_RECEIPT_BYTES:
+                raise RunRepositoryError("terminal receipt projection exceeds its reviewed byte bound")
+            digest = hashlib.sha256(raw).hexdigest()
+            artifact_id = "receipt-" + digest
+            locator = "run-receipts/" + digest + ".json"
+            stamp = _utc(self._clock())
+            conn.execute(
+                "INSERT OR IGNORE INTO app_artifacts VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (artifact_id, digest, digest, len(raw), "application/json", "RUN_RECEIPT",
+                 locator, "RETAINED", "ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1", None, stamp),
+            )
+            metadata = conn.execute(
+                "SELECT byte_sha256,canonical_sha256,byte_count,media_type,artifact_kind,"
+                "logical_path,evidence_class,verification_policy_id FROM app_artifacts "
+                "WHERE artifact_id=?", (artifact_id,),
+            ).fetchone()
+            if (metadata is None or metadata != (
+                    digest, digest, len(raw), "application/json", "RUN_RECEIPT", locator,
+                    "RETAINED", "ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1")):
+                raise RunRepositoryError("pending receipt artifact metadata conflicts")
+            links = conn.execute(
+                "SELECT run_id,role,retained_root FROM app_run_artifacts "
+                "WHERE artifact_id=?", (artifact_id,),
+            ).fetchall()
+            expected_link = (run_id, "RUN_RECEIPT_PENDING", 1)
+            if links and links != [expected_link]:
+                raise RunRepositoryError("pending receipt is linked to another run")
+            conn.execute(
+                "INSERT OR IGNORE INTO app_run_artifacts VALUES(?,?,?,1)",
+                (run_id, artifact_id, "RUN_RECEIPT_PENDING"),
+            )
         publish(self._data_root, "run-receipts/" + digest + ".json", raw)
         return digest
 
@@ -1146,7 +2298,10 @@ class DurableRunRepository:
         digest = _sha(receipt_sha256)
         locator = "run-receipts/" + digest + ".json"
         try:
-            raw = contained(self._data_root, locator).read_bytes()
+            raw = _read_bounded(contained(self._data_root, locator),
+                                MAX_TERMINAL_RECEIPT_BYTES, "terminal receipt projection")
+        except RunRepositoryError:
+            raise
         except (OSError, ValueError) as exc:
             raise TerminalEvidenceUnavailable("published receipt evidence is missing or unsafe") from exc
         if hashlib.sha256(raw).hexdigest() != digest:
@@ -1172,17 +2327,38 @@ class DurableRunRepository:
                     or receipt.authority_manifest != envelope.authority_manifest
                     or receipt.share_code_result is not None):
                 raise RunRepositoryError("receipt contract identity mismatch")
-            self._verify_receipt_producer(conn, run_id, receipt, envelope, row[2])
+            self._verify_receipt_producer(conn, run_id, receipt, envelope, row[2], _identity(value["attempt_id"]))
             if row[3] == "TERMINAL" and row[5] == artifact_id:
                 return False
             self._fence(conn, run_id, value["attempt_id"], value["lease_token"])
             if row[3] not in {"RUNNING", "CANCEL_REQUESTED"} or row[4] != value["expected_version"]:
                 raise RunStateConflict("receipt projection CAS rejected")
+            metadata = conn.execute(
+                "SELECT byte_sha256,canonical_sha256,byte_count,media_type,artifact_kind,"
+                "logical_path,evidence_class,verification_policy_id FROM app_artifacts "
+                "WHERE artifact_id=?", (artifact_id,),
+            ).fetchone()
+            locator = "run-receipts/" + digest + ".json"
+            if (metadata is None or metadata != (
+                    digest, digest, len(raw), "application/json", "RUN_RECEIPT", locator,
+                    "RETAINED", "ATHENA_D4_OFFLINE_TERMINAL_PROJECTION_V1")):
+                raise RunRepositoryError("receipt is not linked to exact retained publication metadata")
+            pending_links = conn.execute(
+                "SELECT run_id,role,retained_root FROM app_run_artifacts WHERE artifact_id=?",
+                (artifact_id,),
+            ).fetchall()
+            if pending_links != [(run_id, "RUN_RECEIPT_PENDING", 1)]:
+                raise RunRepositoryError("receipt pending link is missing or cross-run")
             stamp = _utc(self._clock())
-            conn.execute("INSERT INTO app_artifacts VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                         (artifact_id, digest, digest, len(raw), "application/json", "RUN_RECEIPT",
-                          locator, "RETAINED", value["policy_id"], stamp, stamp))
-            conn.execute("INSERT INTO app_run_artifacts VALUES(?,?,?,1)", (run_id, artifact_id, "RUN_RECEIPT"))
+            conn.execute(
+                "UPDATE app_artifacts SET verified_at=? WHERE artifact_id=?",
+                (stamp, artifact_id),
+            )
+            conn.execute(
+                "UPDATE app_run_artifacts SET role='RUN_RECEIPT' "
+                "WHERE run_id=? AND artifact_id=? AND role='RUN_RECEIPT_PENDING'",
+                (run_id, artifact_id),
+            )
             conn.execute("UPDATE app_runs SET state='TERMINAL',state_version=state_version+1,updated_at=?,receipt_artifact_id=? WHERE run_id=?",
                          (stamp, artifact_id, run_id))
             # Receipt publication is the prerequisite for terminal projection;

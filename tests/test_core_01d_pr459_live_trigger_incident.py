@@ -115,9 +115,13 @@ def test_both_direct_share_workflows_are_offline_only():
         )
 
 
-def test_offline_workflow_successor_is_authenticated_by_current_evolution_projection():
+def test_current_d5_workflow_tree_is_distinct_from_immutable_pr459_anchor():
+    from scripts import audit_data_01c_restore_portability as d5
     ledger = evolution.validate_current_state()
-    assert evolution.current_workflow_tree_sha1(ledger) == evolution.PR459_OFFLINE_WORKFLOW_TREE_SHA1
+    current_tree = evolution.current_workflow_tree_sha1(ledger)
+    assert evolution.PR459_OFFLINE_WORKFLOW_TREE_SHA1 == "72db53f1ef85470e4aaa15959672dcf0bb1b1065"
+    assert current_tree == d5.authenticated_current_workflow_tree()
+    assert current_tree != evolution.PR459_OFFLINE_WORKFLOW_TREE_SHA1
 
 
 def test_b4_historical_workflow_identity_and_receipt_remain_unchanged():

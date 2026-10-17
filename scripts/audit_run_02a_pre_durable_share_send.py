@@ -71,19 +71,38 @@ RETAINED_AUDIT_PREDECESSORS = {'scripts/audit_checkpoint_e_workflows.py': ('test
  'scripts/audit_data_01c_app_store_complete.py': ('tests/fixtures/core_01d/run_02a_pre_historical/app-store-complete-v154.py.txt',
                                                   'f8fc830dfd3ab9a487d8245d6bf545ff2408cacf',
                                                   'c44aecd7405ba13d4f4156e400fe8de15cba89bfc4b4f4e48b0ad34833d3cffd')}
+RUN_02A_CURRENT_SOURCE_PREDECESSORS = {
+    "database/run_repository.py": (
+        "tests/fixtures/core_01d/run_02a_pre_historical/run-repository-pr463-base.py.txt",
+        "103bcbf4e06a90ef768a122408235b9d9267fe6b",
+        "abcce798ddcdfc9b650aadf9f369408831573e51e65d99afb96294e043e2e03f"),
+    "services/athena_job_service.py": (
+        "tests/fixtures/core_01d/run_02a_pre_historical/athena-job-service-pr463-base.py.txt",
+        "d0291cc9a25b1372d86464e2fb54ac97f1fc7f98",
+        "439c97a9b4d22e2e61724e349f20cad8e365787047f306af00f4d4690d60876d"),
+    "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py": (
+        "tests/fixtures/core_01d/run_02a_pre_historical/auth-worker-boundary-pr463-base.py.txt",
+        "8115c18631e445f825dee0b0fa78c1a7cd77e460",
+        "7b6532d9155f5a096c38c12ad003c6bd076e0f329cc0ee26898cf0b5b0b5e795"),
+    "runtime/worker_entry.py": (
+        "tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-pr463-base.py.txt",
+        "113acdf1ece29ca2977e4e3d2d84576a31fe7828",
+        "98d5b1d7cfbc524be876f7000f9e605caac013039893d4f028ac2452216a2a61"),
+}
 
 
 def historical_prerequisite_source_bytes(path, *, latest=None):
     """Exact retained audit/test predecessors; never runtime execution authority."""
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     from scripts import audit_core_01d_authority_reachability_review_a as review
-    if path not in RETAINED_AUDIT_PREDECESSORS or ROOT != review.ROOT or ROOT != a2.ROOT:
+    predecessors = {**RETAINED_AUDIT_PREDECESSORS, **RUN_02A_CURRENT_SOURCE_PREDECESSORS}
+    if path not in predecessors or ROOT != review.ROOT or ROOT != a2.ROOT:
         raise AssertionError("unclassified retained prerequisite source/root")
     latest = a2.authenticate_inventory() if latest is None else latest
     retained = a2.read_generation(a2.inventory_generation_path(RETAINED_GENERATION))
     if retained["canonical_sha256"] != RETAINED_INVENTORY_SHA:
         raise AssertionError("retained prerequisite A2 identity drift")
-    fixture, blob, digest = RETAINED_AUDIT_PREDECESSORS[path]
+    fixture, blob, digest = predecessors[path]
     for logical in (path, fixture):
         candidate = ROOT / logical
         if not candidate.is_file() or any(p.is_symlink() for p in (candidate, *candidate.parents)):
@@ -155,7 +174,8 @@ def build_receipt(source_head, *, retained=False):
         digest = hashlib.sha256((ROOT / path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
         if current.get(path) != digest:
             raise AssertionError("source differs from authenticated A2: " + path)
-        if retained and path in RETAINED_AUDIT_PREDECESSORS:
+        if retained and path in (set(RETAINED_AUDIT_PREDECESSORS)
+                                 | set(RUN_02A_CURRENT_SOURCE_PREDECESSORS)):
             digest = hashlib.sha256(historical_prerequisite_source_bytes(path, latest=latest)).hexdigest()
         identities[path] = digest
     if (type(source_head) is not str or len(source_head) != 40

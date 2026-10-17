@@ -309,11 +309,14 @@ def historical_objects_available(commit=A2_REVIEWED_HEAD):
     identity chain instead of Git history; nothing is fetched and no
     environment variable selects a proof.
     """
-    try:
-        git("cat-file", "-e", f"{commit}^{{commit}}")
-    except subprocess.CalledProcessError:
-        return False
-    return True
+    result = subprocess.run(
+        ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+        cwd=ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def pinned_historical_identity(path, commit=A2_REVIEWED_HEAD):

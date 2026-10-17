@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 
 import yaml
@@ -187,11 +188,32 @@ RUN_02A_PRE_ADDITIVE_PATHS = {
     "tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-predecessor.py.txt",
     "tests/fixtures/core_01d/run_02a_pre_historical/direct-share-predecessor.py.txt",
     "tests/fixtures/core_01d/run_02a_pre_historical/auth-worker-boundary-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/run-repository-pr463-base.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/athena-job-service-pr463-base.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/auth-worker-boundary-pr463-base.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-pr463-base.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/test-worker-launcher-pr463-base.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/audit-run-01a-admission-pr463-base.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr463/run-desktop-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr463/test-run-01a-durable-admission-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr463/test-data-01c-app-storage-predecessor.py.txt",
+    "runtime/worker_startup_gate.py",
+    "services/worker_process_control.py",
+    "services/recovery_service.py",
+    "tests/native/test_run_02a_process_tree.py",
+    "tests/test_run_02a_recovery.py",
+    "tests/test_run_01a_durable_admission.py",
+    "tests/test_run_01b_worker_lifecycle.py",
+    "tests/test_data_01b_durable_run_state.py",
     "tests/test_lg_a_worker_entry_historical_projection.py",
 }
 RUN_02A_PRE_PREDECESSOR_SOURCE_BLOBS = {
     "scripts/audit_lg_a_worker_launch_failure_remediation.py":
         "0e8a349d49ad2cb9a41a709ad134e48e6c766069",
+    "scripts/audit_run_01a_durable_admission.py":
+        "42d7550bec98ddc25b5999b20ed6195a442cd69f",
+    "tests/test_worker_launcher.py":
+        "973e00174e8967569e98fbf15bc58d2c13a3a20d",
 }
 ALLOWED_PASS4_PATHS |= RUN_02A_PRE_ADDITIVE_PATHS | {
     "runtime/worker_entry.py", "scripts/sportybet_direct_share_bridge.py",
@@ -303,6 +325,35 @@ def validate_bounded_inventory(raw: bytes) -> None:
         "services/athena_preview_service.py": "b8c3898baa28a4243c80a2b58ed284365ae854ab",
     }
     predecessor_blobs.update(RUN_02A_PRE_PREDECESSOR_SOURCE_BLOBS)
+    # These evolved current sources remain rows in the immutable Pass-A tree.
+    # Authenticate their exact predecessor fixture bytes and current A2 source
+    # bytes before substituting only the predecessor Git blob in that view.
+    for path in (
+        "scripts/audit_run_01a_durable_admission.py",
+        "tests/test_worker_launcher.py",
+    ):
+        descriptor = completion_v2.RUN_02A_PRE_PREDECESSOR_SOURCES.get(path)
+        if descriptor is None:
+            continue
+        fixture, blob, digest = descriptor
+        for logical in (path, fixture):
+            candidate = ROOT / logical
+            policy.require(candidate.is_file() and not any(p.is_symlink() for p in (candidate, *candidate.parents)),
+                           "E3 Pass-A predecessor requires regular source/fixture: " + logical)
+        predecessor = (ROOT / fixture).read_bytes().replace(b"\r\n", b"\n")
+        current = (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
+        current_sha = current_sources.get(path)
+        predecessor_blob = hashlib.sha1(
+            b"blob " + str(len(predecessor)).encode() + b"\0" + predecessor
+        ).hexdigest()
+        policy.require(
+            predecessor_blob == blob and policy.sha256(predecessor) == digest,
+            "E3 Pass-A predecessor fixture identity mismatch: " + path,
+        )
+        policy.require(
+            current_sha == policy.sha256(current),
+            "current E3 source is not authenticated by A2: " + path,
+        )
     predecessor_blobs.update(PR459_PREDECESSOR_SOURCE_BLOBS)
     from scripts import audit_core_01d_authority_reachability_review_a as review
     for path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:

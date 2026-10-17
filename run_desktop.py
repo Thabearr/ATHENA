@@ -149,6 +149,10 @@ class LocalBackend:
                 launcher = WorkerLauncher.for_development(identity)
                 job_service = AthenaJobService(
                     preview_admission_service, run_repository, launcher, self.writable_roots)
+                # E3 recovery runs before the local API can admit or read work.
+                # Installed releases remain unavailable above until their
+                # worker provenance is independently qualified.
+                job_service.reconcile_startup()
                 read_service = job_service.durable_read_service()
                 app = create_app(release_identity=resources.identity, resource_resolver=resources,
                                  writable_roots=self.writable_roots,

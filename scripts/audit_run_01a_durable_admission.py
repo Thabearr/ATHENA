@@ -31,8 +31,12 @@ FORWARD_EVOLVED_SOURCE_PATHS = frozenset({
     "scripts/audit_run_01a_durable_admission.py",
     "services/athena_job_service.py",
     "database/run_repository.py",
+    "run_desktop.py",
+    "tests/test_run_01a_durable_admission.py",
+    "services/athena_capability_service.py",
     "scripts/audit_data_01b_durable_run_state.py",
     "scripts/audit_data_01c_restore_portability.py",
+    "tests/test_data_01c_app_storage.py",
 })
 FORWARD_EVOLVED_SOURCES = {
     "scripts/audit_checkpoint_e_workflows.py": {
@@ -59,6 +63,14 @@ FORWARD_EVOLVED_SOURCES = {
         "predecessor_lf_sha256": "b394a7013d3926f52af36223187eea8c44bb9b8424d21e6cfce6d5c0f6283e9f",
         "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr458/run-repository-predecessor.py.txt",
     },
+    "run_desktop.py": {
+        "predecessor_lf_sha256": "c827b1ad3fe51a56b87e096af9d0ccf36f29a02f2e471967e4091c2b3fead5b4",
+        "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr463/run-desktop-predecessor.py.txt",
+    },
+    "tests/test_run_01a_durable_admission.py": {
+        "predecessor_lf_sha256": "62ba29d3d3a05c15c50435dd1cee4eb9d4793939e784c292f2d5c157e127b122",
+        "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr463/test-run-01a-durable-admission-predecessor.py.txt",
+    },
     "scripts/audit_data_01b_durable_run_state.py": {
         "predecessor_lf_sha256": "06cd75cab23b13553b561821c5e761bdefbc3393ab38f92e03465c35736bd0ff",
         "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr461/audit-data-01b-durable-run-state-predecessor.py.txt",
@@ -66,6 +78,16 @@ FORWARD_EVOLVED_SOURCES = {
     "scripts/audit_data_01c_restore_portability.py": {
         "predecessor_lf_sha256": "5faf6540116e17e089382a296e16278e145da86aa0da682e02b22182d22f4728",
         "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr461/audit-data-01c-restore-portability-predecessor.py.txt",
+    },
+    "tests/test_data_01c_app_storage.py": {
+        "predecessor_lf_sha256": "3be15604a25453310671e965ec622c41513e8441a6e0b8ea4bc1568151d8606c",
+        "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr463/test-data-01c-app-storage-predecessor.py.txt",
+        "predecessor_git_blob_sha1": "2110631b57af44102b36ce07e6124251310e855e",
+    },
+    "services/athena_capability_service.py": {
+        "predecessor_lf_sha256": "f33cdb4207bac0ecc5daa72bfe0d264ea28c6453a9f6d6d6070c960501c8aef0",
+        "predecessor_fixture": "tests/fixtures/core_01d/run_01a_historical/pr463/athena-capability-service-predecessor.py.txt",
+        "predecessor_git_blob_sha1": "00fab1b190326f748fe705298838bf76a0ee78d0",
     },
 }
 FORWARD_SUCCESSOR_PATHS = frozenset({
@@ -75,6 +97,10 @@ FORWARD_SUCCESSOR_PATHS = frozenset({
     "tests/fixtures/core_01d/run_01a_historical/pr457/audit-run-01a-durable-admission-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr458/athena-job-service-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr458/run-repository-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr463/run-desktop-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr463/test-run-01a-durable-admission-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr463/test-data-01c-app-storage-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr463/athena-capability-service-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr461/audit-data-01b-durable-run-state-predecessor.py.txt",
     "tests/fixtures/core_01d/run_01a_historical/pr461/audit-data-01c-restore-portability-predecessor.py.txt",
     "tests/test_run_01a_forward_successor_pr457.py",
@@ -97,7 +123,9 @@ def _validate_forward_evolved_sources():
     if not FORWARD_EVOLVED_SOURCE_PATHS <= set(SOURCES):
         raise AssertionError("E1 forward source is outside the frozen source set")
     for path, entry in FORWARD_EVOLVED_SOURCES.items():
-        if set(entry) != {"predecessor_lf_sha256", "predecessor_fixture"}:
+        if (not {"predecessor_lf_sha256", "predecessor_fixture"} <= set(entry)
+                or set(entry) - {"predecessor_lf_sha256", "predecessor_fixture",
+                                 "predecessor_git_blob_sha1"}):
             raise AssertionError("E1 forward predecessor descriptor drift: " + path)
 
 
@@ -106,9 +134,15 @@ def _predecessor_bytes(path, *, root=ROOT):
     entry = FORWARD_EVOLVED_SOURCES.get(path)
     if entry is None:
         raise AssertionError("E1 predecessor fixture is not authorized: " + path)
-    raw = _lf((root / entry["predecessor_fixture"]).read_bytes())
+    fixture_raw = (root / entry["predecessor_fixture"]).read_bytes()
+    raw = _lf(fixture_raw)
     if _sha(raw) != entry["predecessor_lf_sha256"]:
         raise AssertionError("E1 predecessor fixture identity drift: " + path)
+    expected_blob = entry.get("predecessor_git_blob_sha1")
+    if (expected_blob is not None
+            and hashlib.sha1(b"blob " + str(len(fixture_raw)).encode() + b"\0" + fixture_raw).hexdigest()
+            != expected_blob):
+        raise AssertionError("E1 predecessor Git blob identity drift: " + path)
     return raw
 
 

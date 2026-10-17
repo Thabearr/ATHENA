@@ -53,12 +53,22 @@ class AthenaCapabilityService:
         preview_available = self.preview_admission_service.preview_source_available()
         admission_repository = getattr(self.preview_admission_service, "admission_repository", None)
         from database.run_repository import DurableRunRepository
-        from services.athena_job_service import DurableRunReadAdapter
+        from services.athena_job_service import DurableCancelAdapter, DurableRunReadAdapter
         durable_admission = (self.job_service is not None
                              and type(admission_repository) is DurableRunRepository
                              and self.job_service.run_repository is admission_repository)
         read_repository = getattr(self.read_service, "run_repository", None) if self.read_service is not None else None
         durable_history = type(read_repository) is DurableRunReadAdapter
+        cancel_repository = (getattr(self.read_service, "cancel_repository", None)
+                             if self.read_service is not None else None)
+        durable_cancel = (
+            durable_admission
+            and type(read_repository) is DurableRunReadAdapter
+            and read_repository._repository is self.job_service.run_repository
+            and type(cancel_repository) is DurableCancelAdapter
+            and cancel_repository._repository is self.job_service.run_repository
+            and callable(cancel_repository._on_cancel_requested)
+        )
         rows = [
             ("local_contract_inspection", "available" if contract.records else "unavailable_unproven",
              "Verified authority records: " + str(len(contract.records)) + ". This is local inspection only."),
@@ -75,8 +85,10 @@ class AthenaCapabilityService:
              "A provider-free retained fixture index is not available in this shell."),
             ("local_export", "blocked_implementation",
              "The durable export repository and service are owned by later storage work."),
-            ("cancel_intent", "blocked_implementation",
-             "Cancellation remains deferred to E3; E1 exposes observation only."),
+            ("cancel_intent", "available" if durable_cancel else "blocked_implementation",
+             "Provider-free durable cancellation intent is bound to the current run store and owned-worker notifier."
+             if durable_cancel else
+             "The durable cancel adapter, current run store, job service, and owned-worker notifier are not all bound."),
             ("provider_acquisition", "blocked_authority", "This local control plane has no acquisition authority."),
             ("market_model_readiness", "unavailable_unproven", "No current model or market qualification is supplied."),
             ("legacy_generate", "deprecated_blocked",

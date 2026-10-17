@@ -140,6 +140,7 @@ def _repo_root(repository_root: Path | None) -> Path:
 def _safe_work_root(repository: Path) -> Path:
     root = repository / WORK_ROOT
     current = repository
+    from runtime.current_shadow_operation_authority import publish_product_evidence
     for part in WORK_ROOT.parts:
         current = current / part
         if current.exists() or current.is_symlink():
@@ -148,7 +149,10 @@ def _safe_work_root(repository: Path) -> Path:
                     "current source work root contains a forbidden symlink/non-directory"
                 )
         else:
-            current.mkdir()
+            publish_product_evidence(
+                evidence_kind="FOTMOB_REVIEW_WORK_DIRECTORY",
+                publish=lambda current=current: current.mkdir(),
+            )
     return root
 
 
@@ -170,8 +174,12 @@ def _write_result(path: Path, payload: Mapping[str, Any]) -> None:
     raw = (
         json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
     ).encode("utf-8")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(raw)
+    def publish() -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+
+    from runtime.current_shadow_operation_authority import publish_product_evidence
+    publish_product_evidence(evidence_kind="FOTMOB_REVIEW_RESULT", publish=publish)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -413,16 +421,23 @@ def _build_verified_current_fotmob_bootstrap_from_capture(
     work_root = _safe_work_root(repository)
     temporary_path: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="wb",
-            prefix="reviewed-catalog-input-",
-            suffix=".jsonl",
-            dir=work_root,
-            delete=False,
-        ) as handle:
-            handle.write(handoff.catalog_input_jsonl_bytes)
-            handle.flush()
-            temporary_path = Path(handle.name)
+        def publish_catalog_input() -> Path:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                prefix="reviewed-catalog-input-",
+                suffix=".jsonl",
+                dir=work_root,
+                delete=False,
+            ) as handle:
+                handle.write(handoff.catalog_input_jsonl_bytes)
+                handle.flush()
+                return Path(handle.name)
+
+        from runtime.current_shadow_operation_authority import publish_product_evidence
+        temporary_path = publish_product_evidence(
+            evidence_kind="FOTMOB_REVIEW_INPUT",
+            publish=publish_catalog_input,
+        )
         catalog_result = compile_fixture_catalog(
             input_path=temporary_path,
             evidence_root=capture_root,
@@ -436,7 +451,17 @@ def _build_verified_current_fotmob_bootstrap_from_capture(
                 raise CurrentFotMobReviewedSourceError(
                     "temporary catalog input became a symlink"
                 )
-            temporary_path.unlink()
+            from runtime.current_shadow_operation_authority import (
+                ProductOperationAuthorityError, publish_product_evidence,
+            )
+            try:
+                publish_product_evidence(
+                    evidence_kind="FOTMOB_REVIEW_INPUT_CLEANUP",
+                    publish=lambda: temporary_path.unlink(),
+                )
+            except ProductOperationAuthorityError:
+                # Cancellation leaves the exact temporary input inspectable.
+                pass
 
     admission_decision = ReviewedFixtureCatalogAdmissionDecision(
         candidate_bundle_sha256=handoff.candidate_bundle_sha256,

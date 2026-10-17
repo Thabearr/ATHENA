@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date
+from enum import Enum
 import os
 from pathlib import Path
 import sys
@@ -16,7 +18,7 @@ from runtime.release_identity import (
     verify_development_checkout,
     verify_installed_release,
 )
-from runtime.resources import ResourceResolver
+from runtime.resources import ResourceResolver, default_writable_roots
 from runtime.worker_launcher import (
     WORKER_COMMAND_FILENAME,
     WORKER_OFFLINE_PROBE_FILENAME,
@@ -37,10 +39,58 @@ class WorkerEntryError(ValueError):
     """The worker could not authenticate its command and source identity."""
 
 
+class WorkerInvocationIntent(Enum):
+    """Reviewed invocation seams; product authority still requires DB proof."""
+
+    PRODUCT_ADMITTED = "PRODUCT_ADMITTED"
+    PORT_02C_INSTALLED_QUALIFICATION = "PORT_02C_INSTALLED_QUALIFICATION"
+
+
 def _same_path(left: Path, right: Path) -> bool:
     return os.path.normcase(os.path.normpath(os.fspath(left))) == os.path.normcase(
         os.path.normpath(os.fspath(right))
     )
+
+
+def _port_02c_probe_request(request: Any) -> bool:
+    return (
+        request.dates == (date(2026, 9, 23),)
+        and request.target_legs == 2
+        and request.target_total_odds is None
+        and request.bookie == "sportybet"
+        and request.mode == "offline_identity_probe"
+        and request.authority_profile == "SHADOW"
+        and request.create_share_code is False
+        and request.place_wager is False
+    )
+
+
+def _invocation_intent(
+    command: WorkerCommand,
+    request: Any,
+    identity: DevelopmentCheckoutIdentity | InstalledReleaseIdentity,
+) -> WorkerInvocationIntent:
+    """Derive the standalone qualifier seam from authenticated installed context."""
+    if command.run_directory.parent.name != "port02c-runs":
+        return WorkerInvocationIntent.PRODUCT_ADMITTED
+    if (
+        type(identity) is not InstalledReleaseIdentity
+        or command.operation != "OFFLINE_IDENTITY_PROBE"
+        or command.mode != "offline_identity_probe"
+        or command.envelope_artifact_id is not None
+        or not _port_02c_probe_request(request)
+    ):
+        raise WorkerEntryError("standalone PORT-02C invocation is outside its fixed probe contract")
+    try:
+        roots = default_writable_roots(installed_release_root=identity.release_root)
+        expected_root = _resolved_directory(roots.data_root, "PORT-02C data root")
+        expected_run = expected_root / "port02c-runs" / command.request_artifact_id
+        actual_run = _resolved_directory(command.run_directory, "PORT-02C run directory")
+    except (OSError, WorkerLaunchError, ValueError) as exc:
+        raise WorkerEntryError("standalone PORT-02C output root is invalid") from exc
+    if not _same_path(actual_run, expected_run) or not _is_contained(expected_root, actual_run):
+        raise WorkerEntryError("standalone PORT-02C output is outside its fixed installed root")
+    return WorkerInvocationIntent.PORT_02C_INSTALLED_QUALIFICATION
 
 
 def _read_command_file(path_value: Any) -> tuple[WorkerCommand, Path]:
@@ -120,7 +170,10 @@ def _run_offline_probe(command: WorkerCommand, identity: Any) -> int:
     return 0
 
 
-def _run_current_shadow(command: WorkerCommand, request: Any) -> int:
+def _run_current_shadow(
+    command: WorkerCommand, request: Any, *, repository=None, gate=None,
+    gate_bytes: bytes | None = None,
+) -> int:
     if request.create_share_code is True:
         raise WorkerEntryError("product delivery requires reviewed durable transport context")
     if command.operation != "CURRENT_SHADOW_REQUEST":
@@ -161,13 +214,18 @@ def _run_current_shadow(command: WorkerCommand, request: Any) -> int:
     # timeout and finalization behavior.
     from scripts import execute_current_shadow_request
 
-    worker_env = execute_current_shadow_request.WORKER_ENV
-    inherited = os.environ.pop(worker_env, None)
+    if (repository is None or type(gate) is not dict or type(gate_bytes) is not bytes):
+        raise WorkerEntryError("Current Shadow supervisor requires the exact product startup owner")
     try:
-        return execute_current_shadow_request.main(args)
-    finally:
-        if inherited is not None:
-            os.environ[worker_env] = inherited
+        return execute_current_shadow_request.run_authenticated_product_worker(
+            args,
+            repository=repository,
+            command=command,
+            gate=gate,
+            gate_bytes=gate_bytes,
+        )
+    except Exception as exc:
+        raise WorkerEntryError("Current Shadow nested supervisor start was not authorized") from exc
 
 
 def execute_worker_command(
@@ -184,14 +242,55 @@ def execute_worker_command(
         release_root=release_root,
         trusted_manifest_sha256=trusted_manifest_sha256,
     )
+    resources = (
+        ResourceResolver.for_development(identity)
+        if type(identity) is DevelopmentCheckoutIdentity
+        else ResourceResolver.for_installed(identity)
+    )
     try:
         request = read_bound_request(command)
     except WorkerLaunchError as exc:
         raise WorkerEntryError("worker request artifact failed identity validation") from exc
+    invocation_intent = _invocation_intent(command, request, identity)
+    repository = None
+    gate = None
+    if invocation_intent is WorkerInvocationIntent.PRODUCT_ADMITTED:
+        from runtime.worker_startup_gate import StartupGateError, _data_root_from_path, wait_for_gate
+        from database.run_repository import DurableRunRepository
+
+        try:
+            gate = wait_for_gate(command, resources=resources)
+            repository = DurableRunRepository.for_worker_data_root(
+                resources, _data_root_from_path(command.run_directory),
+            )
+        except (StartupGateError, ValueError, OSError) as exc:
+            raise WorkerEntryError("worker process ownership gate failed") from exc
+    elif invocation_intent is not WorkerInvocationIntent.PORT_02C_INSTALLED_QUALIFICATION:
+        raise WorkerEntryError("worker invocation intent is outside the reviewed contract")
     if command.operation == "OFFLINE_IDENTITY_PROBE":
+        if repository is not None and gate is not None:
+            try:
+                repository.authorize_worker_start(
+                    command=command, gate=gate, gate_bytes=canonical_json_bytes(gate),
+                    effect=lambda: _run_offline_probe(command, identity),
+                )
+            except Exception as exc:
+                raise WorkerEntryError("worker startup effect was not authorized") from exc
+            return 0
         return _run_offline_probe(command, identity)
     if command.operation == "CURRENT_SHADOW_REQUEST":
-        return _run_current_shadow(command, request)
+        if repository is None or gate is None:
+            raise WorkerEntryError("Current Shadow requires product admission")
+        try:
+            repository.authorize_worker_start(
+                command=command, gate=gate, gate_bytes=canonical_json_bytes(gate),
+            )
+        except Exception as exc:
+            raise WorkerEntryError("worker startup effect was not authorized") from exc
+        return _run_current_shadow(
+            command, request, repository=repository, gate=gate,
+            gate_bytes=canonical_json_bytes(gate),
+        )
     raise WorkerEntryError("worker operation is outside the allowlist")
 
 

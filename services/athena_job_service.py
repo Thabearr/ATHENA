@@ -75,8 +75,10 @@ from services.athena_preview_service import (
     PreviewAdmissionError,
 )
 from services.worker_coordinator import WorkerCoordinator
+from services.recovery_service import RecoveryService, RecoverySummary
 from services.athena_read_service import (
     AthenaReadService,
+    CancelIntentResult,
     ReadBackendError,
     ReceiptObservation,
     RunEventPage,
@@ -158,6 +160,7 @@ class AthenaJobService:
         self._launcher = launcher
         self._roots = writable_roots
         self._coordinator = WorkerCoordinator(run_repository, launcher, writable_roots)
+        self._recovery_service = RecoveryService(run_repository, writable_roots.data_root)
 
     @property
     def preview_service(self) -> AthenaPreviewAdmissionService:
@@ -166,6 +169,20 @@ class AthenaJobService:
     @property
     def run_repository(self) -> DurableRunRepository:
         return self._repository
+
+    @property
+    def coordinator(self) -> WorkerCoordinator:
+        return self._coordinator
+
+    @property
+    def recovery_service(self) -> RecoveryService:
+        return self._recovery_service
+
+    def reconcile_startup(self) -> RecoverySummary:
+        return self._recovery_service.reconcile()
+
+    def cancel_run(self, run_id: str) -> CancelIntentResult:
+        return self.durable_read_service().request_cancel(run_id)
 
     def admit(
         self,
@@ -268,7 +285,8 @@ class AthenaJobService:
         unavailable = AthenaReadService.unavailable()
         return AthenaReadService(
             run_repository=DurableRunReadAdapter(self._repository),
-            cancel_repository=unavailable.cancel_repository,
+            cancel_repository=DurableCancelAdapter(
+                self._repository, on_cancel_requested=self._coordinator.notify_cancel),
             fixture_index=unavailable.fixture_index,
             export_repository=unavailable.export_repository,
         )
@@ -478,7 +496,42 @@ class DurableRunReadAdapter:
         return RunHistoryPage(tuple(page), next_cursor)
 
 
+class DurableCancelAdapter:
+    """D4-owned cooperative cancel-intent port; delegates atomically to repository."""
+
+    def __init__(self, repository: DurableRunRepository, *, on_cancel_requested=None) -> None:
+        if type(repository) is not DurableRunRepository:
+            raise ValueError("exact durable run repository is required")
+        if on_cancel_requested is not None and not callable(on_cancel_requested):
+            raise ValueError("cancel signal callback must be callable")
+        self._repository = repository
+        self._on_cancel_requested = on_cancel_requested
+
+    def request_cancel(self, run_id: str) -> CancelIntentResult | None:
+        try:
+            record = self._repository.record_cancel_intent(run_id)
+        except (RunRepositoryError, RunStateConflict, ValueError, OSError):
+            raise ReadBackendError("CANCEL_STORE_UNAVAILABLE") from None
+        if record is None:
+            return None
+        disposition, state, state_version = record
+        if disposition == "requested" and state == "CANCEL_REQUESTED" and self._on_cancel_requested:
+            try:
+                self._on_cancel_requested(run_id)
+            except Exception:
+                # Durable intent is authoritative; the owned monitor polls it
+                # if the best-effort cooperative signal cannot be delivered.
+                pass
+        return CancelIntentResult(
+            run_id=run_id,
+            disposition=disposition,
+            state=state,
+            state_version=state_version,
+        )
+
+
 __all__ = [
     "AthenaJobService",
+    "DurableCancelAdapter",
     "DurableRunReadAdapter",
 ]

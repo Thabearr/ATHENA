@@ -48,6 +48,11 @@ _COUNT_NAMES = (
 )
 
 
+def _use_synthetic_process_control(monkeypatch):
+    from services import worker_coordinator
+    monkeypatch.setattr(worker_coordinator, "WorkerProcessControl", _SyntheticProcessControl)
+
+
 def _terminal_case(tmp_path, clock, monkeypatch, *, portfolio=True):
     """Admit and hand off a real coordinator; only the child is synthetic."""
     from services.athena_preview_service import AdmissionCandidate
@@ -86,6 +91,7 @@ def _terminal_case(tmp_path, clock, monkeypatch, *, portfolio=True):
         launches.append(built)
         return WorkerProcessHandle(_SyntheticChild(9321, 0))
     monkeypatch.setattr(WorkerLauncher, "launch", launch)
+    _use_synthetic_process_control(monkeypatch)
     coordinator = WorkerCoordinator(
         repository, WorkerLauncher.for_development(identity), roots,
         thread_factory=DeferredThread, sleeper=lambda _: None,
@@ -325,7 +331,60 @@ class _SyntheticChild:
             self._returncode = returncode
 
 
+class _SyntheticProcessControl:
+    def __init__(self, process_handle, owner):
+        self.handle = process_handle
+        self.owner = owner
+        self.locator = None
+        self.cancel_count = 0
+
+    def bind(self):
+        pid = self.handle.pid
+        if os.name == "nt":
+            self.locator = {
+                "kind": "WINDOWS_PROCESS_GROUP", "pid": pid,
+                "creation_time": 1, "job_name": "Local\\ATHENA-E3-synthetic",
+                **self.owner,
+            }
+        else:
+            self.locator = {
+                "kind": "POSIX_PROCESS_GROUP", "pid": pid, "pgid": pid,
+                "session_id": pid, "start_ticks": 1, **self.owner,
+            }
+        return dict(self.locator)
+
+    def state_current(self):
+        return "DEAD" if self.handle.poll() is not None else "ACTIVE"
+
+    @staticmethod
+    def state(locator, owner):
+        return "ACTIVE" if all(locator.get(key) == value for key, value in owner.items()) else "UNKNOWN"
+
+    def request_cancel(self, locator):
+        if locator != self.locator or self.cancel_count:
+            return False
+        self.cancel_count += 1
+        return True
+
+    def force_terminate(self, locator):
+        if locator != self.locator:
+            return False
+        child = self.handle._process
+        if child.poll() is None:
+            child.finish(-9)
+        return True
+
+    def abort_before_start(self):
+        child = self.handle._process
+        if child.poll() is None:
+            child.finish(-9)
+
+    def close(self):
+        return None
+
+
 def _seed_job(resources, roots, clock, monkeypatch, *, specs, heartbeat_seconds=0.05):
+    _use_synthetic_process_control(monkeypatch)
     app = open_repo(resources, roots)
     record_test_release(app, clock())
     previews = []
@@ -442,7 +501,9 @@ def test_http_returns_with_one_owned_worker_and_root_capacity_is_durable(
         first_id = first.json()["run_id"]
         assert repository.run_snapshot(first_id)["state"] == "RUNNING"
         first_events = repository.read_events(first_id)
-        assert [row[2] for row in first_events] == ["RUN_QUEUED", "RUN_RUNNING"]
+        assert [row[2] for row in first_events] == [
+            "RUN_QUEUED", "RUN_RUNNING", "WORKER_STARTUP_GATE_PUBLISHED",
+        ]
         assert children[0].poll() is None
 
         with repository._operation() as conn:
@@ -452,7 +513,12 @@ def test_http_returns_with_one_owned_worker_and_root_capacity_is_durable(
             ).fetchone()
         locator = json.loads(attempt[0])
         expected_kind = "WINDOWS_PROCESS_GROUP" if os.name == "nt" else "POSIX_PROCESS_GROUP"
-        assert locator == {"kind": expected_kind, "pid": children[0].pid}
+        assert locator["kind"] == expected_kind
+        assert locator["pid"] == children[0].pid
+        assert locator["run_id"] == first_id
+        assert locator["attempt_id"]
+        assert locator["worker_instance_id"]
+        assert len(locator["lease_sha256"]) == 64
 
         clock.advance(timedelta(seconds=1))
         assert _wait_for(lambda: _heartbeat_advanced(repository, first_id, attempt[2]))
@@ -469,13 +535,22 @@ def test_http_returns_with_one_owned_worker_and_root_capacity_is_durable(
         assert len(calls) == 1
 
         cancel_before = repository.run_snapshot(first_id)
-        blocked = client.post("/api/v1/runs/" + first_id + "/cancel", headers=headers)
-        assert blocked.status_code == 503
-        assert "CANCEL_STORE_UNAVAILABLE" in blocked.text
-        assert repository.run_snapshot(first_id) == cancel_before
+        cancelled = client.post("/api/v1/runs/" + first_id + "/cancel", headers=headers)
+        assert cancelled.status_code == 200
+        assert cancelled.json()["state"] == "CANCEL_REQUESTED"
+        after_cancel = repository.run_snapshot(first_id)
+        assert after_cancel["state"] == "CANCEL_REQUESTED"
+        assert after_cancel["state_version"] == cancel_before["state_version"] + 1
+        attempt_id = repository.list_unfinished_attempts()[0]["attempt_id"]
+        assert job.coordinator._process_controls[attempt_id].cancel_count == 1
+        repeated = client.post("/api/v1/runs/" + first_id + "/cancel", headers=headers)
+        assert repeated.status_code == 200
+        assert repeated.json()["disposition"] == "already_requested"
+        assert repository.run_snapshot(first_id)["state_version"] == after_cancel["state_version"]
+        assert job.coordinator._process_controls[attempt_id].cancel_count == 1
 
         children[0].finish(1)
-        assert _wait_for(lambda: repository.run_snapshot(first_id)["state"] == "INTERRUPTED")
+        assert _wait_for(lambda: repository.run_snapshot(first_id)["state"] == "CANCELLED")
         assert repository.run_snapshot(second_id)["state"] == "QUEUED"
         replay = client.post("/api/v1/runs", headers=headers, json=second_body)
         assert replay.status_code == 202
