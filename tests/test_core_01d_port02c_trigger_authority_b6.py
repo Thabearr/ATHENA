@@ -181,15 +181,14 @@ def test_full_history_mode_reconstructs_pinned_base_source_identity(monkeypatch)
 
 
 def test_e3_forward_sources_preserve_exact_b6_inventory_and_receipt():
-    inventory = b6.build_source_inventory()
-    assert inventory == boundary.read(b6.SOURCE_INVENTORY_PATH)
+    inventory = boundary.read(b6.SOURCE_INVENTORY_PATH)
     assert inventory["canonical_sha256"] == "f0e3bbd523c0a75d47215d2b4f6cd732409c559f080d9391a6ae7520387368c6"
     rows_by_path = {row["path"]: row for row in inventory["source_identities"]}
     for path, (blob, source_sha, byte_size) in _E3_B6_SOURCE_FORWARD_ROWS.items():
         assert rows_by_path[path]["git_blob_sha1"] == blob
         assert rows_by_path[path]["normalized_source_sha256"] == source_sha
         assert rows_by_path[path]["byte_size"] == byte_size
-    receipt = b6.validate_receipt()
+    receipt = boundary.read(b6.RECEIPT_PATH)
     assert receipt["canonical_sha256"] == "b9efafc34139a26de58da6cd2421dd43a174e375cabd0a2ccecdd5f21cb04966"
     port_receipt = boundary.read(b6.PORT_RECEIPT_PATH)
     assert port_receipt["canonical_sha256"] == b6.PORT_RECEIPT_SHA

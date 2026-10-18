@@ -23,7 +23,7 @@ import hashlib
 import json
 from functools import lru_cache
 import io
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import tokenize
