@@ -20,7 +20,7 @@ import yaml
 from domain.run_contracts import canonical_json_bytes
 from scripts import audit_checkpoint_e_workflows as predecessor
 from scripts import audit_p4_workflow_evolution_ledger as evolution
-from scripts.core_01d_historical_source import historical_bytes, identities
+from scripts.core_01d_historical_source import historical_bytes as _pre_cutover_historical_bytes, identities
 from services.athena_run_request_parser import parse_explicit_request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,6 +71,14 @@ def git(*args):
 
 def blob(value):
     return hashlib.sha1(b"blob " + str(len(value)).encode() + b"\0" + value).hexdigest()
+
+
+def historical_bytes(path):
+    """Exact legacy bytes, with only the authenticated E3 source transitions."""
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    if path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
+        return a2.read_authenticated_cross_contract_predecessor(path)
+    return _pre_cutover_historical_bytes(path)
 
 
 def actual_modules():

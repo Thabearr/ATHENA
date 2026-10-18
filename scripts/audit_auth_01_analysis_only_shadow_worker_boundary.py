@@ -232,12 +232,23 @@ def _worker_boundary_static_checks() -> None:
                     raise AssertionError("worker launch path enables shell=True")
 
     current_shadow = _function(entry_tree, "_run_current_shadow")
-    if not _has_exact_bool_projection(current_shadow):
+    argument_projection = _function(entry_tree, "_current_shadow_arguments")
+    if not _has_exact_bool_projection(argument_projection):
         raise AssertionError("worker_entry does not serialize exact true/false request intent")
-    constants = {node.value for node in ast.walk(current_shadow) if isinstance(node, ast.Constant)}
+    constants = {node.value for node in ast.walk(argument_projection) if isinstance(node, ast.Constant)}
     if "--create-share-code" not in constants:
         raise AssertionError("worker_entry omitted the explicit Current Shadow delivery argument")
-    if not any(
+    product_supervisor_calls = [
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "run_authenticated_product_worker"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "execute_current_shadow_request"
+        for node in ast.walk(current_shadow)
+    ]
+    if not any(product_supervisor_calls):
+        raise AssertionError("worker_entry does not use the authenticated Current Shadow product entry")
+    if any(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "main"
@@ -245,7 +256,32 @@ def _worker_boundary_static_checks() -> None:
         and node.func.value.id == "execute_current_shadow_request"
         for node in ast.walk(current_shadow)
     ):
-        raise AssertionError("worker_entry does not call the reviewed Current Shadow parser/entry")
+        raise AssertionError("worker_entry retains an ungated Current Shadow parser bypass")
+    supervisor_call = next(
+        node for node in ast.walk(current_shadow)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "run_authenticated_product_worker"
+    )
+    if {keyword.arg for keyword in supervisor_call.keywords} != {
+        "repository", "command", "gate", "gate_bytes",
+    }:
+        raise AssertionError("Current Shadow nested worker omits exact repository/command/gate bindings")
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    historical_entry = ast.parse(
+        a2.read_authenticated_cross_contract_predecessor("runtime/worker_entry.py"),
+        filename="authenticated historical worker_entry.py",
+    )
+    historical_current_shadow = _function(historical_entry, "_run_current_shadow")
+    if not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "main"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "execute_current_shadow_request"
+        for node in ast.walk(historical_current_shadow)
+    ):
+        raise AssertionError("AUTH-01 historical parser replay is not bound to exact predecessor bytes")
     execute_command = _function(entry_tree, "execute_worker_command")
     execute_names = [node.id for node in ast.walk(execute_command) if isinstance(node, ast.Name)]
     if "read_bound_request" not in execute_names:

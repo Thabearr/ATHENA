@@ -170,10 +170,13 @@ def _run_offline_probe(command: WorkerCommand, identity: Any) -> int:
     return 0
 
 
-def _run_current_shadow(
-    command: WorkerCommand, request: Any, *, repository=None, gate=None,
-    gate_bytes: bytes | None = None,
-) -> int:
+def _current_shadow_arguments(command: WorkerCommand, request: Any) -> list[str]:
+    """Project the already-bound request into the fixed supervisor argv.
+
+    This helper is deliberately pure: it performs no parsing, process start,
+    provider access, or evidence write.  Product execution still goes through
+    ``_run_current_shadow`` and its authenticated owner gate below.
+    """
     if request.create_share_code is True:
         raise WorkerEntryError("product delivery requires reviewed durable transport context")
     if command.operation != "CURRENT_SHADOW_REQUEST":
@@ -197,7 +200,7 @@ def _run_current_shadow(
             raise WorkerEntryError("Current Shadow output directory is not a safe directory") from exc
         if not _is_contained(command.run_directory, resolved_output):
             raise WorkerEntryError("Current Shadow output directory escaped its exact run directory")
-    args = [
+    return [
         "--target-size",
         str(request.target_legs),
         "--fixture-scope",
@@ -209,6 +212,13 @@ def _run_current_shadow(
         "--create-share-code",
         "true" if request.create_share_code else "false",
     ]
+
+
+def _run_current_shadow(
+    command: WorkerCommand, request: Any, *, repository=None, gate=None,
+    gate_bytes: bytes | None = None,
+) -> int:
+    args = _current_shadow_arguments(command, request)
     # This lazy import preserves the offline identity-probe boundary. The
     # existing request supervisor remains the sole owner of its 75-minute
     # timeout and finalization behavior.

@@ -190,10 +190,14 @@ def _canonical_hash(value: Any) -> str:
 
 
 def _identity(path: str) -> dict[str, Any]:
-    raw = (ROOT / path).read_bytes()
+    if path in boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
+        raw = boundary.read_authenticated_cross_contract_predecessor(path)
+        blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+    else:
+        raw = (ROOT / path).read_bytes()
+        blob = _git("rev-parse", "HEAD:" + path).decode().strip()
     normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     expected_blob, expected_sha = SOURCE_PINS[path]
-    blob = _git("rev-parse", "HEAD:" + path).decode().strip()
     digest = hashlib.sha256(normalized).hexdigest()
     require(blob == expected_blob, f"B5 Git blob identity drift: {path}")
     require(digest == expected_sha, f"B5 normalized source identity drift: {path}")

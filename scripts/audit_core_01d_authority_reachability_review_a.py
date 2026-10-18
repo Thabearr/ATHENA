@@ -156,8 +156,10 @@ def source_bytes(path):
   return _fresh_holdout_predecessor_source(path)
  if path in INCIDENT_20261010_PREDECESSOR_SOURCES:
   return _incident_predecessor_source(path)
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ if path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
+  return a2.read_authenticated_cross_contract_predecessor(path)
  if path=='tests/conftest.py':
-  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
   a2.authenticate_inventory()
   raw=a2.HISTORICAL_CONFTEST_BYTES
   require(hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==a2.HISTORICAL_TEST_BLOBS[path], 'historical conftest identity drift')

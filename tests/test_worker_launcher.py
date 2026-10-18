@@ -703,27 +703,29 @@ def test_port_02b_receipt_and_audit_pin_offline_probe_vector(tmp_path: Path):
 
 
 def test_worker_entry_derives_current_shadow_arguments_only_from_bound_request(monkeypatch, tmp_path: Path):
-    from scripts import execute_current_shadow_request as request_module
-
     request = _request(shadow=True, create_share_code=False)
     command = _command(
         tmp_path / "run", request, operation="CURRENT_SHADOW_REQUEST"
     )
-    captured = {}
-    def fake_main(argv):
-        captured["argv"] = list(argv)
-        return 0
-
-    monkeypatch.setattr(request_module, "main", fake_main)
-    monkeypatch.setenv(request_module.WORKER_ENV, "1")
-    result = worker_entry._run_current_shadow(command, request)
-    assert result == 0
-    assert captured["argv"] == [
+    assert worker_entry._current_shadow_arguments(command, request) == [
         "--target-size", "2", "--fixture-scope", "today", "--fixture-dates", "20260923",
         "--output-dir", os.fspath(command.run_directory / "current-shadow"),
         "--create-share-code", "false",
     ]
-    assert os.environ[request_module.WORKER_ENV] == "1"
+
+
+def test_worker_entry_never_starts_product_supervisor_without_exact_gate(monkeypatch, tmp_path: Path):
+    from scripts import execute_current_shadow_request as request_module
+
+    request = _request(shadow=True, create_share_code=False)
+    command = _command(tmp_path / "run", request, operation="CURRENT_SHADOW_REQUEST")
+    monkeypatch.setattr(
+        request_module,
+        "run_authenticated_product_worker",
+        lambda *args, **kwargs: pytest.fail("product supervisor started without owner gate"),
+    )
+    with pytest.raises(worker_entry.WorkerEntryError, match="exact product startup owner"):
+        worker_entry._run_current_shadow(command, request)
 
 
 def test_worker_entry_rejects_extra_cli_and_wrong_fixed_command_path(tmp_path: Path):

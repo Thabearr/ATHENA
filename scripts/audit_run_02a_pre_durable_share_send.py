@@ -88,6 +88,10 @@ RUN_02A_CURRENT_SOURCE_PREDECESSORS = {
         "tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-pr463-base.py.txt",
         "113acdf1ece29ca2977e4e3d2d84576a31fe7828",
         "98d5b1d7cfbc524be876f7000f9e605caac013039893d4f028ac2452216a2a61"),
+    "scripts/audit_core_01d_port02c_trigger_authority_b6.py": (
+        "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-port02c-trigger-authority-b6.py.txt",
+        "a36066a0b03c03f76e416f1b9235146717b2f483",
+        "261692333467a99de066abe046ba61614dd1879d68856fec980781f884a7588a"),
 }
 
 
@@ -111,6 +115,16 @@ def historical_prerequisite_source_bytes(path, *, latest=None):
     current = {r["path"]:r["lf_source_sha256"] for r in latest["source_identities"]}
     if hashlib.sha256(live.replace(b"\r\n", b"\n")).hexdigest() != current.get(path):
         raise AssertionError("current prerequisite source differs from authenticated A2")
+    if (path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS
+            and a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]["predecessor_fixture"] == fixture):
+        transition = a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]
+        authenticated = a2.read_authenticated_cross_contract_predecessor(path)
+        fixture_lf = (ROOT / fixture).read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        if (transition["predecessor_fixture"] != fixture
+                or transition["predecessor_git_blob_sha1"] != blob
+                or transition["predecessor_lf_source_sha256"] != digest
+                or authenticated.replace(b"\r\n", b"\n").replace(b"\r", b"\n") != fixture_lf):
+            raise AssertionError("retained prerequisite E3 predecessor projection drift: " + path)
     review._tracked_payloads(((fixture, (ROOT / fixture).read_bytes()),))
     raw = (ROOT / fixture).read_bytes().replace(b"\r\n", b"\n")
     retained_sources = {r["path"]:r["lf_source_sha256"] for r in retained["source_identities"]}

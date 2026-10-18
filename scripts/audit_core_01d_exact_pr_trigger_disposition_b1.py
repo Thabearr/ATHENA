@@ -409,9 +409,13 @@ def _normalized(raw: bytes) -> bytes:
 
 def _identity_for_worktree(path: str) -> dict[str, str]:
     raw = (ROOT / path).read_bytes()
-    blob = _git("hash-object", path).decode().strip()
-    head_blob = _git("rev-parse", "HEAD:" + path).decode().strip()
-    boundary.require(blob == head_blob, "reviewed source differs from committed HEAD: " + path)
+    if path in boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
+        raw = boundary.read_authenticated_cross_contract_predecessor(path)
+        blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+    else:
+        blob = _git("hash-object", path).decode().strip()
+        head_blob = _git("rev-parse", "HEAD:" + path).decode().strip()
+        boundary.require(blob == head_blob, "reviewed source differs from committed HEAD: " + path)
     if path == "scripts/sportybet_direct_share_bridge.py":
         from scripts import audit_run_02a_pre_durable_share_send as prerequisite
         raw = prerequisite.historical_transport_bytes(path, root=ROOT)

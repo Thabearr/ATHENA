@@ -215,10 +215,16 @@ RUN_02A_PRE_PREDECESSOR_SOURCE_BLOBS = {
     "tests/test_worker_launcher.py":
         "973e00174e8967569e98fbf15bc58d2c13a3a20d",
 }
+E3_RUN_02A_ADDITIVE_PATHS = frozenset({
+    # New gate-context primitive did not exist in the immutable predecessor
+    # tree. Its current bytes are authenticated by the latest A2 inventory.
+    "runtime/current_shadow_operation_authority.py",
+})
 ALLOWED_PASS4_PATHS |= RUN_02A_PRE_ADDITIVE_PATHS | {
     "runtime/worker_entry.py", "scripts/sportybet_direct_share_bridge.py",
     "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py",
 }
+ALLOWED_PASS4_PATHS |= E3_RUN_02A_ADDITIVE_PATHS
 FRESH_HOLDOUT_20261014_ADDITIVE_PATHS = {'artifacts/product/fresh_holdout_20261014_pass_a_source_projection_v1.json',
  'docs/product/fresh_holdout_20261014_pass_a_source_projection.md',
  'tests/fixtures/core_01d/fresh_holdout_20261014/capture-qualification-predecessor.py.txt',
@@ -355,6 +361,12 @@ def validate_bounded_inventory(raw: bytes) -> None:
             "current E3 source is not authenticated by A2: " + path,
         )
     predecessor_blobs.update(PR459_PREDECESSOR_SOURCE_BLOBS)
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    for path in sorted(a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS):
+        predecessor = a2.read_authenticated_cross_contract_predecessor(path)
+        predecessor_blobs[path] = hashlib.sha1(
+            b"blob " + str(len(predecessor)).encode("ascii") + b"\0" + predecessor
+        ).hexdigest()
     from scripts import audit_core_01d_authority_reachability_review_a as review
     for path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
         review.source_bytes(path)
@@ -367,7 +379,7 @@ def validate_bounded_inventory(raw: bytes) -> None:
     for line in raw.splitlines(keepends=True):
         metadata, separator, path_bytes = line.partition(b"\t")
         path = path_bytes.strip().decode()
-        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | FRESH_HOLDOUT_20261015_ADDITIVE_PATHS | pr459_additive_paths:
+        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | E3_RUN_02A_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | FRESH_HOLDOUT_20261015_ADDITIVE_PATHS | pr459_additive_paths:
             continue
         if path in PR459_PREDECESSOR_SOURCE_BLOBS:
             policy.require(metadata.split()[:2] == [b"100644", b"blob"]

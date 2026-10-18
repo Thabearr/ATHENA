@@ -225,8 +225,8 @@ _E3_B6_FORWARD_SOURCES = {
         "predecessor_git_blob_sha1": "fa2069a2ea1201a93a84b5ce3856f9d9574dea71",
         "predecessor_lf_source_sha256": "0d4d1af14a47e935bf2669c8abf6dbf6409e9f8d72f4070c3bb0b8abc7eec1a3",
         "predecessor_byte_size": 45046,
-        "successor_git_blob_sha1": "2a4030b3a330637dcbfe0e688da8054c1158d157",
-        "successor_lf_source_sha256": "d3b2db5331883b96b8af4a2a5520461fad774cac1d246659413527d13ba788af",
+        "successor_git_blob_sha1": "71eb1b288a2c18caf907c29bec476b7db6c5e9da",
+        "successor_lf_source_sha256": "c39f80f857d2dc5e898bbf0b9bad85908e0e9bdd6fdc1a1f924c3f14bc8a6234",
         "predecessor_fixture": "tests/fixtures/core_01d/e3_b6_three_source_forward/"
         "original-current-shadow-sportybet-pc-upcoming-discovery.py.txt",
         "reason": "E3 RUN-02A durable cancellation/operation-authorization boundary for "
@@ -236,8 +236,8 @@ _E3_B6_FORWARD_SOURCES = {
         "predecessor_git_blob_sha1": "b50689971ee20cb6800145317a0e9fcb3486f40f",
         "predecessor_lf_source_sha256": "449e83af1a8e25bf5b054b88682b8559363196ca2d6e1dad87c742949b8d0484",
         "predecessor_byte_size": 27513,
-        "successor_git_blob_sha1": "432f72290bd7f10e61e13173bd89e0eed8b96aea",
-        "successor_lf_source_sha256": "9dabb9e9844000509028d9933b3ee54c290d7df3de2f35b0046f8a5a0b188cfd",
+        "successor_git_blob_sha1": "9aeb6d26d7d8fd2b83229cbf4e057847622e70f4",
+        "successor_lf_source_sha256": "ea349d025e650e120aa0ca1eba95bd1e35583f0791789397447a4be015681917",
         "predecessor_fixture": "tests/fixtures/core_01d/e3_b6_three_source_forward/"
         "original-issue-current-fotmob-reviewed-source.py.txt",
         "reason": "E3 RUN-02A durable cancellation/operation-authorization boundary for "
@@ -250,15 +250,19 @@ _E3_B6_FORWARD_SOURCES = {
 def test_e3_three_source_forward_predecessors_bind_original_b6_and_current_a2(path):
     a2 = b4.boundary
     expected = _E3_B6_FORWARD_SOURCES[path]
-    transition = a2.SOURCE_FORWARD_TRANSITIONS[path]
+    legacy_transition = a2.SOURCE_FORWARD_TRANSITIONS[path]
+    transition = a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]
     for field, value in expected.items():
         assert transition[field] == value
-    assert transition["a2_predecessor_generation"] == 275
-    assert transition["a2_predecessor_sha256"] == \
+    assert legacy_transition["a2_predecessor_generation"] == 275
+    assert legacy_transition["a2_predecessor_sha256"] == \
         "8457db3718c62c42895f306818598fd0f48d6bf6f5b70a41e1a7938c59880fdc"
-    assert transition["a2_generation"] == 276
-    assert transition["a2_authorization_sha256"] == \
+    assert legacy_transition["a2_generation"] == 276
+    assert legacy_transition["a2_authorization_sha256"] == \
         "b648df655f80af20482ea8810aaf82a0d6d41799854908a3f3d18b697d3f3d29"
+    assert transition["a2_predecessor_generation"] == 283
+    assert transition["a2_predecessor_sha256"] == a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_SHA256
+    assert transition["a2_generation"] == 284
     assert transition["reason_type"] == "E3_RUN_02A_DURABLE_CANCELLATION_OPERATION_AUTHORIZATION"
 
     try:
@@ -282,7 +286,7 @@ def test_e3_three_source_forward_predecessors_bind_original_b6_and_current_a2(pa
         assert tree_path.decode("utf-8") == path
         assert (mode, kind, blob) == ("100644", "blob", expected["predecessor_git_blob_sha1"])
         original = a2.git("cat-file", "blob", blob)
-    predecessor = a2.read_authenticated_forward_predecessor(path)
+    predecessor = a2.read_authenticated_cross_contract_predecessor(path)
     if original is not None:
         assert predecessor == original
     assert len(predecessor) == expected["predecessor_byte_size"]
@@ -305,9 +309,54 @@ def test_e3_three_source_forward_predecessors_bind_original_b6_and_current_a2(pa
         expected["successor_lf_source_sha256"]
 
 
+@pytest.mark.parametrize("path", sorted(b4.boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS))
+def test_e3_cross_contract_matrix_authenticates_every_predecessor_and_current_successor(path):
+    a2 = b4.boundary
+    transition = a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]
+    predecessor = a2.read_authenticated_cross_contract_predecessor(path)
+    # Full-history checkouts independently compare the reviewed predecessor
+    # fixture with its original Git object. Depth-one checkouts do not fetch or
+    # depend on that ancestor; the exact same helper projection is then tested
+    # against the authenticated fixture and V284 row below.
+    if a2.historical_objects_available():
+        original_object = a2.git(
+            "cat-file", "blob", transition["predecessor_git_blob_sha1"],
+        )
+        assert predecessor == original_object
+    normalized_predecessor = predecessor.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    assert len(predecessor) == transition["predecessor_byte_size"]
+    assert hashlib.sha1(
+        b"blob " + str(len(predecessor)).encode("ascii") + b"\0" + predecessor
+    ).hexdigest() == transition["predecessor_git_blob_sha1"]
+    assert hashlib.sha256(normalized_predecessor).hexdigest() == \
+        transition["predecessor_lf_source_sha256"]
+
+    current, current_identity = a2.read_tracked_head_blob(b4.ROOT, path)
+    normalized_current = current.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    assert current_identity.git_blob_sha1 == transition["successor_git_blob_sha1"]
+    assert hashlib.sha256(normalized_current).hexdigest() == \
+        transition["successor_lf_source_sha256"]
+    latest = a2.load_inventory_generations()[-1][1]
+    latest_rows = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
+    assert latest_rows[path] == transition["successor_lf_source_sha256"]
+
+
+def test_e3_cross_contract_supporting_anchor_set_includes_unchanged_capture_source():
+    a2 = b4.boundary
+    assert a2.E3_CROSS_CONTRACT_SUPPORTING_SOURCE_PATHS == frozenset(
+        a2.E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS
+    )
+    for path, anchor in a2.E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS.items():
+        current, identity = a2.read_tracked_head_blob(b4.ROOT, path)
+        fixture = (b4.ROOT / anchor["fixture_path"]).read_bytes()
+        assert current == fixture
+        assert identity.git_blob_sha1 == anchor["git_blob_sha1"]
+        assert len(fixture) == anchor["byte_size"]
+
+
 @pytest.mark.parametrize("path", sorted(b4.boundary.SOURCE_FORWARD_ALLOWED_PATHS))
 def test_e3_three_source_forward_rejects_each_predecessor_byte_flip(monkeypatch, path):
-    fixture = b4.ROOT / b4.boundary.SOURCE_FORWARD_TRANSITIONS[path]["predecessor_fixture"]
+    fixture = b4.ROOT / b4.boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]["predecessor_fixture"]
     original_read_bytes = Path.read_bytes
 
     def tampered_bytes(candidate):
@@ -318,7 +367,7 @@ def test_e3_three_source_forward_rejects_each_predecessor_byte_flip(monkeypatch,
 
     monkeypatch.setattr(Path, "read_bytes", tampered_bytes)
     with pytest.raises(AssertionError, match="predecessor fixture identity mismatch"):
-        b4.boundary.read_authenticated_forward_predecessor(path)
+        b4.boundary.read_authenticated_cross_contract_predecessor(path)
 
 
 @pytest.mark.parametrize("mutation", ["missing", "invalid_encoding", "symlink", "path_traversal", "wrong_mode",
@@ -326,26 +375,26 @@ def test_e3_three_source_forward_rejects_each_predecessor_byte_flip(monkeypatch,
 def test_e3_forward_source_rejects_fixture_path_mode_and_identity_mutations(monkeypatch, mutation):
     a2 = b4.boundary
     path = "domain/current_fotmob_latest_durable_fresh_history.py"
-    fixture = b4.ROOT / a2.SOURCE_FORWARD_TRANSITIONS[path]["predecessor_fixture"]
+    fixture = b4.ROOT / a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]["predecessor_fixture"]
     original_read_bytes = Path.read_bytes
     original_lstat = Path.lstat
     original_git = a2.git
-    transition = deepcopy(a2.SOURCE_FORWARD_TRANSITIONS[path])
+    transition = deepcopy(a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path])
     if mutation == "path_traversal":
         transition["predecessor_fixture"] = "tests/fixtures/core_01d/../outside.py.txt"
-        monkeypatch.setattr(a2, "SOURCE_FORWARD_TRANSITIONS", {**a2.SOURCE_FORWARD_TRANSITIONS, path: transition})
+        monkeypatch.setattr(a2, "E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS", {**a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS, path: transition})
         with pytest.raises(SourceIdentityError, match="traverses"):
-            a2.read_authenticated_forward_predecessor(path)
+            a2.read_authenticated_cross_contract_predecessor(path)
         return
     if mutation == "wrong_blob":
         transition["predecessor_git_blob_sha1"] = "0" * 40
-        monkeypatch.setattr(a2, "SOURCE_FORWARD_TRANSITIONS", {**a2.SOURCE_FORWARD_TRANSITIONS, path: transition})
+        monkeypatch.setattr(a2, "E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS", {**a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS, path: transition})
     elif mutation == "wrong_size":
         transition["predecessor_byte_size"] += 1
-        monkeypatch.setattr(a2, "SOURCE_FORWARD_TRANSITIONS", {**a2.SOURCE_FORWARD_TRANSITIONS, path: transition})
+        monkeypatch.setattr(a2, "E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS", {**a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS, path: transition})
     elif mutation == "wrong_digest":
         transition["predecessor_lf_source_sha256"] = "0" * 64
-        monkeypatch.setattr(a2, "SOURCE_FORWARD_TRANSITIONS", {**a2.SOURCE_FORWARD_TRANSITIONS, path: transition})
+        monkeypatch.setattr(a2, "E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS", {**a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS, path: transition})
 
     if mutation == "missing":
         def missing(candidate):
@@ -354,7 +403,7 @@ def test_e3_forward_source_rejects_fixture_path_mode_and_identity_mutations(monk
             return original_lstat(candidate)
         monkeypatch.setattr(Path, "lstat", missing)
         with pytest.raises(AssertionError, match="fixture is unavailable"):
-            a2.read_authenticated_forward_predecessor(path)
+            a2.read_authenticated_cross_contract_predecessor(path)
     elif mutation == "invalid_encoding":
         def invalid_encoding(candidate):
             raw = original_read_bytes(candidate)
@@ -363,7 +412,7 @@ def test_e3_forward_source_rejects_fixture_path_mode_and_identity_mutations(monk
             return raw
         monkeypatch.setattr(Path, "read_bytes", invalid_encoding)
         with pytest.raises(AssertionError, match="fixture encoding is invalid"):
-            a2.read_authenticated_forward_predecessor(path)
+            a2.read_authenticated_cross_contract_predecessor(path)
     elif mutation == "symlink":
         def linked(candidate):
             if candidate == fixture:
@@ -371,7 +420,7 @@ def test_e3_forward_source_rejects_fixture_path_mode_and_identity_mutations(monk
             return original_lstat(candidate)
         monkeypatch.setattr(Path, "lstat", linked)
         with pytest.raises(AssertionError, match="symlink or junction"):
-            a2.read_authenticated_forward_predecessor(path)
+            a2.read_authenticated_cross_contract_predecessor(path)
     elif mutation == "wrong_mode":
         def wrong_mode(*args, **kwargs):
             result = original_git(*args, **kwargs)
@@ -382,14 +431,128 @@ def test_e3_forward_source_rejects_fixture_path_mode_and_identity_mutations(monk
             return result
         monkeypatch.setattr(a2, "git", wrong_mode)
         with pytest.raises(AssertionError, match="committed predecessor fixture identity mismatch"):
-            a2.read_authenticated_forward_predecessor(path)
+            a2.read_authenticated_cross_contract_predecessor(path)
     elif mutation == "wrong_blob":
-        monkeypatch.setattr(a2, "SOURCE_FORWARD_TRANSITIONS", {**a2.SOURCE_FORWARD_TRANSITIONS, path: transition})
+        monkeypatch.setattr(a2, "E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS", {**a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS, path: transition})
         with pytest.raises(AssertionError, match="predecessor fixture identity mismatch"):
-            a2.read_authenticated_forward_predecessor(path)
+            a2.read_authenticated_cross_contract_predecessor(path)
     elif mutation in {"wrong_size", "wrong_digest"}:
         with pytest.raises(AssertionError, match="fixture (size|identity) mismatch"):
-            a2.read_authenticated_forward_predecessor(path)
+            a2.read_authenticated_cross_contract_predecessor(path)
+
+
+def test_e3_cross_contract_predecessor_rejects_hardlinked_fixture(monkeypatch):
+    a2 = b4.boundary
+    path = "scripts/execute_current_shadow_request.py"
+    fixture = b4.ROOT / a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]["predecessor_fixture"]
+    original_lstat = Path.lstat
+
+    def hardlinked(candidate):
+        result = original_lstat(candidate)
+        if candidate == fixture:
+            return SimpleNamespace(
+                st_mode=result.st_mode,
+                st_file_attributes=getattr(result, "st_file_attributes", 0),
+                st_nlink=2,
+            )
+        return result
+
+    monkeypatch.setattr(Path, "lstat", hardlinked)
+    with pytest.raises(AssertionError, match="predecessor fixture is hardlinked"):
+        a2.read_authenticated_cross_contract_predecessor(path)
+
+
+def test_e3_cross_contract_predecessor_rejects_extra_fixture_directory_member(monkeypatch):
+    a2 = b4.boundary
+    path = "scripts/execute_current_shadow_request.py"
+    directory = b4.ROOT / a2.E3_CROSS_CONTRACT_FIXTURE_DIRECTORY
+    original_iterdir = Path.iterdir
+
+    def extra_member(candidate):
+        entries = list(original_iterdir(candidate))
+        if candidate == directory:
+            entries.append(SimpleNamespace(name="unapproved-extra-predecessor.py.txt"))
+        return iter(entries)
+
+    monkeypatch.setattr(Path, "iterdir", extra_member)
+    with pytest.raises(AssertionError, match="fixture directory has missing, extra, or renamed"):
+        a2.read_authenticated_cross_contract_predecessor(path)
+
+
+def test_e3_cross_contract_predecessor_works_with_depth_one_historical_fallback(monkeypatch):
+    a2 = b4.boundary
+    path = "scripts/audit_core_01d_port02c_trigger_authority_b6.py"
+    fixture = b4.ROOT / a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]["predecessor_fixture"]
+    expected = fixture.read_bytes()
+    monkeypatch.setattr(a2, "historical_objects_available", lambda *_args, **_kwargs: False)
+    assert a2.read_authenticated_cross_contract_predecessor(path) == expected
+
+
+def test_e3_cross_contract_predecessor_rejects_cross_source_fixture(monkeypatch):
+    a2 = b4.boundary
+    path = "scripts/execute_current_shadow_request.py"
+    transition = deepcopy(a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path])
+    other_path = "scripts/audit_core_01d_port02c_trigger_authority_b6.py"
+    transition["predecessor_fixture"] = a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[
+        other_path
+    ]["predecessor_fixture"]
+    monkeypatch.setattr(
+        a2,
+        "E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS",
+        {**a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS, path: transition},
+    )
+    with pytest.raises(AssertionError, match="predecessor fixture (size|identity) mismatch"):
+        a2.read_authenticated_cross_contract_predecessor(path)
+
+
+@pytest.mark.parametrize("link_kind", ["symlink", "hardlink"])
+def test_e3_cross_contract_predecessor_rejects_linked_current_source(monkeypatch, link_kind):
+    a2 = b4.boundary
+    path = "scripts/execute_current_shadow_request.py"
+    source = b4.ROOT / path
+    original_lstat = Path.lstat
+
+    def linked(candidate):
+        result = original_lstat(candidate)
+        if candidate != source:
+            return result
+        if link_kind == "symlink":
+            return SimpleNamespace(st_mode=stat.S_IFLNK | 0o777, st_file_attributes=0, st_nlink=1)
+        return SimpleNamespace(
+            st_mode=result.st_mode,
+            st_file_attributes=getattr(result, "st_file_attributes", 0),
+            st_nlink=2,
+        )
+
+    monkeypatch.setattr(Path, "lstat", linked)
+    expected = "symlink or junction" if link_kind == "symlink" else "hardlinked"
+    with pytest.raises(AssertionError, match=expected):
+        a2.read_authenticated_cross_contract_predecessor(path)
+
+
+@pytest.mark.parametrize("link_kind", ["symlink", "hardlink"])
+def test_e3_cross_contract_predecessor_rejects_linked_supporting_source(monkeypatch, link_kind):
+    a2 = b4.boundary
+    path = "scripts/execute_current_shadow_request.py"
+    source = b4.ROOT / "scripts/capture_fotmob_data_matches.py"
+    original_lstat = Path.lstat
+
+    def linked(candidate):
+        result = original_lstat(candidate)
+        if candidate != source:
+            return result
+        if link_kind == "symlink":
+            return SimpleNamespace(st_mode=stat.S_IFLNK | 0o777, st_file_attributes=0, st_nlink=1)
+        return SimpleNamespace(
+            st_mode=result.st_mode,
+            st_file_attributes=getattr(result, "st_file_attributes", 0),
+            st_nlink=2,
+        )
+
+    monkeypatch.setattr(Path, "lstat", linked)
+    expected = "symlink or junction" if link_kind == "symlink" else "hardlinked"
+    with pytest.raises(AssertionError, match=expected):
+        a2.read_authenticated_cross_contract_predecessor(path)
 
 
 
@@ -420,7 +583,7 @@ def test_e3_forward_source_rejects_unapproved_successor_or_a2_lineage(monkeypatc
             return chain
         monkeypatch.setattr(a2, "load_inventory_generations", altered_chain)
     elif mutation in {"wrong_successor_blob", "wrong_successor_digest", "wrong_fixture_path", "wrong_reason"}:
-        transition = deepcopy(a2.SOURCE_FORWARD_TRANSITIONS[path])
+        transition = deepcopy(a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path])
         if mutation == "wrong_successor_blob":
             transition["successor_git_blob_sha1"] = "0" * 40
         elif mutation == "wrong_successor_digest":
@@ -429,12 +592,12 @@ def test_e3_forward_source_rejects_unapproved_successor_or_a2_lineage(monkeypatc
             transition["predecessor_fixture"] = "tests/fixtures/core_01d/another-predecessor.py.txt"
         else:
             transition["reason_type"] = "GENERIC_SOURCE_BYPASS"
-        transitions = dict(a2.SOURCE_FORWARD_TRANSITIONS)
+        transitions = dict(a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS)
         transitions[path] = transition
-        monkeypatch.setattr(a2, "SOURCE_FORWARD_TRANSITIONS", transitions)
+        monkeypatch.setattr(a2, "E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS", transitions)
 
     with pytest.raises(AssertionError):
-        a2.read_authenticated_forward_predecessor(path)
+        a2.read_authenticated_cross_contract_predecessor(path)
 
 
 @pytest.mark.parametrize("path", sorted(b4.boundary.E3_B6_SOURCE_FORWARD_PATHS))
@@ -450,7 +613,7 @@ def test_e3_three_source_forward_rejects_unreviewed_current_source_edit(monkeypa
 
     monkeypatch.setattr(a2, "read_tracked_head_blob", altered_current)
     with pytest.raises(AssertionError, match="current successor identity mismatch"):
-        a2.read_authenticated_forward_predecessor(path)
+        a2.read_authenticated_cross_contract_predecessor(path)
 
 
 def test_e3_forward_source_policy_is_exactly_four_paths_and_rejects_forged_inventory_rows(monkeypatch):
@@ -472,18 +635,20 @@ def test_e3_forward_source_policy_is_exactly_four_paths_and_rejects_forged_inven
         a2.read_authenticated_forward_predecessor(path)
     monkeypatch.setattr(a2, "SOURCE_FORWARD_TRANSITIONS", original_transitions)
 
+    current_row_path = "domain/sportybet_live_event_quote_evidence.py"
+
     def forged_current_row():
         chain = original_chain()
         latest_path, latest = chain[-1]
         latest = deepcopy(latest)
         for row in latest["source_identities"]:
-            if row["path"] == path:
+            if row["path"] == current_row_path:
                 row["lf_source_sha256"] = "0" * 64
         chain[-1] = (latest_path, latest)
         return chain
     monkeypatch.setattr(a2, "load_inventory_generations", forged_current_row)
     with pytest.raises(AssertionError, match="current successor row differs from authenticated latest inventory"):
-        a2.read_authenticated_forward_predecessor(path)
+        a2.read_authenticated_forward_predecessor(current_row_path)
 
 
 @pytest.mark.parametrize("mutation", [
@@ -518,11 +683,11 @@ def test_e3_three_source_forward_rejects_forged_a2_authorization_chain(monkeypat
 
     monkeypatch.setattr(a2, "load_inventory_generations", altered_chain)
     if mutation == "stale_latest_generation":
-        with pytest.raises(AssertionError, match="latest inventory is stale against the current corpus"):
-            a2.read_authenticated_forward_predecessor(path)
+        with pytest.raises(AssertionError, match="E3 cross-contract"):
+            a2.read_authenticated_cross_contract_predecessor(path)
     else:
         with pytest.raises(AssertionError):
-            a2.read_authenticated_forward_predecessor(path)
+            a2.read_authenticated_cross_contract_predecessor(path)
 
 
 def test_audit_does_not_require_the_base_commit_object(monkeypatch):

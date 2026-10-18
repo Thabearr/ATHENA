@@ -1053,6 +1053,112 @@ def test_product_fotmob_pc_upcoming_and_event_sources_share_the_get_port(
     assert events.count("CURRENT_SHADOW_GET_RESPONSE_RETAINED") == 3
 
 
+def test_product_pc_capture_uses_authenticated_epoch_and_cancel_blocks_next_page(
+    tmp_path, clock, monkeypatch,
+):
+    from runtime.current_shadow_operation_authority import ProviderGetResponse
+    from domain import current_shadow_sportybet_pc_upcoming_discovery as pc_source
+    from runtime.current_shadow_operation_authority import ProductOperationAuthorityError
+
+    intents = []
+    body = json.dumps({
+        "bizCode": 10000,
+        "data": {
+            "totalNum": 101,
+            "tournaments": [{
+                "id": "sr:tournament:242",
+                "name": "Synthetic League",
+                "categoryId": "sr:category:26",
+                "categoryName": "Synthetic",
+                "events": [{
+                    "eventId": "sr:match:99000000001",
+                    "homeTeamId": "sr:competitor:88000000002",
+                    "homeTeamName": "Synthetic Home",
+                    "awayTeamId": "sr:competitor:88000000003",
+                    "awayTeamName": "Synthetic Away",
+                    "estimateStartTime": 1893585600000,
+                    "status": 0,
+                    "matchStatus": "Not start",
+                    "bookingStatus": "Booked",
+                }],
+            }],
+        },
+    }, separators=(",", ":")).encode("utf-8")
+
+    def synthetic_transport(intent):
+        intents.append(intent)
+        return ProviderGetResponse(
+            body=body, status=200, observed_at="2030-01-01T00:00:00.000000Z",
+            content_type="application/json", content_length=len(body),
+            content_length_header=str(len(body)),
+        )
+
+    monkeypatch.setattr(
+        "runtime.current_shadow_operation_authority._fixed_provider_get",
+        synthetic_transport,
+    )
+
+    def capture_one_epoch(authority, repository, command, gate):
+        def cancel_after_first_page(page):
+            assert page.page_num == 1
+            repository.record_cancel_intent(gate["run_id"])
+
+        with pytest.raises((ProductOperationAuthorityError, RunStateConflict)):
+            pc_source._capture_current_pc_upcoming_discovery_once(
+                evidence_root=command.run_directory / "pc-upcoming-race-test",
+                execute_live_network=True,
+                operation_epoch=1,
+                page_observer=cancel_after_first_page,
+            )
+        return tuple(intent["logical_id"] for intent in intents)
+
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch, capture_one_epoch,
+    )
+
+    assert captured["result"] == ("epoch:1:page:1",)
+    assert len(intents) == 1
+    assert intents[0]["provider"] == "SPORTYBET_PC_UPCOMING"
+    assert case["repository"].run_snapshot(case["run_id"])["state"] == "CANCELLED"
+    with case["repository"]._operation() as conn:
+        operations = conn.execute(
+            "SELECT state FROM app_external_operations WHERE run_id=?",
+            (case["run_id"],),
+        ).fetchall()
+    assert operations == [("CONFIRMED",)]
+
+
+def test_product_pc_capture_requires_epoch_before_any_provider_get(
+    tmp_path, clock, monkeypatch,
+):
+    from runtime.current_shadow_operation_authority import ProviderGetResponse
+    from domain import current_shadow_sportybet_pc_upcoming_discovery as pc_source
+
+    calls = []
+    monkeypatch.setattr(
+        "runtime.current_shadow_operation_authority._fixed_provider_get",
+        lambda intent: calls.append(intent) or ProviderGetResponse(
+            body=b"{}", status=200, observed_at="2030-01-01T00:00:00.000000Z",
+            content_type="application/json", content_length=2,
+            content_length_header="2",
+        ),
+    )
+
+    def capture_without_epoch(_authority, _repository, command, _gate):
+        with pytest.raises(pc_source.PcUpcomingDiscoveryError, match="bounded epoch"):
+            pc_source._capture_current_pc_upcoming_discovery_once(
+                evidence_root=command.run_directory / "pc-upcoming-no-epoch-test",
+                execute_live_network=True,
+            )
+        return True
+
+    _case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch, capture_without_epoch,
+    )
+    assert captured["result"] is True
+    assert calls == []
+
+
 def test_product_pr151_lineage_readers_route_every_github_get_through_authority(
     tmp_path, clock, monkeypatch,
 ):

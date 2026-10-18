@@ -178,6 +178,21 @@ def _supporting_source_inventory() -> list[dict[str, str]]:
         working_tree_raw = (ROOT / path).read_bytes()
         _require_head_file_identity(path, working_tree_raw)
         predecessor = HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS.get(path)
+        if path in boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
+            current_lf_sha = hashlib.sha256(
+                working_tree_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            ).hexdigest()
+            require(current_a2.get(path) == current_lf_sha,
+                    f"current supporting source differs from authenticated A2: {path}")
+            historical_raw = boundary.read_authenticated_cross_contract_predecessor(path)
+            identity = evolution.source_identity(historical_raw)
+            transition = boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]
+            require(identity == {
+                "git_blob_sha1": transition["predecessor_git_blob_sha1"],
+                "source_sha256": transition["predecessor_lf_source_sha256"],
+            }, f"authenticated historical supporting-source identity drift: {path}")
+            rows.append({"path": path, **identity})
+            continue
         if predecessor is not None:
             current_lf_sha = hashlib.sha256(
                 working_tree_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")

@@ -219,6 +219,87 @@ def test_explicit_shadow_path_uses_fixed_v2_policy_and_no_authority(
     assert summary["wager_placed"] is False
 
 
+def test_product_shadow_capture_uses_authenticated_permit_and_fenced_publication(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    from runtime import current_shadow_operation_authority as authority_module
+
+    from runtime.current_shadow_operation_authority import ProviderGetResponse
+
+    calls: list[tuple[str, object]] = []
+    response = ProviderGetResponse(
+        body=_raw(), status=200, observed_at="2026-08-27T07:00:00.000000Z",
+        content_type="application/json; charset=utf-8", content_length=len(_raw()),
+        content_length_header=str(len(_raw())),
+    )
+
+    class FakeAuthority:
+        def perform_get(self, **kwargs):
+            calls.append(("get", kwargs))
+            return response
+
+        def publish_evidence(self, *, evidence_kind, publish):
+            calls.append(("publish", evidence_kind))
+            return publish()
+
+    authority = FakeAuthority()
+    monkeypatch.setattr(authority_module, "current_product_authority", lambda: authority)
+    monkeypatch.setattr(
+        issuer_module,
+        "fetch_fotmob_data_matches",
+        lambda **_kwargs: pytest.fail("product route used the legacy transport"),
+    )
+    capture_directory = tmp_path / "capture"
+    manifest = object()
+    monkeypatch.setattr(
+        issuer_module,
+        "write_data_matches_capture_directory",
+        lambda *_args, **_kwargs: (capture_directory, manifest),
+    )
+    replay_result = object()
+    result = issuer_module._issue_current_fotmob_reviewed_source(
+        request_date="20260827",
+        timezone="UTC",
+        ccode3="NGA",
+        execute_live_network=True,
+        repository_root=tmp_path,
+        clock=lambda: ISSUED,
+        replay_builder=lambda path, **_kwargs: (path, replay_result),
+    )
+
+    assert result == (capture_directory, replay_result)
+    assert [kind for kind, _payload in calls] == ["get", "publish"]
+    assert calls[0][1] == {
+        "provider": "FOTMOB_DATA_MATCHES",
+        "request_target": issuer_module.fotmob_request_target("20260827", "UTC", "NGA"),
+        "logical_id": "20260827",
+        "headers": tuple(issuer_module.FOTMOB_REQUEST_HEADERS),
+        "timeout_seconds": issuer_module.FOTMOB_REQUEST_TIMEOUT_SECONDS,
+        "maximum_bytes": issuer_module.MAX_RESPONSE_BYTES,
+    }
+    assert calls[1][1] == "FOTMOB_CAPTURE_BUNDLE"
+
+
+def test_product_shadow_capture_rejects_injected_transport_before_get(monkeypatch, tmp_path: Path) -> None:
+    from runtime import current_shadow_operation_authority as authority_module
+
+    class FakeAuthority:
+        def perform_get(self, **_kwargs):
+            pytest.fail("product request used an injected transport")
+
+    monkeypatch.setattr(authority_module, "current_product_authority", lambda: FakeAuthority())
+    with pytest.raises(CurrentFotMobReviewedSourceError, match="rejects caller-supplied transports"):
+        issuer_module._issue_current_fotmob_reviewed_source(
+            request_date="20260827",
+            timezone="UTC",
+            ccode3="NGA",
+            execute_live_network=True,
+            repository_root=tmp_path,
+            connection_factory=lambda *_args, **_kwargs: pytest.fail("legacy connection factory ran"),
+            replay_builder=lambda *_args, **_kwargs: None,
+        )
+
+
 def test_execution_receipt_cannot_relabel_source_manifest_sha(tmp_path: Path) -> None:
     execution = _execution(tmp_path)
     with pytest.raises(

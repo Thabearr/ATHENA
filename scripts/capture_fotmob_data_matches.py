@@ -153,56 +153,6 @@ def fetch_fotmob_data_matches(
         target = request_target(date, zone, country)
     except FotMobDataMatchesProbeError as exc:
         raise FotMobDataMatchesCaptureError(str(exc)) from exc
-    from runtime.current_shadow_operation_authority import (
-        ProductOperationAuthorityError, current_product_authority,
-    )
-
-    authority = current_product_authority()
-    if authority is not None:
-        try:
-            product_response = authority.perform_get(
-                provider="FOTMOB_DATA_MATCHES",
-                request_target=target,
-                logical_id=date,
-                headers=tuple(REQUEST_HEADERS), timeout_seconds=REQUEST_TIMEOUT_SECONDS,
-                maximum_bytes=MAX_RESPONSE_BYTES,
-            )
-            if product_response.status != 200:
-                raise FotMobDataMatchesNetworkError(
-                    f"FotMob data-matches capture requires HTTP 200; received {product_response.status!r}"
-                )
-            validated_content_type = validate_json_content_type(product_response.content_type)
-            content_length = parse_content_length(product_response.content_length_header)
-            if len(product_response.body) > MAX_RESPONSE_BYTES:
-                raise FotMobDataMatchesNetworkError(
-                    "FotMob data-matches response exceeds the 8 MiB limit"
-                )
-            if not product_response.body:
-                raise FotMobDataMatchesNetworkError("FotMob data-matches response body was empty")
-            if content_length is not None and content_length != len(product_response.body):
-                raise FotMobDataMatchesNetworkError(
-                    "Content-Length does not match received body"
-                )
-            observed_at = datetime.datetime.fromisoformat(
-                product_response.observed_at[:-1] + "+00:00"
-            ).astimezone(datetime.timezone.utc)
-            return CapturedFotMobDataMatchesResponse(
-                status=product_response.status,
-                content_type=validated_content_type,
-                content_length=content_length,
-                body=product_response.body,
-                observed_at=observed_at,
-                network_acquisition_performed=True,
-            )
-        except (FotMobDataMatchesCaptureError, FotMobDataMatchesNetworkError):
-            raise
-        except Exception as exc:
-            if isinstance(exc, ProductOperationAuthorityError):
-                raise FotMobDataMatchesNetworkError(
-                    "Current Shadow provider GET authority failed closed"
-                ) from exc
-            raise
-
     connection = None
     try:
         connection = connection_factory(
@@ -549,28 +499,24 @@ def _atomic_write(
         raise FotMobDataMatchesCaptureError(
             "capture output is outside owned directory"
         )
-    def publish() -> None:
-        temporary = path.with_name(f".{path.name}.tmp")
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
         try:
-            try:
-                handle = temporary.open("xb")
-            except FileExistsError as exc:
-                raise FotMobDataMatchesCaptureError(
-                    f"capture temporary file already exists: {temporary}"
-                ) from exc
-            transaction.owned_temp_files.add(temporary)
-            with handle:
-                handle.write(content)
-                handle.flush()
-                os.fsync(handle.fileno())
-            _publish_no_overwrite(temporary, path, transaction)
-        except Exception as exc:
+            handle = temporary.open("xb")
+        except FileExistsError as exc:
             raise FotMobDataMatchesCaptureError(
-                f"could not durably write {path.name}: {_bounded_failure(exc)}"
+                f"capture temporary file already exists: {temporary}"
             ) from exc
-
-    from runtime.current_shadow_operation_authority import publish_product_evidence
-    publish_product_evidence(evidence_kind="FOTMOB_CAPTURE", publish=publish)
+        transaction.owned_temp_files.add(temporary)
+        with handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _publish_no_overwrite(temporary, path, transaction)
+    except Exception as exc:
+        raise FotMobDataMatchesCaptureError(
+            f"could not durably write {path.name}: {_bounded_failure(exc)}"
+        ) from exc
 
 
 def _cleanup_owned_capture(transaction: _CaptureTransactionState) -> tuple[str, ...]:
@@ -660,11 +606,7 @@ def write_data_matches_capture_directory(
     )
     repository = (repository_root or _repository_root()).resolve(strict=True)
     root = validate_output_root(output_root, repository_root=repository)
-    from runtime.current_shadow_operation_authority import publish_product_evidence
-    publish_product_evidence(
-        evidence_kind="FOTMOB_CAPTURE_ROOT",
-        publish=lambda: _ensure_directory_tree_durable(root, boundary=repository),
-    )
+    _ensure_directory_tree_durable(root, boundary=repository)
     _reject_symlink_components(root, "output root")
     date_directory = root / date
     capture_directory = date_directory / capture_identifier(
@@ -687,10 +629,7 @@ def write_data_matches_capture_directory(
             _sync_directory(date_directory)
         else:
             try:
-                publish_product_evidence(
-                    evidence_kind="FOTMOB_CAPTURE_DATE_DIRECTORY",
-                    publish=lambda: date_directory.mkdir(),
-                )
+                date_directory.mkdir()
             except FileExistsError as exc:
                 raise FotMobDataMatchesCaptureError(
                     "capture date directory appeared concurrently"
@@ -699,10 +638,7 @@ def write_data_matches_capture_directory(
             _sync_directory(root)
             _sync_directory(date_directory)
         try:
-            publish_product_evidence(
-                evidence_kind="FOTMOB_CAPTURE_DIRECTORY",
-                publish=lambda: capture_directory.mkdir(),
-            )
+            capture_directory.mkdir()
         except FileExistsError as exc:
             raise FotMobDataMatchesCaptureError(
                 "capture directory already exists"
@@ -722,16 +658,7 @@ def write_data_matches_capture_directory(
         )
         return capture_directory, manifest
     except Exception as operation_error:
-        from runtime.current_shadow_operation_authority import (
-            ProductOperationAuthorityError, publish_product_evidence,
-        )
-        try:
-            cleanup_failures = publish_product_evidence(
-                evidence_kind="FOTMOB_CAPTURE_CLEANUP",
-                publish=lambda: _cleanup_owned_capture(transaction),
-            )
-        except ProductOperationAuthorityError:
-            cleanup_failures = ("cleanup deferred by durable cancellation fence",)
+        cleanup_failures = _cleanup_owned_capture(transaction)
         if cleanup_failures:
             raise FotMobDataMatchesCaptureError(
                 "capture operation failed: "

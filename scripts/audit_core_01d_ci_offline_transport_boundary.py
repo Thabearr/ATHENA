@@ -29,7 +29,11 @@ import subprocess
 import tokenize
 import yaml
 
-from runtime.source_identity import read_tracked_head_blob, validate_repository_relative_path
+from runtime.source_identity import (
+    SourceIdentityError,
+    read_tracked_head_blob,
+    validate_repository_relative_path,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE_MAIN = "86ffc41205d83f5e4b37d20d35d73f9f97f3b23f"
@@ -154,6 +158,193 @@ SOURCE_FORWARD_TRANSITIONS = {
         ),
     },
 }
+# E3 cross-contract compatibility is a separate, append-only transition from
+# the exact A2 V283 candidate.  V274/V276 and their predecessor records above
+# remain unchanged.  This finite path set covers only current E3 sources whose
+# historical auditors or retained source pins must keep reading exact bytes.
+E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_GENERATION = 283
+E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_SHA256 = \
+    "870906754447e9044294b21350a68d34afd86c3513a82cc4a83ef3dfdf800209"
+E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION = 284
+E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_SHA256 = "TO_BE_FILLED_AFTER_V284_SEAL"
+E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS = frozenset({
+    "domain/sportybet_live_event_quote_evidence.py",
+    "domain/current_fotmob_latest_durable_fresh_history.py",
+    "domain/current_shadow_sportybet_pc_upcoming_discovery.py",
+    "scripts/issue_current_fotmob_reviewed_source.py",
+    "domain/current_shadow_all_market_runner.py",
+    "domain/reviewed_fixture_catalog_admission_source_replay.py",
+    "scripts/execute_current_shadow_request.py",
+    "scripts/audit_core_01d_port02c_trigger_authority_b6.py",
+    "runtime/worker_entry.py",
+    "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py",
+    "scripts/audit_core_01d_checkpoint_e_completion_v2.py",
+})
+_E3_CROSS_CONTRACT_SUCCESSORS = {
+    "domain/sportybet_live_event_quote_evidence.py": (
+        "13e83b15e4d01cdaa95b83d4aeb5a465a63322d2",
+        "4c316538ac87c8f8e6151c0f9dae37e58e349e6c84b7e01eaeb29b4bc36f66bb",
+    ),
+    "domain/current_fotmob_latest_durable_fresh_history.py": (
+        "8efc9d0f70e651be74bcf528119f2fc462bd7c50",
+        "bb89e01104ccf6357cba9f3e935a6ed3d32a2ab09d0a1064dd63a6221c9b9a09",
+    ),
+    "domain/current_shadow_sportybet_pc_upcoming_discovery.py": (
+        "71eb1b288a2c18caf907c29bec476b7db6c5e9da",
+        "c39f80f857d2dc5e898bbf0b9bad85908e0e9bdd6fdc1a1f924c3f14bc8a6234",
+    ),
+    "scripts/issue_current_fotmob_reviewed_source.py": (
+        "9aeb6d26d7d8fd2b83229cbf4e057847622e70f4",
+        "ea349d025e650e120aa0ca1eba95bd1e35583f0791789397447a4be015681917",
+    ),
+    "domain/current_shadow_all_market_runner.py": (
+        "2dbfaa1f2367e494c01df01c48cd86322d2975bb",
+        "8b80a61d1705d396688b26bc9bb12b1eb63ba205a8dcb83a91fa42012b48d08a",
+    ),
+    "domain/reviewed_fixture_catalog_admission_source_replay.py": (
+        "4fa64f4d134a8f7042575185f9b97f1a6b8fcbd2",
+        "fa15bba1a4d0c3000e3fcfa64ad62d38c93bb9f07ea3eb2047d8d70dd69586f8",
+    ),
+    "scripts/execute_current_shadow_request.py": (
+        "d92cd7159fcedab33f78865cc4f46fb27ab0204f",
+        "d356cc5ddbac2642aaf3fcb9b237a53eed0b2c33065b53ced3db0a4048a7c2d6",
+    ),
+    "scripts/audit_core_01d_port02c_trigger_authority_b6.py": (
+        "89fa1378743fbbf7db4b3aa0ed9d5bd35f9ef513",
+        "831ac85757db1517071e2c6ef57148ce60367f92c061dc4ce66ae93e355474a0",
+    ),
+    "runtime/worker_entry.py": (
+        "58ff830f63b5d875d873c1927b95e1b045da7364",
+        "c5378dfbdcb4bbfac0815847cc48de04c7049a25268a04e364efaed6a26e788e",
+    ),
+    "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py": (
+        "1e7b6bee6bb01287067f70269722c2bd492ddea9",
+        "dff62d695f3f7246d14df22aededcefe8c5fc576ef92dec7ed6355dffe92451c",
+    ),
+    "scripts/audit_core_01d_checkpoint_e_completion_v2.py": (
+        "9564fcafdb53d99d674109b6fb5a27ab518a80fa",
+        "2655acceb3226db0c111ee2cb5d4adb1a7a254c65f180fdd27a39016415125c7",
+    ),
+}
+E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS = {}
+for _e3_path in SOURCE_FORWARD_ALLOWED_PATHS:
+    _e3_transition = dict(SOURCE_FORWARD_TRANSITIONS[_e3_path])
+    _e3_transition["successor_git_blob_sha1"], _e3_transition["successor_lf_source_sha256"] = \
+        _E3_CROSS_CONTRACT_SUCCESSORS[_e3_path]
+    _e3_transition["a2_predecessor_generation"] = E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_GENERATION
+    _e3_transition["a2_predecessor_sha256"] = E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_SHA256
+    _e3_transition["a2_generation"] = E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION
+    _e3_transition["a2_authorization_sha256"] = E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_SHA256
+    E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[_e3_path] = _e3_transition
+E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS.update({
+    "domain/current_shadow_all_market_runner.py": {
+        "predecessor_fixture": "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-current-shadow-all-market-runner.py.txt",
+        "predecessor_byte_size": 68966,
+        "predecessor_git_blob_sha1": "b21a9d8a24ac60def6d76e7111ae8a473e9f1a8c",
+        "predecessor_lf_source_sha256": "43f770741b10747bc917e039b2aeca6a466ac6a3d59d0a42a8f5b2bb5a086cf7",
+        "successor_git_blob_sha1": _E3_CROSS_CONTRACT_SUCCESSORS["domain/current_shadow_all_market_runner.py"][0],
+        "successor_lf_source_sha256": _E3_CROSS_CONTRACT_SUCCESSORS["domain/current_shadow_all_market_runner.py"][1],
+        "reason_type": "E3_RUN_02A_CROSS_CONTRACT_COMPATIBILITY_V1",
+        "reason": "E3 product provider operations are authorized at the owned Current Shadow request boundary",
+    },
+    "domain/reviewed_fixture_catalog_admission_source_replay.py": {
+        "predecessor_fixture": "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-reviewed-fixture-catalog-admission-source-replay.py.txt",
+        "predecessor_byte_size": 24800,
+        "predecessor_git_blob_sha1": "b2fd258fa89afc492da35cbbe242b15203040759",
+        "predecessor_lf_source_sha256": "2061974642bc903482772303db49e589a991c58d8ffbd94d6a137f24f8582de5",
+        "successor_git_blob_sha1": _E3_CROSS_CONTRACT_SUCCESSORS["domain/reviewed_fixture_catalog_admission_source_replay.py"][0],
+        "successor_lf_source_sha256": _E3_CROSS_CONTRACT_SUCCESSORS["domain/reviewed_fixture_catalog_admission_source_replay.py"][1],
+        "reason_type": "E3_RUN_02A_CROSS_CONTRACT_COMPATIBILITY_V1",
+        "reason": "E3 keeps frozen fixture replay data-only while authenticating its current source successor",
+    },
+    "scripts/execute_current_shadow_request.py": {
+        "predecessor_fixture": "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-execute-current-shadow-request.py.txt",
+        "predecessor_byte_size": 11076,
+        "predecessor_git_blob_sha1": "52519a5f32cc0d8c130ea053fde5647b751e3fc0",
+        "predecessor_lf_source_sha256": "bbaa767d45db82b4dec4dfb7e64abdfcb92a90e5c63d7c915b246eb6306155c5",
+        "successor_git_blob_sha1": _E3_CROSS_CONTRACT_SUCCESSORS["scripts/execute_current_shadow_request.py"][0],
+        "successor_lf_source_sha256": _E3_CROSS_CONTRACT_SUCCESSORS["scripts/execute_current_shadow_request.py"][1],
+        "reason_type": "E3_RUN_02A_CROSS_CONTRACT_COMPATIBILITY_V1",
+        "reason": "E3 nested Current Shadow supervisor proves the exact owner, run, attempt, lease and gate",
+    },
+    "scripts/audit_core_01d_port02c_trigger_authority_b6.py": {
+        "predecessor_fixture": "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-port02c-trigger-authority-b6.py.txt",
+        "predecessor_byte_size": 63794,
+        "predecessor_git_blob_sha1": "a36066a0b03c03f76e416f1b9235146717b2f483",
+        "predecessor_lf_source_sha256": "261692333467a99de066abe046ba61614dd1879d68856fec980781f884a7588a",
+        "successor_git_blob_sha1": _E3_CROSS_CONTRACT_SUCCESSORS["scripts/audit_core_01d_port02c_trigger_authority_b6.py"][0],
+        "successor_lf_source_sha256": _E3_CROSS_CONTRACT_SUCCESSORS["scripts/audit_core_01d_port02c_trigger_authority_b6.py"][1],
+        "reason_type": "E3_RUN_02A_CROSS_CONTRACT_COMPATIBILITY_V1",
+        "reason": "E3 PR459 compatibility reads the V154 B6 auditor predecessor as evidence only",
+    },
+    "runtime/worker_entry.py": {
+        "predecessor_fixture": "tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-pr463-base.py.txt",
+        "predecessor_byte_size": 8914,
+        "predecessor_git_blob_sha1": "113acdf1ece29ca2977e4e3d2d84576a31fe7828",
+        "predecessor_lf_source_sha256": "98d5b1d7cfbc524be876f7000f9e605caac013039893d4f028ac2452216a2a61",
+        "successor_git_blob_sha1": _E3_CROSS_CONTRACT_SUCCESSORS["runtime/worker_entry.py"][0],
+        "successor_lf_source_sha256": _E3_CROSS_CONTRACT_SUCCESSORS["runtime/worker_entry.py"][1],
+        "reason_type": "E3_RUN_02A_CROSS_CONTRACT_COMPATIBILITY_V1",
+        "reason": "E3 historical AUTH-01 parser replay is data-only; product execution remains gate-bound",
+    },
+    "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py": {
+        "predecessor_fixture": "tests/fixtures/core_01d/run_02a_pre_historical/auth-worker-boundary-pr463-base.py.txt",
+        "predecessor_byte_size": 27128,
+        "predecessor_git_blob_sha1": "8115c18631e445f825dee0b0fa78c1a7cd77e460",
+        "predecessor_lf_source_sha256": "7b6532d9155f5a096c38c12ad003c6bd076e0f329cc0ee26898cf0b5b0b5e795",
+        "successor_git_blob_sha1": _E3_CROSS_CONTRACT_SUCCESSORS["scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py"][0],
+        "successor_lf_source_sha256": _E3_CROSS_CONTRACT_SUCCESSORS["scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py"][1],
+        "reason_type": "E3_RUN_02A_CROSS_CONTRACT_COMPATIBILITY_V1",
+        "reason": "E3 AUTH-01 static replay distinguishes exact historical parsing from product gate authority",
+    },
+    "scripts/audit_core_01d_checkpoint_e_completion_v2.py": {
+        "predecessor_fixture": "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-checkpoint-e-completion-v2.py.txt",
+        "predecessor_byte_size": 35648,
+        "predecessor_git_blob_sha1": "957bc5376fd7707e15e0e292f04d1e413151e95c",
+        "predecessor_lf_source_sha256": "5798f64d84a578496a8a2ecb9174e9246590f1daee1b79013f28d6b6d797b706",
+        "successor_git_blob_sha1": _E3_CROSS_CONTRACT_SUCCESSORS["scripts/audit_core_01d_checkpoint_e_completion_v2.py"][0],
+        "successor_lf_source_sha256": _E3_CROSS_CONTRACT_SUCCESSORS["scripts/audit_core_01d_checkpoint_e_completion_v2.py"][1],
+        "reason_type": "E3_RUN_02A_CROSS_CONTRACT_COMPATIBILITY_V1",
+        "reason": "Pass-A historical tree projection preserves exact source rows while authenticating E3 successors",
+    },
+})
+E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS = {
+    "scripts/capture_fotmob_data_matches.py": {
+        "fixture_path": "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-capture-fotmob-data-matches.py.txt",
+        "byte_size": 26628,
+        "git_blob_sha1": "10b8858ab62f2708bd564d578a627c43718e5a12",
+        "lf_source_sha256": "7364da10ff20f48aee24808de115a9dbcfca7dc58c93b571b9e87b13cccce4f",
+        "purpose": "exact unchanged capture source preserving direct Fresh Holdout and ordinary-FT semantics",
+    },
+    "domain/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.py": {
+        "fixture_path": "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-fresh-holdout-activation-runner.py.txt",
+        "byte_size": 60460,
+        "git_blob_sha1": "901ab137d6601a3485eac30da7e6bad7eeefa397",
+        "lf_source_sha256": "ac14ac89a60a80cae736483dfd4516424a553401a31af4a1934204d81205dc4b",
+        "purpose": "exact unchanged direct Fresh Holdout source; no product authority added",
+    },
+    "scripts/run_fotmob_ordinary_ft_source_history_acquisition.py": {
+        "fixture_path": "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-ordinary-ft-source-history-acquisition.py.txt",
+        "byte_size": 38943,
+        "git_blob_sha1": "6f067b8f069a760248a3b0b624c88d4f91aaa7ef",
+        "lf_source_sha256": "68707cee683a2194b933c6e2a10a3f1f80699b1ccf40204f299c1501a586e40d",
+        "purpose": "exact unchanged ordinary FT source-history request timing and offline semantics",
+    },
+}
+E3_CROSS_CONTRACT_SUPPORTING_SOURCE_PATHS = frozenset({
+    "scripts/capture_fotmob_data_matches.py",
+    "domain/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.py",
+    "scripts/run_fotmob_ordinary_ft_source_history_acquisition.py",
+})
+E3_CROSS_CONTRACT_FIXTURE_DIRECTORY = \
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward"
+E3_CROSS_CONTRACT_FIXTURE_PATHS = frozenset({
+    transition["predecessor_fixture"]
+    for transition in E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS.values()
+    if transition["predecessor_fixture"].startswith(E3_CROSS_CONTRACT_FIXTURE_DIRECTORY + "/")
+} | {
+    anchor["fixture_path"] for anchor in E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS.values()
+})
 # Frozen repository location: a successor's predecessor binding always names the
 # canonical committed path, whichever isolated directory the chain is checked in.
 INVENTORY_CANONICAL_DIRECTORY = INVENTORY_DIRECTORY
@@ -900,6 +1091,367 @@ def read_authenticated_forward_predecessor(path):
     return fixture_raw
 
 
+def _e3_cross_contract_source_forward_authorization():
+    """Exact V284 source transition set; predecessor bytes remain evidence only."""
+    sources = []
+    for path in sorted(E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS):
+        transition = E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]
+        sources.append({
+            "path": path,
+            "predecessor": {
+                "fixture_path": transition["predecessor_fixture"],
+                "git_blob_sha1": transition["predecessor_git_blob_sha1"],
+                "lf_source_sha256": transition["predecessor_lf_source_sha256"],
+                "byte_size": transition["predecessor_byte_size"],
+            },
+            "successor": {
+                "git_blob_sha1": transition["successor_git_blob_sha1"],
+                "lf_source_sha256": transition["successor_lf_source_sha256"],
+            },
+            "reason_type": transition["reason_type"],
+            "reason": transition["reason"],
+        })
+    anchors = []
+    for path in sorted(E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS):
+        anchor = E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS[path]
+        anchors.append({
+            "path": path,
+            "fixture_path": anchor["fixture_path"],
+            "git_blob_sha1": anchor["git_blob_sha1"],
+            "lf_source_sha256": anchor["lf_source_sha256"],
+            "byte_size": anchor["byte_size"],
+            "purpose": anchor["purpose"],
+        })
+    return {
+        "schema_version": 1,
+        "policy_id": "ATHENA_E3_RUN_02A_CROSS_CONTRACT_SOURCE_FORWARD_V1",
+        "scope": "EXACT_ELEVEN_RUN_02A_SOURCE_PATHS_AND_THREE_UNCHANGED_SOURCE_ANCHORS",
+        "predecessor_inventory": {
+            "path": inventory_generation_path(E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_GENERATION),
+            "canonical_sha256": E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_SHA256,
+            "generation": E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_GENERATION,
+            "rewritten": False,
+        },
+        "source_identities": sources,
+        "unchanged_source_anchors": anchors,
+    }
+
+
+def _e3_path_stat(relative_path, *, label):
+    """Reject links, reparse points, non-files, and hardlinks in pinned paths."""
+    relative = validate_repository_relative_path(relative_path)
+    import stat
+    cursor = ROOT
+    final = None
+    try:
+        for index, part in enumerate(PurePosixPath(relative).parts):
+            cursor = cursor / part
+            current = cursor.lstat()
+            is_junction = getattr(cursor, "is_junction", lambda: False)()
+            reparse = bool(getattr(current, "st_file_attributes", 0)
+                           & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+            require(not stat.S_ISLNK(current.st_mode) and not is_junction and not reparse,
+                    "E3 source-forward " + label + " contains a symlink or junction: " + relative)
+            if index < len(PurePosixPath(relative).parts) - 1:
+                require(stat.S_ISDIR(current.st_mode),
+                        "E3 source-forward " + label + " parent is not a directory: " + relative)
+            else:
+                final = current
+    except (OSError, ValueError, SourceIdentityError) as error:
+        raise AssertionError("E3 source-forward " + label + " is unavailable: " + relative) from error
+    require(final is not None and stat.S_ISREG(final.st_mode),
+            "E3 source-forward " + label + " is not a regular file: " + relative)
+    require(final.st_nlink == 1,
+            "E3 source-forward " + label + " is hardlinked: " + relative)
+    return ROOT / relative
+
+
+def _e3_directory_path(relative_path, *, label):
+    relative = validate_repository_relative_path(relative_path)
+    import stat
+    cursor = ROOT
+    try:
+        for part in PurePosixPath(relative).parts:
+            cursor = cursor / part
+            current = cursor.lstat()
+            is_junction = getattr(cursor, "is_junction", lambda: False)()
+            reparse = bool(getattr(current, "st_file_attributes", 0)
+                           & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+            require(not stat.S_ISLNK(current.st_mode) and not is_junction and not reparse
+                    and stat.S_ISDIR(current.st_mode),
+                    "E3 source-forward " + label + " contains a link or non-directory: " + relative)
+    except (OSError, ValueError, SourceIdentityError) as error:
+        raise AssertionError("E3 source-forward " + label + " is unavailable: " + relative) from error
+    return cursor
+
+
+def _e3_source_forward_file_identity(path, *, fixture, expected_blob, expected_lf, expected_size):
+    relative = validate_repository_relative_path(path)
+    candidate = _e3_path_stat(relative, label="current source")
+    raw, identity = read_tracked_head_blob(ROOT, relative)
+    normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    require(len(raw) == expected_size if fixture else True,
+            "E3 source-forward predecessor fixture size mismatch: " + relative)
+    if fixture:
+        blob = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+        require(blob == expected_blob and hashlib.sha256(normalized).hexdigest() == expected_lf,
+                "E3 source-forward predecessor fixture identity mismatch: " + relative)
+    else:
+        require(identity.git_blob_sha1 == expected_blob
+                and hashlib.sha256(normalized).hexdigest() == expected_lf,
+                "E3 source-forward current successor identity mismatch: " + relative)
+    worktree_raw = candidate.read_bytes()
+    worktree_normalized = worktree_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    require(worktree_normalized == normalized,
+            "E3 source-forward worktree bytes differ from tracked identity: " + relative)
+    entry = git("ls-tree", "-z", "HEAD", "--", relative)
+    require(bool(entry), "E3 source-forward path is not committed at HEAD: " + relative)
+    metadata, tree_path = entry.rstrip(b"\0").split(b"\t", 1)
+    mode, kind, blob = metadata.decode("ascii").split(" ")
+    require(tree_path.decode("utf-8") == relative and mode == "100644" and kind == "blob"
+            and blob == identity.git_blob_sha1,
+            "E3 source-forward tracked path mode or Git blob mismatch: " + relative)
+    return raw
+
+
+def read_authenticated_cross_contract_predecessor(path):
+    """Read one exact historical source after V284 and latest-A2 validation.
+
+    The predecessor is returned as inert bytes for historical audit replay. It
+    is never imported or used by product execution. Current source, fixture,
+    path mode, A2 authorization, append-only chain, and latest corpus are all
+    independently checked before the bytes are returned.
+    """
+    require(type(path) is str
+            and set(SOURCE_FORWARD_TRANSITIONS) == SOURCE_FORWARD_ALLOWED_PATHS
+            and set(E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS)
+                == E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS
+            and path in E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS
+            and set(E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS)
+                == set(SOURCE_FORWARD_ALLOWED_PATHS) | {
+                    "domain/current_shadow_all_market_runner.py",
+                    "domain/reviewed_fixture_catalog_admission_source_replay.py",
+                    "scripts/execute_current_shadow_request.py",
+                    "scripts/audit_core_01d_port02c_trigger_authority_b6.py",
+                    "runtime/worker_entry.py",
+                    "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py",
+                    "scripts/audit_core_01d_checkpoint_e_completion_v2.py",
+                }, "unreviewed E3 cross-contract predecessor path: " + repr(path))
+    require(set(_E3_CROSS_CONTRACT_SUCCESSORS) == E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS,
+            "E3 cross-contract successor table path set drift")
+    require(set(E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS) == E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS,
+            "E3 cross-contract transition table path set drift")
+    require(set(E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS)
+                == E3_CROSS_CONTRACT_SUPPORTING_SOURCE_PATHS,
+            "E3 unchanged supporting-source anchor path set drift")
+    transition = E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]
+    require(type(transition) is dict and set(transition) == {
+        "predecessor_fixture", "predecessor_byte_size", "predecessor_git_blob_sha1",
+        "predecessor_lf_source_sha256", "successor_git_blob_sha1", "successor_lf_source_sha256",
+        "a2_predecessor_generation", "a2_predecessor_sha256", "a2_generation",
+        "a2_authorization_sha256", "reason_type", "reason",
+    }, "E3 cross-contract transition declaration shape drift")
+    require(type(transition["predecessor_byte_size"]) is int and transition["predecessor_byte_size"] > 0
+            and transition["reason_type"] in {
+                "E3_RUN_02A_DURABLE_CANCELLATION_OPERATION_AUTHORIZATION",
+                "E3_RUN_02A_CROSS_CONTRACT_COMPATIBILITY_V1",
+            }
+            and type(transition["reason"]) is str and transition["reason"],
+            "E3 cross-contract transition is not narrowly reviewed: " + path)
+    require(transition["a2_predecessor_generation"]
+                == E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_GENERATION
+            and transition["a2_predecessor_sha256"]
+                == E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_SHA256
+            and transition["a2_generation"]
+                == E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION
+            and transition["a2_authorization_sha256"]
+                == E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_SHA256,
+            "E3 cross-contract A2 generation binding drift: " + path)
+
+    # V274/V276 remain immutable and must still name the exact same original
+    # predecessor bytes for overlapping paths.
+    if path in SOURCE_FORWARD_ALLOWED_PATHS:
+        old = SOURCE_FORWARD_TRANSITIONS[path]
+        for field in ("predecessor_fixture", "predecessor_byte_size",
+                      "predecessor_git_blob_sha1", "predecessor_lf_source_sha256"):
+            require(transition[field] == old[field],
+                    "E3 cross-contract predecessor rewrites prior B4/B6 identity: " + path)
+
+    fixture_path = validate_repository_relative_path(transition["predecessor_fixture"])
+    fixture = _e3_path_stat(fixture_path, label="predecessor fixture")
+    fixture_raw = fixture.read_bytes()
+    require(len(fixture_raw) == transition["predecessor_byte_size"],
+            "E3 source-forward predecessor fixture size mismatch: " + fixture_path)
+    try:
+        fixture_raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise AssertionError("E3 source-forward predecessor fixture encoding is invalid: " + fixture_path) from error
+    fixture_lf = fixture_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    fixture_blob = hashlib.sha1(
+        b"blob " + str(len(fixture_raw)).encode("ascii") + b"\0" + fixture_raw
+    ).hexdigest()
+    require(fixture_blob == transition["predecessor_git_blob_sha1"]
+            and hashlib.sha256(fixture_lf).hexdigest() == transition["predecessor_lf_source_sha256"],
+            "E3 source-forward predecessor fixture identity mismatch: " + fixture_path)
+    fixture_entry = git("ls-tree", "-z", "HEAD", "--", fixture_path)
+    require(bool(fixture_entry), "E3 source-forward predecessor fixture is not committed: " + fixture_path)
+    metadata, tree_path = fixture_entry.rstrip(b"\0").split(b"\t", 1)
+    mode, kind, blob = metadata.decode("ascii").split(" ")
+    require(tree_path.decode("utf-8") == fixture_path and mode == "100644" and kind == "blob"
+            and blob == transition["predecessor_git_blob_sha1"],
+            "E3 source-forward committed predecessor fixture identity mismatch: " + fixture_path)
+
+    # The newly added fixture directory is closed-world: missing, renamed, or
+    # extra evidence files reject the transition.
+    directory = _e3_directory_path(E3_CROSS_CONTRACT_FIXTURE_DIRECTORY, label="fixture directory")
+    actual_fixtures = {
+        (E3_CROSS_CONTRACT_FIXTURE_DIRECTORY + "/" + child.name)
+        for child in directory.iterdir()
+    }
+    require(actual_fixtures == set(E3_CROSS_CONTRACT_FIXTURE_PATHS),
+            "E3 source-forward fixture directory has missing, extra, or renamed evidence")
+
+    # Unchanged Fresh Holdout/ordinary-FT sources are explicit support anchors,
+    # not product transitions. Their source and byte-identical fixture remain
+    # local, offline, and provider-free.
+    for anchor_path, anchor in E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS.items():
+        if path == anchor_path:
+            raise AssertionError("unchanged source anchor is not a predecessor transition: " + path)
+        if anchor_path in E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS:
+            anchor_fixture = _e3_path_stat(anchor["fixture_path"], label="supporting fixture")
+            anchor_raw = anchor_fixture.read_bytes()
+            require(len(anchor_raw) == anchor["byte_size"]
+                    and hashlib.sha1(b"blob " + str(len(anchor_raw)).encode("ascii") + b"\0" + anchor_raw).hexdigest()
+                        == anchor["git_blob_sha1"]
+                    and hashlib.sha256(anchor_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")).hexdigest()
+                        == anchor["lf_source_sha256"],
+                    "E3 supporting source fixture identity mismatch: " + anchor["fixture_path"])
+            anchor_entry = git("ls-tree", "-z", "HEAD", "--", anchor["fixture_path"])
+            require(bool(anchor_entry),
+                    "E3 supporting source fixture is not committed: " + anchor["fixture_path"])
+            anchor_metadata, anchor_tree_path = anchor_entry.rstrip(b"\0").split(b"\t", 1)
+            anchor_mode, anchor_kind, anchor_blob = anchor_metadata.decode("ascii").split(" ")
+            require(anchor_tree_path.decode("utf-8") == anchor["fixture_path"]
+                    and anchor_mode == "100644" and anchor_kind == "blob"
+                    and anchor_blob == anchor["git_blob_sha1"],
+                    "E3 supporting source fixture mode or Git blob mismatch: " + anchor["fixture_path"])
+            _e3_path_stat(anchor_path, label="supporting source")
+            anchor_current, anchor_identity = read_tracked_head_blob(ROOT, anchor_path)
+            anchor_lf = anchor_current.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            require(anchor_identity.git_blob_sha1 == anchor["git_blob_sha1"]
+                    and anchor_current == anchor_raw
+                    and hashlib.sha256(anchor_lf).hexdigest() == anchor["lf_source_sha256"],
+                    "E3 supporting source changed from its exact historical bytes: " + anchor_path)
+
+    current_raw = _e3_source_forward_file_identity(
+        path, fixture=False,
+        expected_blob=transition["successor_git_blob_sha1"],
+        expected_lf=transition["successor_lf_source_sha256"],
+        expected_size=0,
+    )
+    chain = load_inventory_generations()
+    predecessor_generation = E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_GENERATION
+    authorization_generation = E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION
+    for old_path in SOURCE_FORWARD_ALLOWED_PATHS:
+        old = SOURCE_FORWARD_TRANSITIONS[old_path]
+        old_predecessor_generation = old["a2_predecessor_generation"]
+        old_authorization_generation = old["a2_generation"]
+        require(chain[old_predecessor_generation - 1][0]
+                    == inventory_generation_path(old_predecessor_generation)
+                and chain[old_predecessor_generation - 1][1].get("canonical_sha256")
+                    == old["a2_predecessor_sha256"],
+                "immutable B4/B6 predecessor generation changed: " + old_path)
+        old_auth_path, old_auth = chain[old_authorization_generation - 1]
+        require(old_auth_path == inventory_generation_path(old_authorization_generation)
+                and old_auth.get("generation") == old_authorization_generation
+                and old_auth.get("canonical_sha256") == old["a2_authorization_sha256"]
+                and old_auth.get("predecessor_inventory") == {
+                    "path": inventory_generation_path(old_predecessor_generation),
+                    "canonical_sha256": old["a2_predecessor_sha256"],
+                    "generation": old_predecessor_generation,
+                    "rewritten": False,
+                }, "immutable B4/B6 source-forward generation changed: " + old_path)
+        old_rows = {row["path"]: row["lf_source_sha256"]
+                    for row in old_auth.get("source_identities", []) if type(row) is dict}
+        require(old_rows.get(old_path) == old["successor_lf_source_sha256"],
+                "immutable B4/B6 successor row changed: " + old_path)
+        if old_path in E3_B6_SOURCE_FORWARD_PATHS:
+            require(old_auth.get("source_forward_authorization")
+                    == _e3_b6_source_forward_authorization(),
+                    "immutable V276 B6 authorization content changed: " + old_path)
+    authenticate_historical_v1()
+    require(len(chain) > authorization_generation
+            and chain[predecessor_generation - 1][0] == inventory_generation_path(predecessor_generation)
+            and chain[predecessor_generation - 1][1].get("canonical_sha256")
+                == E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_SHA256,
+            "E3 cross-contract transition does not extend exact authenticated V283")
+    authorization_path, authorization = chain[authorization_generation - 1]
+    require(authorization_path == inventory_generation_path(authorization_generation)
+            and authorization.get("generation") == authorization_generation
+            and authorization.get("canonical_sha256") == E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_SHA256
+            and authorization.get("predecessor_inventory") == {
+                "path": inventory_generation_path(predecessor_generation),
+                "canonical_sha256": E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_SHA256,
+                "generation": predecessor_generation,
+                "rewritten": False,
+            }
+            and authorization.get("e3_cross_contract_source_forward_authorization")
+                == _e3_cross_contract_source_forward_authorization(),
+            "E3 cross-contract V284 authorization identity or payload drift")
+
+    latest_path, latest = chain[-1]
+    latest_generation = len(chain)
+    latest_predecessor = latest.get("predecessor_inventory")
+    require(latest_generation >= authorization_generation + 1
+            and latest_path == inventory_generation_path(latest_generation)
+            and latest.get("generation") == latest_generation
+            and latest.get("schema_version") == latest_generation
+            and latest.get("policy_id") == INVENTORY_POLICY_PREFIX + "_V" + str(latest_generation)
+            and type(latest_predecessor) is dict
+            and latest_predecessor == {
+                "path": inventory_generation_path(latest_generation - 1),
+                "canonical_sha256": chain[-2][1]["canonical_sha256"],
+                "generation": latest_generation - 1,
+                "rewritten": False,
+            }, "E3 cross-contract latest-generation binding drift")
+    rows = latest.get("source_identities")
+    require(type(rows) is list and all(
+        type(row) is dict and type(row.get("path")) is str
+        and type(row.get("lf_source_sha256")) is str
+        and re.fullmatch(r"[0-9a-f]{64}", row["lf_source_sha256"])
+        for row in rows
+    ), "E3 cross-contract latest inventory rows are malformed")
+    row_paths = [row["path"] for row in rows]
+    require(row_paths == sorted(row_paths) and len(row_paths) == len(set(row_paths)),
+            "E3 cross-contract latest inventory rows are not uniquely path ordered")
+    by_path = {row["path"]: row["lf_source_sha256"] for row in rows}
+    current_lf = hashlib.sha256(
+        current_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    ).hexdigest()
+    require(by_path.get(path) == current_lf
+            and inventory_document(latest) == latest,
+            "E3 cross-contract latest inventory is stale or omits the exact current source")
+    for anchor_path, anchor in E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS.items():
+        _e3_path_stat(anchor_path, label="supporting source")
+        anchor_raw, anchor_identity = read_tracked_head_blob(ROOT, anchor_path)
+        anchor_lf = anchor_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        require(anchor_identity.git_blob_sha1 == anchor["git_blob_sha1"]
+                and by_path.get(anchor_path) == hashlib.sha256(anchor_lf).hexdigest()
+                == anchor["lf_source_sha256"],
+                "E3 unchanged supporting source differs from latest A2 inventory: " + anchor_path)
+
+    a2_path = Path(__file__).resolve().relative_to(ROOT).as_posix()
+    _e3_path_stat(a2_path, label="current A2 source")
+    a2_source, a2_identity = read_tracked_head_blob(ROOT, a2_path)
+    a2_lf = a2_source.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    a2_worktree_lf = (ROOT / a2_path).read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    require(hashlib.sha256(a2_lf).hexdigest() == hashlib.sha256(a2_worktree_lf).hexdigest()
+            and by_path.get(a2_path) == hashlib.sha256(a2_lf).hexdigest()
+            and a2_identity.git_blob_sha1,
+            "E3 cross-contract latest inventory does not authenticate the current A2 source")
+    return fixture_raw
+
+
 def inventory_document(template, corpus=None):
     """Current corpus sealed into the shape of an authenticated generation."""
     value = {key: val for key, val in template.items()
@@ -911,6 +1463,38 @@ def inventory_document(template, corpus=None):
 def build_inventory(directory=None):
     """Full current reviewed inventory for the latest discovered generation."""
     return inventory_document(load_inventory_generations(directory)[-1][1])
+
+
+def build_cross_contract_authorization_inventory(directory=None):
+    """Propose V284 without rewriting V1–V283 or their immutable receipts."""
+    directory = INVENTORY_DIRECTORY if directory is None else directory
+    chain = load_inventory_generations(directory)
+    require(len(chain) == E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_GENERATION,
+            "E3 cross-contract V284 must append directly after V283")
+    previous_path, previous = chain[-1]
+    require(previous_path == inventory_generation_path(E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_GENERATION)
+            and previous.get("canonical_sha256")
+                == E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_SHA256,
+            "E3 cross-contract V284 predecessor V283 identity drift")
+    generation = E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION
+    value = {key: val for key, val in previous.items()
+             if key not in CORPUS_FIELDS and key != "canonical_sha256"}
+    value.update({
+        "schema_version": generation,
+        "policy_id": INVENTORY_POLICY_PREFIX + "_V" + str(generation),
+        "generation": generation,
+        "bridge_base_main_sha": BRIDGE_BASE_MAIN,
+        "historical_a2_reviewed_head": A2_REVIEWED_HEAD,
+        "predecessor_inventory": {
+            "path": inventory_generation_path(generation - 1),
+            "canonical_sha256": previous["canonical_sha256"],
+            "generation": generation - 1,
+            "rewritten": False,
+        },
+        "e3_cross_contract_source_forward_authorization":
+            _e3_cross_contract_source_forward_authorization(),
+    })
+    return seal(value)
 
 
 def build_successor_inventory(directory=None, corpus=None):

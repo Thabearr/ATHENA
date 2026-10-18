@@ -182,7 +182,11 @@ def validate_receipt(value: Any, *, check_live: bool = True) -> dict[str, Any]:
 
 
 def _source_identity(path: str) -> dict[str, str]:
-    raw = _git("show", f"HEAD:{path}")
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    if path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
+        raw = a2.read_authenticated_cross_contract_predecessor(path)
+    else:
+        raw = _git("show", f"HEAD:{path}")
     return {
         "git_blob_sha1": hashlib.sha1(
             b"blob " + str(len(raw)).encode("ascii") + bytes([0]) + raw

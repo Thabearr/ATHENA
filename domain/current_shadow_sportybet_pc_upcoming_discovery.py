@@ -935,9 +935,26 @@ def _capture_current_pc_upcoming_discovery_once(
         if required_pages is not None and page_num > required_pages:
             break
         nonce = int(time.time() * 1000)
-        raw, observed = _fetch_page(
-            page_num, nonce, operation_epoch=operation_epoch,
-        )
+        # The operation epoch is meaningful only inside the authenticated
+        # Current Shadow capability context. Legacy/offline research callers
+        # keep the reviewed two-argument fetch seam even if they pass an
+        # incidental epoch value; this is not a caller-selectable product
+        # mode. Product requests must carry the bounded epoch on every page
+        # so _fetch_page can consume its per-GET permit.
+        from runtime.current_shadow_operation_authority import current_product_authority
+
+        authority = current_product_authority()
+        if authority is None:
+            raw, observed = _fetch_page(page_num, nonce)
+        else:
+            if (type(operation_epoch) is not int
+                    or not 1 <= operation_epoch <= MAX_PRODUCT_CAPTURE_EPOCHS):
+                raise PcUpcomingDiscoveryError(
+                    "product pcUpcoming capture lacks its exact bounded epoch"
+                )
+            raw, observed = _fetch_page(
+                page_num, nonce, operation_epoch=operation_epoch,
+            )
         target = request_target(page_num, nonce)
         raw_ancestry = {
             "page_num": page_num,
