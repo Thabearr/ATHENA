@@ -234,11 +234,11 @@ def test_v300_eight_fixtures_bind_base_v2_v299_and_exact_current_successors(monk
             assert original_raw == raw
 
 
-def test_v300_rejects_stale_latest_generation_and_tampered_v299_parent(monkeypatch):
+def test_v300_rejects_stale_latest_generation(monkeypatch):
     original = a2.load_inventory_generations
 
     def stale_latest():
-        return original()[:-1]
+        return original()[:300]
 
     monkeypatch.setattr(a2, "load_inventory_generations", stale_latest)
     with pytest.raises(AssertionError, match="V300/V301 authorization chain"):
@@ -349,6 +349,8 @@ def test_v300_rejects_fixture_symlink_and_byte_drift(monkeypatch):
 
 def test_v300_rejects_current_executable_worktree_drift(monkeypatch):
     path = next(iter(EXPECTED))
+    state = a2._authenticated_pass_a_source_inventory_state()
+    monkeypatch.setattr(a2, "_authenticated_pass_a_source_inventory_state", lambda: state)
     current_path = a2.ROOT / path
     original_read_bytes = Path.read_bytes
 
