@@ -223,6 +223,7 @@ E3_RUN_02A_ADDITIVE_PATHS = frozenset({
     # immutable V1 Pass-4 inventory. These paths are excluded by exact name;
     # evolved sources remain represented by their pinned predecessor blobs.
     "docs/run-02a/current-shadow-operation-fence.md",
+    "tests/test_core_01d_workflow_consolidation_e3_source_projection.py",
     "tests/fixtures/core_01d/e3_b6_three_source_forward/original-current-fotmob-latest-durable-fresh-history.py.txt",
     "tests/fixtures/core_01d/e3_b6_three_source_forward/original-current-shadow-sportybet-pc-upcoming-discovery.py.txt",
     "tests/fixtures/core_01d/e3_b6_three_source_forward/original-issue-current-fotmob-reviewed-source.py.txt",

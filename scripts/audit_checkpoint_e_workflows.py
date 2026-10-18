@@ -820,7 +820,7 @@ def _authenticate_pr119_release_only_workflow_forward(current, before):
     }
 
 
-def base_input():
+def base_input(*, include_scan_source_predecessors=False):
     raw = read(BASE_PATH)
     require(sha(raw) == BASE_INPUT_SHA, "exact-main base inventory identity drift")
     value = strict(raw)
@@ -841,6 +841,7 @@ def base_input():
     pass_a_predecessors = None
     pass_a_v2_compat_predecessors = None
     pass1_forward_predecessor_blobs = {}
+    pass1_forward_predecessor_sources = {}
     for path, identity in value["files"].items():
         if path == HISTORICAL_AUDIT:
             require(current.get(path) in (identity, {"mode": identity["mode"], "git_blob_sha1": audit_after}), "historical audit forward Git identity differs")
@@ -912,6 +913,17 @@ def base_input():
                 "Pass-1 Pass-A V2 source predecessor identity drift: " + path,
             )
             pass1_forward_predecessor_blobs[path] = pass_a_v2_compat_predecessors[path]
+            fixture = pass_a_v2.PASS_A_E3_COMPAT_SOURCE_PREDECESSORS[path][0]
+            predecessor_source = a2.lf((ROOT / fixture).read_bytes())
+            predecessor_source_blob = hashlib.sha1(
+                b"blob " + str(len(predecessor_source)).encode("ascii") + b"\0" + predecessor_source
+            ).hexdigest()
+            require(
+                predecessor_source_blob == pass_a_v2_compat_predecessors[path],
+                "Pass-1 Pass-A V2 source predecessor bytes drift: " + path,
+            )
+            if path in value["scan_paths"]:
+                pass1_forward_predecessor_sources[path] = predecessor_source
         elif path in (a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS
                       | a2.E3_PASS_A_SOURCE_FORWARD_PATHS):
             if path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
@@ -956,6 +968,8 @@ def base_input():
                     "Pass-1 V284/V300 source predecessor/successor identity drift: " + path,
                 )
                 pass1_forward_predecessor_blobs[path] = predecessor_blob
+                if path in value["scan_paths"]:
+                    pass1_forward_predecessor_sources[path] = predecessor
             else:
                 # An earlier historical owner may project a different exact
                 # Pass-1 blob for a V284/V300 path. Preserve that precedence;
@@ -1034,6 +1048,8 @@ def base_input():
         )
         require(actual == expected_blob, f"worktree source differs: {path}")
     require(value["workflow_tree_sha1"] == "134cdd8bfa54488770f562c93571e46ac84a8187", "immutable V1 workflow tree changed")
+    if include_scan_source_predecessors:
+        return value, pass1_forward_predecessor_sources
     return value
 
 
@@ -1138,8 +1154,36 @@ def reachability(path, name, artifact_names, texts):
             "retirement_reachability_pass": False}
 
 
-def build_matrix(base, history):
+def build_matrix(base, history, historical_source_predecessors):
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as pass_a_v2
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+
+    allowed_predecessor_paths = (
+        a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS
+        | a2.E3_PASS_A_SOURCE_FORWARD_PATHS
+        | pass_a_v2.PASS_A_V2_AUTHENTICATED_SOURCE_PREDECESSORS
+    )
+    require(
+        type(historical_source_predecessors) is dict
+        and set(historical_source_predecessors) <= allowed_predecessor_paths,
+        "historical reachability scan received an unapproved source predecessor",
+    )
+    for path, raw in historical_source_predecessors.items():
+        expected = base["files"].get(path)
+        require(
+            path in base["scan_paths"]
+            and expected is not None
+            and expected.get("mode") == "100644"
+            and type(raw) is bytes,
+            "historical reachability scan predecessor is outside the immutable source inventory: " + path,
+        )
+        blob = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+        require(
+            blob == expected.get("git_blob_sha1"),
+            "historical reachability scan predecessor differs from the immutable source inventory: " + path,
+        )
     texts = {path: read(path).decode("utf-8") for path in base["scan_paths"]}
+    texts.update({path: raw.decode("utf-8") for path, raw in historical_source_predecessors.items()})
     texts[HISTORICAL_AUDIT] = read(HISTORICAL_AUDIT_FIXTURE).decode("utf-8")
     old = strict(read("artifacts/architecture/p4_3_workflow_capability_matrix_v1.json"))
     old_rows = {row["workflow_path"]: row for row in old["workflow_rows"]}
@@ -1278,9 +1322,10 @@ def validate_documents(matrix, receipt):
 
 
 def expected_documents():
-    base, history = base_input(), history_input()
+    base, historical_source_predecessors = base_input(include_scan_source_predecessors=True)
+    history = history_input()
     require(set(history) == set(path for path in base["files"] if path.startswith(".github/workflows/") and path.endswith(".yml")), "history capture coverage differs")
-    matrix = build_matrix(base, history)
+    matrix = build_matrix(base, history, historical_source_predecessors)
     accepted = accepted_evidence()
     accepted_history = history[CANONICAL]["last_successful"]
     require((accepted_history["id"], accepted_history["head_sha"], accepted_history["event"],
