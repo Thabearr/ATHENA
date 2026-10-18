@@ -517,8 +517,12 @@ def test_e3_three_source_forward_rejects_forged_a2_authorization_chain(monkeypat
         return chain
 
     monkeypatch.setattr(a2, "load_inventory_generations", altered_chain)
-    with pytest.raises(AssertionError):
-        a2.read_authenticated_forward_predecessor(path)
+    if mutation == "stale_latest_generation":
+        with pytest.raises(AssertionError, match="latest inventory is stale against the current corpus"):
+            a2.read_authenticated_forward_predecessor(path)
+    else:
+        with pytest.raises(AssertionError):
+            a2.read_authenticated_forward_predecessor(path)
 
 
 def test_audit_does_not_require_the_base_commit_object(monkeypatch):

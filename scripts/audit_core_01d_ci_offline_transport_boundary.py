@@ -885,6 +885,8 @@ def read_authenticated_forward_predecessor(path):
     by_path = {row["path"]: row["lf_source_sha256"] for row in rows}
     require(by_path.get(path) == transition["successor_lf_source_sha256"],
             "A2 source-forward current successor row differs from authenticated latest inventory")
+    require(inventory_document(latest) == latest,
+            "A2 source-forward latest inventory is stale against the current corpus")
 
     a2_path = Path(__file__).resolve().relative_to(ROOT).as_posix()
     a2_source, a2_identity = read_tracked_head_blob(ROOT, a2_path)
