@@ -394,7 +394,12 @@ def test_e3_capture_anchor_digest_correction_is_append_only_and_exact(monkeypatc
     ] = "0" * 64
     altered_chain[a2.E3_CROSS_CONTRACT_ANCHOR_CORRECTION_GENERATION - 1] = (v288_path, altered_v288)
     monkeypatch.setattr(a2, "load_inventory_generations", lambda: altered_chain)
-    with pytest.raises(AssertionError, match="V288 supporting-anchor correction identity or payload drift"):
+    # V300 authenticates V288 as an ancestor before the V284 reader reaches its
+    # narrower correction check, so this mutation must fail at that earlier gate.
+    with pytest.raises(
+        AssertionError,
+        match="E3 Pass-A ancestry does not preserve the exact V288 correction",
+    ):
         a2.read_authenticated_cross_contract_predecessor(
             "domain/current_fotmob_latest_durable_fresh_history.py"
         )
