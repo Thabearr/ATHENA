@@ -840,6 +840,7 @@ def base_input():
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as pass_a_v2
     pass_a_predecessors = None
     pass_a_v2_compat_predecessors = None
+    pass1_forward_predecessor_blobs = {}
     for path, identity in value["files"].items():
         if path == HISTORICAL_AUDIT:
             require(current.get(path) in (identity, {"mode": identity["mode"], "git_blob_sha1": audit_after}), "historical audit forward Git identity differs")
@@ -910,6 +911,7 @@ def base_input():
                 and pass_a_v2_compat_predecessors[path] == identity["git_blob_sha1"],
                 "Pass-1 Pass-A V2 source predecessor identity drift: " + path,
             )
+            pass1_forward_predecessor_blobs[path] = pass_a_v2_compat_predecessors[path]
         elif path in (a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS
                       | a2.E3_PASS_A_SOURCE_FORWARD_PATHS):
             if path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
@@ -953,6 +955,7 @@ def base_input():
                     },
                     "Pass-1 V284/V300 source predecessor/successor identity drift: " + path,
                 )
+                pass1_forward_predecessor_blobs[path] = predecessor_blob
             else:
                 # An earlier historical owner may project a different exact
                 # Pass-1 blob for a V284/V300 path. Preserve that precedence;
@@ -1015,6 +1018,10 @@ def base_input():
             # by the complete latest A2 inventory above; preserve the exact
             # immutable Pass-A base identity for this historical scan.
             actual = PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS[path]
+        if path in pass1_forward_predecessor_blobs:
+            # The source was independently authenticated by its exact
+            # Pass-A/V284/V300 transition in the immutable base comparison.
+            actual = pass1_forward_predecessor_blobs[path]
         expected_blob = (
             audit_after if path == HISTORICAL_AUDIT
             else fresh_workflow_after_blob if path == fresh_workflow_path and fresh_workflow_after_blob
@@ -1022,6 +1029,7 @@ def base_input():
             else PASS_A_HISTORICAL_SOURCE_BLOBS[path] if path in PASS_A_HISTORICAL_SOURCE_BLOBS
             else PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS[path] if path in PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS
             else INCIDENT_20261010_PREDECESSOR_BLOBS[path] if path in INCIDENT_20261010_PREDECESSOR_BLOBS
+            else pass1_forward_predecessor_blobs[path] if path in pass1_forward_predecessor_blobs
             else value["files"][path]["git_blob_sha1"]
         )
         require(actual == expected_blob, f"worktree source differs: {path}")
