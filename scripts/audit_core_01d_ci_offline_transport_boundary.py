@@ -52,28 +52,105 @@ INVENTORY_V1_SHA256 = "ca8c07c071538298ffb293027e7a0be1c5766e8a943b3d2b605627f9f
 V1_SOURCE_IDENTITY_COUNT = 1150
 V1_OBLIGATION_COUNT = 1693
 INVENTORY_V2_PATH = INVENTORY_DIRECTORY + "/" + INVENTORY_PREFIX + "v2.json"
-# This single forward-source exception preserves the B4/B6 historical source
-# identity while authenticating the E3 product successor independently.  The
-# predecessor fixture is evidence only; it is never imported or packaged.
+# These path-exact forward-source transitions preserve immutable historical
+# B4/B6 identities while authenticating each reviewed E3 successor separately.
+# Predecessor fixtures are evidence only; they are never imported or packaged.
 SOURCE_FORWARD_PREDECESSOR_GENERATION = 273
 SOURCE_FORWARD_PREDECESSOR_SHA256 = "9d9ad9404d659c7548b89aec6a795ee3d511fdca23f4d8673550d1f2c569e809"
 SOURCE_FORWARD_AUTHORIZATION_GENERATION = 274
 SOURCE_FORWARD_AUTHORIZATION_SHA256 = "0655816adeb22f4ec5dcdb1012ee15af5c98c08c95c0b98286d451216e5377fc"
+E3_B6_SOURCE_FORWARD_PREDECESSOR_GENERATION = 275
+E3_B6_SOURCE_FORWARD_PREDECESSOR_SHA256 = "8457db3718c62c42895f306818598fd0f48d6bf6f5b70a41e1a7938c59880fdc"
+E3_B6_SOURCE_FORWARD_AUTHORIZATION_GENERATION = 276
+E3_B6_SOURCE_FORWARD_AUTHORIZATION_SHA256 = "b648df655f80af20482ea8810aaf82a0d6d41799854908a3f3d18b697d3f3d29"
+E3_B6_SOURCE_FORWARD_PATHS = frozenset({
+    "domain/current_fotmob_latest_durable_fresh_history.py",
+    "domain/current_shadow_sportybet_pc_upcoming_discovery.py",
+    "scripts/issue_current_fotmob_reviewed_source.py",
+})
+SOURCE_FORWARD_ALLOWED_PATHS = frozenset({
+    "domain/sportybet_live_event_quote_evidence.py",
+    *E3_B6_SOURCE_FORWARD_PATHS,
+})
 SOURCE_FORWARD_TRANSITIONS = {
     "domain/sportybet_live_event_quote_evidence.py": {
         "predecessor_fixture": (
             "tests/fixtures/core_01d/sportybet_event_detail_e3_forward/"
             "original-b4-b6-sportybet-live-event-quote-evidence.py.txt"
         ),
+        "predecessor_byte_size": 56007,
         "predecessor_git_blob_sha1": "096d54fe7493f6d81cdf3c4af7c4a9333c75fadc",
         "predecessor_lf_source_sha256": "5d64143321e12313bb239b6d3973c8b5da5fb28855649e9890194f233ff0b48f",
         "successor_git_blob_sha1": "13e83b15e4d01cdaa95b83d4aeb5a465a63322d2",
         "successor_lf_source_sha256": "4c316538ac87c8f8e6151c0f9dae37e58e349e6c84b7e01eaeb29b4bc36f66bb",
+        "a2_predecessor_generation": SOURCE_FORWARD_PREDECESSOR_GENERATION,
+        "a2_predecessor_sha256": SOURCE_FORWARD_PREDECESSOR_SHA256,
         "a2_generation": SOURCE_FORWARD_AUTHORIZATION_GENERATION,
+        "a2_authorization_sha256": SOURCE_FORWARD_AUTHORIZATION_SHA256,
         "reason_type": "E3_RUN_02A_DURABLE_CANCELLATION_OPERATION_AUTHORIZATION",
         "reason": (
             "E3 RUN-02A durable cancellation/operation-authorization boundary for "
             "product SportyBet event-detail GET and bounded evidence publication"
+        ),
+    },
+    "domain/current_fotmob_latest_durable_fresh_history.py": {
+        "predecessor_fixture": (
+            "tests/fixtures/core_01d/e3_b6_three_source_forward/"
+            "original-current-fotmob-latest-durable-fresh-history.py.txt"
+        ),
+        "predecessor_byte_size": 43798,
+        "predecessor_git_blob_sha1": "4e5695711078acb06fba537f3f69ca1e2c9df470",
+        "predecessor_lf_source_sha256": "2f3eb3473acdcab1bf10a0e6431708aa8225b2b2f279bf10405e669f453386ab",
+        "successor_git_blob_sha1": "8efc9d0f70e651be74bcf528119f2fc462bd7c50",
+        "successor_lf_source_sha256": "bb89e01104ccf6357cba9f3e935a6ed3d32a2ab09d0a1064dd63a6221c9b9a09",
+        "a2_predecessor_generation": E3_B6_SOURCE_FORWARD_PREDECESSOR_GENERATION,
+        "a2_predecessor_sha256": E3_B6_SOURCE_FORWARD_PREDECESSOR_SHA256,
+        "a2_generation": E3_B6_SOURCE_FORWARD_AUTHORIZATION_GENERATION,
+        "a2_authorization_sha256": E3_B6_SOURCE_FORWARD_AUTHORIZATION_SHA256,
+        "reason_type": "E3_RUN_02A_DURABLE_CANCELLATION_OPERATION_AUTHORIZATION",
+        "reason": (
+            "E3 RUN-02A durable cancellation/operation-authorization boundary for "
+            "current FotMob latest durable fresh-history provider operations"
+        ),
+    },
+    "domain/current_shadow_sportybet_pc_upcoming_discovery.py": {
+        "predecessor_fixture": (
+            "tests/fixtures/core_01d/e3_b6_three_source_forward/"
+            "original-current-shadow-sportybet-pc-upcoming-discovery.py.txt"
+        ),
+        "predecessor_byte_size": 45046,
+        "predecessor_git_blob_sha1": "fa2069a2ea1201a93a84b5ce3856f9d9574dea71",
+        "predecessor_lf_source_sha256": "0d4d1af14a47e935bf2669c8abf6dbf6409e9f8d72f4070c3bb0b8abc7eec1a3",
+        "successor_git_blob_sha1": "2a4030b3a330637dcbfe0e688da8054c1158d157",
+        "successor_lf_source_sha256": "d3b2db5331883b96b8af4a2a5520461fad774cac1d246659413527d13ba788af",
+        "a2_predecessor_generation": E3_B6_SOURCE_FORWARD_PREDECESSOR_GENERATION,
+        "a2_predecessor_sha256": E3_B6_SOURCE_FORWARD_PREDECESSOR_SHA256,
+        "a2_generation": E3_B6_SOURCE_FORWARD_AUTHORIZATION_GENERATION,
+        "a2_authorization_sha256": E3_B6_SOURCE_FORWARD_AUTHORIZATION_SHA256,
+        "reason_type": "E3_RUN_02A_DURABLE_CANCELLATION_OPERATION_AUTHORIZATION",
+        "reason": (
+            "E3 RUN-02A durable cancellation/operation-authorization boundary for "
+            "current Shadow SportyBet PC upcoming discovery"
+        ),
+    },
+    "scripts/issue_current_fotmob_reviewed_source.py": {
+        "predecessor_fixture": (
+            "tests/fixtures/core_01d/e3_b6_three_source_forward/"
+            "original-issue-current-fotmob-reviewed-source.py.txt"
+        ),
+        "predecessor_byte_size": 27513,
+        "predecessor_git_blob_sha1": "b50689971ee20cb6800145317a0e9fcb3486f40f",
+        "predecessor_lf_source_sha256": "449e83af1a8e25bf5b054b88682b8559363196ca2d6e1dad87c742949b8d0484",
+        "successor_git_blob_sha1": "432f72290bd7f10e61e13173bd89e0eed8b96aea",
+        "successor_lf_source_sha256": "9dabb9e9844000509028d9933b3ee54c290d7df3de2f35b0046f8a5a0b188cfd",
+        "a2_predecessor_generation": E3_B6_SOURCE_FORWARD_PREDECESSOR_GENERATION,
+        "a2_predecessor_sha256": E3_B6_SOURCE_FORWARD_PREDECESSOR_SHA256,
+        "a2_generation": E3_B6_SOURCE_FORWARD_AUTHORIZATION_GENERATION,
+        "a2_authorization_sha256": E3_B6_SOURCE_FORWARD_AUTHORIZATION_SHA256,
+        "reason_type": "E3_RUN_02A_DURABLE_CANCELLATION_OPERATION_AUTHORIZATION",
+        "reason": (
+            "E3 RUN-02A durable cancellation/operation-authorization boundary for "
+            "reviewed current FotMob source issuance"
         ),
     },
 }
@@ -603,56 +680,136 @@ def load_inventory_generations(directory=None):
     return chain
 
 
-def read_authenticated_forward_predecessor(path):
-    """Return the one byte-pinned B4/B6 predecessor after authenticating E3.
+def _e3_b6_source_forward_authorization():
+    """Exact three-path A2 authorization payload committed in generation V276."""
+    sources = []
+    for path in sorted(E3_B6_SOURCE_FORWARD_PATHS):
+        transition = SOURCE_FORWARD_TRANSITIONS[path]
+        sources.append({
+            "path": path,
+            "predecessor": {
+                "fixture_path": transition["predecessor_fixture"],
+                "git_blob_sha1": transition["predecessor_git_blob_sha1"],
+                "lf_source_sha256": transition["predecessor_lf_source_sha256"],
+                "byte_size": transition["predecessor_byte_size"],
+            },
+            "successor": {
+                "git_blob_sha1": transition["successor_git_blob_sha1"],
+                "lf_source_sha256": transition["successor_lf_source_sha256"],
+            },
+            "reason_type": transition["reason_type"],
+            "reason": transition["reason"],
+        })
+    return {
+        "schema_version": 1,
+        "policy_id": "ATHENA_E3_RUN_02A_B6_THREE_SOURCE_FORWARD_V1",
+        "scope": "EXACT_THREE_OWNER_AUTHORIZED_B6_SOURCE_PATHS_ONLY",
+        "predecessor_inventory": {
+            "path": inventory_generation_path(E3_B6_SOURCE_FORWARD_PREDECESSOR_GENERATION),
+            "canonical_sha256": E3_B6_SOURCE_FORWARD_PREDECESSOR_SHA256,
+            "generation": E3_B6_SOURCE_FORWARD_PREDECESSOR_GENERATION,
+            "rewritten": False,
+        },
+        "source_identities": sources,
+    }
 
-    This primitive is deliberately independent of B4/B6 and their callers:
-    it validates the append-only A2 chain, the exact current committed source,
-    the current A2 source identity, and the evidence-only predecessor fixture.
-    It accepts no caller-provided digest, fixture path, generation, or bypass.
+
+def read_authenticated_forward_predecessor(path):
+    """Return one exact B4/B6 predecessor after authenticating its E3 successor.
+
+    This primitive is independent of B4/B6. It accepts only the four reviewed
+    source paths, validates each path's own A2 authorization link, checks the
+    exact current tracked source and latest A2 row, and returns evidence-only
+    predecessor bytes. Callers cannot supply a digest, fixture path, generation,
+    or bypass flag.
     """
-    require(type(path) is str and set(SOURCE_FORWARD_TRANSITIONS) == {
-        "domain/sportybet_live_event_quote_evidence.py"
-    } and path in SOURCE_FORWARD_TRANSITIONS,
-        "unreviewed A2 source-forward path: " + repr(path))
+    require(type(path) is str and set(SOURCE_FORWARD_TRANSITIONS) == SOURCE_FORWARD_ALLOWED_PATHS
+            and path in SOURCE_FORWARD_ALLOWED_PATHS,
+            "unreviewed A2 source-forward path: " + repr(path))
     transition = SOURCE_FORWARD_TRANSITIONS[path]
-    require(set(transition) == {
-        "predecessor_fixture", "predecessor_git_blob_sha1", "predecessor_lf_source_sha256",
-        "successor_git_blob_sha1", "successor_lf_source_sha256", "a2_generation",
-        "reason_type", "reason",
+    require(type(transition) is dict and set(transition) == {
+        "predecessor_fixture", "predecessor_byte_size", "predecessor_git_blob_sha1",
+        "predecessor_lf_source_sha256", "successor_git_blob_sha1", "successor_lf_source_sha256",
+        "a2_predecessor_generation", "a2_predecessor_sha256", "a2_generation",
+        "a2_authorization_sha256", "reason_type", "reason",
     }, "A2 source-forward declaration shape drift")
-    require(transition["a2_generation"] == SOURCE_FORWARD_AUTHORIZATION_GENERATION
-            and transition["reason_type"] == "E3_RUN_02A_DURABLE_CANCELLATION_OPERATION_AUTHORIZATION"
-            and transition["reason"] == (
-                "E3 RUN-02A durable cancellation/operation-authorization boundary for "
-                "product SportyBet event-detail GET and bounded evidence publication"
-            ), "A2 source-forward declaration is not the reviewed E3 transition")
+    require(transition["reason_type"] == "E3_RUN_02A_DURABLE_CANCELLATION_OPERATION_AUTHORIZATION"
+            and type(transition["reason"]) is str and transition["reason"],
+            "A2 source-forward declaration is not a reviewed E3 transition")
+    generation_bindings = {
+        "domain/sportybet_live_event_quote_evidence.py": (
+            SOURCE_FORWARD_PREDECESSOR_GENERATION, SOURCE_FORWARD_PREDECESSOR_SHA256,
+            SOURCE_FORWARD_AUTHORIZATION_GENERATION, SOURCE_FORWARD_AUTHORIZATION_SHA256,
+        ),
+        "domain/current_fotmob_latest_durable_fresh_history.py": (
+            E3_B6_SOURCE_FORWARD_PREDECESSOR_GENERATION, E3_B6_SOURCE_FORWARD_PREDECESSOR_SHA256,
+            E3_B6_SOURCE_FORWARD_AUTHORIZATION_GENERATION, E3_B6_SOURCE_FORWARD_AUTHORIZATION_SHA256,
+        ),
+        "domain/current_shadow_sportybet_pc_upcoming_discovery.py": (
+            E3_B6_SOURCE_FORWARD_PREDECESSOR_GENERATION, E3_B6_SOURCE_FORWARD_PREDECESSOR_SHA256,
+            E3_B6_SOURCE_FORWARD_AUTHORIZATION_GENERATION, E3_B6_SOURCE_FORWARD_AUTHORIZATION_SHA256,
+        ),
+        "scripts/issue_current_fotmob_reviewed_source.py": (
+            E3_B6_SOURCE_FORWARD_PREDECESSOR_GENERATION, E3_B6_SOURCE_FORWARD_PREDECESSOR_SHA256,
+            E3_B6_SOURCE_FORWARD_AUTHORIZATION_GENERATION, E3_B6_SOURCE_FORWARD_AUTHORIZATION_SHA256,
+        ),
+    }
+    expected_predecessor_generation, expected_predecessor_sha, expected_generation, expected_authorization_sha = \
+        generation_bindings[path]
+    require(type(transition["predecessor_byte_size"]) is int and transition["predecessor_byte_size"] > 0
+            and transition["a2_predecessor_generation"] == expected_predecessor_generation
+            and transition["a2_predecessor_sha256"] == expected_predecessor_sha
+            and transition["a2_generation"] == expected_generation
+            and transition["a2_authorization_sha256"] == expected_authorization_sha,
+            "A2 source-forward generation authorization binding drift: " + path)
 
     current, current_identity = read_tracked_head_blob(ROOT, path)
     current_lf = current.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     require(current_identity.git_blob_sha1 == transition["successor_git_blob_sha1"]
             and hashlib.sha256(current_lf).hexdigest() == transition["successor_lf_source_sha256"],
             "A2 source-forward current successor identity mismatch: " + path)
+    current_tree_entry = git("ls-tree", "-z", "HEAD", "--", path)
+    require(bool(current_tree_entry), "A2 source-forward current successor is not tracked: " + path)
+    current_metadata, current_tree_path = current_tree_entry.rstrip(b"\0").split(b"\t", 1)
+    current_mode, current_kind, current_blob = current_metadata.decode("ascii").split(" ")
+    require(current_tree_path.decode("utf-8") == path and current_mode == "100644"
+            and current_kind == "blob" and current_blob == transition["successor_git_blob_sha1"],
+            "A2 source-forward current successor tree identity or mode mismatch: " + path)
     worktree_path = ROOT / path
     worktree_lf = worktree_path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     require(hashlib.sha256(worktree_lf).hexdigest() == transition["successor_lf_source_sha256"],
             "A2 source-forward current worktree differs from the approved successor: " + path)
 
-    fixture = transition["predecessor_fixture"]
-    fixture = validate_repository_relative_path(fixture)
+    fixture = validate_repository_relative_path(transition["predecessor_fixture"])
     fixture_path = ROOT / fixture
+    import stat
     try:
         resolved_root = ROOT.resolve(strict=True)
         resolved_fixture = fixture_path.resolve(strict=True)
         resolved_fixture.relative_to(resolved_root)
-        fixture_stat = fixture_path.lstat()
+        cursor = ROOT
+        fixture_parts = PurePosixPath(fixture).parts
+        fixture_stat = None
+        for index, part in enumerate(fixture_parts):
+            cursor = cursor / part
+            candidate_stat = cursor.lstat()
+            is_junction = getattr(cursor, "is_junction", lambda: False)()
+            reparse = bool(getattr(candidate_stat, "st_file_attributes", 0)
+                           & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+            require(not stat.S_ISLNK(candidate_stat.st_mode) and not is_junction and not reparse,
+                    "A2 source-forward fixture path contains a symlink or junction")
+            if index < len(fixture_parts) - 1:
+                require(stat.S_ISDIR(candidate_stat.st_mode),
+                        "A2 source-forward fixture parent is not a regular directory")
+            else:
+                fixture_stat = candidate_stat
     except (OSError, ValueError) as error:
         raise AssertionError("A2 source-forward predecessor fixture is unavailable or escapes scope") from error
-    import stat
-    require(stat.S_ISREG(fixture_stat.st_mode) and not fixture_path.is_symlink(),
+    require(fixture_stat is not None and stat.S_ISREG(fixture_stat.st_mode),
             "A2 source-forward predecessor fixture is not a regular file")
     fixture_raw = fixture_path.read_bytes()
-    require(len(fixture_raw) == 56007, "A2 source-forward predecessor fixture size mismatch")
+    require(len(fixture_raw) == transition["predecessor_byte_size"],
+            "A2 source-forward predecessor fixture size mismatch")
     try:
         fixture_raw.decode("utf-8", errors="strict")
     except UnicodeDecodeError as error:
@@ -663,12 +820,12 @@ def read_authenticated_forward_predecessor(path):
             and hashlib.sha256(fixture_lf).hexdigest() == transition["predecessor_lf_source_sha256"],
             "A2 source-forward predecessor fixture identity mismatch")
 
-    # When the evidence fixture is committed (all hosted/check-out use), bind
-    # both its tree mode and object bytes. Before the first commit, the same
-    # hardcoded blob and normalized digest still authenticate the working file.
-    entry = git("ls-tree", "-z", "HEAD", "--", fixture)
-    if entry:
-        metadata, tree_path = entry.rstrip(b"\0").split(b"\t", 1)
+    # In a committed checkout, bind the fixture's Git mode and object bytes.
+    # During local authoring, the byte and path checks above still apply before
+    # the new evidence fixture is added to the next commit.
+    fixture_entry = git("ls-tree", "-z", "HEAD", "--", fixture)
+    if fixture_entry:
+        metadata, tree_path = fixture_entry.rstrip(b"\0").split(b"\t", 1)
         mode, kind, blob = metadata.decode("ascii").split(" ")
         committed = git("cat-file", "blob", blob)
         require(tree_path.decode("utf-8") == fixture and mode == "100644" and kind == "blob"
@@ -676,26 +833,30 @@ def read_authenticated_forward_predecessor(path):
                 and committed == fixture_raw,
                 "A2 source-forward committed predecessor fixture identity mismatch")
 
-    # Validate the chain only after cheap exact-source and fixture checks, so
-    # rejected bytes never incur a full historical inventory parse.
+    # Reject a changed predecessor or successor before doing the more expensive
+    # append-only inventory parse.
     chain = load_inventory_generations()
-    require(len(chain) >= SOURCE_FORWARD_AUTHORIZATION_GENERATION
-            and chain[SOURCE_FORWARD_PREDECESSOR_GENERATION - 1][0]
-                == inventory_generation_path(SOURCE_FORWARD_PREDECESSOR_GENERATION)
-            and chain[SOURCE_FORWARD_PREDECESSOR_GENERATION - 1][1].get("canonical_sha256")
-                == SOURCE_FORWARD_PREDECESSOR_SHA256,
-            "A2 source-forward transition does not extend the authenticated V"
-            + str(SOURCE_FORWARD_PREDECESSOR_GENERATION) + " chain")
-    authorization_path, authorization = chain[SOURCE_FORWARD_AUTHORIZATION_GENERATION - 1]
-    require(authorization_path == inventory_generation_path(SOURCE_FORWARD_AUTHORIZATION_GENERATION)
-            and authorization.get("generation") == SOURCE_FORWARD_AUTHORIZATION_GENERATION
-            and authorization.get("canonical_sha256") == SOURCE_FORWARD_AUTHORIZATION_SHA256
+    predecessor_generation = transition["a2_predecessor_generation"]
+    authorization_generation = transition["a2_generation"]
+    require(len(chain) > authorization_generation
+            and chain[predecessor_generation - 1][0] == inventory_generation_path(predecessor_generation)
+            and chain[predecessor_generation - 1][1].get("canonical_sha256")
+                == transition["a2_predecessor_sha256"],
+            "A2 source-forward transition does not extend its exact authenticated predecessor")
+    authorization_path, authorization = chain[authorization_generation - 1]
+    require(authorization_path == inventory_generation_path(authorization_generation)
+            and authorization.get("generation") == authorization_generation
+            and authorization.get("canonical_sha256") == transition["a2_authorization_sha256"]
             and authorization.get("predecessor_inventory") == {
-                "path": inventory_generation_path(SOURCE_FORWARD_PREDECESSOR_GENERATION),
-                "canonical_sha256": SOURCE_FORWARD_PREDECESSOR_SHA256,
-                "generation": SOURCE_FORWARD_PREDECESSOR_GENERATION,
+                "path": inventory_generation_path(predecessor_generation),
+                "canonical_sha256": transition["a2_predecessor_sha256"],
+                "generation": predecessor_generation,
                 "rewritten": False,
             }, "A2 source-forward authorization generation identity drift")
+    if path in E3_B6_SOURCE_FORWARD_PATHS:
+        require(authorization.get("source_forward_authorization")
+                == _e3_b6_source_forward_authorization(),
+                "A2 source-forward three-source authorization content mismatch")
     latest_path, latest = chain[-1]
     latest_generation = len(chain)
     latest_predecessor = latest.get("predecessor_inventory")
