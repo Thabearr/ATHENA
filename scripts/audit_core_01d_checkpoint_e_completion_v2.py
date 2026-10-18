@@ -566,7 +566,6 @@ def historical_v1_git_view():
    return authenticated_v1_original_raw_tree(a2)
   raw=original(*args)
   if args==('diff','--name-only','HEAD'):
-   from scripts import audit_core_01d_ci_offline_transport_boundary as a2
    generation_additions=a2_generation_additions(a2)
    return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|app_successor_paths()|INCIDENT_20261010_CURRENT_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|E3_RUN_02A_ADDITIVE_PATHS|set(a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS)|set(a2.E3_CROSS_CONTRACT_FIXTURE_PATHS)|set(a2.E3_PASS_A_SOURCE_FORWARD_FIXTURE_PATHS)|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|set(RUN_02A_PRE_PREDECESSOR_BLOBS)|v1.FRESH_HOLDOUT_20261015_ADDITIVE_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS|set(v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS))
   return raw
