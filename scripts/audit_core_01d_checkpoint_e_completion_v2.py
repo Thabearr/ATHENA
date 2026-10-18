@@ -143,6 +143,14 @@ RUN_02A_PRE_ADDITIVE_PATHS={
  'tests/test_run_01b_worker_lifecycle.py',
 }
 E3_RUN_02A_ADDITIVE_PATHS={'runtime/current_shadow_operation_authority.py'}
+# These exact evidence copies are additive E3 source records. D5 remains the
+# owner of the historical Pass-A tree projection for their audit modules.
+E3_RUN_02A_ADDITIVE_PATHS |= {
+ 'tests/fixtures/core_01d/run_02a_pre_historical/b1-disposition-audit-v154.py.txt',
+ 'tests/fixtures/core_01d/e3_cross_contract_source_forward/original-audit-core-01d-owner-one-shot-issue-comment-authority-b3.py.txt',
+ 'tests/fixtures/core_01d/e3_cross_contract_source_forward/original-audit-core-01d-frozen-artifact-replay-authority-b5.py.txt',
+ 'tests/fixtures/core_01d/e3_cross_contract_source_forward/original-audit-core-01d-scheduled-shadow-ownership.py.txt',
+}
 RUN_02A_PRE_PREDECESSOR_BLOBS={
  'scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py':'07ce59ed824d40ef1be12686537c4e355e565c30',
  'scripts/audit_lg_a_worker_launch_failure_remediation.py':'0e8a349d49ad2cb9a41a709ad134e48e6c766069',
@@ -216,11 +224,6 @@ PASS_A_HISTORICAL_BLOBS={
  # projection while A2 independently authenticates their current successors.
  '.github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml':'84fd86333c34e8b6e27afe7f9d6e0e1c4234e93c',
  '.github/workflows/prove-sportybet-direct-share-code.yml':'18e5656c232102df141aaa614aca3d5d7575ec5b',
- # E3's compatibility adapters are current successors of these exact main
- # audit sources. Keep Pass-A's original tree projection on their base bytes.
- 'scripts/audit_core_01d_owner_one_shot_issue_comment_authority_b3.py':'d5ef137eff40bacdbb56efcfdbbcfca59f8e9d59',
- 'scripts/audit_core_01d_frozen_artifact_replay_authority_b5.py':'d06dbdc52357c20aa5c7306cf0c3e2ac452750ce',
- 'scripts/audit_core_01d_scheduled_shadow_ownership.py':'0ad2ef664c265a241f488466a4d1bb674de68d03',
 }
 PASS_A_E3_COMPAT_SOURCE_PREDECESSORS={
  'scripts/audit_core_01d_owner_one_shot_issue_comment_authority_b3.py':(
@@ -312,7 +315,7 @@ def a2_historical_projection(raw):
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  # Authenticate all current caller/guard source before using a historical view.
  latest=a2.authenticate_inventory()
- pass_a_e3_predecessor_blobs=authenticate_pass_a_e3_compat_predecessors(a2,latest)
+ authenticate_pass_a_e3_compat_predecessors(a2,latest)
  from scripts import audit_run_02a_pre_durable_share_send as run02a
  # Reuse the retained V154 predecessor seam for the exact E3-evolved E1
  # sources. It independently checks the fixture Git blob/LF hash, its
@@ -412,8 +415,6 @@ def a2_historical_projection(raw):
    line=('100644 blob '+RUN_02A_PRE_PREDECESSOR_BLOBS[path]+'\t'+path+'\n').encode()
   elif path in INCIDENT_20261010_PREDECESSOR_BLOBS:
    line=('100644 blob '+INCIDENT_20261010_PREDECESSOR_BLOBS[path]+'\t'+path+'\n').encode()
-  elif path in pass_a_e3_predecessor_blobs:
-   line=('100644 blob '+pass_a_e3_predecessor_blobs[path]+'\t'+path+'\n').encode()
   elif path in PASS_A_HISTORICAL_BLOBS:
    line=('100644 blob '+PASS_A_HISTORICAL_BLOBS[path]+'\t'+path+'\n').encode()
   elif path in a2.HISTORICAL_TEST_BLOBS:
@@ -444,8 +445,7 @@ def authenticate_pass_a_e3_compat_predecessors(a2,latest):
   tracked_fixture=a2.git('rev-parse','HEAD:'+fixture).decode().strip()
   review.require(len(predecessor)==expected_size
                  and hashlib.sha256(predecessor).hexdigest()==expected_sha
-                 and fixture_blob==expected_blob==tracked_fixture
-                 and PASS_A_HISTORICAL_BLOBS[path]==expected_blob,
+                 and fixture_blob==expected_blob==tracked_fixture,
                  'Pass-A E3 audit predecessor differs from its exact base source: '+path)
   blobs[path]=expected_blob
  return blobs
