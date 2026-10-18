@@ -147,9 +147,9 @@ E3_RUN_02A_ADDITIVE_PATHS={'runtime/current_shadow_operation_authority.py'}
 # owner of the historical Pass-A tree projection for their audit modules.
 E3_RUN_02A_ADDITIVE_PATHS |= {
  'tests/fixtures/core_01d/run_02a_pre_historical/b1-disposition-audit-v154.py.txt',
- 'tests/fixtures/core_01d/e3_cross_contract_source_forward/original-audit-core-01d-owner-one-shot-issue-comment-authority-b3.py.txt',
- 'tests/fixtures/core_01d/e3_cross_contract_source_forward/original-audit-core-01d-frozen-artifact-replay-authority-b5.py.txt',
- 'tests/fixtures/core_01d/e3_cross_contract_source_forward/original-audit-core-01d-scheduled-shadow-ownership.py.txt',
+ 'tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-core-01d-owner-one-shot-issue-comment-authority-b3.py.txt',
+ 'tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-core-01d-frozen-artifact-replay-authority-b5.py.txt',
+ 'tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-core-01d-scheduled-shadow-ownership.py.txt',
 }
 RUN_02A_PRE_PREDECESSOR_BLOBS={
  'scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py':'07ce59ed824d40ef1be12686537c4e355e565c30',
@@ -227,19 +227,19 @@ PASS_A_HISTORICAL_BLOBS={
 }
 PASS_A_E3_COMPAT_SOURCE_PREDECESSORS={
  'scripts/audit_core_01d_owner_one_shot_issue_comment_authority_b3.py':(
-  'tests/fixtures/core_01d/e3_cross_contract_source_forward/original-audit-core-01d-owner-one-shot-issue-comment-authority-b3.py.txt',
+  'tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-core-01d-owner-one-shot-issue-comment-authority-b3.py.txt',
   'd5ef137eff40bacdbb56efcfdbbcfca59f8e9d59',
   '036d577c703867b9fb3afc599c3b10eb30179deafe0add0d090d2b828c5f78be',
   75918,
  ),
  'scripts/audit_core_01d_frozen_artifact_replay_authority_b5.py':(
-  'tests/fixtures/core_01d/e3_cross_contract_source_forward/original-audit-core-01d-frozen-artifact-replay-authority-b5.py.txt',
+  'tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-core-01d-frozen-artifact-replay-authority-b5.py.txt',
   'd06dbdc52357c20aa5c7306cf0c3e2ac452750ce',
   '01059fb325059fd12e05dc7fd33cf589f2a802a9c71d257554571599eaaac729',
   55154,
  ),
  'scripts/audit_core_01d_scheduled_shadow_ownership.py':(
-  'tests/fixtures/core_01d/e3_cross_contract_source_forward/original-audit-core-01d-scheduled-shadow-ownership.py.txt',
+  'tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-core-01d-scheduled-shadow-ownership.py.txt',
   '0ad2ef664c265a241f488466a4d1bb674de68d03',
   '7d98e8c913ee37536d95278936714e35a97fc7182b4727b4498653c2302ab708',
   28162,
