@@ -1056,6 +1056,7 @@ def test_product_fotmob_pc_upcoming_and_event_sources_share_the_get_port(
 def test_product_pc_capture_uses_authenticated_epoch_and_cancel_blocks_next_page(
     tmp_path, clock, monkeypatch,
 ):
+    from datetime import datetime, timezone
     from runtime.current_shadow_operation_authority import ProviderGetResponse
     from domain import current_shadow_sportybet_pc_upcoming_discovery as pc_source
     from runtime.current_shadow_operation_authority import ProductOperationAuthorityError
@@ -1088,7 +1089,8 @@ def test_product_pc_capture_uses_authenticated_epoch_and_cancel_blocks_next_page
     def synthetic_transport(intent):
         intents.append(intent)
         return ProviderGetResponse(
-            body=body, status=200, observed_at="2030-01-01T00:00:00.000000Z",
+            body=body, status=200,
+            observed_at=datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z"),
             content_type="application/json", content_length=len(body),
             content_length_header=str(len(body)),
         )
@@ -1116,6 +1118,7 @@ def test_product_pc_capture_uses_authenticated_epoch_and_cancel_blocks_next_page
         tmp_path, clock, monkeypatch, capture_one_epoch,
     )
 
+    assert "error" not in captured, captured.get("error")
     assert captured["result"] == ("epoch:1:page:1",)
     assert len(intents) == 1
     assert intents[0]["provider"] == "SPORTYBET_PC_UPCOMING"
