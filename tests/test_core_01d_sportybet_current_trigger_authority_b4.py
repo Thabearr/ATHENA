@@ -354,6 +354,45 @@ def test_e3_cross_contract_supporting_anchor_set_includes_unchanged_capture_sour
         assert len(fixture) == anchor["byte_size"]
 
 
+def test_e3_capture_anchor_digest_correction_is_append_only_and_exact(monkeypatch):
+    a2 = b4.boundary
+    chain = a2.load_inventory_generations()
+    v284 = chain[a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION - 1][1]
+    v288_path, v288 = chain[a2.E3_CROSS_CONTRACT_ANCHOR_CORRECTION_GENERATION - 1]
+    assert v284["canonical_sha256"] == a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_SHA256
+    assert v284["e3_cross_contract_source_forward_authorization"] == \
+        a2._e3_cross_contract_source_forward_authorization()
+    assert v288_path == a2.inventory_generation_path(a2.E3_CROSS_CONTRACT_ANCHOR_CORRECTION_GENERATION)
+    assert v288["canonical_sha256"] == a2.E3_CROSS_CONTRACT_ANCHOR_CORRECTION_SHA256
+    assert v288["predecessor_inventory"] == {
+        "path": a2.inventory_generation_path(287),
+        "canonical_sha256": a2.E3_CROSS_CONTRACT_ANCHOR_CORRECTION_PREDECESSOR_SHA256,
+        "generation": 287,
+        "rewritten": False,
+    }
+    assert v288["e3_cross_contract_supporting_source_anchor_correction"] == \
+        a2._e3_cross_contract_supporting_source_anchor_correction()
+    correction = v288["e3_cross_contract_supporting_source_anchor_correction"]
+    assert correction["authority_granted"] is False
+    assert correction["historical_bytes_changed"] is False
+    assert correction["anchor"]["superseded_lf_source_sha256"] == \
+        a2.E3_CROSS_CONTRACT_V284_CAPTURE_ANCHOR_LF_SHA256
+    assert correction["anchor"]["lf_source_sha256"] == \
+        a2.E3_CROSS_CONTRACT_CAPTURE_ANCHOR_CORRECTED_LF_SHA256
+
+    altered_chain = list(chain)
+    altered_v288 = deepcopy(v288)
+    altered_v288["e3_cross_contract_supporting_source_anchor_correction"]["anchor"][
+        "lf_source_sha256"
+    ] = "0" * 64
+    altered_chain[a2.E3_CROSS_CONTRACT_ANCHOR_CORRECTION_GENERATION - 1] = (v288_path, altered_v288)
+    monkeypatch.setattr(a2, "load_inventory_generations", lambda: altered_chain)
+    with pytest.raises(AssertionError, match="V288 supporting-anchor correction identity or payload drift"):
+        a2.read_authenticated_cross_contract_predecessor(
+            "domain/current_fotmob_latest_durable_fresh_history.py"
+        )
+
+
 @pytest.mark.parametrize("path", sorted(b4.boundary.SOURCE_FORWARD_ALLOWED_PATHS))
 def test_e3_three_source_forward_rejects_each_predecessor_byte_flip(monkeypatch, path):
     fixture = b4.ROOT / b4.boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]["predecessor_fixture"]

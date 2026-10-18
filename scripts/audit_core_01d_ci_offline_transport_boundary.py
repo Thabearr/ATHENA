@@ -167,6 +167,18 @@ E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_SHA256 = \
     "870906754447e9044294b21350a68d34afd86c3513a82cc4a83ef3dfdf800209"
 E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION = 284
 E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_SHA256 = "c2f31e8268eadb282465ee85132cacc6eff572de98dea6e811d42b0e74cc7a7a"
+# V284 recorded the capture anchor's exact Git blob and size but its normalized
+# SHA-256 literal omitted one character. Preserve that immutable generation and
+# append a one-anchor correction after V287; the correction grants no authority.
+E3_CROSS_CONTRACT_V284_CAPTURE_ANCHOR_LF_SHA256 = \
+    "7364da10ff20f48aee24808de115a9dbcfca7dc58c93b571b9e87b13cccce4f"
+E3_CROSS_CONTRACT_ANCHOR_CORRECTION_PREDECESSOR_GENERATION = 287
+E3_CROSS_CONTRACT_ANCHOR_CORRECTION_PREDECESSOR_SHA256 = \
+    "7679a71844aa2b89280a9b7d65760cafe791e7efeed878717700fdd483f26c91"
+E3_CROSS_CONTRACT_ANCHOR_CORRECTION_GENERATION = 288
+E3_CROSS_CONTRACT_ANCHOR_CORRECTION_SHA256 = "da515b92b3cd8b50e7ce7866d37e98abfb116d712a7a965f7a2c6f1558110511"
+E3_CROSS_CONTRACT_CAPTURE_ANCHOR_CORRECTED_LF_SHA256 = \
+    "7364da10ff20f48aee24808bde115a9dbcfca7dc58c93b571b9e87b13cccce4f"
 E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS = frozenset({
     "domain/sportybet_live_event_quote_evidence.py",
     "domain/current_fotmob_latest_durable_fresh_history.py",
@@ -308,12 +320,22 @@ E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS.update({
         "reason": "Pass-A historical tree projection preserves exact source rows while authenticating E3 successors",
     },
 })
+# The seven additive records above are part of the same V284 authorization.
+# Bind every declaration to that exact predecessor and authorization, matching
+# the four records constructed from the pre-existing B4/B6 transition table.
+for _e3_transition in E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS.values():
+    _e3_transition.update({
+        "a2_predecessor_generation": E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_GENERATION,
+        "a2_predecessor_sha256": E3_CROSS_CONTRACT_SOURCE_FORWARD_PREDECESSOR_SHA256,
+        "a2_generation": E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION,
+        "a2_authorization_sha256": E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_SHA256,
+    })
 E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS = {
     "scripts/capture_fotmob_data_matches.py": {
         "fixture_path": "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-capture-fotmob-data-matches.py.txt",
         "byte_size": 26628,
         "git_blob_sha1": "10b8858ab62f2708bd564d578a627c43718e5a12",
-        "lf_source_sha256": "7364da10ff20f48aee24808de115a9dbcfca7dc58c93b571b9e87b13cccce4f",
+        "lf_source_sha256": "7364da10ff20f48aee24808bde115a9dbcfca7dc58c93b571b9e87b13cccce4f",
         "purpose": "exact unchanged capture source preserving direct Fresh Holdout and ordinary-FT semantics",
     },
     "domain/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.py": {
@@ -329,6 +351,16 @@ E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS = {
         "git_blob_sha1": "6f067b8f069a760248a3b0b624c88d4f91aaa7ef",
         "lf_source_sha256": "68707cee683a2194b933c6e2a10a3f1f80699b1ccf40204f299c1501a586e40d",
         "purpose": "exact unchanged ordinary FT source-history request timing and offline semantics",
+    },
+}
+E3_CROSS_CONTRACT_SUPPORTING_SOURCE_CORRECTIONS = {
+    "scripts/capture_fotmob_data_matches.py": {
+        "fixture_path": "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-capture-fotmob-data-matches.py.txt",
+        "byte_size": 26628,
+        "git_blob_sha1": "10b8858ab62f2708bd564d578a627c43718e5a12",
+        "superseded_lf_source_sha256": E3_CROSS_CONTRACT_V284_CAPTURE_ANCHOR_LF_SHA256,
+        "lf_source_sha256": E3_CROSS_CONTRACT_CAPTURE_ANCHOR_CORRECTED_LF_SHA256,
+        "purpose": "correct the V284 normalized digest typo for the unchanged direct capture source",
     },
 }
 E3_CROSS_CONTRACT_SUPPORTING_SOURCE_PATHS = frozenset({
@@ -1114,11 +1146,17 @@ def _e3_cross_contract_source_forward_authorization():
     anchors = []
     for path in sorted(E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS):
         anchor = E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS[path]
+        # Reconstruct immutable V284 exactly, including its malformed digest.
+        anchor_lf = (
+            E3_CROSS_CONTRACT_V284_CAPTURE_ANCHOR_LF_SHA256
+            if path == "scripts/capture_fotmob_data_matches.py"
+            else anchor["lf_source_sha256"]
+        )
         anchors.append({
             "path": path,
             "fixture_path": anchor["fixture_path"],
             "git_blob_sha1": anchor["git_blob_sha1"],
-            "lf_source_sha256": anchor["lf_source_sha256"],
+            "lf_source_sha256": anchor_lf,
             "byte_size": anchor["byte_size"],
             "purpose": anchor["purpose"],
         })
@@ -1134,6 +1172,35 @@ def _e3_cross_contract_source_forward_authorization():
         },
         "source_identities": sources,
         "unchanged_source_anchors": anchors,
+    }
+
+
+def _e3_cross_contract_supporting_source_anchor_correction():
+    """Exact V288 correction for the single malformed V284 anchor digest."""
+    anchor = E3_CROSS_CONTRACT_SUPPORTING_SOURCE_CORRECTIONS[
+        "scripts/capture_fotmob_data_matches.py"
+    ]
+    return {
+        "schema_version": 1,
+        "policy_id": "ATHENA_E3_RUN_02A_CROSS_CONTRACT_SOURCE_ANCHOR_CORRECTION_V1",
+        "scope": "EXACT_ONE_UNCHANGED_CAPTURE_SOURCE_ANCHOR",
+        "supersedes": {
+            "path": inventory_generation_path(E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION),
+            "canonical_sha256": E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_SHA256,
+            "generation": E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION,
+            "rewritten": False,
+        },
+        "anchor": {
+            "path": "scripts/capture_fotmob_data_matches.py",
+            "fixture_path": anchor["fixture_path"],
+            "git_blob_sha1": anchor["git_blob_sha1"],
+            "byte_size": anchor["byte_size"],
+            "superseded_lf_source_sha256": anchor["superseded_lf_source_sha256"],
+            "lf_source_sha256": anchor["lf_source_sha256"],
+            "purpose": anchor["purpose"],
+        },
+        "authority_granted": False,
+        "historical_bytes_changed": False,
     }
 
 
@@ -1215,11 +1282,11 @@ def _e3_source_forward_file_identity(path, *, fixture, expected_blob, expected_l
 
 
 def read_authenticated_cross_contract_predecessor(path):
-    """Read one exact historical source after V284 and latest-A2 validation.
+    """Read one historical source after V284, V288 and latest-A2 validation.
 
     The predecessor is returned as inert bytes for historical audit replay. It
     is never imported or used by product execution. Current source, fixture,
-    path mode, A2 authorization, append-only chain, and latest corpus are all
+    path mode, append-only authorizations, chain and latest corpus are all
     independently checked before the bytes are returned.
     """
     require(type(path) is str
@@ -1399,10 +1466,29 @@ def read_authenticated_cross_contract_predecessor(path):
                 == _e3_cross_contract_source_forward_authorization(),
             "E3 cross-contract V284 authorization identity or payload drift")
 
+    correction_generation = E3_CROSS_CONTRACT_ANCHOR_CORRECTION_GENERATION
+    correction_path, correction = chain[correction_generation - 1]
+    require(correction_path == inventory_generation_path(correction_generation)
+            and correction.get("generation") == correction_generation
+            and correction.get("schema_version") == correction_generation
+            and correction.get("policy_id") == INVENTORY_POLICY_PREFIX + "_V" + str(correction_generation)
+            and correction.get("canonical_sha256") == E3_CROSS_CONTRACT_ANCHOR_CORRECTION_SHA256
+            and correction.get("predecessor_inventory") == {
+                "path": inventory_generation_path(E3_CROSS_CONTRACT_ANCHOR_CORRECTION_PREDECESSOR_GENERATION),
+                "canonical_sha256": E3_CROSS_CONTRACT_ANCHOR_CORRECTION_PREDECESSOR_SHA256,
+                "generation": E3_CROSS_CONTRACT_ANCHOR_CORRECTION_PREDECESSOR_GENERATION,
+                "rewritten": False,
+            }
+            and chain[E3_CROSS_CONTRACT_ANCHOR_CORRECTION_PREDECESSOR_GENERATION - 1][1].get("canonical_sha256")
+                == E3_CROSS_CONTRACT_ANCHOR_CORRECTION_PREDECESSOR_SHA256
+            and correction.get("e3_cross_contract_supporting_source_anchor_correction")
+                == _e3_cross_contract_supporting_source_anchor_correction(),
+            "E3 cross-contract V288 supporting-anchor correction identity or payload drift")
+
     latest_path, latest = chain[-1]
     latest_generation = len(chain)
     latest_predecessor = latest.get("predecessor_inventory")
-    require(latest_generation >= authorization_generation + 1
+    require(latest_generation >= correction_generation + 1
             and latest_path == inventory_generation_path(latest_generation)
             and latest.get("generation") == latest_generation
             and latest.get("schema_version") == latest_generation
@@ -1493,6 +1579,38 @@ def build_cross_contract_authorization_inventory(directory=None):
         },
         "e3_cross_contract_source_forward_authorization":
             _e3_cross_contract_source_forward_authorization(),
+    })
+    return seal(value)
+
+
+def build_cross_contract_anchor_correction_inventory(directory=None):
+    """Propose the append-only V288 correction to the single V284 digest typo."""
+    directory = INVENTORY_DIRECTORY if directory is None else directory
+    chain = load_inventory_generations(directory)
+    require(len(chain) == E3_CROSS_CONTRACT_ANCHOR_CORRECTION_PREDECESSOR_GENERATION,
+            "E3 supporting-anchor correction must append directly after V287")
+    previous_path, previous = chain[-1]
+    require(previous_path == inventory_generation_path(E3_CROSS_CONTRACT_ANCHOR_CORRECTION_PREDECESSOR_GENERATION)
+            and previous.get("canonical_sha256")
+                == E3_CROSS_CONTRACT_ANCHOR_CORRECTION_PREDECESSOR_SHA256,
+            "E3 supporting-anchor correction predecessor V287 identity drift")
+    generation = E3_CROSS_CONTRACT_ANCHOR_CORRECTION_GENERATION
+    value = {key: val for key, val in previous.items()
+             if key not in CORPUS_FIELDS and key != "canonical_sha256"}
+    value.update({
+        "schema_version": generation,
+        "policy_id": INVENTORY_POLICY_PREFIX + "_V" + str(generation),
+        "generation": generation,
+        "bridge_base_main_sha": BRIDGE_BASE_MAIN,
+        "historical_a2_reviewed_head": A2_REVIEWED_HEAD,
+        "predecessor_inventory": {
+            "path": inventory_generation_path(generation - 1),
+            "canonical_sha256": previous["canonical_sha256"],
+            "generation": generation - 1,
+            "rewritten": False,
+        },
+        "e3_cross_contract_supporting_source_anchor_correction":
+            _e3_cross_contract_supporting_source_anchor_correction(),
     })
     return seal(value)
 
