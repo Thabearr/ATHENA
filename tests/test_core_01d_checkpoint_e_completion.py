@@ -84,6 +84,30 @@ def test_scope_rejects_an_extra_runtime_file_without_base_commit_in_ci():
         completion.validate_bounded_inventory(forged)
 
 
+def test_pass4_v9_source_predecessor_binds_exact_base_and_current_a2():
+    path = "tests/test_core_01d_checkpoint_e_completion_v9.py"
+    expected = completion.PASS4_E3_SOURCE_PREDECESSORS[path]
+    assert completion.authenticate_pass4_e3_source_predecessor(path) == (
+        expected[1], expected[2],
+    )
+
+
+def test_pass4_v9_source_predecessor_rejects_fixture_tampering(monkeypatch):
+    from pathlib import Path
+
+    path = "tests/test_core_01d_checkpoint_e_completion_v9.py"
+    fixture = (completion.ROOT / completion.PASS4_E3_SOURCE_PREDECESSORS[path][0]).resolve()
+    original = Path.read_bytes
+
+    def altered(candidate):
+        raw = original(candidate)
+        return raw + b"# tampered predecessor\n" if candidate.resolve() == fixture else raw
+
+    monkeypatch.setattr(Path, "read_bytes", altered)
+    with pytest.raises(policy.RetentionAcceptanceError, match="predecessor fixture identity drift"):
+        completion.authenticate_pass4_e3_source_predecessor(path)
+
+
 def test_completion_does_not_invoke_any_sender_even_a_mock(monkeypatch):
     import smtplib
     import socket

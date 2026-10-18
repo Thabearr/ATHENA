@@ -191,6 +191,43 @@ def test_base_input_tamper_rejected_before_any_git_scan(monkeypatch):
     with pytest.raises(ValueError, match="base inventory identity drift"): audit.base_input()
 
 
+def test_pass1_runner_uses_exact_v284_predecessor_projection():
+    path = "domain/current_shadow_all_market_runner.py"
+    value = audit.base_input()
+    assert value["files"][path] == {
+        "mode": "100644",
+        "git_blob_sha1": "b21a9d8a24ac60def6d76e7111ae8a473e9f1a8c",
+    }
+
+
+def test_pass1_runner_rejects_tampered_v284_predecessor(monkeypatch):
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+
+    original = a2.read_authenticated_cross_contract_predecessor
+
+    def tampered(path):
+        raw = original(path)
+        return raw + b"# tampered predecessor\n" if path == "domain/current_shadow_all_market_runner.py" else raw
+
+    monkeypatch.setattr(a2, "read_authenticated_cross_contract_predecessor", tampered)
+    with pytest.raises(ValueError, match="Pass-1 V284 source predecessor/successor identity drift"):
+        audit.base_input()
+
+
+def test_pass1_runner_rejects_current_mode_drift(monkeypatch):
+    path = "domain/current_shadow_all_market_runner.py"
+    original = audit.git_inventory
+
+    def wrong_mode():
+        current = original()
+        current[path] = {"mode": "120000", "git_blob_sha1": current[path]["git_blob_sha1"]}
+        return current
+
+    monkeypatch.setattr(audit, "git_inventory", wrong_mode)
+    with pytest.raises(ValueError, match="Pass-1 V284 source predecessor/successor identity drift"):
+        audit.base_input()
+
+
 @pytest.mark.parametrize("path", sorted(audit.PASS1_V1_BASE_SOURCE_FIXTURES))
 def test_checkpoint_v1_base_source_fixtures_are_shallow_checkout_safe(path, monkeypatch):
     def reject_base_git_show(*args):

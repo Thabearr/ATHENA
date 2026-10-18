@@ -510,6 +510,20 @@ E3_PASS_A_V309_SUCCESSOR_EXTENSION_IDENTITY = (
     "eb0bbff694c051d83ad93c3d731569308fbf44cd",
     "565b84b7d2b21b5a3e17ae1cdc837428e928ebc3fe8b143b2ff28ba1127b900d",
 )
+E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR_GENERATION = 311
+E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR_SHA256 = \
+    "10284bd90f45a3eddd5ccca203c5a2749dc7ff3508fcd487987ff03ff72dac3d"
+E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION = 312
+E3_PASS_A_V312_SUCCESSOR_EXTENSION_PATH = \
+    "scripts/audit_core_01d_checkpoint_e_completion_v2.py"
+E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR = {
+    "git_blob_sha1": "938ee2a10e1f34d1226da537b8591fc3d6f098f4",
+    "lf_source_sha256": "1d818d3c0be8d9b64b4318374e48c0f36258bacf98eb4c99d9275842600aaf0c",
+}
+E3_PASS_A_V312_SUCCESSOR_EXTENSION_IDENTITY = (
+    "938ee2a10e1f34d1226da537b8591fc3d6f098f4",
+    "1d818d3c0be8d9b64b4318374e48c0f36258bacf98eb4c99d9275842600aaf0c",
+)
 
 
 def resolve_historical_source_transition(path, *, expected_generation):
@@ -596,8 +610,64 @@ def _e3_pass_a_v309_source_successor_extension(chain):
     }
 
 
+def _e3_pass_a_v312_source_successor_extension(chain):
+    """Bind the current V2 auditor source row to the exact V311 inventory."""
+    predecessor_generation = E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR_GENERATION
+    require(type(chain) is list and len(chain) >= predecessor_generation,
+            "E3 V312 source successor requires the exact V311 predecessor")
+    predecessor_path, predecessor = chain[predecessor_generation - 1]
+    require(predecessor_path == inventory_generation_path(predecessor_generation)
+            and predecessor.get("generation") == predecessor_generation
+            and predecessor.get("schema_version") == predecessor_generation
+            and predecessor.get("canonical_sha256")
+                == E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR_SHA256,
+            "E3 V312 source successor predecessor inventory drift")
+    predecessor_rows = {row["path"]: row["lf_source_sha256"]
+                        for row in predecessor.get("source_identities", [])
+                        if type(row) is dict and type(row.get("path")) is str}
+    expected_predecessor = E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR
+    require(predecessor_rows.get(E3_PASS_A_V312_SUCCESSOR_EXTENSION_PATH)
+            == expected_predecessor["lf_source_sha256"],
+            "E3 V312 source successor does not match the exact V311 source row")
+    _e3_source_forward_file_identity(
+        E3_PASS_A_V312_SUCCESSOR_EXTENSION_PATH,
+        fixture=False,
+        expected_blob=E3_PASS_A_V312_SUCCESSOR_EXTENSION_IDENTITY[0],
+        expected_lf=E3_PASS_A_V312_SUCCESSOR_EXTENSION_IDENTITY[1],
+        expected_size=0,
+        expected_mode="100644",
+    )
+    return {
+        "path": E3_PASS_A_V312_SUCCESSOR_EXTENSION_PATH,
+        "generation": E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION,
+        "predecessor_inventory": {
+            "path": predecessor_path,
+            "canonical_sha256": predecessor["canonical_sha256"],
+            "generation": predecessor_generation,
+            "rewritten": False,
+        },
+        "previous_successor": {
+            "generation": predecessor_generation,
+            "canonical_sha256": predecessor["canonical_sha256"],
+            "git_blob_sha1": expected_predecessor["git_blob_sha1"],
+            "lf_source_sha256": expected_predecessor["lf_source_sha256"],
+            "rewritten": False,
+        },
+        "successor": {
+            "git_blob_sha1": E3_PASS_A_V312_SUCCESSOR_EXTENSION_IDENTITY[0],
+            "lf_source_sha256": E3_PASS_A_V312_SUCCESSOR_EXTENSION_IDENTITY[1],
+            "git_mode": "100644",
+        },
+        "reason_type": "E3_RUN_02A_PASS_A_SOURCE_FORWARD_V312",
+        "reason": "V312 binds the exact V311 Pass-A V2 auditor source row while preserving its authenticated historical projections",
+        "authority_granted": False,
+        "historical_bytes_changed": False,
+        "rewritten": False,
+    }
+
+
 def _e3_cross_contract_source_forward_successor_extensions(chain=None, generation=None):
-    """Exact V298, V301 and V309 append-only source successors."""
+    """Exact V298, V301, V309 and V312 append-only source successors."""
     path = E3_CROSS_CONTRACT_SUCCESSOR_EXTENSION_PATH
     prior = resolve_historical_source_transition(
         path, expected_generation=E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION,
@@ -676,6 +746,8 @@ def _e3_cross_contract_source_forward_successor_extensions(chain=None, generatio
         })
     if generation >= E3_PASS_A_V309_SUCCESSOR_EXTENSION_GENERATION:
         extensions.append(_e3_pass_a_v309_source_successor_extension(chain))
+    if generation >= E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION:
+        extensions.append(_e3_pass_a_v312_source_successor_extension(chain))
     return extensions
 
 
@@ -1791,7 +1863,7 @@ def _authenticated_e3_successor_identity(path, chain, latest):
         return v298["successor"]
 
     require(path == E3_PASS_A_COMPAT_SUCCESSOR_EXTENSION_PATH
-            and len(matches) == 3
+            and len(matches) in {3, 4}
             and latest_generation >= E3_PASS_A_COMPAT_SUCCESSOR_EXTENSION_GENERATION,
             "E3 source-forward path has an unsupported extension chain")
     v301 = next((row for row in matches
@@ -1878,15 +1950,75 @@ def _authenticated_e3_successor_identity(path, chain, latest):
                  if type(row) is dict}
     require(v309_rows.get(path) == v309["successor"]["lf_source_sha256"],
             "E3 source-forward V309 successor is absent from its generation")
-    return v309["successor"]
+    if len(matches) == 3:
+        return v309["successor"]
+
+    require(path == E3_PASS_A_V312_SUCCESSOR_EXTENSION_PATH
+            and latest_generation >= E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION,
+            "E3 source-forward V312 extension is missing or outside its exact generation")
+    v312 = next((row for row in matches
+                 if row["generation"] == E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION), None)
+    v311_path, v311 = chain[E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR_GENERATION - 1]
+    v312_path, v312_inventory = chain[E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION - 1]
+    v312_extensions = _e3_cross_contract_source_forward_successor_extensions(
+        chain=chain, generation=E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION,
+    )
+    require(v312 is not None
+            and v311_path == inventory_generation_path(
+                E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR_GENERATION)
+            and v311.get("canonical_sha256")
+                == E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR_SHA256
+            and v312_path == inventory_generation_path(
+                E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION)
+            and v312_inventory.get("generation")
+                == E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION
+            and v312_inventory.get("schema_version")
+                == E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION
+            and v312_inventory.get("predecessor_inventory")
+                == v312["predecessor_inventory"]
+            and v312_inventory.get("e3_cross_contract_source_forward_successor_extensions")
+                == v312_extensions,
+            "E3 source-forward V312 extension does not append to exact V311")
+    predecessor = E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR
+    successor = E3_PASS_A_V312_SUCCESSOR_EXTENSION_IDENTITY
+    require(v312["predecessor_inventory"] == {
+                "path": inventory_generation_path(
+                    E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR_GENERATION),
+                "canonical_sha256": E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR_SHA256,
+                "generation": E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR_GENERATION,
+                "rewritten": False,
+            }
+            and v312["previous_successor"] == {
+                "generation": E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR_GENERATION,
+                "canonical_sha256": E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR_SHA256,
+                "git_blob_sha1": predecessor["git_blob_sha1"],
+                "lf_source_sha256": predecessor["lf_source_sha256"],
+                "rewritten": False,
+            }
+            and v312["successor"] == {
+                "git_blob_sha1": successor[0],
+                "lf_source_sha256": successor[1],
+                "git_mode": "100644",
+            }
+            and v312.get("authority_granted") is False
+            and v312.get("historical_bytes_changed") is False
+            and v312.get("rewritten") is False,
+            "E3 source-forward V312 predecessor/successor identity drift")
+    _e3_pass_a_v312_source_successor_extension(chain)
+    v312_rows = {row["path"]: row["lf_source_sha256"]
+                 for row in v312_inventory.get("source_identities", [])
+                 if type(row) is dict}
+    require(v312_rows.get(path) == successor[1],
+            "E3 source-forward V312 successor is absent from its generation")
+    return v312["successor"]
 
 
 def _authenticated_pass_a_source_inventory_state(chain=None):
-    """Authenticate V1-V309 ancestry and the live latest corpus once."""
+    """Authenticate V1-V312 ancestry and the live latest corpus once."""
     chain = load_inventory_generations() if chain is None else chain
     require(type(chain) is list
-            and len(chain) >= E3_PASS_A_V309_SUCCESSOR_EXTENSION_GENERATION,
-            "E3 Pass-A V300/V301/V309 authorization chain or its complete ancestry is missing")
+            and len(chain) >= E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION,
+            "E3 Pass-A V300/V301/V309/V312 authorization chain or its complete ancestry is missing")
 
     v2_path, v2 = chain[E3_PASS_A_SOURCE_FORWARD_PREDECESSOR_GENERATION - 1]
     require(v2_path == inventory_generation_path(E3_PASS_A_SOURCE_FORWARD_PREDECESSOR_GENERATION)

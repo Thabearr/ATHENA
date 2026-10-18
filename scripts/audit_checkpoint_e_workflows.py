@@ -890,6 +890,32 @@ def base_input():
                 and current[path]["mode"] == identity["mode"],
                 "Pass-A preserved A2 successor differs from its exact V1 base identity: " + path,
             )
+        elif path == "domain/current_shadow_all_market_runner.py":
+            from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+            transition = a2.resolve_historical_source_transition(
+                path,
+                expected_generation=a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION,
+            )
+            predecessor = a2.read_authenticated_cross_contract_predecessor(path)
+            predecessor_lf = predecessor.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            predecessor_blob = hashlib.sha1(
+                b"blob " + str(len(predecessor)).encode("ascii") + b"\0" + predecessor
+            ).hexdigest()
+            require(
+                len(predecessor) == transition["predecessor_byte_size"]
+                and predecessor_blob == transition["predecessor_git_blob_sha1"]
+                and hashlib.sha256(predecessor_lf).hexdigest()
+                    == transition["predecessor_lf_source_sha256"]
+                and identity == {
+                    "mode": "100644",
+                    "git_blob_sha1": transition["predecessor_git_blob_sha1"],
+                }
+                and current.get(path) == {
+                    "mode": "100644",
+                    "git_blob_sha1": transition["successor_git_blob_sha1"],
+                },
+                "Pass-1 V284 source predecessor/successor identity drift: " + path,
+            )
         else:
             require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
     # Git can be clean while the working tree has edits. Verify inspected source

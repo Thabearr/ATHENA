@@ -254,6 +254,7 @@ E3_RUN_02A_ADDITIVE_PATHS = frozenset({
     "tests/fixtures/core_01d/pass_a_v2_source_predecessors/test-p3-0-canonical-pre-router-pipeline.py.txt",
     "tests/fixtures/core_01d/pass4_source_predecessors/original-port02c-trigger-authority-b6-v1.py.txt",
     "tests/fixtures/core_01d/pass4_source_predecessors/original-test-checkpoint-e-completion-v2-v1.py.txt",
+    "tests/fixtures/core_01d/pass4_source_predecessors/original-test-checkpoint-e-completion-v9-v1.py.txt",
     "tests/fixtures/core_01d/e3_v309_source_forward/original-checkpoint-e-completion-v2-v308.py.txt",
 })
 
@@ -269,6 +270,12 @@ PASS4_E3_SOURCE_PREDECESSORS = {
         "f46260e3e9b0a850c1a95a96dcd8b033b001e564",
         "f0dbc7593241c97826a0b0aede688383f0ab152a1589a5a5c77376b5a227f84d",
         5242,
+    ),
+    "tests/test_core_01d_checkpoint_e_completion_v9.py": (
+        "tests/fixtures/core_01d/pass4_source_predecessors/original-test-checkpoint-e-completion-v9-v1.py.txt",
+        "23645979f5577fc3691282b6813862c85f3f66a8",
+        "1ebfb2989bf7b3a197e081bd8bd01d5d56cc7edf24ff441dc99da09c9f4c82a9",
+        4989,
     ),
 }
 ALLOWED_PASS4_PATHS |= RUN_02A_PRE_ADDITIVE_PATHS | {
