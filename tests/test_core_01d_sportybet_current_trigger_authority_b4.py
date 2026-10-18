@@ -413,7 +413,7 @@ def test_e3_three_source_forward_rejects_each_predecessor_byte_flip(monkeypatch,
                                         "wrong_blob", "wrong_size", "wrong_digest"])
 def test_e3_forward_source_rejects_fixture_path_mode_and_identity_mutations(monkeypatch, mutation):
     a2 = b4.boundary
-    path = "domain/current_fotmob_latest_durable_fresh_history.py"
+    path = "domain/current_shadow_all_market_runner.py"
     fixture = b4.ROOT / a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]["predecessor_fixture"]
     original_read_bytes = Path.read_bytes
     original_lstat = Path.lstat
