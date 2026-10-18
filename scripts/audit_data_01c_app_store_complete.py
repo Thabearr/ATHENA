@@ -395,6 +395,9 @@ def audit(latest=None):
                         # Their committed bytes are bound by the latest A2 inventory.
                         "tests/test_core_01d_sportybet_current_trigger_authority_b4.py",
         "tests/test_core_01d_port02c_trigger_authority_b6.py",
+        # V298's append-only E3 successor extension has a dedicated A2 chain
+        # regression; its current bytes are authenticated by the latest A2 row.
+        "tests/test_core_01d_ci_offline_transport_inventory_evolution.py",
         # E3's finite current successors for the retained B3, B5, and
         # scheduled-shadow auditors remain source-bound by current A2 rows;
         # their historical audit bytes and conclusions stay unchanged.
