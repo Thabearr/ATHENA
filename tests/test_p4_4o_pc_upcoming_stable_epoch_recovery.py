@@ -55,9 +55,17 @@ def _raw(total: int, numbers: range) -> bytes:
 def _install_pages(monkeypatch: pytest.MonkeyPatch, pages: list[tuple[int, int, range] | Exception | bytes]) -> list[int]:
     requested: list[int] = []
 
-    def fetch(page_num: int, nonce: int):
+    def fetch(
+        page_num: int,
+        nonce: int,
+        *,
+        operation_epoch: int | None = None,
+    ):
         index = len(requested)
         requested.append(page_num)
+        if operation_epoch is not None:
+            assert type(operation_epoch) is int
+            assert 1 <= operation_epoch <= source.MAX_PRODUCT_CAPTURE_EPOCHS
         if index >= len(pages):
             raise AssertionError("unexpected third epoch or per-page retry")
         item = pages[index]

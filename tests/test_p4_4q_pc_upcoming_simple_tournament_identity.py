@@ -213,7 +213,15 @@ def test_case_e_stable_total_synthetic_multipage_capture_completes(
     raw_p2 = _page_bytes(total, [p2_tournament])
     raw_pages = [raw_p1, raw_p2]
 
-    def fetch(page_num: int, nonce: int):
+    def fetch(
+        page_num: int,
+        nonce: int,
+        *,
+        operation_epoch: int | None = None,
+    ):
+        if operation_epoch is not None:
+            assert type(operation_epoch) is int
+            assert 1 <= operation_epoch <= source.MAX_PRODUCT_CAPTURE_EPOCHS
         return raw_pages[page_num - 1], datetime.now(timezone.utc)
 
     monkeypatch.setattr(source, "_fetch_page", fetch)
@@ -294,7 +302,15 @@ def test_case_g_negative_evidence_preservation_rejects_invalid_namespace(
     raw = _page_bytes(1, [tournament_row])
     raw_hash = hashlib.sha256(raw).hexdigest()
 
-    def fetch(page_num: int, nonce: int):
+    def fetch(
+        page_num: int,
+        nonce: int,
+        *,
+        operation_epoch: int | None = None,
+    ):
+        if operation_epoch is not None:
+            assert type(operation_epoch) is int
+            assert 1 <= operation_epoch <= source.MAX_PRODUCT_CAPTURE_EPOCHS
         return raw, datetime.now(timezone.utc)
 
     monkeypatch.setattr(source, "_fetch_page", fetch)
