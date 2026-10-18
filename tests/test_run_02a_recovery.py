@@ -1914,6 +1914,24 @@ def test_later_a2_generation_cannot_hide_pr459_predecessor_fixture_tamper(monkey
         audit.historical_prerequisite_source_bytes("database/run_repository.py")
 
 
+def test_later_a2_generation_cannot_hide_retained_b1_source_fixture_tamper(monkeypatch):
+    from scripts import audit_run_02a_pre_durable_share_send as audit
+
+    path = "scripts/audit_core_01d_exact_pr_trigger_disposition_b1.py"
+    fixture = (audit.ROOT / audit.RETAINED_AUDIT_PREDECESSORS[path][0]).resolve()
+    original = Path.read_bytes
+
+    def tampered(candidate):
+        value = original(candidate)
+        if candidate.resolve() == fixture:
+            return value + b"# altered retained B1 predecessor\n"
+        return value
+
+    monkeypatch.setattr(Path, "read_bytes", tampered)
+    with pytest.raises(AssertionError):
+        audit.historical_prerequisite_source_bytes(path)
+
+
 def test_athena_job_service_cancel_and_recovery_integration(tmp_path, clock):
     _identity, roots, repository, item, envelope = _development_shadow_run(tmp_path, clock)
     resources = ResourceResolver.for_development(_identity)

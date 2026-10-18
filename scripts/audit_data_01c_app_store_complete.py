@@ -394,7 +394,13 @@ def audit(latest=None):
                         # the retained historical identity and current E3 successor.
                         # Their committed bytes are bound by the latest A2 inventory.
                         "tests/test_core_01d_sportybet_current_trigger_authority_b4.py",
-                        "tests/test_core_01d_port02c_trigger_authority_b6.py"}
+        "tests/test_core_01d_port02c_trigger_authority_b6.py",
+        # E3's finite current successors for the retained B3, B5, and
+        # scheduled-shadow auditors remain source-bound by current A2 rows;
+        # their historical audit bytes and conclusions stay unchanged.
+        "scripts/audit_core_01d_owner_one_shot_issue_comment_authority_b3.py",
+        "scripts/audit_core_01d_frozen_artifact_replay_authority_b5.py",
+        "scripts/audit_core_01d_scheduled_shadow_ownership.py"}
         inventory = boundary.authenticate_inventory()
         identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
         if (set(current) != set(frozen)

@@ -62,6 +62,11 @@ RETAINED_AUDIT_PREDECESSORS = {'scripts/audit_checkpoint_e_workflows.py': ('test
  'scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py': ('tests/fixtures/core_01d/run_02a_pre_historical/b4-trigger-authority-predecessor.py.txt',
                                                                      '28e4963c668ab5992cd5760b499c0f69fd6f14db',
                                                                      'b10036a6fc5d56c9d718db3e14d0a998cffad3c3050530e28ed4e21630e2ac2b'),
+ # Exact source bytes at d133206e; the immutable V154 row supplies the LF pin.
+ 'scripts/audit_core_01d_exact_pr_trigger_disposition_b1.py': (
+     'tests/fixtures/core_01d/run_02a_pre_historical/b1-disposition-audit-v154.py.txt',
+     '5c2d3fec933aa75f49bb41c7f8e7774b4facef82',
+     'ce26a3530f3f2adbd8aa43c2e4b5dd0be6710c855003af930f0819b49c4808d8'),
  'scripts/audit_run_02a_pre_durable_share_send.py': ('tests/fixtures/core_01d/fresh_holdout_20261014/share-prerequisite-predecessor.py.txt',
                                                      '35617b52e020e9350b6de422dfd74171243990c6',
                                                      'eb2e8dbc6fcb464ab1dead01c0db3096ed85db0110e96e8c0c23a2f69d9d7974'),

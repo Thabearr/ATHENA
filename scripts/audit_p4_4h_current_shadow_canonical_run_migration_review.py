@@ -500,15 +500,19 @@ def _verify_historical_source_identity(
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     if path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
         transition = a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]
-        projected = a2.read_authenticated_cross_contract_predecessor(path)
-        actual = evolution.source_identity(projected)
-        if (transition["predecessor_git_blob_sha1"] != pair[0]
-                or transition["predecessor_lf_source_sha256"] != pair[1]
-                or actual != expected):
-            raise P44HReviewError(
-                f"P4.4H authenticated E3 predecessor differs from the historical source pin: {path}"
-            )
-        return
+        # E3's source-forward fixture is the PR #463 base, which is later than
+        # some P4.4H pins. Use it only when its exact identity is the historical
+        # identity P4.4H reviewed; otherwise continue through P4.4H's own
+        # reviewed-head/blob/receipt protocol below.
+        if (transition["predecessor_git_blob_sha1"] == pair[0]
+                and transition["predecessor_lf_source_sha256"] == pair[1]):
+            projected = a2.read_authenticated_cross_contract_predecessor(path)
+            actual = evolution.source_identity(projected)
+            if actual != expected:
+                raise P44HReviewError(
+                    f"P4.4H authenticated E3 predecessor differs from the historical source pin: {path}"
+                )
+            return
     if _commit_object_available(P44H_REVIEWED_HEAD):
         actual = _identity(path, P44H_REVIEWED_HEAD)
     elif _blob_object_available(pair[0]):
