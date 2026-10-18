@@ -216,6 +216,31 @@ PASS_A_HISTORICAL_BLOBS={
  # projection while A2 independently authenticates their current successors.
  '.github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml':'84fd86333c34e8b6e27afe7f9d6e0e1c4234e93c',
  '.github/workflows/prove-sportybet-direct-share-code.yml':'18e5656c232102df141aaa614aca3d5d7575ec5b',
+ # E3's compatibility adapters are current successors of these exact main
+ # audit sources. Keep Pass-A's original tree projection on their base bytes.
+ 'scripts/audit_core_01d_owner_one_shot_issue_comment_authority_b3.py':'d5ef137eff40bacdbb56efcfdbbcfca59f8e9d59',
+ 'scripts/audit_core_01d_frozen_artifact_replay_authority_b5.py':'d06dbdc52357c20aa5c7306cf0c3e2ac452750ce',
+ 'scripts/audit_core_01d_scheduled_shadow_ownership.py':'0ad2ef664c265a241f488466a4d1bb674de68d03',
+}
+PASS_A_E3_COMPAT_SOURCE_PREDECESSORS={
+ 'scripts/audit_core_01d_owner_one_shot_issue_comment_authority_b3.py':(
+  'tests/fixtures/core_01d/e3_cross_contract_source_forward/original-audit-core-01d-owner-one-shot-issue-comment-authority-b3.py.txt',
+  'd5ef137eff40bacdbb56efcfdbbcfca59f8e9d59',
+  '036d577c703867b9fb3afc599c3b10eb30179deafe0add0d090d2b828c5f78be',
+  75918,
+ ),
+ 'scripts/audit_core_01d_frozen_artifact_replay_authority_b5.py':(
+  'tests/fixtures/core_01d/e3_cross_contract_source_forward/original-audit-core-01d-frozen-artifact-replay-authority-b5.py.txt',
+  'd06dbdc52357c20aa5c7306cf0c3e2ac452750ce',
+  '01059fb325059fd12e05dc7fd33cf589f2a802a9c71d257554571599eaaac729',
+  55154,
+ ),
+ 'scripts/audit_core_01d_scheduled_shadow_ownership.py':(
+  'tests/fixtures/core_01d/e3_cross_contract_source_forward/original-audit-core-01d-scheduled-shadow-ownership.py.txt',
+  '0ad2ef664c265a241f488466a4d1bb674de68d03',
+  '7d98e8c913ee37536d95278936714e35a97fc7182b4727b4498653c2302ab708',
+  28162,
+ ),
 }
 B1_ADDITIVE_EVIDENCE_PATHS={
  'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v3.json',
@@ -287,6 +312,7 @@ def a2_historical_projection(raw):
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  # Authenticate all current caller/guard source before using a historical view.
  latest=a2.authenticate_inventory()
+ pass_a_e3_predecessor_blobs=authenticate_pass_a_e3_compat_predecessors(a2,latest)
  from scripts import audit_run_02a_pre_durable_share_send as run02a
  # Reuse the retained V154 predecessor seam for the exact E3-evolved E1
  # sources. It independently checks the fixture Git blob/LF hash, its
@@ -386,6 +412,8 @@ def a2_historical_projection(raw):
    line=('100644 blob '+RUN_02A_PRE_PREDECESSOR_BLOBS[path]+'\t'+path+'\n').encode()
   elif path in INCIDENT_20261010_PREDECESSOR_BLOBS:
    line=('100644 blob '+INCIDENT_20261010_PREDECESSOR_BLOBS[path]+'\t'+path+'\n').encode()
+  elif path in pass_a_e3_predecessor_blobs:
+   line=('100644 blob '+pass_a_e3_predecessor_blobs[path]+'\t'+path+'\n').encode()
   elif path in PASS_A_HISTORICAL_BLOBS:
    line=('100644 blob '+PASS_A_HISTORICAL_BLOBS[path]+'\t'+path+'\n').encode()
   elif path in a2.HISTORICAL_TEST_BLOBS:
@@ -396,6 +424,30 @@ def a2_historical_projection(raw):
    line=('100644 blob '+e3_predecessor_blobs[path]+'\t'+path+'\n').encode()
   rows.append(line)
  return b''.join(rows)
+
+def authenticate_pass_a_e3_compat_predecessors(a2,latest):
+ """Bind exact Pass-A audit predecessors and their current A2 successors."""
+ identities={row['path']:row for row in latest['source_identities']}
+ blobs={}
+ for path,(fixture,expected_blob,expected_sha,expected_size) in PASS_A_E3_COMPAT_SOURCE_PREDECESSORS.items():
+  for relative in (path,fixture):
+   a2._e3_path_stat(relative,label='Pass-A E3 audit source')
+  current=a2.lf((ROOT/path).read_bytes())
+  row=identities.get(path,{})
+  head_blob=a2.git('rev-parse','HEAD:'+path).decode().strip()
+  review.require(hashlib.sha256(current).hexdigest()==row.get('lf_source_sha256')
+                 and head_blob==row.get('git_blob_sha1'),
+                 'current Pass-A E3 audit source differs from authenticated A2: '+path)
+  predecessor=a2.lf((ROOT/fixture).read_bytes())
+  fixture_blob=hashlib.sha1(b'blob '+str(len(predecessor)).encode()+b'\0'+predecessor).hexdigest()
+  tracked_fixture=a2.git('rev-parse','HEAD:'+fixture).decode().strip()
+  review.require(len(predecessor)==expected_size
+                 and hashlib.sha256(predecessor).hexdigest()==expected_sha
+                 and fixture_blob==expected_blob==tracked_fixture
+                 and PASS_A_HISTORICAL_BLOBS[path]==expected_blob,
+                 'Pass-A E3 audit predecessor differs from its exact base source: '+path)
+  blobs[path]=expected_blob
+ return blobs
 
 def authenticate_current_scope():
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2

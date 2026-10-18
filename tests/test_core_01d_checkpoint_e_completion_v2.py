@@ -65,6 +65,22 @@ def test_unapproved_runtime_change_cannot_hide_in_historical_projection(monkeypa
  monkeypatch.setattr(review.retention.v4.v3,'_git',changed)
  with pytest.raises(AssertionError,match='outside bounded evidence scope'):current.historical_v1_receipt()
 
+def test_e3_pass_audit_predecessors_are_exact_and_fixture_tamper_fails_closed(monkeypatch):
+ from pathlib import Path
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ latest=a2.authenticate_inventory()
+ expected={path:identity[1] for path,identity in current.PASS_A_E3_COMPAT_SOURCE_PREDECESSORS.items()}
+ assert current.authenticate_pass_a_e3_compat_predecessors(a2,latest)==expected
+ path,identity=next(iter(current.PASS_A_E3_COMPAT_SOURCE_PREDECESSORS.items()))
+ target=(current.ROOT/identity[0]).resolve()
+ original=Path.read_bytes
+ def altered(candidate):
+  raw=original(candidate)
+  return raw+b'# altered historical predecessor\\n' if candidate.resolve()==target else raw
+ monkeypatch.setattr(Path,'read_bytes',altered)
+ with pytest.raises(AssertionError,match='Pass-A E3 audit predecessor differs'):
+  current.authenticate_pass_a_e3_compat_predecessors(a2,latest)
+
 def test_local_test_products_are_not_authority_evidence(monkeypatch):
  assert current.LOCAL_TEST_PRODUCTS=={'.pytest-shard-files','p3-0-e1-live-readiness.json','artifacts/p3-0-comparison-evidence/p3-0-e1-live-readiness.json'}
  assert 'Path(".pytest-shard-files").write_text(' in (review.ROOT/'.github/workflows/tests.yml').read_text()
