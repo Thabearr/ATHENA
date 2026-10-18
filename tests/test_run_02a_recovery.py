@@ -1122,7 +1122,10 @@ def test_product_pc_capture_uses_authenticated_epoch_and_cancel_blocks_next_page
     assert captured["result"] == ("epoch:1:page:1",)
     assert len(intents) == 1
     assert intents[0]["provider"] == "SPORTYBET_PC_UPCOMING"
-    assert case["repository"].run_snapshot(case["run_id"])["state"] == "CANCELLED"
+    assert case["repository"].run_snapshot(case["run_id"])["state"] == "CANCEL_REQUESTED"
+    assert "RUN_CANCEL_REQUESTED" in [
+        event[2] for event in case["repository"].read_events(case["run_id"])
+    ]
     with case["repository"]._operation() as conn:
         operations = conn.execute(
             "SELECT state FROM app_external_operations WHERE run_id=?",
