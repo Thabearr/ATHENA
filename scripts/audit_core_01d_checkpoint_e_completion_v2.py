@@ -142,7 +142,24 @@ RUN_02A_PRE_ADDITIVE_PATHS={
  'tests/test_run_02a_pre_durable_share_send.py',
  'tests/test_run_01b_worker_lifecycle.py',
 }
-E3_RUN_02A_ADDITIVE_PATHS={'runtime/current_shadow_operation_authority.py'}
+E3_RUN_02A_ADDITIVE_PATHS={
+ 'runtime/current_shadow_operation_authority.py',
+ # E3-owned documents and exact predecessor snapshots were added after the
+ # immutable Pass-A V2 tree. They are retained as evidence, never projected as
+ # historical source rows.
+ 'docs/run-02a/current-shadow-operation-fence.md',
+ 'tests/fixtures/core_01d/e3_b6_three_source_forward/original-current-fotmob-latest-durable-fresh-history.py.txt',
+ 'tests/fixtures/core_01d/e3_b6_three_source_forward/original-current-shadow-sportybet-pc-upcoming-discovery.py.txt',
+ 'tests/fixtures/core_01d/e3_b6_three_source_forward/original-issue-current-fotmob-reviewed-source.py.txt',
+ 'tests/fixtures/core_01d/sportybet_event_detail_e3_forward/original-b4-b6-sportybet-live-event-quote-evidence.py.txt',
+ # These exact snapshots anchor the older V1 Pass-4 and V2 Pass-A views.
+ 'tests/fixtures/core_01d/pass_a_v1_original_raw_tree/ls-tree-v1-pass4.txt',
+ 'tests/fixtures/core_01d/pass_a_v2_source_predecessors/test-port-01-source-identity-parity.py.txt',
+ 'tests/fixtures/core_01d/pass_a_v2_source_predecessors/test-p3-0-canonical-pre-router-pipeline.py.txt',
+ 'tests/fixtures/core_01d/pass4_source_predecessors/original-port02c-trigger-authority-b6-v1.py.txt',
+ 'tests/fixtures/core_01d/pass4_source_predecessors/original-test-checkpoint-e-completion-v2-v1.py.txt',
+ 'tests/fixtures/core_01d/e3_v309_source_forward/original-checkpoint-e-completion-v2-v308.py.txt',
+}
 # These exact evidence copies are additive E3 source records. D5 remains the
 # owner of the historical Pass-A tree projection for their audit modules.
 E3_RUN_02A_ADDITIVE_PATHS |= {
@@ -244,7 +261,33 @@ PASS_A_E3_COMPAT_SOURCE_PREDECESSORS={
   '7d98e8c913ee37536d95278936714e35a97fc7182b4727b4498653c2302ab708',
   28162,
  ),
+ 'tests/portability/test_port_01_source_identity_parity.py':(
+  'tests/fixtures/core_01d/pass_a_v2_source_predecessors/test-port-01-source-identity-parity.py.txt',
+  '1bf0d561db831866c322a4c30fa9bc06cd4e844e',
+  '37fad6ca26fa3d1a54774a8d5531d8c20c473f05f39ff2bd1e1548bda0ec79ac',
+  17484,
+ ),
+ 'tests/test_p3_0_canonical_pre_router_pipeline.py':(
+  'tests/fixtures/core_01d/pass_a_v2_source_predecessors/test-p3-0-canonical-pre-router-pipeline.py.txt',
+  'be7a93f2b7788b7cdb011a4567788018d6e67bfa',
+  'd948f0e265b481a8d4f532937aaab90e7e8616308d178ea43aef357aac88fa3b',
+  66081,
+ ),
 }
+PASS_A_V2_AUTHENTICATED_SOURCE_PREDECESSORS=frozenset({
+ 'tests/portability/test_port_01_source_identity_parity.py',
+ 'tests/test_p3_0_canonical_pre_router_pipeline.py',
+})
+V1_ORIGINAL_RAW_TREE_PATH=(
+ 'tests/fixtures/core_01d/pass_a_v1_original_raw_tree/ls-tree-v1-pass4.txt'
+)
+V1_ORIGINAL_RAW_TREE_COMMIT='5bbc0730b90d1e1e29de0d0fae1191197cc9388e'
+V1_ORIGINAL_RAW_TREE_SHA1='96629b79a6ffaa13ab497fae58a9411cec4bc846'
+V1_ORIGINAL_RAW_TREE_SIZE=2538376
+V1_ORIGINAL_RAW_TREE_SHA256=(
+ 'b4dfcb8c8c76efc929aabf9ef3b6959b2ee2bcaf3f9dfc16da0d196094cbb35d'
+)
+V1_ORIGINAL_RAW_TREE_BLOB='26c8b52c8468a35f5ec5eeb8f73a876d5a8020d0'
 B1_ADDITIVE_EVIDENCE_PATHS={
  'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v3.json',
  'tests/fixtures/core_01d/exact-pr-trigger-disposition-b1-source-inventory-v1.json',
@@ -315,7 +358,7 @@ def a2_historical_projection(raw):
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  # Authenticate all current caller/guard source before using a historical view.
  latest=a2.authenticate_inventory()
- authenticate_pass_a_e3_compat_predecessors(a2,latest)
+ pass_a_compat_predecessor_blobs=authenticate_pass_a_e3_compat_predecessors(a2,latest)
  from scripts import audit_run_02a_pre_durable_share_send as run02a
  # Reuse the retained V154 predecessor seam for the exact E3-evolved E1
  # sources. It independently checks the fixture Git blob/LF hash, its
@@ -406,6 +449,10 @@ def a2_historical_projection(raw):
  for path in sorted(a2.E3_PASS_A_SOURCE_FORWARD_PATHS):
   predecessor=pass_a_predecessors[path]
   e3_predecessor_blobs[path]=hashlib.sha1(b'blob '+str(len(predecessor)).encode()+b'\0'+predecessor).hexdigest()
+ # Preserve exact V2 source blobs for evolved pre-existing test paths. The
+ # retained V2 inventory and current A2 source identities are both checked.
+ for path in PASS_A_V2_AUTHENTICATED_SOURCE_PREDECESSORS:
+  e3_predecessor_blobs[path]=pass_a_compat_predecessor_blobs[path]
  new_paths=(a2.A2_PATHS-preserved_a2_successors-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|successor_inventory_paths|B1_ADDITIVE_EVIDENCE_PATHS|APP01B_ADDITIVE_PATHS|APP01C_NEW_PATHS|INCIDENT_20261010_NEW_PATHS|RUN_01B_ADDITIVE_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|E3_RUN_02A_ADDITIVE_PATHS|set(a2.E3_CROSS_CONTRACT_FIXTURE_PATHS)|set(a2.E3_PASS_A_SOURCE_FORWARD_FIXTURE_PATHS)|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|v1.FRESH_HOLDOUT_20261015_ADDITIVE_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS
  for path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
   review.source_bytes(path)
@@ -433,6 +480,7 @@ def a2_historical_projection(raw):
 def authenticate_pass_a_e3_compat_predecessors(a2,latest):
  """Bind exact Pass-A audit predecessors and their current A2 successors."""
  identities={row['path']:row for row in latest['source_identities']}
+ v2_rows={row['path']:row for row in a2.read_generation(a2.inventory_generation_path(2))['source_identities']}
  blobs={}
  for path,(fixture,expected_blob,expected_sha,expected_size) in PASS_A_E3_COMPAT_SOURCE_PREDECESSORS.items():
   for relative in (path,fixture):
@@ -451,8 +499,41 @@ def authenticate_pass_a_e3_compat_predecessors(a2,latest):
                  and hashlib.sha256(predecessor).hexdigest()==expected_sha
                  and fixture_blob==expected_blob==tracked_fixture,
                  'Pass-A E3 audit predecessor differs from its exact base source: '+path)
+  if path in PASS_A_V2_AUTHENTICATED_SOURCE_PREDECESSORS:
+   review.require(v2_rows.get(path,{}).get('lf_source_sha256')==expected_sha,
+                  'Pass-A test predecessor differs from immutable A2 V2 source identity: '+path)
   blobs[path]=expected_blob
  return blobs
+
+def authenticated_v1_original_raw_tree(a2):
+ """Read the exact V1 raw tree snapshot without requiring shallow ancestors."""
+ path=V1_ORIGINAL_RAW_TREE_PATH
+ candidate=ROOT/path
+ review.require(candidate.is_file()
+                and not any(p.is_symlink() for p in (candidate,*candidate.parents)),
+                'V1 original raw-tree snapshot requires a regular tracked fixture')
+ raw=candidate.read_bytes()
+ entry=a2.git('ls-tree','-z','HEAD','--',path)
+ review.require(bool(entry), 'V1 original raw-tree snapshot is not tracked at HEAD')
+ metadata,tree_path=entry.rstrip(b'\0').split(b'\t',1)
+ mode,kind,blob=metadata.decode('ascii').split(' ')
+ review.require(tree_path.decode('utf-8')==path and mode=='100644' and kind=='blob'
+                and blob==V1_ORIGINAL_RAW_TREE_BLOB,
+                'V1 original raw-tree snapshot mode or HEAD blob drift')
+ actual_blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+ review.require(len(raw)==V1_ORIGINAL_RAW_TREE_SIZE
+                and hashlib.sha256(raw).hexdigest()==V1_ORIGINAL_RAW_TREE_SHA256
+                and actual_blob==V1_ORIGINAL_RAW_TREE_BLOB,
+                'V1 original raw-tree snapshot bytes drift')
+ # Full clones compare against the exact historical Git object. Depth-one CI
+ # relies on the byte-pinned tracked fixture and immutable V1 digest; no fetch
+ # is attempted.
+ if a2.historical_objects_available(V1_ORIGINAL_RAW_TREE_COMMIT):
+  tree=a2.git('rev-parse',V1_ORIGINAL_RAW_TREE_COMMIT+'^{tree}').decode().strip()
+  historical=a2.git('ls-tree','-r',V1_ORIGINAL_RAW_TREE_COMMIT)
+  review.require(tree==V1_ORIGINAL_RAW_TREE_SHA1 and historical==raw,
+                 'V1 original raw-tree fixture differs from its exact historical Git tree')
+ return raw
 
 def authenticate_current_scope():
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
@@ -470,19 +551,20 @@ def authenticate_current_scope():
 def historical_v1_git_view():
  """Remove only authenticated additive evidence from V1's historical inventory.
 
- V1's source, receipt, validator, criteria and strict inventory hash are unchanged.
- The original validator runs against the historical projection; no criterion or
- failure is overridden. All source outside this pass was authenticated first.
+ The original V1 source bytes, receipt, criteria and strict inventory hash are
+ unchanged. That original validator runs against its exact raw historical tree;
+ no criterion or failure is overridden. Current source is authenticated first.
  This is deterministic in shallow CI and requires no network or ancestor fetch.
  """
  authenticate_current_scope()
  module=review.retention.v4.v3
  original=module._git
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ authenticated_latest=a2.authenticate_inventory()
  def projected(*args):
-  raw=original(*args)
   if args==('ls-tree','-r','HEAD'):
-   raw=a2_historical_projection(raw)
-   return b''.join(line for line in raw.splitlines(keepends=True) if line.split(b'\t',1)[1].strip().decode() not in NEW_PASS_A_PATHS)
+   return authenticated_v1_original_raw_tree(a2)
+  raw=original(*args)
   if args==('diff','--name-only','HEAD'):
    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
    generation_additions=a2_generation_additions(a2)
@@ -498,7 +580,18 @@ def historical_v1_git_view():
   from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
   if path in b4.B4_WORKFLOW_PREDECESSORS:
    return {'path':path,**portability.identity(b4._historical_b4_workflow_bytes(path))}
-  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+  from scripts import audit_core_01d_checkpoint_e_completion as current_v1
+  if path in current_v1.PASS4_E3_SOURCE_PREDECESSORS:
+   blob,digest=current_v1.authenticate_pass4_e3_source_predecessor(path,a2,authenticated_latest)
+   return {'path':path,'git_blob_sha1':blob,'source_sha256':digest}
+  if path in PASS_A_E3_COMPAT_SOURCE_PREDECESSORS:
+   blobs=authenticate_pass_a_e3_compat_predecessors(a2,authenticated_latest)
+   fixture,expected_blob,expected_sha,_size=PASS_A_E3_COMPAT_SOURCE_PREDECESSORS[path]
+   raw=(ROOT/fixture).read_bytes()
+   review.require(blobs[path]==expected_blob
+                  and hashlib.sha256(a2.lf(raw)).hexdigest()==expected_sha,
+                  'Pass-A exact V2 source predecessor identity drift: '+path)
+   return {'path':path,'git_blob_sha1':expected_blob,'source_sha256':expected_sha}
   if path in a2.E3_CROSS_CONTRACT_V284_SOURCE_FORWARD_PATHS:
    transition=a2.resolve_historical_source_transition(
     path,expected_generation=a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION)

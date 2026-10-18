@@ -149,11 +149,31 @@ def test_policy_build_is_offline_and_cannot_call_operational_commands(monkeypatc
         if command[1] == "-C":
             assert command[2] == str(policy.ROOT)
             index = 3
-        assert command[index] in {"show", "rev-parse", "hash-object", "cat-file", "ls-tree", "diff", "log"}
+        allowed = {
+            "show", "rev-parse", "hash-object", "cat-file", "ls-tree", "diff", "log",
+            "ls-files",
+        }
+        assert command[index] in allowed
+        if command[index] == "ls-files":
+            assert command[index + 1:] == ["--cached", "--others", "--exclude-standard", "--", "*.py"]
         return original(command, *args, **kwargs)
     monkeypatch.setattr(subprocess, "run", git_read_only)
     result = policy.build_receipt()
     assert all(value == 0 for value in result["actions"].values())
+
+
+def test_offline_git_read_allowlist_rejects_mutations_and_network_commands():
+    def git_read_only(command):
+        assert command[0] == "git"
+        assert command[1] in {
+            "show", "rev-parse", "hash-object", "cat-file", "ls-tree", "diff", "log", "ls-files",
+        }
+
+    for operation in ("add", "commit", "push", "fetch", "checkout", "reset", "clean", "remote"):
+        with pytest.raises(AssertionError):
+            git_read_only(["git", operation])
+    with pytest.raises(AssertionError):
+        git_read_only(["curl", "https://example.invalid"])
 
 
 def test_committed_retention_and_v5_audits_pass():

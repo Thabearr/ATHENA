@@ -190,107 +190,49 @@ def test_evidence_is_canonical_and_source_bound(receipt):
 
 
 def test_historical_completion_projection_accepts_only_post_v2_inventory_sources():
+    chain = boundary.load_inventory_generations()
+    assert len(chain) >= 2
+    v2_path, v2 = chain[1]
+    assert v2_path == boundary.inventory_generation_path(2)
+    assert v2["generation"] == 2
+    v2_paths = {row["path"] for row in v2["source_identities"]}
+
+    # Derive additions from every authenticated, contiguous successor rather
+    # than maintaining a second brittle copy of the long A2 path list.
+    previously_seen = set(v2_paths)
+    first_added_generation = {}
+    ever_removed = set()
+    reintroduced = set()
+    for generation_path, document in chain[2:]:
+        if "source_identities" not in document:
+            # V284 is an authorization record in the same contiguous chain,
+            # not a source inventory generation.
+            continue
+        generation = document["generation"]
+        assert generation_path == boundary.inventory_generation_path(generation)
+        current_paths = {row["path"] for row in document["source_identities"]}
+        reintroduced.update((current_paths - previously_seen) & ever_removed)
+        ever_removed.update(previously_seen - current_paths)
+        for path in current_paths - previously_seen:
+            first_added_generation[path] = generation
+        previously_seen = current_paths
+
     latest = boundary.authenticate_inventory()
-    v2 = boundary.read_generation(boundary.inventory_generation_path(2))
-    v2_paths = {
-        row["path"] for row in v2["source_identities"]
-    }
     latest_paths = {row["path"] for row in latest["source_identities"]}
     added = latest_paths - v2_paths
-    assert added == {
-        "tests/native/test_fresh_holdout_pass_a_source_projection.py",
-        "tests/test_run_01a_forward_successor_pr457.py",
-        "scripts/audit_inc_20261010_pc_upcoming_bounded_epoch_stabilization.py",
-        "tests/test_inc_20261010_pc_upcoming_bounded_epoch_stabilization.py",
-        "database/run_repository.py",
-        "scripts/audit_data_01b_durable_run_state.py",
-        "tests/test_data_01b_durable_run_state.py",
-        "tests/native/test_data_01b_bundle_migrations.py",
-        "database/app_migrations.py",
-        "database/app_migration_evidence.py",
-        "database/app_repository.py",
-        "services/app_preview_store.py",
-        "tests/test_data_01a_app_schema.py",
-        "scripts/audit_data_01a_app_schema_core.py",
-        "api/app_factory.py",
-        "runtime/local_session.py",
-        "services/athena_capability_service.py",
-        "scripts/audit_app_01a_local_shell.py",
-        "tests/test_app_01a_local_shell.py",
-        "scripts/audit_core_01d_checkpoint_e_completion_v4.py",
-        "scripts/audit_core_01d_exact_pr_trigger_disposition_b1.py",
-        "tests/test_core_01d_checkpoint_e_completion_v4.py",
-        "tests/test_core_01d_exact_pr_trigger_disposition_b1.py",
-        "scripts/audit_core_01d_historical_warehouse_transfer_authority_b2.py",
-        "scripts/audit_core_01d_checkpoint_e_completion_v5.py",
-        "tests/test_core_01d_historical_warehouse_transfer_authority_b2.py",
-        "tests/test_core_01d_checkpoint_e_completion_v5.py",
-        "scripts/audit_core_01d_owner_one_shot_issue_comment_authority_b3.py",
-        "scripts/audit_core_01d_checkpoint_e_completion_v6.py",
-        "tests/test_core_01d_owner_one_shot_issue_comment_authority_b3.py",
-        "tests/test_core_01d_checkpoint_e_completion_v6.py",
-        "scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py",
-        "scripts/audit_core_01d_checkpoint_e_completion_v7.py",
-        "tests/test_core_01d_sportybet_current_trigger_authority_b4.py",
-        "tests/test_core_01d_checkpoint_e_completion_v7.py",
-        "scripts/audit_core_01d_frozen_artifact_replay_authority_b5.py",
-        "scripts/audit_core_01d_checkpoint_e_completion_v8.py",
-        "tests/test_core_01d_frozen_artifact_replay_authority_b5.py",
-        "tests/test_core_01d_checkpoint_e_completion_v8.py",
-        "scripts/audit_core_01d_port02c_trigger_authority_b6.py",
-        "scripts/audit_core_01d_checkpoint_e_completion_v9.py",
-        "tests/test_core_01d_port02c_trigger_authority_b6.py",
-        "tests/test_core_01d_checkpoint_e_completion_v9.py",
-        "scripts/audit_core_01d_win_either_half_trigger_authority_b7.py",
-        "scripts/audit_core_01d_checkpoint_e_completion_v10.py",
-        "tests/test_core_01d_win_either_half_trigger_authority_b7.py",
-        "tests/test_core_01d_checkpoint_e_completion_v10.py",
-        "api/schemas.py",
-        "api/v1/__init__.py",
-        "api/v1/run_previews.py",
-        "services/athena_preview_service.py",
-        "tests/test_app_01b_preview_admission.py",
-        "api/v1/common.py",
-        "api/v1/exports.py",
-        "api/v1/fixtures.py",
-        "api/v1/runs.py",
-        "database/app_root_lock.py",
-        "database/app_storage_access.py",
-        "services/app_projection_service.py",
-        "services/backup_service.py",
-        "services/export_service.py",
-        "scripts/audit_data_01c_app_store_complete.py",
-        "tests/native/test_data_01c_bundle_migrations.py",
-        "tests/test_data_01c_app_storage.py",
-        "services/athena_read_service.py",
-        "tests/test_app_01c_versioned_read_api.py",
-        "scripts/qualify_data_01c_restore_portability.py",
-        "scripts/audit_data_01c_restore_portability.py",
-        "tests/test_data_01c_restore_portability.py",
-        "services/athena_job_service.py",
-        "scripts/audit_run_01a_durable_admission.py",
-        "tests/test_run_01a_durable_admission.py",
-        "scripts/audit_run_01b_worker_lifecycle.py",
-        "services/worker_coordinator.py",
-        "tests/test_run_01b_worker_lifecycle.py",
-        "tests/native/test_run_01b_worker_coordinator_native.py",
-        "services/durable_share_code_transport.py",
-        "scripts/audit_run_02a_pre_durable_share_send.py",
-        "tests/test_run_02a_pre_durable_share_send.py",
-        "tests/native/test_run_02a_pre_share_send_publication.py",
-        "services/recovery_service.py",
-        "services/worker_process_control.py",
-        "runtime/worker_startup_gate.py",
-        "tests/native/test_run_02a_process_tree.py",
-        "tests/test_run_02a_recovery.py",
-        "tests/native/test_fresh_holdout_20261015_v7_native_compatibility.py",
-        "tests/test_lg_a_worker_entry_historical_projection.py",
-        ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml",
-        ".github/workflows/prove-sportybet-direct-share-code.yml",
-        "scripts/audit_core_01d_pr459_live_trigger_incident.py",
-        "tests/native/test_pr459_hosted_pr_live_share_trigger_safety.py",
-        "tests/test_core_01d_pr459_live_trigger_incident.py",
+    removed_after_addition = set(first_added_generation) - latest_paths
+    assert reintroduced == set()
+    assert removed_after_addition == {
+        "tests/fixtures/core_01d/pass1-v1-source/audit-core-01-schedule-date-disposition.py",
+        "tests/fixtures/core_01d/pass1-v1-source/test-core-01-schedule-date-disposition.py",
     }
+    assert added == set(first_added_generation) - removed_after_addition
+    assert len(added) == 94
+    assert first_added_generation["runtime/current_shadow_operation_authority.py"] == 263
+    assert first_added_generation[
+        "tests/test_core_01d_pass_a_v300_source_predecessors.py"
+    ] == 300
+
     original_tree = boundary.git("ls-tree", "-r", "HEAD")
     projected = completion_v2.a2_historical_projection(original_tree)
     projected_paths = {line.split(b"\t", 1)[1].strip().decode()

@@ -1003,12 +1003,16 @@ def test_product_github_unapproved_redirect_host_is_never_contacted(
 def test_product_fotmob_pc_upcoming_and_event_sources_share_the_get_port(
     tmp_path, clock, monkeypatch,
 ):
+    import http.client
+    import socket
+    import traceback
+    import base64
+
     from runtime import current_shadow_operation_authority as authority_module
     from runtime.current_shadow_operation_authority import ProviderGetResponse
     from domain import current_shadow_sportybet_pc_upcoming_discovery as pc_source
     from domain import sportybet_live_event_quote_evidence as event_source
-    from scripts import capture_fotmob_data_matches as fotmob_source
-    from datetime import datetime, timezone
+    from scripts import issue_current_fotmob_reviewed_source as product_fotmob
 
     calls = []
 
@@ -1024,12 +1028,23 @@ def test_product_fotmob_pc_upcoming_and_event_sources_share_the_get_port(
         authority_module, "_fixed_provider_get", synthetic_transport,
     )
 
+    def deny_real_network(*_args, **_kwargs):
+        raise AssertionError("real network disabled by synthetic authority regression")
+
+    # The provider port above is the only permitted transport in this test.
+    # Catch direct http.client/socket paths before they can open a connection.
+    monkeypatch.setattr(socket, "create_connection", deny_real_network)
+    monkeypatch.setattr(socket.socket, "connect", deny_real_network)
+    monkeypatch.setattr(socket.socket, "connect_ex", deny_real_network)
+    monkeypatch.setattr(http.client.HTTPConnection, "connect", deny_real_network)
+    monkeypatch.setattr(http.client.HTTPSConnection, "connect", deny_real_network)
+
     def acquire_through_sources(authority, *_args):
         date = authority._context["allowed_dates"][0]
-        fotmob_source.fetch_fotmob_data_matches(
-            request_date=date, timezone="UTC", ccode3="NGA",
+        product_fotmob._fetch_product_authorized_fotmob_source(
+            authority, request_date=date, timezone="UTC", ccode3="NGA",
         )
-        nonce = int(datetime.now(timezone.utc).timestamp() * 1000)
+        nonce = 1_893_456_000_000
         pc_source._fetch_page(1, nonce, operation_epoch=1)
         event_source._network_fetch("sr:match:123456789")
         return tuple(call["provider"] for call in calls)
@@ -1038,19 +1053,76 @@ def test_product_fotmob_pc_upcoming_and_event_sources_share_the_get_port(
         tmp_path, clock, monkeypatch, acquire_through_sources,
     )
 
-    assert captured["result"] == (
+    error = captured.get("error")
+    stack = " > ".join(
+        f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
+        for frame in traceback.extract_tb(error.__traceback__)[-6:]
+    ) if error is not None else ""
+    message = str(error) if error is not None else ""
+    if any(secret_word in message.lower() for secret_word in (
+        "token", "secret", "cookie", "lease", "authorization", "bearer",
+    )) or "://" in message or "?" in message:
+        message = "<redacted>"
+    assert error is None, (
+        f"synthetic product provider path failed: "
+        f"{type(error).__name__ if error is not None else ''}: {message}; stack={stack}"
+    )
+    assert captured.get("result") == (
         "FOTMOB_DATA_MATCHES", "SPORTYBET_PC_UPCOMING", "SPORTYBET_EVENT_DETAIL",
     )
     with case["repository"]._operation() as conn:
         operations = conn.execute(
-            "SELECT state FROM app_external_operations WHERE run_id=?",
+            "SELECT operation_id,operation_kind,state,intent_sha256,input_artifact_id,"
+            "response_artifact_id FROM app_external_operations WHERE run_id=? "
+            "ORDER BY prepared_at,operation_id",
             (case["run_id"],),
         ).fetchall()
-    assert operations == [("CONFIRMED",), ("CONFIRMED",), ("CONFIRMED",)]
+        artifacts = {}
+        for operation in operations:
+            artifacts[operation[4]] = conn.execute(
+                "SELECT logical_path,byte_sha256,byte_count FROM app_artifacts "
+                "WHERE artifact_id=?", (operation[4],),
+            ).fetchone()
+            artifacts[operation[5]] = conn.execute(
+                "SELECT logical_path,byte_sha256,byte_count FROM app_artifacts "
+                "WHERE artifact_id=?", (operation[5],),
+            ).fetchone()
+    assert len(operations) == 3
+    assert all(row[1:3] == ("CURRENT_SHADOW_PROVIDER_GET_V1", "CONFIRMED")
+               and row[4] is not None and row[5] is not None for row in operations)
+    expected_providers = [
+        "FOTMOB_DATA_MATCHES", "SPORTYBET_PC_UPCOMING", "SPORTYBET_EVENT_DETAIL",
+    ]
+    verified = []
+    for operation in operations:
+        intent_artifact = artifacts[operation[4]]
+        intent_raw = (case["roots"].data_root / intent_artifact[0]).read_bytes()
+        assert hashlib.sha256(intent_raw).hexdigest() == intent_artifact[1]
+        assert len(intent_raw) == intent_artifact[2]
+        intent = json.loads(intent_raw)
+        assert hashlib.sha256(intent_raw).hexdigest() == operation[3]
+
+        response_artifact = artifacts[operation[5]]
+        response_raw = (case["roots"].data_root / response_artifact[0]).read_bytes()
+        assert hashlib.sha256(response_raw).hexdigest() == response_artifact[1]
+        assert len(response_raw) == response_artifact[2]
+        response = json.loads(response_raw)
+        body = base64.b64decode(response["raw_base64"], validate=True)
+        assert response["operation_id"] == operation[0]
+        assert response["intent_sha256"] == operation[3]
+        assert response["raw_sha256"] == hashlib.sha256(body).hexdigest()
+        assert response["raw_size"] == len(body) == 2
+        assert body == b"{}" and response["status"] == 200
+        verified.append((intent["sequence"], operation, intent, response))
+    verified.sort(key=lambda row: row[0])
+    assert [row[0] for row in verified] == [1, 2, 3]
+    assert [row[2]["provider"] for row in verified] == expected_providers
     events = [event[2] for event in case["repository"].read_events(case["run_id"])]
-    assert events.count("CURRENT_SHADOW_GET_PREPARED") == 3
-    assert events.count("CURRENT_SHADOW_GET_SENT") == 3
-    assert events.count("CURRENT_SHADOW_GET_RESPONSE_RETAINED") == 3
+    operation_events = [event for event in events if event.startswith("CURRENT_SHADOW_GET_")]
+    assert operation_events == [
+        "CURRENT_SHADOW_GET_PREPARED", "CURRENT_SHADOW_GET_SENT",
+        "CURRENT_SHADOW_GET_RESPONSE_RETAINED",
+    ] * 3
 
 
 def test_product_pc_capture_uses_authenticated_epoch_and_cancel_blocks_next_page(

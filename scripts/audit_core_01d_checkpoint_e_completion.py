@@ -219,7 +219,58 @@ E3_RUN_02A_ADDITIVE_PATHS = frozenset({
     # New gate-context primitive did not exist in the immutable predecessor
     # tree. Its current bytes are authenticated by the latest A2 inventory.
     "runtime/current_shadow_operation_authority.py",
+    # Exact E3 evidence and predecessor snapshots were added after the
+    # immutable V1 Pass-4 inventory. These paths are excluded by exact name;
+    # evolved sources remain represented by their pinned predecessor blobs.
+    "docs/run-02a/current-shadow-operation-fence.md",
+    "tests/fixtures/core_01d/e3_b6_three_source_forward/original-current-fotmob-latest-durable-fresh-history.py.txt",
+    "tests/fixtures/core_01d/e3_b6_three_source_forward/original-current-shadow-sportybet-pc-upcoming-discovery.py.txt",
+    "tests/fixtures/core_01d/e3_b6_three_source_forward/original-issue-current-fotmob-reviewed-source.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-capture-fotmob-data-matches.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-checkpoint-e-completion-v2.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-current-shadow-all-market-runner.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-execute-current-shadow-request.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-fresh-holdout-activation-runner.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-ordinary-ft-source-history-acquisition.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-port02c-trigger-authority-b6.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-reviewed-fixture-catalog-admission-source-replay.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-core-01d-frozen-artifact-replay-authority-b5.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-core-01d-owner-one-shot-issue-comment-authority-b3.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-core-01d-scheduled-shadow-ownership.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-p4-4e-current-fotmob-ingest-issuer.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-p4-4f-current-fotmob-exact-lane-caller-migration.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-p4-4g-current-fotmob-canonical-only-workflow.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-p4-4h-current-shadow-canonical-run-migration-review.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-port-01-source-identity-parity.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-execute-current-shadow-daily.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-test-issue-current-fotmob-reviewed-source.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-test-p4-4h-current-shadow-canonical-run-migration-review.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/b1-disposition-audit-v154.py.txt",
+    "tests/fixtures/core_01d/sportybet_event_detail_e3_forward/original-b4-b6-sportybet-live-event-quote-evidence.py.txt",
+    "tests/test_core_01d_pass_a_v300_source_predecessors.py",
+    # Exact source snapshots used to authenticate older Pass-4/V2 trees.
+    "tests/fixtures/core_01d/pass_a_v1_original_raw_tree/ls-tree-v1-pass4.txt",
+    "tests/fixtures/core_01d/pass_a_v2_source_predecessors/test-port-01-source-identity-parity.py.txt",
+    "tests/fixtures/core_01d/pass_a_v2_source_predecessors/test-p3-0-canonical-pre-router-pipeline.py.txt",
+    "tests/fixtures/core_01d/pass4_source_predecessors/original-port02c-trigger-authority-b6-v1.py.txt",
+    "tests/fixtures/core_01d/pass4_source_predecessors/original-test-checkpoint-e-completion-v2-v1.py.txt",
+    "tests/fixtures/core_01d/e3_v309_source_forward/original-checkpoint-e-completion-v2-v308.py.txt",
 })
+
+PASS4_E3_SOURCE_PREDECESSORS = {
+    "scripts/audit_core_01d_port02c_trigger_authority_b6.py": (
+        "tests/fixtures/core_01d/pass4_source_predecessors/original-port02c-trigger-authority-b6-v1.py.txt",
+        "cdee96e9a5cca5ee272b47e00cbede9ca96a4d22",
+        "b394f9578a06194c65d53a60a7a3859b8e7bfb0153ebf3dfcf1aada3af6b36cf",
+        61205,
+    ),
+    "tests/test_core_01d_checkpoint_e_completion_v2.py": (
+        "tests/fixtures/core_01d/pass4_source_predecessors/original-test-checkpoint-e-completion-v2-v1.py.txt",
+        "f46260e3e9b0a850c1a95a96dcd8b033b001e564",
+        "f0dbc7593241c97826a0b0aede688383f0ab152a1589a5a5c77376b5a227f84d",
+        5242,
+    ),
+}
 ALLOWED_PASS4_PATHS |= RUN_02A_PRE_ADDITIVE_PATHS | {
     "runtime/worker_entry.py", "scripts/sportybet_direct_share_bridge.py",
     "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py",
@@ -267,6 +318,42 @@ def authenticate_fresh_holdout_20261015_evidence():
         policy.require(identity.git_blob_sha1 == blob and policy.sha256(payload) == digest,
                        "October 15 additive evidence identity drift: " + path)
     return FRESH_HOLDOUT_20261015_ADDITIVE_PATHS
+
+
+def authenticate_pass4_e3_source_predecessor(path: str, a2=None, latest=None) -> tuple[str, str]:
+    """Bind one exact V1 predecessor fixture to the current A2 successor."""
+    if a2 is None:
+        from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    descriptor = PASS4_E3_SOURCE_PREDECESSORS.get(path)
+    policy.require(descriptor is not None,
+                   "Pass-4 source path has no exact E3 predecessor authority: " + path)
+    fixture_path, expected_blob, expected_sha, expected_size = descriptor
+    for relative in (path, fixture_path):
+        candidate = ROOT / relative
+        policy.require(candidate.is_file()
+                       and not any(parent.is_symlink() for parent in (candidate, *candidate.parents)),
+                       "Pass-4 E3 predecessor requires regular source/fixture: " + relative)
+        a2._e3_path_stat(relative, label="Pass-4 E3 predecessor")
+    if latest is None:
+        latest = a2.authenticate_inventory()
+    current_rows = {row["path"]: row for row in latest["source_identities"]}
+    current = a2.lf((ROOT / path).read_bytes())
+    head_blob = a2.git("rev-parse", "HEAD:" + path).decode("ascii").strip()
+    worktree_blob = a2.git("hash-object", path).decode("ascii").strip()
+    policy.require(current_rows.get(path, {}).get("lf_source_sha256")
+                   == hashlib.sha256(current).hexdigest()
+                   and head_blob == worktree_blob,
+                   "current Pass-4 E3 source differs from authenticated A2 successor: " + path)
+    fixture = a2.lf((ROOT / fixture_path).read_bytes())
+    fixture_blob = hashlib.sha1(
+        b"blob " + str(len(fixture)).encode("ascii") + b"\0" + fixture
+    ).hexdigest()
+    tracked_blob = a2.git("rev-parse", "HEAD:" + fixture_path).decode("ascii").strip()
+    policy.require(len(fixture) == expected_size
+                   and hashlib.sha256(fixture).hexdigest() == expected_sha
+                   and fixture_blob == expected_blob == tracked_blob,
+                   "Pass-4 E3 predecessor fixture identity drift: " + fixture_path)
+    return expected_blob, expected_sha
 
 
 # Exact handoff ls-tree inventory excluding only the enumerated bounded
@@ -367,6 +454,24 @@ def validate_bounded_inventory(raw: bytes) -> None:
         predecessor_blobs[path] = hashlib.sha1(
             b"blob " + str(len(predecessor)).encode("ascii") + b"\0" + predecessor
         ).hexdigest()
+    # V300 is a distinct exact eight-path contract. Preserve its own
+    # predecessor bytes without falling back to or overriding through V284.
+    pass_a_predecessors = a2.read_authenticated_pass_a_source_predecessors()
+    for path in sorted(a2.E3_PASS_A_SOURCE_FORWARD_PATHS):
+        predecessor = pass_a_predecessors[path]
+        predecessor_blobs[path] = hashlib.sha1(
+            b"blob " + str(len(predecessor)).encode("ascii") + b"\0" + predecessor
+        ).hexdigest()
+    # These existing Pass-A tests have exact V2 predecessor fixtures and
+    # separately A2-authenticated current successors.
+    pass_a_v2_predecessors = completion_v2.authenticate_pass_a_e3_compat_predecessors(a2, latest)
+    for path in completion_v2.PASS_A_V2_AUTHENTICATED_SOURCE_PREDECESSORS:
+        predecessor_blobs[path] = pass_a_v2_predecessors[path]
+    # A later V284 transition for B6 retained-source readers has its own exact
+    # predecessor; Pass-4's older cdee identity remains the owner here.
+    for path in PASS4_E3_SOURCE_PREDECESSORS:
+        blob, _digest = authenticate_pass4_e3_source_predecessor(path, a2, latest)
+        predecessor_blobs[path] = blob
     from scripts import audit_core_01d_authority_reachability_review_a as review
     for path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
         review.source_bytes(path)

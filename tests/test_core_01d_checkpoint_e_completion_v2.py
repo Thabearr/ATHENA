@@ -81,6 +81,54 @@ def test_e3_pass_audit_predecessors_are_exact_and_fixture_tamper_fails_closed(mo
  with pytest.raises(AssertionError,match='Pass-A E3 audit predecessor differs'):
   current.authenticate_pass_a_e3_compat_predecessors(a2,latest)
 
+def test_v1_pass4_raw_tree_fixture_is_exact_historical_git_tree():
+ import hashlib
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ raw=current.authenticated_v1_original_raw_tree(a2)
+ assert len(raw)==current.V1_ORIGINAL_RAW_TREE_SIZE
+ assert hashlib.sha256(raw).hexdigest()==current.V1_ORIGINAL_RAW_TREE_SHA256
+ if a2.historical_objects_available(current.V1_ORIGINAL_RAW_TREE_COMMIT):
+  assert raw==a2.git('ls-tree','-r',current.V1_ORIGINAL_RAW_TREE_COMMIT)
+
+def test_v1_pass4_raw_tree_fixture_rejects_byte_mode_path_and_symlink_tampering(
+ monkeypatch,tmp_path,
+):
+ from pathlib import Path
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ target=(current.ROOT/current.V1_ORIGINAL_RAW_TREE_PATH).resolve()
+ original=Path.read_bytes
+ def altered(candidate):
+  raw=original(candidate)
+  return raw+b'100644 blob 0000000000000000000000000000000000000000\\tforged.py\\n' if candidate.resolve()==target else raw
+ monkeypatch.setattr(Path,'read_bytes',altered)
+ with pytest.raises(AssertionError,match='raw-tree snapshot bytes drift'):
+  current.authenticated_v1_original_raw_tree(a2)
+ monkeypatch.setattr(Path,'read_bytes',original)
+
+ original_git=a2.git
+ def wrong_mode(*args,**kwargs):
+  if args==('ls-tree','-z','HEAD','--',current.V1_ORIGINAL_RAW_TREE_PATH):
+   return ('120000 blob '+current.V1_ORIGINAL_RAW_TREE_BLOB+'\t'+current.V1_ORIGINAL_RAW_TREE_PATH+'\0').encode()
+  return original_git(*args,**kwargs)
+ monkeypatch.setattr(a2,'git',wrong_mode)
+ with pytest.raises(AssertionError,match='mode or HEAD blob drift'):
+  current.authenticated_v1_original_raw_tree(a2)
+ monkeypatch.setattr(a2,'git',original_git)
+
+ monkeypatch.setattr(current,'V1_ORIGINAL_RAW_TREE_PATH','tests/fixtures/forged-tree.txt')
+ with pytest.raises(AssertionError,match='regular tracked fixture'):
+  current.authenticated_v1_original_raw_tree(a2)
+
+ monkeypatch.setattr(current,'V1_ORIGINAL_RAW_TREE_PATH',
+                     'tests/fixtures/core_01d/pass_a_v1_original_raw_tree/linked-tree.txt')
+ link_root=tmp_path/'linked-tree'
+ link=(link_root/current.V1_ORIGINAL_RAW_TREE_PATH)
+ link.parent.mkdir(parents=True)
+ link.symlink_to(target)
+ monkeypatch.setattr(current,'ROOT',link_root)
+ with pytest.raises(AssertionError,match='regular tracked fixture'):
+  current.authenticated_v1_original_raw_tree(a2)
+
 def test_local_test_products_are_not_authority_evidence(monkeypatch):
  assert current.LOCAL_TEST_PRODUCTS=={'.pytest-shard-files','p3-0-e1-live-readiness.json','artifacts/p3-0-comparison-evidence/p3-0-e1-live-readiness.json'}
  assert 'Path(".pytest-shard-files").write_text(' in (review.ROOT/'.github/workflows/tests.yml').read_text()

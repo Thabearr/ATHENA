@@ -52,6 +52,11 @@ SUPPORTING_SOURCE_PATHS = (
     "tests/test_p4_4a1_baseline_workflow_maintenance_revision_authority.py",
 )
 HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS = {
+    "domain/current_fotmob_latest_durable_fresh_history.py": {
+        "fixture_path": "tests/fixtures/core_01d/e3_b6_three_source_forward/original-current-fotmob-latest-durable-fresh-history.py.txt",
+        "git_blob_sha1": "4e5695711078acb06fba537f3f69ca1e2c9df470",
+        "source_sha256": "2f3eb3473acdcab1bf10a0e6431708aa8225b2b2f279bf10405e669f453386ab",
+    },
     "scripts/audit_p4_3_workflow_retirement_ledger.py": {
         "fixture_path": "tests/fixtures/core_01d/pr459_live_trigger_incident/p4-3-workflow-retirement-ledger-predecessor.py.txt",
         "git_blob_sha1": "77927732b2abc2b13f20a4979ad7092307873900",
@@ -178,7 +183,7 @@ def _supporting_source_inventory() -> list[dict[str, str]]:
         working_tree_raw = (ROOT / path).read_bytes()
         _require_head_file_identity(path, working_tree_raw)
         predecessor = HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS.get(path)
-        if path in boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
+        if path in boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS and predecessor is None:
             current_lf_sha = hashlib.sha256(
                 working_tree_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
             ).hexdigest()

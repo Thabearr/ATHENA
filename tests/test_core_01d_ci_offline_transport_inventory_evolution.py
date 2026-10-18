@@ -276,8 +276,63 @@ def test_e3_pass_a_source_successor_extension_is_append_only_and_exact(monkeypat
         rows[-1] = (generation, changed)
         return rows
     monkeypatch.setattr(boundary, "load_inventory_generations", altered)
-    with pytest.raises(AssertionError, match="successor extension is missing or altered"):
+    # Latest-generation source/authentication integrity is checked before the
+    # extension reader returns any predecessor bytes. This is the stable
+    # fail-closed layer for a tampered persisted generation.
+    with pytest.raises(
+        AssertionError,
+        match="E3 Pass-A latest A2 authorization or generation link drift",
+    ):
         boundary.read_authenticated_cross_contract_predecessor(path)
+
+
+def test_e3_pass_a_extension_reader_rejects_altered_successor_identity():
+    chain = boundary.load_inventory_generations()
+    latest = json.loads(json.dumps(chain[-1][1]))
+    path = boundary.E3_PASS_A_V309_SUCCESSOR_EXTENSION_PATH
+    extensions = latest["e3_cross_contract_source_forward_successor_extensions"]
+    record = next(
+        row for row in extensions
+        if row["path"] == path
+        and row["generation"] == boundary.E3_PASS_A_V309_SUCCESSOR_EXTENSION_GENERATION
+    )
+    record["successor"]["git_blob_sha1"] = "0" * 40
+    with pytest.raises(
+        AssertionError,
+        match="E3 source-forward successor extension is missing or altered",
+    ):
+        boundary._authenticated_e3_successor_identity(path, chain, latest)
+
+
+def test_e3_v309_predecessor_fixture_is_exact_and_tampering_fails_closed(monkeypatch):
+    chain = boundary.load_inventory_generations()
+    extension = next(
+        row for row in boundary._e3_cross_contract_source_forward_successor_extensions(
+            chain=chain,
+            generation=boundary.E3_PASS_A_V309_SUCCESSOR_EXTENSION_GENERATION,
+        )
+        if row["generation"] == boundary.E3_PASS_A_V309_SUCCESSOR_EXTENSION_GENERATION
+    )
+    expected = boundary.E3_PASS_A_V309_SUCCESSOR_EXTENSION_PREDECESSOR
+    raw = boundary._authenticate_e3_v309_predecessor_fixture(extension)
+    assert len(raw) == expected["byte_size"]
+    normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    assert hashlib.sha256(normalized).hexdigest() == expected["lf_source_sha256"]
+
+    class TamperedFixture:
+        @staticmethod
+        def read_bytes():
+            return raw + b"tampered"
+
+    with monkeypatch.context() as patch:
+        patch.setattr(boundary, "_e3_path_stat", lambda *_args, **_kwargs: TamperedFixture())
+        with pytest.raises(AssertionError, match="V309 source predecessor fixture identity mismatch"):
+            boundary._authenticate_e3_v309_predecessor_fixture(extension)
+
+    altered = json.loads(json.dumps(extension))
+    altered["predecessor_fixture"]["git_blob_sha1"] = "0" * 40
+    with pytest.raises(AssertionError, match="V309 source predecessor fixture authorization drift"):
+        boundary._authenticate_e3_v309_predecessor_fixture(altered)
 
 
 # --- E. additive source fails closed ---------------------------------------
