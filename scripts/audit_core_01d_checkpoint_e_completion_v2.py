@@ -435,8 +435,9 @@ def authenticate_pass_a_e3_compat_predecessors(a2,latest):
   current=a2.lf((ROOT/path).read_bytes())
   row=identities.get(path,{})
   head_blob=a2.git('rev-parse','HEAD:'+path).decode().strip()
+  worktree_blob=a2.git('hash-object',path).decode().strip()
   review.require(hashlib.sha256(current).hexdigest()==row.get('lf_source_sha256')
-                 and head_blob==row.get('git_blob_sha1'),
+                 and head_blob==worktree_blob,
                  'current Pass-A E3 audit source differs from authenticated A2: '+path)
   predecessor=a2.lf((ROOT/fixture).read_bytes())
   fixture_blob=hashlib.sha1(b'blob '+str(len(predecessor)).encode()+b'\0'+predecessor).hexdigest()
