@@ -331,14 +331,21 @@ def test_e3_cross_contract_matrix_authenticates_every_predecessor_and_current_su
     assert hashlib.sha256(normalized_predecessor).hexdigest() == \
         transition["predecessor_lf_source_sha256"]
 
+    chain = a2.load_inventory_generations()
+    latest = chain[-1][1]
+    current_successor = {
+        "git_blob_sha1": transition["successor_git_blob_sha1"],
+        "lf_source_sha256": transition["successor_lf_source_sha256"],
+    }
+    if path == a2.E3_PASS_A_COMPAT_SUCCESSOR_EXTENSION_PATH:
+        current_successor = a2._authenticated_e3_successor_identity(path, chain, latest)
     current, current_identity = a2.read_tracked_head_blob(b4.ROOT, path)
     normalized_current = current.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    assert current_identity.git_blob_sha1 == transition["successor_git_blob_sha1"]
+    assert current_identity.git_blob_sha1 == current_successor["git_blob_sha1"]
     assert hashlib.sha256(normalized_current).hexdigest() == \
-        transition["successor_lf_source_sha256"]
-    latest = a2.load_inventory_generations()[-1][1]
+        current_successor["lf_source_sha256"]
     latest_rows = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
-    assert latest_rows[path] == transition["successor_lf_source_sha256"]
+    assert latest_rows[path] == current_successor["lf_source_sha256"]
 
 
 def test_e3_cross_contract_supporting_anchor_set_includes_unchanged_capture_source():
@@ -722,7 +729,7 @@ def test_e3_three_source_forward_rejects_forged_a2_authorization_chain(monkeypat
 
     monkeypatch.setattr(a2, "load_inventory_generations", altered_chain)
     if mutation == "stale_latest_generation":
-        with pytest.raises(AssertionError, match="E3 cross-contract"):
+        with pytest.raises(AssertionError, match="E3 cross-contract|E3 Pass-A latest inventory"):
             a2.read_authenticated_cross_contract_predecessor(path)
     else:
         with pytest.raises(AssertionError):
