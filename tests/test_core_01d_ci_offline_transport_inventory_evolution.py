@@ -243,6 +243,43 @@ def test_latest_generation_is_a_full_reviewed_copy_of_the_current_corpus():
                                            for path in boundary.current_source_paths()]
 
 
+def test_e3_pass_a_source_successor_extension_is_append_only_and_exact(monkeypatch):
+    path = boundary.E3_CROSS_CONTRACT_SUCCESSOR_EXTENSION_PATH
+    chain = boundary.load_inventory_generations()
+    latest = chain[-1][1]
+    extensions = boundary._e3_cross_contract_source_forward_successor_extensions()
+    assert latest["generation"] >= boundary.E3_CROSS_CONTRACT_SUCCESSOR_EXTENSION_GENERATION
+    assert latest["e3_cross_contract_source_forward_successor_extensions"] == extensions
+    record = extensions[0]
+    assert record["path"] == path
+    assert record["generation"] == boundary.E3_CROSS_CONTRACT_SUCCESSOR_EXTENSION_GENERATION
+    assert record["previous_successor"]["generation"] == boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION
+    assert record["previous_successor"]["git_blob_sha1"] == (
+        boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]["successor_git_blob_sha1"]
+    )
+    assert record["authority_granted"] is False
+    assert record["historical_bytes_changed"] is False
+    assert record["rewritten"] is False
+    # The source reader must still return the exact V284 predecessor bytes.
+    predecessor = boundary.read_authenticated_cross_contract_predecessor(path)
+    transition = boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]
+    assert hashlib.sha1(b"blob " + str(len(predecessor)).encode() + b"\0" + predecessor).hexdigest() == (
+        transition["predecessor_git_blob_sha1"]
+    )
+
+    original = boundary.load_inventory_generations
+    def altered(directory=None):
+        rows = list(original(directory))
+        generation, document = rows[-1]
+        changed = json.loads(json.dumps(document))
+        changed["e3_cross_contract_source_forward_successor_extensions"][0]["successor"]["git_blob_sha1"] = "0" * 40
+        rows[-1] = (generation, changed)
+        return rows
+    monkeypatch.setattr(boundary, "load_inventory_generations", altered)
+    with pytest.raises(AssertionError, match="successor extension is missing or altered"):
+        boundary.read_authenticated_cross_contract_predecessor(path)
+
+
 # --- E. additive source fails closed ---------------------------------------
 def test_new_python_source_without_a_successor_inventory_fails_before_collection():
     scratch = boundary.ROOT / "tests" / "test_core_01d_unreviewed_scratch_probe.py"
