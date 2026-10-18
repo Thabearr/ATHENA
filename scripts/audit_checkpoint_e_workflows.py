@@ -837,6 +837,7 @@ def base_input():
         fresh_workflow_after_blob = forward["workflow_blob"]
         supporting_source_blobs = forward["supporting_source_blobs"]
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    pass_a_predecessors = None
     for path, identity in value["files"].items():
         if path == HISTORICAL_AUDIT:
             require(current.get(path) in (identity, {"mode": identity["mode"], "git_blob_sha1": audit_after}), "historical audit forward Git identity differs")
@@ -891,17 +892,34 @@ def base_input():
                 and current[path]["mode"] == identity["mode"],
                 "Pass-A preserved A2 successor differs from its exact V1 base identity: " + path,
             )
-        elif path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
-            transition = a2.resolve_historical_source_transition(
-                path,
-                expected_generation=a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION,
-            )
+        elif path in (a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS
+                      | a2.E3_PASS_A_SOURCE_FORWARD_PATHS):
+            if path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
+                transition = a2.resolve_historical_source_transition(
+                    path,
+                    expected_generation=a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION,
+                )
+                predecessor_mode = successor_mode = "100644"
+                predecessor_reader = a2.read_authenticated_cross_contract_predecessor
+            else:
+                transition = a2.resolve_historical_source_transition(
+                    path,
+                    expected_generation=a2.E3_PASS_A_SOURCE_FORWARD_AUTHORIZATION_GENERATION,
+                )
+                predecessor_mode = transition["predecessor_git_mode"]
+                successor_mode = transition["successor_git_mode"]
+                predecessor_reader = None
             expected_predecessor = {
-                "mode": "100644",
+                "mode": predecessor_mode,
                 "git_blob_sha1": transition["predecessor_git_blob_sha1"],
             }
             if identity == expected_predecessor and current.get(path) != identity:
-                predecessor = a2.read_authenticated_cross_contract_predecessor(path)
+                if predecessor_reader is not None:
+                    predecessor = predecessor_reader(path)
+                else:
+                    if pass_a_predecessors is None:
+                        pass_a_predecessors = a2.read_authenticated_pass_a_source_predecessors()
+                    predecessor = pass_a_predecessors[path]
                 predecessor_lf = predecessor.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
                 predecessor_blob = hashlib.sha1(
                     b"blob " + str(len(predecessor)).encode("ascii") + b"\0" + predecessor
@@ -912,16 +930,16 @@ def base_input():
                     and hashlib.sha256(predecessor_lf).hexdigest()
                         == transition["predecessor_lf_source_sha256"]
                     and current.get(path) == {
-                        "mode": "100644",
+                        "mode": successor_mode,
                         "git_blob_sha1": transition["successor_git_blob_sha1"],
                     },
-                    "Pass-1 V284 source predecessor/successor identity drift: " + path,
+                    "Pass-1 V284/V300 source predecessor/successor identity drift: " + path,
                 )
             else:
                 # An earlier historical owner may project a different exact
-                # Pass-1 blob for this V284 path. Preserve that precedence;
-                # only a base row equal to the V284 predecessor can use this
-                # transition.
+                # Pass-1 blob for a V284/V300 path. Preserve that precedence;
+                # only a base row equal to the authorized predecessor can use
+                # this transition.
                 require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
         else:
             require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")

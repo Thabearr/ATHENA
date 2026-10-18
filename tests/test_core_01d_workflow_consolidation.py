@@ -191,7 +191,7 @@ def test_base_input_tamper_rejected_before_any_git_scan(monkeypatch):
     with pytest.raises(ValueError, match="base inventory identity drift"): audit.base_input()
 
 
-def test_pass1_v284_sources_use_exact_predecessor_projection():
+def test_pass1_v284_v300_sources_use_exact_predecessor_projection():
     expected = {
         "domain/current_shadow_all_market_runner.py": "b21a9d8a24ac60def6d76e7111ae8a473e9f1a8c",
         "domain/current_shadow_sportybet_pc_upcoming_discovery.py": "fa2069a2ea1201a93a84b5ce3856f9d9574dea71",
@@ -199,6 +199,14 @@ def test_pass1_v284_sources_use_exact_predecessor_projection():
         "domain/sportybet_live_event_quote_evidence.py": "096d54fe7493f6d81cdf3c4af7c4a9333c75fadc",
         "scripts/execute_current_shadow_request.py": "52519a5f32cc0d8c130ea053fde5647b751e3fc0",
         "scripts/issue_current_fotmob_reviewed_source.py": "b50689971ee20cb6800145317a0e9fcb3486f40f",
+        "scripts/audit_p4_4e_current_fotmob_ingest_issuer.py": "fc772ced8b8c1d0d433179fcc04765ed1b273438",
+        "scripts/audit_p4_4f_current_fotmob_exact_lane_caller_migration.py": "74dc0f87592bf956ab649070d9059075e2645989",
+        "scripts/audit_p4_4g_current_fotmob_canonical_only_workflow.py": "0884f6837db4c27745f67601574a2a9f20e97df2",
+        "scripts/audit_p4_4h_current_shadow_canonical_run_migration_review.py": "ab0f2261e0a30a165b5e48ee9643feda8e4273ab",
+        "scripts/audit_port_01_source_identity_parity.py": "ef19eedecff06268f5c2c2c1b6372d240ff39df3",
+        "scripts/execute_current_shadow_daily.py": "c2ea5eb021fd7ce72bfd5447458468f75a28a101",
+        "tests/test_issue_current_fotmob_reviewed_source.py": "4fa54db086b2689b1dd7a60ae12c64f50c8eec75",
+        "tests/test_p4_4h_current_shadow_canonical_run_migration_review.py": "204a756c040bc00c36fd676449f970537209e0cf",
     }
     value = audit.base_input()
     assert {path: value["files"][path]["git_blob_sha1"] for path in expected} == expected
@@ -218,7 +226,23 @@ def test_pass1_v284_rejects_tampered_predecessor(monkeypatch, path):
         return raw + b"# tampered predecessor\n" if candidate == path else raw
 
     monkeypatch.setattr(a2, "read_authenticated_cross_contract_predecessor", tampered)
-    with pytest.raises(ValueError, match="Pass-1 V284 source predecessor/successor identity drift"):
+    with pytest.raises(ValueError, match="Pass-1 V284/V300 source predecessor/successor identity drift"):
+        audit.base_input()
+
+
+def test_pass1_v300_rejects_tampered_predecessor(monkeypatch):
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+
+    original = a2.read_authenticated_pass_a_source_predecessors
+    path = "scripts/audit_p4_4e_current_fotmob_ingest_issuer.py"
+
+    def tampered():
+        predecessors = dict(original())
+        predecessors[path] += b"# tampered predecessor\n"
+        return predecessors
+
+    monkeypatch.setattr(a2, "read_authenticated_pass_a_source_predecessors", tampered)
+    with pytest.raises(ValueError, match="Pass-1 V284/V300 source predecessor/successor identity drift"):
         audit.base_input()
 
 
@@ -232,7 +256,7 @@ def test_pass1_runner_rejects_current_mode_drift(monkeypatch):
         return current
 
     monkeypatch.setattr(audit, "git_inventory", wrong_mode)
-    with pytest.raises(ValueError, match="Pass-1 V284 source predecessor/successor identity drift"):
+    with pytest.raises(ValueError, match="Pass-1 V284/V300 source predecessor/successor identity drift"):
         audit.base_input()
 
 
