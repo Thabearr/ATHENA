@@ -399,10 +399,14 @@ def a2_historical_projection(raw):
  # chain from V3 onward after authenticate_inventory has verified it.
  successor_inventory_paths=current_successor_inventory_paths(a2)
  e3_predecessor_blobs={}
- for path in sorted(a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS):
+ for path in sorted(a2.E3_CROSS_CONTRACT_V284_SOURCE_FORWARD_PATHS):
   predecessor=a2.read_authenticated_cross_contract_predecessor(path)
   e3_predecessor_blobs[path]=hashlib.sha1(b'blob '+str(len(predecessor)).encode()+b'\0'+predecessor).hexdigest()
- new_paths=(a2.A2_PATHS-preserved_a2_successors-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|successor_inventory_paths|B1_ADDITIVE_EVIDENCE_PATHS|APP01B_ADDITIVE_PATHS|APP01C_NEW_PATHS|INCIDENT_20261010_NEW_PATHS|RUN_01B_ADDITIVE_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|E3_RUN_02A_ADDITIVE_PATHS|set(a2.E3_CROSS_CONTRACT_FIXTURE_PATHS)|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|v1.FRESH_HOLDOUT_20261015_ADDITIVE_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS
+ pass_a_predecessors=a2.read_authenticated_pass_a_source_predecessors()
+ for path in sorted(a2.E3_PASS_A_SOURCE_FORWARD_PATHS):
+  predecessor=pass_a_predecessors[path]
+  e3_predecessor_blobs[path]=hashlib.sha1(b'blob '+str(len(predecessor)).encode()+b'\0'+predecessor).hexdigest()
+ new_paths=(a2.A2_PATHS-preserved_a2_successors-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|successor_inventory_paths|B1_ADDITIVE_EVIDENCE_PATHS|APP01B_ADDITIVE_PATHS|APP01C_NEW_PATHS|INCIDENT_20261010_NEW_PATHS|RUN_01B_ADDITIVE_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|E3_RUN_02A_ADDITIVE_PATHS|set(a2.E3_CROSS_CONTRACT_FIXTURE_PATHS)|set(a2.E3_PASS_A_SOURCE_FORWARD_FIXTURE_PATHS)|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|v1.FRESH_HOLDOUT_20261015_ADDITIVE_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS
  for path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
   review.source_bytes(path)
  rows=[]
@@ -454,7 +458,7 @@ def authenticate_current_scope():
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
  generation_additions=a2_generation_additions(a2)
  successor_inventory_paths=current_successor_inventory_paths(a2)
- allowed=ALLOWED_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|successor_inventory_paths|app_successor_paths()|INCIDENT_20261010_CURRENT_PATHS|RUN_01B_ADDITIVE_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|E3_RUN_02A_ADDITIVE_PATHS|set(a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS)|set(a2.E3_CROSS_CONTRACT_FIXTURE_PATHS)|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|set(RUN_02A_PRE_PREDECESSOR_BLOBS)|v1.FRESH_HOLDOUT_20261015_ADDITIVE_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS|set(v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS)
+ allowed=ALLOWED_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|successor_inventory_paths|app_successor_paths()|INCIDENT_20261010_CURRENT_PATHS|RUN_01B_ADDITIVE_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|E3_RUN_02A_ADDITIVE_PATHS|set(a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS)|set(a2.E3_CROSS_CONTRACT_FIXTURE_PATHS)|set(a2.E3_PASS_A_SOURCE_FORWARD_FIXTURE_PATHS)|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|set(RUN_02A_PRE_PREDECESSOR_BLOBS)|v1.FRESH_HOLDOUT_20261015_ADDITIVE_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS|set(v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS)
  git=review.retention.v4.v3._git
  review.require(review.sha256(unchanged_inventory(a2_historical_projection(git('ls-tree','-r','HEAD'))))==UNCHANGED_SCOPE_SHA,'Pass-A runtime/workflow/ledger/historical source change outside bounded evidence scope')
  review.require(set(git('diff','--name-only','HEAD').decode().splitlines())<=allowed,'unapproved dirty source in Pass A or its exact A2-generation/evidence seam')
@@ -482,9 +486,10 @@ def historical_v1_git_view():
   if args==('diff','--name-only','HEAD'):
    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
    generation_additions=a2_generation_additions(a2)
-   return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|app_successor_paths()|INCIDENT_20261010_CURRENT_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|E3_RUN_02A_ADDITIVE_PATHS|set(a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS)|set(a2.E3_CROSS_CONTRACT_FIXTURE_PATHS)|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|set(RUN_02A_PRE_PREDECESSOR_BLOBS)|v1.FRESH_HOLDOUT_20261015_ADDITIVE_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS|set(v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS))
+   return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|app_successor_paths()|INCIDENT_20261010_CURRENT_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|E3_RUN_02A_ADDITIVE_PATHS|set(a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS)|set(a2.E3_CROSS_CONTRACT_FIXTURE_PATHS)|set(a2.E3_PASS_A_SOURCE_FORWARD_FIXTURE_PATHS)|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|set(RUN_02A_PRE_PREDECESSOR_BLOBS)|v1.FRESH_HOLDOUT_20261015_ADDITIVE_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS|set(v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS))
   return raw
  original_identity=module._source_identity
+ pass_a_predecessors={}
  def projected_identity(path,**kwargs):
   from scripts import audit_data_01c_restore_portability as portability
   if path==portability.WORKFLOW:
@@ -494,14 +499,27 @@ def historical_v1_git_view():
   if path in b4.B4_WORKFLOW_PREDECESSORS:
    return {'path':path,**portability.identity(b4._historical_b4_workflow_bytes(path))}
   from scripts import audit_core_01d_ci_offline_transport_boundary as a2
-  if path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
-   transition=a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]
+  if path in a2.E3_CROSS_CONTRACT_V284_SOURCE_FORWARD_PATHS:
+   transition=a2.resolve_historical_source_transition(
+    path,expected_generation=a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION)
    raw=a2.read_authenticated_cross_contract_predecessor(path)
    normalized=raw.replace(b'\r\n',b'\n')
    blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
    review.require(blob==transition['predecessor_git_blob_sha1']
                   and hashlib.sha256(normalized).hexdigest()==transition['predecessor_lf_source_sha256'],
-                  'Pass-A exact source-forward identity drift: '+path)
+                  'Pass-A exact V284 source-forward identity drift: '+path)
+   return {'path':path,'git_blob_sha1':blob,'source_sha256':hashlib.sha256(normalized).hexdigest()}
+  if path in a2.E3_PASS_A_SOURCE_FORWARD_PATHS:
+   transition=a2.resolve_historical_source_transition(
+    path,expected_generation=a2.E3_PASS_A_SOURCE_FORWARD_AUTHORIZATION_GENERATION)
+   if not pass_a_predecessors:
+    pass_a_predecessors.update(a2.read_authenticated_pass_a_source_predecessors())
+   raw=pass_a_predecessors[path]
+   normalized=raw.replace(b'\r\n',b'\n')
+   blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+   review.require(blob==transition['predecessor_git_blob_sha1']
+                  and hashlib.sha256(normalized).hexdigest()==transition['predecessor_lf_source_sha256'],
+                  'Pass-A exact V300 source-forward identity drift: '+path)
    return {'path':path,'git_blob_sha1':blob,'source_sha256':hashlib.sha256(normalized).hexdigest()}
   return original_identity(path,**kwargs)
  module._git=projected
