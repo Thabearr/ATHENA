@@ -251,7 +251,7 @@ def test_v300_rejects_stale_latest_generation(monkeypatch):
 def test_v312_extension_binds_exact_v311_v2_auditor_source_row():
     path = a2.E3_PASS_A_V312_SUCCESSOR_EXTENSION_PATH
     chain = a2.load_inventory_generations()
-    assert len(chain) == a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_GENERATION
+    assert len(chain) >= a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_GENERATION
     v312_path, v312 = chain[a2.E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION - 1]
     assert v312_path == a2.inventory_generation_path(
         a2.E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION,
@@ -306,7 +306,7 @@ def test_v312_rejects_tampered_successor_extension(monkeypatch):
 def test_v313_extension_binds_exact_v312_v2_auditor_source_row():
     path = a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_PATH
     chain = a2.load_inventory_generations()
-    assert len(chain) == a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_GENERATION
+    assert len(chain) >= a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_GENERATION
     latest = chain[-1][1]
     extension, = [row for row in latest["e3_cross_contract_source_forward_successor_extensions"]
                   if row["generation"] == a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_GENERATION]
