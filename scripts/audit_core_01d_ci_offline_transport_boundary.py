@@ -479,6 +479,13 @@ E3_PASS_A_SOURCE_FORWARD_FIXTURE_PATHS = frozenset({
     E3_PASS_A_SOURCE_FORWARD_FIXTURE_DIRECTORY + "/original-test-issue-current-fotmob-reviewed-source.py.txt",
     E3_PASS_A_SOURCE_FORWARD_FIXTURE_DIRECTORY + "/original-test-p4-4h-current-shadow-canonical-run-migration-review.py.txt",
 })
+# Three pre-existing B3/B5/B6 snapshots share the directory. They remain owned
+# by their original Checkpoint-E predecessor map and are not V300 sources.
+E3_PASS_A_SOURCE_FORWARD_EXISTING_FIXTURE_PATHS = frozenset({
+    E3_PASS_A_SOURCE_FORWARD_FIXTURE_DIRECTORY + "/original-audit-core-01d-frozen-artifact-replay-authority-b5.py.txt",
+    E3_PASS_A_SOURCE_FORWARD_FIXTURE_DIRECTORY + "/original-audit-core-01d-owner-one-shot-issue-comment-authority-b3.py.txt",
+    E3_PASS_A_SOURCE_FORWARD_FIXTURE_DIRECTORY + "/original-audit-core-01d-scheduled-shadow-ownership.py.txt",
+})
 E3_PASS_A_COMPAT_SUCCESSOR_EXTENSION_PREDECESSOR_GENERATION = 300
 E3_PASS_A_COMPAT_SUCCESSOR_EXTENSION_GENERATION = 301
 E3_PASS_A_COMPAT_SUCCESSOR_EXTENSION_PATH = \
@@ -1788,7 +1795,8 @@ def _authenticated_pass_a_source_inventory_state(chain=None):
         E3_PASS_A_SOURCE_FORWARD_FIXTURE_DIRECTORY + "/" + child.name
         for child in fixture_directory.iterdir()
     }
-    require(actual_fixtures == set(E3_PASS_A_SOURCE_FORWARD_FIXTURE_PATHS),
+    require(actual_fixtures == (set(E3_PASS_A_SOURCE_FORWARD_FIXTURE_PATHS)
+                                | set(E3_PASS_A_SOURCE_FORWARD_EXISTING_FIXTURE_PATHS)),
             "E3 Pass-A V300 fixture directory has missing, extra, or renamed evidence")
 
     latest_path, latest = chain[-1]

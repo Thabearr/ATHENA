@@ -106,6 +106,11 @@ def test_v284_public_matrix_stays_exact_and_v300_requires_its_own_generation():
     assert set(a2.E3_CROSS_CONTRACT_FIXTURE_PATHS).isdisjoint(
         a2.E3_PASS_A_SOURCE_FORWARD_FIXTURE_PATHS
     )
+    assert len(a2.E3_PASS_A_SOURCE_FORWARD_FIXTURE_PATHS) == 8
+    assert len(a2.E3_PASS_A_SOURCE_FORWARD_EXISTING_FIXTURE_PATHS) == 3
+    assert a2.E3_PASS_A_SOURCE_FORWARD_FIXTURE_PATHS.isdisjoint(
+        a2.E3_PASS_A_SOURCE_FORWARD_EXISTING_FIXTURE_PATHS
+    )
 
     for path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
         assert a2.resolve_historical_source_transition(
