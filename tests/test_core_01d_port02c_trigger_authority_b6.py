@@ -92,14 +92,24 @@ def test_depth_one_source_forward_projection_rejects_checkout_tree_mutation(monk
         checkout[path] = (mode, kind, "0" * 40)
 
     original_git = b6._git
+    original_boundary_git = boundary.git
 
     def shallow_checkout_git(*args):
         if b6.BASE_MAIN in args:
             raise subprocess.CalledProcessError(128, ["git", *args])
         return original_git(*args)
 
+    def wrong_head_boundary_git(*args):
+        result = original_boundary_git(*args)
+        if mutation == "wrong_head_blob" and args == ("ls-tree", "-z", "HEAD", "--", path):
+            metadata, tree_path = result.rstrip(b"\0").split(b"\t", 1)
+            mode, kind, _blob = metadata.decode("ascii").split(" ")
+            return f"{mode} {kind} {'0' * 40}\t".encode("ascii") + tree_path + b"\0"
+        return result
+
     monkeypatch.setattr(b6, "_git", shallow_checkout_git)
     monkeypatch.setattr(b6, "_checkout_tree_entries", lambda: checkout)
+    monkeypatch.setattr(boundary, "git", wrong_head_boundary_git)
     b6._base_tree_entries.cache_clear()
     try:
         with pytest.raises(AssertionError):

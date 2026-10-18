@@ -398,9 +398,7 @@ def _base_tree_entries() -> dict[str, tuple[str, str, str]]:
                     "required B6 source is not a checked-out regular Git blob: " + path)
             mode, _kind, blob = mode_kind_blob
             if path in boundary.SOURCE_FORWARD_TRANSITIONS:
-                transition = boundary.SOURCE_FORWARD_TRANSITIONS[path]
-                require(mode == "100644" and blob == transition["successor_git_blob_sha1"],
-                        "B6 source-forward checked-out successor blob or mode drift: " + path)
+                require(mode == "100644", "B6 source-forward successor is not a regular source file: " + path)
                 boundary.read_authenticated_forward_predecessor(path)
                 blob = row.get("git_blob_sha1")
             elif (
