@@ -1007,6 +1007,7 @@ def test_product_fotmob_pc_upcoming_and_event_sources_share_the_get_port(
     import socket
     import traceback
     import base64
+    from datetime import datetime, timezone
 
     from runtime import current_shadow_operation_authority as authority_module
     from runtime.current_shadow_operation_authority import ProviderGetResponse
@@ -1044,7 +1045,9 @@ def test_product_fotmob_pc_upcoming_and_event_sources_share_the_get_port(
         product_fotmob._fetch_product_authorized_fotmob_source(
             authority, request_date=date, timezone="UTC", ccode3="NGA",
         )
-        nonce = 1_893_456_000_000
+        # PC-upcoming's reviewed source contract requires a fresh epoch-ms
+        # query marker. This value does not pause execution or grant authority.
+        nonce = int(datetime.now(timezone.utc).timestamp() * 1000)
         pc_source._fetch_page(1, nonce, operation_epoch=1)
         event_source._network_fetch("sr:match:123456789")
         return tuple(call["provider"] for call in calls)
