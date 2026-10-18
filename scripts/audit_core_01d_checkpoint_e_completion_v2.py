@@ -158,6 +158,9 @@ E3_RUN_02A_ADDITIVE_PATHS={
  'tests/fixtures/core_01d/pass_a_v2_source_predecessors/test-p3-0-canonical-pre-router-pipeline.py.txt',
  'tests/fixtures/core_01d/pass4_source_predecessors/original-port02c-trigger-authority-b6-v1.py.txt',
  'tests/fixtures/core_01d/pass4_source_predecessors/original-test-checkpoint-e-completion-v2-v1.py.txt',
+ # Exact V9 predecessor evidence was added after immutable Pass-A V2; the
+ # V1 Pass-4 descriptor authenticates these bytes without changing V2's tree.
+ 'tests/fixtures/core_01d/pass4_source_predecessors/original-test-checkpoint-e-completion-v9-v1.py.txt',
  'tests/fixtures/core_01d/e3_v309_source_forward/original-checkpoint-e-completion-v2-v308.py.txt',
 }
 # These exact evidence copies are additive E3 source records. D5 remains the

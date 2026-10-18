@@ -243,7 +243,7 @@ def test_v300_rejects_stale_latest_generation(monkeypatch):
     monkeypatch.setattr(a2, "load_inventory_generations", stale_latest)
     with pytest.raises(
         AssertionError,
-        match="V300/V301/V309/V312 authorization chain or its complete ancestry is missing",
+        match="V300/V301/V309/V312/V313 authorization chain or its complete ancestry is missing",
     ):
         a2.read_authenticated_pass_a_source_predecessor(next(iter(EXPECTED)))
 
@@ -251,9 +251,12 @@ def test_v300_rejects_stale_latest_generation(monkeypatch):
 def test_v312_extension_binds_exact_v311_v2_auditor_source_row():
     path = a2.E3_PASS_A_V312_SUCCESSOR_EXTENSION_PATH
     chain = a2.load_inventory_generations()
-    assert len(chain) == a2.E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION
-    latest = chain[-1][1]
-    extension, = [row for row in latest["e3_cross_contract_source_forward_successor_extensions"]
+    assert len(chain) == a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_GENERATION
+    v312_path, v312 = chain[a2.E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION - 1]
+    assert v312_path == a2.inventory_generation_path(
+        a2.E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION,
+    )
+    extension, = [row for row in v312["e3_cross_contract_source_forward_successor_extensions"]
                   if row["generation"] == a2.E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION]
     predecessor = a2.E3_PASS_A_V312_SUCCESSOR_EXTENSION_PREDECESSOR
     successor = a2.E3_PASS_A_V312_SUCCESSOR_EXTENSION_IDENTITY
@@ -278,7 +281,8 @@ def test_v312_extension_binds_exact_v311_v2_auditor_source_row():
     assert extension["authority_granted"] is False
     assert extension["historical_bytes_changed"] is False
     assert extension["rewritten"] is False
-    assert a2._authenticated_e3_successor_identity(path, chain, latest) == extension["successor"]
+    v312_rows = {row["path"]: row["lf_source_sha256"] for row in v312["source_identities"]}
+    assert v312_rows[path] == successor[1]
 
 
 def test_v312_rejects_tampered_successor_extension(monkeypatch):
@@ -286,10 +290,61 @@ def test_v312_rejects_tampered_successor_extension(monkeypatch):
 
     def tampered_latest():
         chain = original()
+        path, v312 = chain[a2.E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION - 1]
+        v312 = deepcopy(v312)
+        extension, = [row for row in v312["e3_cross_contract_source_forward_successor_extensions"]
+                      if row["generation"] == a2.E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION]
+        extension["successor"]["lf_source_sha256"] = "0" * 64
+        chain[a2.E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION - 1] = (path, v312)
+        return chain
+
+    monkeypatch.setattr(a2, "load_inventory_generations", tampered_latest)
+    with pytest.raises(AssertionError, match="V312 extension does not append to exact V311"):
+        a2.read_authenticated_pass_a_source_predecessor(next(iter(EXPECTED)))
+
+
+def test_v313_extension_binds_exact_v312_v2_auditor_source_row():
+    path = a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_PATH
+    chain = a2.load_inventory_generations()
+    assert len(chain) == a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_GENERATION
+    latest = chain[-1][1]
+    extension, = [row for row in latest["e3_cross_contract_source_forward_successor_extensions"]
+                  if row["generation"] == a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_GENERATION]
+    predecessor = a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_PREDECESSOR
+    successor = a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_IDENTITY
+    assert extension["predecessor_inventory"] == {
+        "path": a2.inventory_generation_path(312),
+        "canonical_sha256": a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_PREDECESSOR_SHA256,
+        "generation": 312,
+        "rewritten": False,
+    }
+    assert extension["previous_successor"] == {
+        "generation": 312,
+        "canonical_sha256": a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_PREDECESSOR_SHA256,
+        "git_blob_sha1": predecessor["git_blob_sha1"],
+        "lf_source_sha256": predecessor["lf_source_sha256"],
+        "rewritten": False,
+    }
+    assert extension["successor"] == {
+        "git_blob_sha1": successor[0],
+        "lf_source_sha256": successor[1],
+        "git_mode": "100644",
+    }
+    assert extension["authority_granted"] is False
+    assert extension["historical_bytes_changed"] is False
+    assert extension["rewritten"] is False
+    assert a2._authenticated_e3_successor_identity(path, chain, latest) == extension["successor"]
+
+
+def test_v313_rejects_tampered_successor_extension(monkeypatch):
+    original = a2.load_inventory_generations
+
+    def tampered_latest():
+        chain = original()
         path, latest = chain[-1]
         latest = deepcopy(latest)
         extension, = [row for row in latest["e3_cross_contract_source_forward_successor_extensions"]
-                      if row["generation"] == a2.E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION]
+                      if row["generation"] == a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_GENERATION]
         extension["successor"]["lf_source_sha256"] = "0" * 64
         chain[-1] = (path, latest)
         return chain
