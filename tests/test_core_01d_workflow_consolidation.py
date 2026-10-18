@@ -207,6 +207,8 @@ def test_pass1_v284_v300_sources_use_exact_predecessor_projection():
         "scripts/execute_current_shadow_daily.py": "c2ea5eb021fd7ce72bfd5447458468f75a28a101",
         "tests/test_issue_current_fotmob_reviewed_source.py": "4fa54db086b2689b1dd7a60ae12c64f50c8eec75",
         "tests/test_p4_4h_current_shadow_canonical_run_migration_review.py": "204a756c040bc00c36fd676449f970537209e0cf",
+        "tests/portability/test_port_01_source_identity_parity.py": "1bf0d561db831866c322a4c30fa9bc06cd4e844e",
+        "tests/test_p3_0_canonical_pre_router_pipeline.py": "be7a93f2b7788b7cdb011a4567788018d6e67bfa",
     }
     value = audit.base_input()
     assert {path: value["files"][path]["git_blob_sha1"] for path in expected} == expected
@@ -243,6 +245,22 @@ def test_pass1_v300_rejects_tampered_predecessor(monkeypatch):
 
     monkeypatch.setattr(a2, "read_authenticated_pass_a_source_predecessors", tampered)
     with pytest.raises(ValueError, match="Pass-1 V284/V300 source predecessor/successor identity drift"):
+        audit.base_input()
+
+
+def test_pass1_v2_compat_predecessor_tampering_rejected(monkeypatch):
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as pass_a_v2
+
+    original = pass_a_v2.authenticate_pass_a_e3_compat_predecessors
+    path = "tests/portability/test_port_01_source_identity_parity.py"
+
+    def tampered(a2, latest):
+        predecessors = dict(original(a2, latest))
+        predecessors[path] = "0" * 40
+        return predecessors
+
+    monkeypatch.setattr(pass_a_v2, "authenticate_pass_a_e3_compat_predecessors", tampered)
+    with pytest.raises(ValueError, match="Pass-1 Pass-A V2 source predecessor identity drift"):
         audit.base_input()
 
 

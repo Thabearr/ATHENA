@@ -837,7 +837,9 @@ def base_input():
         fresh_workflow_after_blob = forward["workflow_blob"]
         supporting_source_blobs = forward["supporting_source_blobs"]
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as pass_a_v2
     pass_a_predecessors = None
+    pass_a_v2_compat_predecessors = None
     for path, identity in value["files"].items():
         if path == HISTORICAL_AUDIT:
             require(current.get(path) in (identity, {"mode": identity["mode"], "git_blob_sha1": audit_after}), "historical audit forward Git identity differs")
@@ -891,6 +893,22 @@ def base_input():
                 and current.get(path) is not None
                 and current[path]["mode"] == identity["mode"],
                 "Pass-A preserved A2 successor differs from its exact V1 base identity: " + path,
+            )
+        elif path in pass_a_v2.PASS_A_V2_AUTHENTICATED_SOURCE_PREDECESSORS:
+            if pass_a_v2_compat_predecessors is None:
+                latest_a2 = a2.authenticate_inventory()
+                pass_a_v2_compat_predecessors = pass_a_v2.authenticate_pass_a_e3_compat_predecessors(
+                    a2, latest_a2,
+                )
+            require(
+                identity == {
+                    "mode": "100644",
+                    "git_blob_sha1": pass_a_v2.PASS_A_E3_COMPAT_SOURCE_PREDECESSORS[path][1],
+                }
+                and current.get(path) is not None
+                and current[path]["mode"] == "100644"
+                and pass_a_v2_compat_predecessors[path] == identity["git_blob_sha1"],
+                "Pass-1 Pass-A V2 source predecessor identity drift: " + path,
             )
         elif path in (a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS
                       | a2.E3_PASS_A_SOURCE_FORWARD_PATHS):
