@@ -191,23 +191,31 @@ def test_base_input_tamper_rejected_before_any_git_scan(monkeypatch):
     with pytest.raises(ValueError, match="base inventory identity drift"): audit.base_input()
 
 
-def test_pass1_runner_uses_exact_v284_predecessor_projection():
-    path = "domain/current_shadow_all_market_runner.py"
-    value = audit.base_input()
-    assert value["files"][path] == {
-        "mode": "100644",
-        "git_blob_sha1": "b21a9d8a24ac60def6d76e7111ae8a473e9f1a8c",
+def test_pass1_v284_sources_use_exact_predecessor_projection():
+    expected = {
+        "domain/current_shadow_all_market_runner.py": "b21a9d8a24ac60def6d76e7111ae8a473e9f1a8c",
+        "domain/current_shadow_sportybet_pc_upcoming_discovery.py": "fa2069a2ea1201a93a84b5ce3856f9d9574dea71",
+        "domain/reviewed_fixture_catalog_admission_source_replay.py": "b2fd258fa89afc492da35cbbe242b15203040759",
+        "domain/sportybet_live_event_quote_evidence.py": "096d54fe7493f6d81cdf3c4af7c4a9333c75fadc",
+        "scripts/execute_current_shadow_request.py": "52519a5f32cc0d8c130ea053fde5647b751e3fc0",
+        "scripts/issue_current_fotmob_reviewed_source.py": "b50689971ee20cb6800145317a0e9fcb3486f40f",
     }
+    value = audit.base_input()
+    assert {path: value["files"][path]["git_blob_sha1"] for path in expected} == expected
 
 
-def test_pass1_runner_rejects_tampered_v284_predecessor(monkeypatch):
+@pytest.mark.parametrize("path", [
+    "domain/current_shadow_all_market_runner.py",
+    "domain/current_shadow_sportybet_pc_upcoming_discovery.py",
+])
+def test_pass1_v284_rejects_tampered_predecessor(monkeypatch, path):
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
 
     original = a2.read_authenticated_cross_contract_predecessor
 
-    def tampered(path):
-        raw = original(path)
-        return raw + b"# tampered predecessor\n" if path == "domain/current_shadow_all_market_runner.py" else raw
+    def tampered(candidate):
+        raw = original(candidate)
+        return raw + b"# tampered predecessor\n" if candidate == path else raw
 
     monkeypatch.setattr(a2, "read_authenticated_cross_contract_predecessor", tampered)
     with pytest.raises(ValueError, match="Pass-1 V284 source predecessor/successor identity drift"):

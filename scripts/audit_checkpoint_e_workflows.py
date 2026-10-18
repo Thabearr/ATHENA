@@ -836,6 +836,7 @@ def base_input():
         )
         fresh_workflow_after_blob = forward["workflow_blob"]
         supporting_source_blobs = forward["supporting_source_blobs"]
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     for path, identity in value["files"].items():
         if path == HISTORICAL_AUDIT:
             require(current.get(path) in (identity, {"mode": identity["mode"], "git_blob_sha1": audit_after}), "historical audit forward Git identity differs")
@@ -890,32 +891,38 @@ def base_input():
                 and current[path]["mode"] == identity["mode"],
                 "Pass-A preserved A2 successor differs from its exact V1 base identity: " + path,
             )
-        elif path == "domain/current_shadow_all_market_runner.py":
-            from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+        elif path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
             transition = a2.resolve_historical_source_transition(
                 path,
                 expected_generation=a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION,
             )
-            predecessor = a2.read_authenticated_cross_contract_predecessor(path)
-            predecessor_lf = predecessor.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-            predecessor_blob = hashlib.sha1(
-                b"blob " + str(len(predecessor)).encode("ascii") + b"\0" + predecessor
-            ).hexdigest()
-            require(
-                len(predecessor) == transition["predecessor_byte_size"]
-                and predecessor_blob == transition["predecessor_git_blob_sha1"]
-                and hashlib.sha256(predecessor_lf).hexdigest()
-                    == transition["predecessor_lf_source_sha256"]
-                and identity == {
-                    "mode": "100644",
-                    "git_blob_sha1": transition["predecessor_git_blob_sha1"],
-                }
-                and current.get(path) == {
-                    "mode": "100644",
-                    "git_blob_sha1": transition["successor_git_blob_sha1"],
-                },
-                "Pass-1 V284 source predecessor/successor identity drift: " + path,
-            )
+            expected_predecessor = {
+                "mode": "100644",
+                "git_blob_sha1": transition["predecessor_git_blob_sha1"],
+            }
+            if identity == expected_predecessor and current.get(path) != identity:
+                predecessor = a2.read_authenticated_cross_contract_predecessor(path)
+                predecessor_lf = predecessor.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+                predecessor_blob = hashlib.sha1(
+                    b"blob " + str(len(predecessor)).encode("ascii") + b"\0" + predecessor
+                ).hexdigest()
+                require(
+                    len(predecessor) == transition["predecessor_byte_size"]
+                    and predecessor_blob == transition["predecessor_git_blob_sha1"]
+                    and hashlib.sha256(predecessor_lf).hexdigest()
+                        == transition["predecessor_lf_source_sha256"]
+                    and current.get(path) == {
+                        "mode": "100644",
+                        "git_blob_sha1": transition["successor_git_blob_sha1"],
+                    },
+                    "Pass-1 V284 source predecessor/successor identity drift: " + path,
+                )
+            else:
+                # An earlier historical owner may project a different exact
+                # Pass-1 blob for this V284 path. Preserve that precedence;
+                # only a base row equal to the V284 predecessor can use this
+                # transition.
+                require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
         else:
             require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
     # Git can be clean while the working tree has edits. Verify inspected source
@@ -926,7 +933,6 @@ def base_input():
         capture_output=True, check=True,
     ).stdout.decode().splitlines()
     require(len(hashed) == len(value["scan_paths"]), "worktree filtered hash inventory incomplete")
-    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     latest_a2 = a2.authenticate_inventory()
     latest_a2_paths = {row["path"] for row in latest_a2["source_identities"]}
     for path in PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS:
