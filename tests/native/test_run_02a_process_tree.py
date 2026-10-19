@@ -273,6 +273,7 @@ def test_native_crlf_checkout_keeps_e1_v284_and_v300_exact_head_predecessors(
     second_e1_blob = e1.FORWARD_EVOLVED_SOURCES[declarations[1][1]]["predecessor_git_blob_sha1"]
     second_e1_object = fixture_root / ".git" / "objects" / second_e1_blob[:2] / second_e1_blob[2:]
     assert second_e1_object.is_file(), "E1 fixture object should remain loose in this bounded test repo"
+    second_e1_object.chmod(stat.S_IREAD | stat.S_IWRITE)
     second_e1_object.unlink()
     with pytest.raises(AssertionError, match="cannot be authenticated from HEAD"):
         e1._predecessor_bytes(declarations[1][1], root=fixture_root)
@@ -286,6 +287,7 @@ def test_native_crlf_checkout_keeps_e1_v284_and_v300_exact_head_predecessors(
     blob = git("rev-parse", "HEAD:" + a2_fixture).stdout.decode("ascii").strip()
     object_path = fixture_root / ".git" / "objects" / blob[:2] / blob[2:]
     assert object_path.is_file(), "fixture object should remain a loose object in this bounded test repo"
+    object_path.chmod(stat.S_IREAD | stat.S_IWRITE)
     object_path.unlink()
     with pytest.raises(AssertionError, match="HEAD blob is unavailable"):
         a2._e3_read_exact_head_fixture(
