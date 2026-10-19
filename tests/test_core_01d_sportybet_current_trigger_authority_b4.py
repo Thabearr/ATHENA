@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import stat
 import subprocess
 from copy import deepcopy
@@ -412,16 +413,17 @@ def test_e3_capture_anchor_digest_correction_is_append_only_and_exact(monkeypatc
 @pytest.mark.parametrize("path", sorted(b4.boundary.SOURCE_FORWARD_ALLOWED_PATHS))
 def test_e3_three_source_forward_rejects_each_predecessor_byte_flip(monkeypatch, path):
     fixture = b4.ROOT / b4.boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]["predecessor_fixture"]
-    original_read_bytes = Path.read_bytes
+    original_open = Path.open
 
-    def tampered_bytes(candidate):
-        raw = original_read_bytes(candidate)
-        if candidate == fixture:
-            return bytes([raw[0] ^ 1]) + raw[1:]
-        return raw
+    def tampered_open(candidate, mode="r", *args, **kwargs):
+        if candidate == fixture and mode == "rb":
+            with original_open(candidate, mode, *args, **kwargs) as handle:
+                raw = handle.read()
+            return io.BytesIO(bytes([raw[0] ^ 1]) + raw[1:])
+        return original_open(candidate, mode, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_bytes", tampered_bytes)
-    with pytest.raises(AssertionError, match="predecessor fixture identity mismatch"):
+    monkeypatch.setattr(Path, "open", tampered_open)
+    with pytest.raises(AssertionError, match="checkout differs from exact HEAD text"):
         b4.boundary.read_authenticated_cross_contract_predecessor(path)
 
 
@@ -431,7 +433,7 @@ def test_e3_forward_source_rejects_fixture_path_mode_and_identity_mutations(monk
     a2 = b4.boundary
     path = "domain/current_shadow_all_market_runner.py"
     fixture = b4.ROOT / a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]["predecessor_fixture"]
-    original_read_bytes = Path.read_bytes
+    original_open = Path.open
     original_lstat = Path.lstat
     original_git = a2.git
     transition = deepcopy(a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path])
@@ -460,13 +462,14 @@ def test_e3_forward_source_rejects_fixture_path_mode_and_identity_mutations(monk
         with pytest.raises(AssertionError, match="fixture is unavailable"):
             a2.read_authenticated_cross_contract_predecessor(path)
     elif mutation == "invalid_encoding":
-        def invalid_encoding(candidate):
-            raw = original_read_bytes(candidate)
-            if candidate == fixture:
-                return b"\xff" + raw[1:]
-            return raw
-        monkeypatch.setattr(Path, "read_bytes", invalid_encoding)
-        with pytest.raises(AssertionError, match="fixture encoding is invalid"):
+        def invalid_encoding(candidate, mode="r", *args, **kwargs):
+            if candidate == fixture and mode == "rb":
+                with original_open(candidate, mode, *args, **kwargs) as handle:
+                    raw = handle.read()
+                return io.BytesIO(b"\xff" + raw[1:])
+            return original_open(candidate, mode, *args, **kwargs)
+        monkeypatch.setattr(Path, "open", invalid_encoding)
+        with pytest.raises(AssertionError, match="checkout differs from exact HEAD text"):
             a2.read_authenticated_cross_contract_predecessor(path)
     elif mutation == "symlink":
         def linked(candidate):
@@ -485,14 +488,14 @@ def test_e3_forward_source_rejects_fixture_path_mode_and_identity_mutations(monk
                 return b"100755 " + kind.encode() + b" " + blob.encode() + b"\t" + tree_path + b"\0"
             return result
         monkeypatch.setattr(a2, "git", wrong_mode)
-        with pytest.raises(AssertionError, match="committed predecessor fixture identity mismatch"):
+        with pytest.raises(AssertionError, match="HEAD mode/path/blob mismatch"):
             a2.read_authenticated_cross_contract_predecessor(path)
     elif mutation == "wrong_blob":
         monkeypatch.setattr(a2, "E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS", {**a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS, path: transition})
-        with pytest.raises(AssertionError, match="predecessor fixture identity mismatch"):
+        with pytest.raises(AssertionError, match="HEAD mode/path/blob mismatch"):
             a2.read_authenticated_cross_contract_predecessor(path)
     elif mutation in {"wrong_size", "wrong_digest"}:
-        with pytest.raises(AssertionError, match="fixture (size|identity) mismatch"):
+        with pytest.raises(AssertionError, match="HEAD object size mismatch|exact HEAD identity mismatch"):
             a2.read_authenticated_cross_contract_predecessor(path)
 
 
@@ -556,7 +559,7 @@ def test_e3_cross_contract_predecessor_rejects_cross_source_fixture(monkeypatch)
         "E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS",
         {**a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS, path: transition},
     )
-    with pytest.raises(AssertionError, match="predecessor fixture (size|identity) mismatch"):
+    with pytest.raises(AssertionError, match="HEAD mode/path/blob mismatch"):
         a2.read_authenticated_cross_contract_predecessor(path)
 
 
@@ -738,7 +741,10 @@ def test_e3_three_source_forward_rejects_forged_a2_authorization_chain(monkeypat
 
     monkeypatch.setattr(a2, "load_inventory_generations", altered_chain)
     if mutation == "stale_latest_generation":
-        with pytest.raises(AssertionError, match="E3 cross-contract|E3 Pass-A latest inventory"):
+        with pytest.raises(
+            AssertionError,
+            match="E3 cross-contract|E3 Pass-A latest inventory|current A2 source differs from authenticated latest A2",
+        ):
             a2.read_authenticated_cross_contract_predecessor(path)
     else:
         with pytest.raises(AssertionError):
