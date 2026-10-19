@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 from pathlib import Path
 import sqlite3
@@ -525,18 +526,18 @@ def test_later_a2_generation_cannot_hide_e1_predecessor_fixture_tamper(monkeypat
     latest = boundary.authenticate_inventory()
     fixture = e1.ROOT / e1.FORWARD_EVOLVED_SOURCES[
         "tests/test_data_01c_app_storage.py"]["predecessor_fixture"]
-    original_read_bytes = Path.read_bytes
+    original_open = Path.open
 
-    def read_tampered_predecessor(path):
-        raw = original_read_bytes(path)
-        if path == fixture:
-            return raw + b"\n# tampered after a later A2 generation\n"
-        return raw
+    def read_tampered_predecessor(path, *args, **kwargs):
+        if path == fixture and args and args[0] == "rb":
+            raw = original_open(path, *args, **kwargs).read()
+            return io.BytesIO(raw + b"\n# tampered after a later A2 generation\n")
+        return original_open(path, *args, **kwargs)
 
     monkeypatch.setattr(boundary, "authenticate_inventory", lambda: latest)
-    monkeypatch.setattr(Path, "read_bytes", read_tampered_predecessor)
+    monkeypatch.setattr(Path, "open", read_tampered_predecessor)
 
-    with pytest.raises(AssertionError, match="E1 predecessor fixture identity drift"):
+    with pytest.raises(AssertionError, match="E1 predecessor fixture worktree differs from exact HEAD text"):
         e1.authenticate_successor()
 
 
