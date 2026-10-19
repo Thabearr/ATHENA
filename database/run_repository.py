@@ -1449,6 +1449,349 @@ class DurableRunRepository:
             self._validate_worker_progress(value)
             return value
 
+    @staticmethod
+    def _operation_events_for_attempt(conn, run_id, operation_id, event_type):
+        """Return integrity-checked events for one operation identity."""
+        rows = conn.execute(
+            "SELECT sequence,state_version,payload_bytes,payload_sha256 "
+            "FROM app_run_events WHERE run_id=? AND event_type=? ORDER BY sequence",
+            (run_id, event_type),
+        ).fetchall()
+        matches = []
+        for sequence, state_version, raw, digest in rows:
+            try:
+                value = json.loads(raw)
+            except (TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise RunRepositoryError("stored external-operation event is malformed") from exc
+            if (hashlib.sha256(raw).hexdigest() != digest
+                    or canonical_json_bytes(value) != raw or type(value) is not dict):
+                raise RunRepositoryError("stored external-operation event integrity mismatch")
+            if value.get("operation_id") == operation_id:
+                matches.append((sequence, state_version, value))
+        return matches
+
+    def _verify_provider_get_evidence(self, conn, run_id, attempt_id, operation):
+        """Authenticate one exact provider GET owner, lineage, and ledger state."""
+        (operation_id, operation_kind, intent_sha256, authority_sha256,
+         input_artifact_id, idempotency_key, state, prepared_at, sent_at,
+         completed_at, response_artifact_id, error_code) = operation
+        if (operation_kind != "CURRENT_SHADOW_PROVIDER_GET_V1"
+                or state not in {"PREPARED", "SENT", "CONFIRMED", "FAILED", "OUTCOME_UNKNOWN"}
+                or type(prepared_at) is not str or not prepared_at
+                or type(intent_sha256) is not str or re.fullmatch(r"[0-9a-f]{64}", intent_sha256) is None
+                or type(authority_sha256) is not str or re.fullmatch(r"[0-9a-f]{64}", authority_sha256) is None
+                or type(idempotency_key) is not str
+                or re.fullmatch(r"CSGET-[0-9a-f]{64}", idempotency_key) is None
+                or operation_id != "provider-get-" + hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()
+                or input_artifact_id != "provider-get-input-" + intent_sha256
+                or (state == "PREPARED" and (sent_at is not None or completed_at is not None
+                                               or response_artifact_id is not None or error_code is not None))
+                or (state == "SENT" and (type(sent_at) is not str or not sent_at
+                                           or completed_at is not None or response_artifact_id is not None
+                                           or error_code is not None))
+                or (state == "CONFIRMED" and (type(sent_at) is not str or not sent_at
+                                                or type(completed_at) is not str or not completed_at
+                                                or type(response_artifact_id) is not str or error_code is not None))
+                or (state == "FAILED" and (sent_at is not None or type(completed_at) is not str
+                                             or not completed_at or response_artifact_id is not None
+                                             or error_code != "PROVIDER_GET_NEVER_SENT"))
+                or (state == "OUTCOME_UNKNOWN" and (type(sent_at) is not str or not sent_at
+                                                      or type(completed_at) is not str or not completed_at
+                                                      or response_artifact_id is not None
+                                                      or error_code not in {
+                                                          "PROVIDER_GET_OUTCOME_UNKNOWN",
+                                                          "PROVIDER_GET_TRANSPORT_UNKNOWN",
+                                                      }))):
+            raise RunRepositoryError("unsettled provider GET row identity or state drift")
+
+        self._require_artifact_role(conn, run_id, input_artifact_id, "EXTERNAL_INPUT")
+        artifact = conn.execute(
+            "SELECT byte_sha256,canonical_sha256,byte_count,media_type,artifact_kind,logical_path,"
+            "evidence_class,verification_policy_id FROM app_artifacts WHERE artifact_id=?",
+            (input_artifact_id,),
+        ).fetchone()
+        links = conn.execute(
+            "SELECT run_id,role,retained_root FROM app_run_artifacts WHERE artifact_id=? ORDER BY run_id,role",
+            (input_artifact_id,),
+        ).fetchall()
+        if (artifact is None or artifact[:2] != (intent_sha256, intent_sha256)
+                or type(artifact[2]) is not int or not 1 <= artifact[2] <= 65_536
+                or artifact[3:] != (
+                    "application/json", "EXTERNAL_INPUT",
+                    f"external-operation-evidence/{operation_id}-input.json", "RETAINED",
+                    "CURRENT_SHADOW_PROVIDER_GET_V1")
+                or links != [(run_id, "EXTERNAL_INPUT", 1)]):
+            raise RunRepositoryError("unsettled provider GET input artifact identity drift")
+        input_path = contained(self._data_root, logical_locator(artifact[5]))
+        intent_bytes = _read_bounded(input_path, 65_536, "provider GET intent artifact")
+        try:
+            intent = json.loads(intent_bytes)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RunRepositoryError("unsettled provider GET intent is malformed") from exc
+        required_intent_fields = {
+            "schema_version", "operation_kind", "method", "provider", "origin",
+            "request_target", "logical_id", "sequence", "headers", "timeout_seconds",
+            "maximum_bytes", "redirect_policy", "retry_policy", "run_id", "attempt_id",
+            "worker_instance_id", "lease_sha256", "request_sha256", "envelope_sha256",
+            "release_identity_kind", "release_identity_id", "source_revision",
+            "source_identity_sha256", "profile", "intent_id", "retrieval_policy_id",
+        }
+        optional_intent_fields = {"redirect_parent_operation_id", "redirect_target_sha256"}
+        if (type(intent) is not dict
+                or not required_intent_fields <= set(intent)
+                or set(intent) - required_intent_fields not in (set(), optional_intent_fields)
+                or canonical_json_bytes(intent) != intent_bytes
+                or hashlib.sha256(intent_bytes).hexdigest() != intent_sha256
+                or intent.get("schema_version") != 1
+                or intent.get("operation_kind") != operation_kind
+                or intent.get("method") != "GET"
+                or intent.get("run_id") != run_id
+                or intent.get("attempt_id") != attempt_id
+                or type(intent.get("worker_instance_id")) is not str
+                or type(intent.get("sequence")) is not int or intent["sequence"] <= 0
+                or type(intent.get("provider")) is not str):
+            raise RunRepositoryError("unsettled provider GET intent does not bind its exact owner")
+
+        attempt_owner = conn.execute(
+            "SELECT lease_token,worker_instance_id FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
+            (run_id, attempt_id),
+        ).fetchone()
+        run_identity = conn.execute(
+            "SELECT request_sha256,envelope_sha256 FROM app_runs WHERE run_id=?", (run_id,),
+        ).fetchone()
+        owner_events = conn.execute(
+            "SELECT payload_bytes,payload_sha256 FROM app_run_events WHERE run_id=? "
+            "AND event_type='CURRENT_SHADOW_SUPERVISOR_STARTED' ORDER BY sequence",
+            (run_id,),
+        ).fetchall()
+        if (attempt_owner is None or run_identity is None or len(owner_events) != 1
+                or type(attempt_owner[0]) is not str or type(attempt_owner[1]) is not str):
+            raise RunRepositoryError("provider GET exact attempt owner evidence is unavailable")
+        try:
+            owner_payload = json.loads(owner_events[0][0])
+        except (TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RunRepositoryError("provider GET supervisor owner event is malformed") from exc
+        lease_sha256 = hashlib.sha256(attempt_owner[0].encode("utf-8")).hexdigest()
+        if (hashlib.sha256(owner_events[0][0]).hexdigest() != owner_events[0][1]
+                or canonical_json_bytes(owner_payload) != owner_events[0][0]
+                or type(owner_payload) is not dict
+                or owner_payload.get("context_sha256") != authority_sha256
+                or owner_payload.get("attempt_id") != attempt_id
+                or owner_payload.get("worker_instance_id") != attempt_owner[1]
+                or owner_payload.get("lease_sha256") != lease_sha256
+                or owner_payload.get("request_sha256") != run_identity[0]
+                or owner_payload.get("envelope_sha256") != run_identity[1]
+                or intent.get("worker_instance_id") != attempt_owner[1]
+                or intent.get("lease_sha256") != lease_sha256
+                or intent.get("request_sha256") != run_identity[0]
+                or intent.get("envelope_sha256") != run_identity[1]):
+            raise RunRepositoryError("provider GET intent differs from the exact attempt and supervisor owner")
+
+        prepared = self._operation_events_for_attempt(
+            conn, run_id, operation_id, "CURRENT_SHADOW_GET_PREPARED",
+        )
+        expected_prepared = {
+            "operation_id": operation_id,
+            "operation_kind": operation_kind,
+            "intent_sha256": intent_sha256,
+            "authority_sha256": authority_sha256,
+            "input_artifact_id": input_artifact_id,
+            "idempotency_key_sha256": hashlib.sha256(idempotency_key.encode("ascii")).hexdigest(),
+            "sequence": intent["sequence"],
+            "provider": intent["provider"],
+        }
+        if len(prepared) != 1 or prepared[0][2] != expected_prepared:
+            raise RunRepositoryError("unsettled provider GET lacks one exact PREPARED event")
+        sent = self._operation_events_for_attempt(
+            conn, run_id, operation_id, "CURRENT_SHADOW_GET_SENT",
+        )
+        if state == "PREPARED":
+            if sent:
+                raise RunRepositoryError("PREPARED provider GET already has a SENT event")
+        elif (len(sent) != 1 or sent[0][2] != {
+                "operation_id": operation_id,
+                "intent_sha256": intent_sha256,
+                "linearization": "ONE_IN_FLIGHT_GET_PERMIT",
+        } or sent[0][0] <= prepared[0][0]):
+            raise RunRepositoryError("SENT provider GET lacks one ordered exact SENT event")
+        never_sent = self._operation_events_for_attempt(
+            conn, run_id, operation_id, "CURRENT_SHADOW_GET_NEVER_SENT",
+        )
+        unknown = self._operation_events_for_attempt(
+            conn, run_id, operation_id, "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN",
+        )
+        retained = self._operation_events_for_attempt(
+            conn, run_id, operation_id, "CURRENT_SHADOW_GET_RESPONSE_RETAINED",
+        )
+        if state in {"PREPARED", "SENT"} and (never_sent or unknown or retained):
+            raise RunRepositoryError("unsettled provider GET already has a terminal event")
+        if state == "FAILED":
+            if (sent or len(never_sent) != 1 or unknown or retained
+                    or never_sent[0][2].get("intent_sha256") != intent_sha256
+                    or type(never_sent[0][2].get("reason")) is not str
+                    or not never_sent[0][2]["reason"]):
+                raise RunRepositoryError("FAILED provider GET lacks one exact never-sent event")
+        if state == "OUTCOME_UNKNOWN":
+            if (len(sent) != 1 or never_sent or len(unknown) != 1 or retained
+                    or unknown[0][2].get("intent_sha256") != intent_sha256
+                    or unknown[0][2].get("error_code") != error_code):
+                raise RunRepositoryError("uncertain provider GET lacks one exact outcome event")
+        if state == "CONFIRMED":
+            self._verify_confirmed_provider_get_artifact(
+                conn, run_id, operation_id, intent_sha256, response_artifact_id,
+                sent, never_sent, unknown, retained,
+            )
+        return intent
+
+    def _verify_confirmed_provider_get_artifact(
+        self, conn, run_id, operation_id, intent_sha256, response_artifact_id,
+        sent, never_sent, unknown, retained,
+    ):
+        if (len(sent) != 1 or never_sent or unknown or len(retained) != 1
+                or retained[0][0] <= sent[0][0]):
+            raise RunRepositoryError("CONFIRMED provider GET lacks one ordered response event")
+        event = retained[0][2]
+        if (event.get("response_artifact_id") != response_artifact_id
+                or event.get("run_state_at_retention") not in {"RUNNING", "CANCEL_REQUESTED"}):
+            raise RunRepositoryError("CONFIRMED provider GET response event identity drift")
+        artifact = conn.execute(
+            "SELECT byte_sha256,canonical_sha256,byte_count,media_type,artifact_kind,logical_path,"
+            "evidence_class,verification_policy_id FROM app_artifacts WHERE artifact_id=?",
+            (response_artifact_id,),
+        ).fetchone()
+        links = conn.execute(
+            "SELECT run_id,role,retained_root FROM app_run_artifacts WHERE artifact_id=? ORDER BY run_id,role",
+            (response_artifact_id,),
+        ).fetchall()
+        expected_artifact_id = "provider-get-external_response-" + hashlib.sha256(operation_id.encode("ascii")).hexdigest()
+        if (response_artifact_id != expected_artifact_id or artifact is None
+                or type(artifact[2]) is not int or not 1 <= artifact[2] <= 24 * 1024 * 1024
+                or artifact[3:] != (
+                    "application/json", "EXTERNAL_RESPONSE",
+                    f"external-operation-evidence/{operation_id}-external_response.json", "RETAINED",
+                    "CURRENT_SHADOW_PROVIDER_GET_V1")
+                or links != [(run_id, "EXTERNAL_RESPONSE", 1)]):
+            raise RunRepositoryError("CONFIRMED provider GET response artifact metadata drift")
+        raw = _read_bounded(
+            contained(self._data_root, logical_locator(artifact[5])),
+            24 * 1024 * 1024,
+            "provider GET retained response",
+        )
+        if (len(raw) != artifact[2] or hashlib.sha256(raw).hexdigest() != artifact[0]
+                or artifact[0] != artifact[1]):
+            raise RunRepositoryError("CONFIRMED provider GET response artifact bytes drift")
+        try:
+            response = json.loads(raw)
+            response_body = base64.b64decode(response["raw_base64"], validate=True)
+        except (TypeError, KeyError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RunRepositoryError("CONFIRMED provider GET response payload is malformed") from exc
+        if (type(response) is not dict or canonical_json_bytes(response) != raw
+                or response.get("schema_version") != 1
+                or response.get("operation_kind") != "CURRENT_SHADOW_PROVIDER_GET_V1"
+                or response.get("operation_id") != operation_id
+                or response.get("intent_sha256") != intent_sha256
+                or type(response.get("status")) is not int
+                or type(response.get("raw_size")) is not int
+                or response["raw_size"] != len(response_body)
+                or response.get("raw_sha256") != hashlib.sha256(response_body).hexdigest()
+                or event.get("operation_id") != operation_id
+                or event.get("response_artifact_sha256") != artifact[0]
+                or event.get("raw_sha256") != response["raw_sha256"]
+                or event.get("raw_size") != response["raw_size"]
+                or event.get("status") != response["status"]
+                or event.get("observed_at") != response.get("observed_at")
+                or event.get("content_type") != response.get("content_type")
+                or event.get("content_length") != response.get("content_length")
+                or event.get("redirect_target_sha256") != response.get("redirect_target_sha256")):
+            raise RunRepositoryError("CONFIRMED provider GET response payload differs from its retained event")
+
+    def _settle_unresolved_external_operations(
+        self, conn, run_id, attempt_id, state_version, stamp, *, reason, sent_reason=None,
+    ):
+        """Settle exact attempt operations before releasing its root-wide slot.
+
+        Ordinary no-receipt interruption and explicit dead-worker recovery
+        share this connection-bound transaction. A committed SENT operation
+        becomes uncertain and is never retried.
+        """
+        rows = conn.execute(
+            "SELECT operation_id,operation_kind,intent_sha256,authority_sha256,input_artifact_id,"
+            "idempotency_key,state,prepared_at,sent_at,completed_at,response_artifact_id,error_code "
+            "FROM app_external_operations WHERE run_id=? AND attempt_id=? "
+            "ORDER BY prepared_at,operation_id",
+            (run_id, attempt_id),
+        ).fetchall()
+        pending = []
+        for operation in rows:
+            (operation_id, operation_kind, intent_sha256, authority_sha256,
+             input_artifact_id, idempotency_key, state, prepared_at, sent_at,
+             completed_at, response_artifact_id, error_code) = operation
+            _identity(operation_id)
+            if (type(operation_kind) is not str
+                    or operation_kind not in {
+                        "CURRENT_SHADOW_PROVIDER_GET_V1", "TESTING_SYNTHETIC", SHARE_CREATE_KIND,
+                    }
+                    or state not in {"PREPARED", "SENT", "CONFIRMED", "FAILED", "OUTCOME_UNKNOWN"}
+                    or type(prepared_at) is not str or not prepared_at):
+                raise RunRepositoryError("external operation kind or state is outside the reviewed schema")
+            if operation_kind == "CURRENT_SHADOW_PROVIDER_GET_V1":
+                self._verify_provider_get_evidence(conn, run_id, attempt_id, operation)
+            if state in {"CONFIRMED", "FAILED", "OUTCOME_UNKNOWN"}:
+                continue
+            if state == "PREPARED":
+                if sent_at is not None or completed_at is not None or response_artifact_id is not None:
+                    raise RunRepositoryError("PREPARED external operation carries sent or result evidence")
+            elif (type(sent_at) is not str or not sent_at
+                    or completed_at is not None or response_artifact_id is not None):
+                raise RunRepositoryError("SENT external operation carries inconsistent result evidence")
+
+            if operation_kind == "CURRENT_SHADOW_PROVIDER_GET_V1":
+                new_state = "FAILED" if state == "PREPARED" else "OUTCOME_UNKNOWN"
+                new_error = (
+                    "PROVIDER_GET_NEVER_SENT" if state == "PREPARED"
+                    else "PROVIDER_GET_OUTCOME_UNKNOWN"
+                )
+                event_type = (
+                    "CURRENT_SHADOW_GET_NEVER_SENT" if state == "PREPARED"
+                    else "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN"
+                )
+                payload = {
+                    "operation_id": operation_id,
+                    "intent_sha256": intent_sha256,
+                    "reason": reason if state == "PREPARED" else (
+                        sent_reason or reason + "_AFTER_SENT_WITHOUT_PROVEN_RESPONSE"
+                    ),
+                }
+                if state == "SENT":
+                    payload["error_code"] = new_error
+            else:
+                if operation_kind == SHARE_CREATE_KIND:
+                    self._share_operation(conn, run_id, operation_id)
+                    new_state, new_error = (
+                        ("FAILED", "SHARE_CREATE_NEVER_SENT") if state == "PREPARED"
+                        else ("OUTCOME_UNKNOWN", "OFFLINE_RECOVERY")
+                    )
+                else:
+                    _sha(intent_sha256)
+                    _sha(authority_sha256)
+                    new_state, new_error = (
+                        ("FAILED", "OFFLINE_RECOVERY") if state == "PREPARED"
+                        else ("OUTCOME_UNKNOWN", "OFFLINE_RECOVERY")
+                    )
+                event_type, payload = None, None
+            pending.append((operation_id, state, new_state, new_error, event_type, payload))
+
+        for operation_id, old_state, new_state, error_code, event_type, payload in pending:
+            cursor = conn.execute(
+                "UPDATE app_external_operations SET state=?,completed_at=?,error_code=? "
+                "WHERE run_id=? AND attempt_id=? AND operation_id=? AND state=?",
+                (new_state, stamp, error_code, run_id, attempt_id, operation_id, old_state),
+            )
+            if cursor.rowcount != 1:
+                raise RunRepositoryError("external operation settlement lost its exact row fence")
+            if event_type is not None:
+                self._event(conn, run_id, state_version, event_type, payload, stamp)
+
     def interrupt_worker_without_receipt(self, run_id, attempt_id, lease_token, *,
                                          exit_code, diagnostic_id, last_proven_stage):
         allowed = {"WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT", "WORKER_RECEIPT_INVALID",
@@ -1469,22 +1812,30 @@ class DurableRunRepository:
             if row is None or row[0] not in {"RUNNING", "CANCEL_REQUESTED"} or row[2] is not None:
                 raise RunStateConflict("worker interruption state is not eligible")
             stamp = _utc(self._clock())
+            self._settle_unresolved_external_operations(
+                conn, run_id, attempt_id, row[1], stamp,
+                reason="WORKER_INTERRUPTED_WITHOUT_RECEIPT",
+            )
             self._event(conn, run_id, row[1], "WORKER_INTERRUPTED", {
                 "diagnostic_id": diagnostic_id, "exit_code": exit_code,
                 "last_proven_stage": last_proven_stage,
             }, stamp)
             disposition = "CANCEL_REQUESTED_SETTLED" if row[0] == "CANCEL_REQUESTED" else "E2_NO_VERIFIED_RECEIPT"
-            conn.execute(
+            cursor = conn.execute(
                 "UPDATE app_run_attempts SET finished_at=?,exit_code=?,recovery_disposition=? "
-                "WHERE run_id=? AND attempt_id=?",
+                "WHERE run_id=? AND attempt_id=? AND finished_at IS NULL",
                 (stamp, exit_code, disposition, run_id, attempt_id),
             )
+            if cursor.rowcount != 1:
+                raise RunRepositoryError("worker interruption lost its exact attempt fence")
             next_state = "CANCELLED" if row[0] == "CANCEL_REQUESTED" else "INTERRUPTED"
-            conn.execute(
+            cursor = conn.execute(
                 "UPDATE app_runs SET state=?,state_version=state_version+1,updated_at=? "
                 "WHERE run_id=? AND state_version=?",
                 (next_state, stamp, run_id, row[1]),
             )
+            if cursor.rowcount != 1:
+                raise RunRepositoryError("worker interruption lost its exact run state fence")
             self._event(conn, run_id, row[1] + 1, "RUN_" + next_state, {}, stamp)
 
     def heartbeat(self, run_id, attempt_id, lease_token):
@@ -1501,12 +1852,119 @@ class DurableRunRepository:
             conn.execute("UPDATE app_run_attempts SET finished_at=?,exit_code=? WHERE attempt_id=?",
                          (_utc(self._clock()), exit_code, attempt_id))
 
+    def _settle_queued_prelaunch_attempt(self, conn, run_id, state_version, request_sha256, stamp):
+        """Release only the exact placeholder proven never to have launched."""
+        attempts = conn.execute(
+            "SELECT attempt_id,attempt_number,lease_token,worker_instance_id,process_locator_json,finished_at "
+            "FROM app_run_attempts WHERE run_id=? AND finished_at IS NULL ORDER BY attempt_number",
+            (run_id,),
+        ).fetchall()
+        if not attempts:
+            return False
+        if len(attempts) != 1 or state_version != 0:
+            raise RunStateConflict("queued cancellation cannot prove one initial prelaunch attempt")
+        attempt_id, number, lease_token, worker_instance_id, locator_raw, finished_at = attempts[0]
+        all_attempts = conn.execute(
+            "SELECT attempt_id,attempt_number,finished_at FROM app_run_attempts "
+            "WHERE run_id=? ORDER BY attempt_number",
+            (run_id,),
+        ).fetchall()
+        active = conn.execute(
+            "SELECT run_id,attempt_id FROM app_run_attempts WHERE finished_at IS NULL ORDER BY run_id,attempt_id"
+        ).fetchall()
+        if (number != 1 or all_attempts != [(attempt_id, 1, None)]
+                or active != [(run_id, attempt_id)]
+                or finished_at is not None):
+            raise RunStateConflict("queued cancellation does not own the exact root-wide attempt slot")
+        _identity(attempt_id)
+        _identity(lease_token)
+        _identity(worker_instance_id)
+        try:
+            locator = json.loads(locator_raw)
+        except (TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RunStateConflict("queued attempt locator cannot prove no worker launch") from exc
+        if (type(locator) is not dict or set(locator) != {"kind", "label"}
+                or locator.get("kind") != "OFFLINE_TEST"
+                or type(locator.get("label")) is not str
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", locator["label"]) is None
+                or canonical_json_bytes(locator).decode("utf-8") != locator_raw):
+            raise RunStateConflict("queued attempt has a native or unverified process locator")
+        if (conn.execute(
+                "SELECT 1 FROM app_external_operations WHERE run_id=? LIMIT 1", (run_id,),
+        ).fetchone()
+                or conn.execute(
+                    "SELECT 1 FROM app_run_artifacts WHERE run_id=? LIMIT 1", (run_id,),
+                ).fetchone()):
+            raise RunStateConflict("queued attempt already has external or retained worker evidence")
+        genesis = conn.execute(
+            "SELECT sequence,state_version,event_type,payload_bytes,payload_sha256 "
+            "FROM app_run_events WHERE run_id=? ORDER BY sequence",
+            (run_id,),
+        ).fetchall()
+        queued_identity = conn.execute(
+            "SELECT preview_id,idempotency_key FROM app_runs WHERE run_id=?", (run_id,),
+        ).fetchone()
+        if (len(genesis) != 1 or genesis[0][:3] != (1, 0, "RUN_QUEUED")
+                or queued_identity is None
+                or genesis[0][3] != canonical_json_bytes({
+                    "preview_id": queued_identity[0],
+                    "idempotency_key": queued_identity[1],
+                })
+                or hashlib.sha256(genesis[0][3]).hexdigest() != genesis[0][4]):
+            raise RunStateConflict("queued attempt has startup or worker event evidence")
+
+        # A product worker cannot be launched while the run is QUEUED: the
+        # coordinator commits RUNNING before staging or Popen. Also reject a
+        # gate file at the exact admitted request path, including unsafe links.
+        from runtime.worker_startup_gate import FILENAME as STARTUP_GATE_FILENAME
+        import stat
+        cursor = self._data_root
+        path_parts = ("runs", run_id, request_sha256, STARTUP_GATE_FILENAME)
+        for index, part in enumerate(path_parts):
+            cursor = cursor / part
+            try:
+                info = cursor.lstat()
+            except FileNotFoundError:
+                break
+            except OSError as exc:
+                raise RunStateConflict("queued startup-gate path cannot be verified") from exc
+            is_junction = getattr(cursor, "is_junction", lambda: False)()
+            reparse = bool(getattr(info, "st_file_attributes", 0)
+                           & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+            if stat.S_ISLNK(info.st_mode) or is_junction or reparse:
+                raise RunStateConflict("queued startup-gate path contains an unsafe link")
+            if index < len(path_parts) - 1:
+                if not stat.S_ISDIR(info.st_mode):
+                    raise RunStateConflict("queued startup-gate parent is not a directory")
+            else:
+                raise RunStateConflict("queued attempt already has a startup-gate file")
+
+        cursor = conn.execute(
+            "UPDATE app_run_attempts SET finished_at=?,exit_code=NULL,"
+            "recovery_disposition='CANCELLED_BEFORE_WORKER_START' "
+            "WHERE run_id=? AND attempt_id=? AND attempt_number=1 AND lease_token=? "
+            "AND worker_instance_id=? AND process_locator_json=? AND finished_at IS NULL",
+            (stamp, run_id, attempt_id, lease_token, worker_instance_id, locator_raw),
+        )
+        if cursor.rowcount != 1:
+            raise RunStateConflict("prelaunch cancellation lost its exact attempt fence")
+        self._event(conn, run_id, state_version, "WORKER_CANCELLED_BEFORE_START", {
+            "attempt_id": attempt_id,
+            "worker_instance_id": worker_instance_id,
+            "lease_sha256": hashlib.sha256(lease_token.encode("utf-8")).hexdigest(),
+            "disposition": "CANCELLED_BEFORE_WORKER_START",
+        }, stamp)
+        return True
+
     def record_cancel_intent(self, run_id, *, expected_version=None):
         _identity(run_id)
         if expected_version is not None and (type(expected_version) is not int or expected_version < 0):
             raise RunStateConflict("invalid state version")
         with self._operation(write=True) as conn:
-            row = conn.execute("SELECT state,state_version FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
+            row = conn.execute(
+                "SELECT state,state_version,request_sha256,receipt_artifact_id FROM app_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
             if row is None:
                 return None
             self._verify_run_identity(conn, run_id, current=False)
@@ -1525,13 +1983,23 @@ class DurableRunRepository:
                 raise RunStateConflict("terminal receipt projection is pending")
             if expected_version is not None and current_version != expected_version:
                 raise RunStateConflict("cancellation CAS rejected")
+            if current_state == "QUEUED":
+                if row[3] is not None:
+                    raise RunStateConflict("queued run unexpectedly carries a receipt")
+                stamp = _utc(self._clock())
+                self._settle_queued_prelaunch_attempt(
+                    conn, run_id, current_version, row[2], stamp,
+                )
+            else:
+                stamp = _utc(self._clock())
             next_state = "CANCELLED" if current_state == "QUEUED" else "CANCEL_REQUESTED"
             next_version = current_version + 1
-            stamp = _utc(self._clock())
-            conn.execute(
+            cursor = conn.execute(
                 "UPDATE app_runs SET state=?,state_version=?,updated_at=? WHERE run_id=? AND state_version=?",
                 (next_state, next_version, stamp, run_id, current_version),
             )
+            if cursor.rowcount != 1:
+                raise RunStateConflict("cancellation state CAS lost its writer fence")
             self._event(conn, run_id, next_version, "RUN_" + next_state, {}, stamp)
             return ("requested", next_state, next_version)
 
@@ -1920,62 +2388,29 @@ class DurableRunRepository:
             state_version = conn.execute(
                 "SELECT state,state_version FROM app_runs WHERE run_id=?", (run_id,),
             ).fetchone()[1]
-            provider_prepared = conn.execute(
-                "SELECT operation_id,intent_sha256 FROM app_external_operations "
-                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' "
-                "AND state='PREPARED' ORDER BY operation_id",
-                (run_id, attempt_id),
-            ).fetchall()
-            provider_sent = conn.execute(
-                "SELECT operation_id,intent_sha256 FROM app_external_operations "
-                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' "
-                "AND state='SENT' ORDER BY operation_id",
-                (run_id, attempt_id),
-            ).fetchall()
-            conn.execute(
-                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='PROVIDER_GET_NEVER_SENT' "
-                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' AND state='PREPARED'",
-                (stamp, run_id, attempt_id),
-            )
-            for operation_id, intent_sha256 in provider_prepared:
-                self._event(conn, run_id, state_version, "CURRENT_SHADOW_GET_NEVER_SENT", {
-                    "operation_id": operation_id, "intent_sha256": intent_sha256,
-                    "reason": "RECOVERY_FOUND_PREPARED_WITHOUT_SENT",
-                }, stamp)
-            for operation_id, intent_sha256 in provider_sent:
-                self._event(conn, run_id, state_version, "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN", {
-                    "operation_id": operation_id, "intent_sha256": intent_sha256,
-                    "error_code": "PROVIDER_GET_OUTCOME_UNKNOWN",
-                    "reason": "RECOVERY_FOUND_SENT_WITHOUT_PROVEN_RESPONSE",
-                }, stamp)
-            conn.execute(
-                "UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='PROVIDER_GET_OUTCOME_UNKNOWN' "
-                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' AND state='SENT'",
-                (stamp, run_id, attempt_id),
-            )
-            conn.execute(
-                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='SHARE_CREATE_NEVER_SENT' "
-                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' AND operation_kind=?",
-                (stamp, run_id, attempt_id, SHARE_CREATE_KIND),
-            )
-            conn.execute(
-                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='OFFLINE_RECOVERY' "
-                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' "
-                "AND operation_kind NOT IN (?, 'CURRENT_SHADOW_PROVIDER_GET_V1')",
-                (stamp, run_id, attempt_id, SHARE_CREATE_KIND),
-            )
-            conn.execute(
-                "UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='OFFLINE_RECOVERY' "
-                "WHERE run_id=? AND attempt_id=? AND state='SENT' AND operation_kind<>'CURRENT_SHADOW_PROVIDER_GET_V1'",
-                (stamp, run_id, attempt_id),
+            self._settle_unresolved_external_operations(
+                conn, run_id, attempt_id, state_version, stamp,
+                reason="RECOVERY_FOUND_PREPARED_WITHOUT_SENT",
+                sent_reason="RECOVERY_FOUND_SENT_WITHOUT_PROVEN_RESPONSE",
             )
             row = conn.execute("SELECT state,state_version FROM app_runs WHERE run_id=?", (run_id,)).fetchone()
             disposition = "CANCEL_REQUESTED_SETTLED" if row is not None and row[0] == "CANCEL_REQUESTED" else "OFFLINE_INTERRUPTED"
-            conn.execute("UPDATE app_run_attempts SET finished_at=?,recovery_disposition=? WHERE attempt_id=?",
-                         (stamp, disposition, attempt_id))
+            cursor = conn.execute(
+                "UPDATE app_run_attempts SET finished_at=?,recovery_disposition=? "
+                "WHERE run_id=? AND attempt_id=? AND finished_at IS NULL",
+                (stamp, disposition, run_id, attempt_id),
+            )
+            if cursor.rowcount != 1:
+                raise RunRepositoryError("recovery lost its exact attempt fence")
             if row is not None and row[0] in {"QUEUED", "RUNNING", "CANCEL_REQUESTED"}:
                 next_state = "CANCELLED" if row[0] == "CANCEL_REQUESTED" else "INTERRUPTED"
-                conn.execute("UPDATE app_runs SET state=?,state_version=state_version+1,updated_at=? WHERE run_id=?", (next_state, stamp, run_id))
+                cursor = conn.execute(
+                    "UPDATE app_runs SET state=?,state_version=state_version+1,updated_at=? "
+                    "WHERE run_id=? AND state_version=?",
+                    (next_state, stamp, run_id, row[1]),
+                )
+                if cursor.rowcount != 1:
+                    raise RunRepositoryError("recovery lost its exact run state fence")
                 self._event(conn, run_id, row[1] + 1, "RUN_" + next_state, {}, stamp)
 
     def list_unfinished_attempts(self):
@@ -2053,64 +2488,21 @@ class DurableRunRepository:
             if row is None or row[2] is not None:
                 raise RunStateConflict("run is not eligible for recovery")
             stamp = _utc(self._clock())
-            provider_prepared = conn.execute(
-                "SELECT operation_id,intent_sha256 FROM app_external_operations "
-                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' "
-                "AND state='PREPARED' ORDER BY operation_id",
-                (run_id, attempt_id),
-            ).fetchall()
-            provider_sent = conn.execute(
-                "SELECT operation_id,intent_sha256 FROM app_external_operations "
-                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' "
-                "AND state='SENT' ORDER BY operation_id",
-                (run_id, attempt_id),
-            ).fetchall()
-            conn.execute(
-                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='PROVIDER_GET_NEVER_SENT' "
-                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' AND state='PREPARED'",
-                (stamp, run_id, attempt_id),
-            )
-            for operation_id, intent_sha256 in provider_prepared:
-                self._event(conn, run_id, row[1], "CURRENT_SHADOW_GET_NEVER_SENT", {
-                    "operation_id": operation_id, "intent_sha256": intent_sha256,
-                    "reason": "RECOVERY_FOUND_PREPARED_WITHOUT_SENT",
-                }, stamp)
-            for operation_id, intent_sha256 in provider_sent:
-                self._event(conn, run_id, row[1], "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN", {
-                    "operation_id": operation_id, "intent_sha256": intent_sha256,
-                    "error_code": "PROVIDER_GET_OUTCOME_UNKNOWN",
-                    "reason": "RECOVERY_FOUND_SENT_WITHOUT_PROVEN_RESPONSE",
-                }, stamp)
-            conn.execute(
-                "UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='PROVIDER_GET_OUTCOME_UNKNOWN' "
-                "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' AND state='SENT'",
-                (stamp, run_id, attempt_id),
-            )
-            conn.execute(
-                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='SHARE_CREATE_NEVER_SENT' "
-                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' AND operation_kind=?",
-                (stamp, run_id, attempt_id, SHARE_CREATE_KIND),
-            )
-            conn.execute(
-                "UPDATE app_external_operations SET state='FAILED',completed_at=?,error_code='OFFLINE_RECOVERY' "
-                "WHERE run_id=? AND attempt_id=? AND state='PREPARED' "
-                "AND operation_kind NOT IN (?, 'CURRENT_SHADOW_PROVIDER_GET_V1')",
-                (stamp, run_id, attempt_id, SHARE_CREATE_KIND),
-            )
-            conn.execute(
-                "UPDATE app_external_operations SET state='OUTCOME_UNKNOWN',completed_at=?,error_code='OFFLINE_RECOVERY' "
-                "WHERE run_id=? AND attempt_id=? AND state='SENT' "
-                "AND operation_kind<>'CURRENT_SHADOW_PROVIDER_GET_V1'",
-                (stamp, run_id, attempt_id),
+            self._settle_unresolved_external_operations(
+                conn, run_id, attempt_id, row[1], stamp,
+                reason="RECOVERY_FOUND_PREPARED_WITHOUT_SENT",
+                sent_reason="RECOVERY_FOUND_SENT_WITHOUT_PROVEN_RESPONSE",
             )
             current_state = row[0]
             next_state = "CANCELLED" if current_state == "CANCEL_REQUESTED" else "INTERRUPTED"
             disposition = "CANCEL_REQUESTED_SETTLED" if current_state == "CANCEL_REQUESTED" else "OFFLINE_INTERRUPTED"
-            conn.execute(
+            cursor = conn.execute(
                 "UPDATE app_run_attempts SET finished_at=?,exit_code=?,recovery_disposition=? "
-                "WHERE run_id=? AND attempt_id=?",
+                "WHERE run_id=? AND attempt_id=? AND finished_at IS NULL",
                 (stamp, exit_code, disposition, run_id, attempt_id),
             )
+            if cursor.rowcount != 1:
+                raise RunRepositoryError("dead-process recovery lost its exact attempt fence")
             if current_state in {"QUEUED", "RUNNING", "CANCEL_REQUESTED"}:
                 latest_stage = None
                 progress_row = conn.execute(
@@ -2130,10 +2522,12 @@ class DurableRunRepository:
                     "diagnostic_id": diagnostic_id, "exit_code": exit_code,
                     "last_proven_stage": latest_stage,
                 }, stamp)
-                conn.execute(
+                cursor = conn.execute(
                     "UPDATE app_runs SET state=?,state_version=state_version+1,updated_at=? WHERE run_id=? AND state_version=?",
                     (next_state, stamp, run_id, row[1]),
                 )
+                if cursor.rowcount != 1:
+                    raise RunRepositoryError("dead-process recovery lost its exact run state fence")
                 self._event(conn, run_id, row[1] + 1, "RUN_" + next_state, {}, stamp)
 
     def run_snapshot(self, run_id):

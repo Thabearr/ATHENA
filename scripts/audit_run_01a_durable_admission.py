@@ -4,6 +4,14 @@ import argparse
 import hashlib
 import json
 import base64
+import stat
+import subprocess
+
+from runtime.source_identity import (
+    SourceIdentityError,
+    read_tracked_head_blob,
+    validate_repository_relative_path,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 RECEIPT = "artifacts/product/run_01a_durable_admission_v1.json"
@@ -134,15 +142,66 @@ def _predecessor_bytes(path, *, root=ROOT):
     entry = FORWARD_EVOLVED_SOURCES.get(path)
     if entry is None:
         raise AssertionError("E1 predecessor fixture is not authorized: " + path)
-    fixture_raw = (root / entry["predecessor_fixture"]).read_bytes()
+    fixture = validate_repository_relative_path(entry["predecessor_fixture"])
+    fixture_path = root.joinpath(*fixture.split("/"))
+    try:
+        resolved_root = root.resolve(strict=True)
+        resolved_fixture = fixture_path.resolve(strict=True)
+        resolved_fixture.relative_to(resolved_root)
+        cursor = root
+        parts = fixture.split("/")
+        fixture_stat = None
+        for index, part in enumerate(parts):
+            cursor = cursor / part
+            current = cursor.lstat()
+            is_junction = getattr(cursor, "is_junction", lambda: False)()
+            reparse = bool(getattr(current, "st_file_attributes", 0)
+                           & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+            if stat.S_ISLNK(current.st_mode) or is_junction or reparse:
+                raise AssertionError("E1 predecessor fixture path contains a symlink or junction: " + fixture)
+            if index < len(parts) - 1 and not stat.S_ISDIR(current.st_mode):
+                raise AssertionError("E1 predecessor fixture parent is not a directory: " + fixture)
+            if index == len(parts) - 1:
+                fixture_stat = current
+        if fixture_stat is None or not stat.S_ISREG(fixture_stat.st_mode) or fixture_stat.st_nlink != 1:
+            raise AssertionError("E1 predecessor fixture is not one regular file: " + fixture)
+        tree = subprocess.run(
+            ["git", "-C", str(root), "ls-tree", "-z", "HEAD", "--", fixture],
+            check=True, capture_output=True, timeout=10,
+        ).stdout
+        if not tree:
+            raise AssertionError("E1 predecessor fixture is not tracked at HEAD: " + fixture)
+        metadata, tree_path = tree.rstrip(b"\0").split(b"\t", 1)
+        mode, kind, tree_blob = metadata.decode("ascii").split(" ")
+        if tree_path.decode("utf-8") != fixture or mode != "100644" or kind != "blob":
+            raise AssertionError("E1 predecessor fixture HEAD mode or path mismatch: " + fixture)
+        object_size = subprocess.run(
+            ["git", "-C", str(root), "cat-file", "-s", tree_blob],
+            check=True, capture_output=True, timeout=10,
+        ).stdout.decode("ascii").strip()
+        if not object_size.isdecimal() or int(object_size) > 2_000_000:
+            raise AssertionError("E1 predecessor fixture exceeds its fixed byte bound: " + fixture)
+        fixture_raw, identity = read_tracked_head_blob(
+            root, fixture, verify_worktree_filtered_identity=False,
+        )
+    except SourceIdentityError as error:
+        raise AssertionError("E1 predecessor fixture HEAD identity is unavailable: " + fixture) from error
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError, ValueError) as error:
+        raise AssertionError("E1 predecessor fixture cannot be authenticated from HEAD: " + fixture) from error
+    if (len(fixture_raw) != int(object_size)
+            or identity.git_blob_sha1 != tree_blob
+            or (entry.get("predecessor_git_blob_sha1") is not None
+                and tree_blob != entry["predecessor_git_blob_sha1"])):
+        raise AssertionError("E1 predecessor fixture Git blob identity drift: " + path)
+    worktree_limit = len(fixture_raw) + fixture_raw.count(b"\n")
+    with fixture_path.open("rb") as handle:
+        worktree_raw = handle.read(worktree_limit + 1)
     raw = _lf(fixture_raw)
+    worktree_lf = _lf(worktree_raw)
+    if len(worktree_raw) > worktree_limit or worktree_lf != raw:
+        raise AssertionError("E1 predecessor fixture worktree differs from exact HEAD text: " + path)
     if _sha(raw) != entry["predecessor_lf_sha256"]:
         raise AssertionError("E1 predecessor fixture identity drift: " + path)
-    expected_blob = entry.get("predecessor_git_blob_sha1")
-    if (expected_blob is not None
-            and hashlib.sha1(b"blob " + str(len(fixture_raw)).encode() + b"\0" + fixture_raw).hexdigest()
-            != expected_blob):
-        raise AssertionError("E1 predecessor Git blob identity drift: " + path)
     return raw
 
 

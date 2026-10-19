@@ -196,7 +196,10 @@ def test_v300_eight_fixtures_bind_base_v2_v299_and_exact_current_successors(monk
         assert len(raw) == size
         assert _git_blob(raw) == predecessor_blob
         assert hashlib.sha256(_normalized(raw)).hexdigest() == predecessor_sha
-        assert (a2.ROOT / fixture_path).read_bytes() == raw
+        assert a2._e3_read_exact_head_fixture(
+            fixture_path, expected_blob=predecessor_blob, expected_lf=predecessor_sha,
+            expected_size=size, label="Pass-A test predecessor fixture",
+        ) == raw
         assert v2_rows[path] == predecessor_sha
 
         auth_row = authorization_rows[path]

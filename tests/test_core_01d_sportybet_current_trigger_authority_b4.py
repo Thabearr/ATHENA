@@ -355,7 +355,11 @@ def test_e3_cross_contract_supporting_anchor_set_includes_unchanged_capture_sour
     )
     for path, anchor in a2.E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS.items():
         current, identity = a2.read_tracked_head_blob(b4.ROOT, path)
-        fixture = (b4.ROOT / anchor["fixture_path"]).read_bytes()
+        fixture = a2._e3_read_exact_head_fixture(
+            anchor["fixture_path"], expected_blob=anchor["git_blob_sha1"],
+            expected_lf=anchor["lf_source_sha256"], expected_size=anchor["byte_size"],
+            label="supporting anchor test fixture",
+        )
         assert current == fixture
         assert identity.git_blob_sha1 == anchor["git_blob_sha1"]
         assert len(fixture) == anchor["byte_size"]
@@ -533,8 +537,8 @@ def test_e3_cross_contract_predecessor_rejects_extra_fixture_directory_member(mo
 def test_e3_cross_contract_predecessor_works_with_depth_one_historical_fallback(monkeypatch):
     a2 = b4.boundary
     path = "scripts/audit_core_01d_port02c_trigger_authority_b6.py"
-    fixture = b4.ROOT / a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]["predecessor_fixture"]
-    expected = fixture.read_bytes()
+    transition = a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]
+    expected = a2.git("cat-file", "blob", transition["predecessor_git_blob_sha1"])
     monkeypatch.setattr(a2, "historical_objects_available", lambda *_args, **_kwargs: False)
     assert a2.read_authenticated_cross_contract_predecessor(path) == expected
 

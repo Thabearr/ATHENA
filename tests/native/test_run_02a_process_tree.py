@@ -1,13 +1,16 @@
 """Native, provider-free process ownership and recovery tests for RUN-02A."""
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 import signal
+import stat
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -33,6 +36,263 @@ def _owner(label: str) -> dict[str, str]:
         worker_instance_id="native-test",
         lease_token="lease-native-" + label,
     )
+
+
+def test_native_crlf_checkout_keeps_e1_v284_and_v300_exact_head_predecessors(
+    tmp_path, monkeypatch,
+):
+    """Exercise real Git LF/CRLF filters without any ancestor or network access."""
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_run_01a_durable_admission as e1
+    from runtime.source_identity import read_tracked_head_blob
+
+    source_root = Path(__file__).resolve().parents[2]
+    e1_sources = (
+        "services/athena_capability_service.py",
+        "tests/test_data_01c_app_storage.py",
+    )
+    a2_paths = (
+        "domain/sportybet_live_event_quote_evidence.py",
+        "scripts/audit_p4_4e_current_fotmob_ingest_issuer.py",
+    )
+    declarations = []
+    for source_path in e1_sources:
+        declaration = e1.FORWARD_EVOLVED_SOURCES[source_path]
+        fixture_path = declaration["predecessor_fixture"]
+        raw, identity = read_tracked_head_blob(
+            source_root, fixture_path, verify_worktree_filtered_identity=False,
+        )
+        assert identity.git_blob_sha1 == declaration["predecessor_git_blob_sha1"]
+        assert hashlib.sha256(raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")).hexdigest() == declaration["predecessor_lf_sha256"]
+        declarations.append(("e1", source_path, fixture_path, raw, declaration))
+    for source_path in a2_paths:
+        declaration = (
+            a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[source_path]
+            if source_path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS
+            else a2.E3_PASS_A_SOURCE_FORWARD_TRANSITIONS[source_path]
+        )
+        fixture_path = declaration["predecessor_fixture"]
+        raw, identity = read_tracked_head_blob(
+            source_root, fixture_path, verify_worktree_filtered_identity=False,
+        )
+        assert identity.git_blob_sha1 == declaration["predecessor_git_blob_sha1"]
+        sha_field = declaration["predecessor_lf_source_sha256"]
+        assert hashlib.sha256(raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")).hexdigest() == sha_field
+        declarations.append(("a2", source_path, fixture_path, raw, declaration))
+
+    fixture_root = tmp_path / "shallow-text-checkout"
+    fixture_root.mkdir()
+
+    def git(*args, check=True):
+        return subprocess.run(
+            ["git", "-C", os.fspath(fixture_root), *args],
+            check=check, capture_output=True, timeout=10,
+        )
+
+    subprocess.run([
+        "git", "init", "--quiet", "--initial-branch=main", os.fspath(fixture_root),
+    ], check=True, timeout=10)
+    git("config", "user.name", "ATHENA F3 Regression")
+    git("config", "user.email", "f3-regression@invalid.example")
+    git("config", "core.autocrlf", "false")
+    (fixture_root / ".gitattributes").write_text("*.py.txt text\n", encoding="ascii")
+    for _kind, _source_path, fixture_path, raw, _declaration in declarations:
+        target = fixture_root.joinpath(*fixture_path.split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+    git("add", "--all")
+    git("commit", "--quiet", "-m", "exact historical fixtures")
+    head = git("rev-parse", "HEAD").stdout.decode("ascii").strip()
+    (fixture_root / ".git" / "shallow").write_text(head + "\n", encoding="ascii")
+    assert git("rev-parse", "--is-shallow-repository").stdout.strip() == b"true"
+    assert git("rev-list", "--count", "HEAD").stdout.strip() == b"1"
+    assert git("cat-file", "-e", "HEAD^", check=False).returncode != 0
+    assert "[remote " not in (fixture_root / ".git" / "config").read_text(encoding="utf-8").lower()
+    assert git("status", "--porcelain").stdout == b""
+
+    # Authenticate the LF working tree first, then switch back to this exact
+    # commit from a temporary commit that changes every fixture. Git must
+    # materialize each original tracked blob through core.autocrlf on checkout.
+    monkeypatch.setattr(a2, "ROOT", fixture_root)
+
+    def verify_all():
+        for kind, source_path, fixture_path, raw, declaration in declarations:
+            if kind == "e1":
+                assert e1._predecessor_bytes(source_path, root=fixture_root) == raw
+                expected_blob = declaration["predecessor_git_blob_sha1"]
+                expected_lf = declaration["predecessor_lf_sha256"]
+                expected_size = len(raw)
+            else:
+                expected_blob = declaration["predecessor_git_blob_sha1"]
+                expected_lf = declaration["predecessor_lf_source_sha256"]
+                expected_size = declaration["predecessor_byte_size"]
+            assert a2._e3_read_exact_head_fixture(
+                fixture_path, expected_blob=expected_blob, expected_lf=expected_lf,
+                expected_size=expected_size, label="native CRLF predecessor test",
+            ) == raw
+
+    verify_all()
+    git("checkout", "-b", "temporary-fixture-identity-change")
+    for _kind, _source_path, fixture_path, raw, _declaration in declarations:
+        changed = bytearray(raw)
+        index = next(i for i, byte in enumerate(changed) if 97 <= byte <= 122)
+        changed[index] = ord("z") if changed[index] != ord("z") else ord("y")
+        fixture_root.joinpath(*fixture_path.split("/")).write_bytes(changed)
+    git("add", "--all")
+    git("commit", "--quiet", "-m", "temporary fixture identity change")
+    git("config", "core.autocrlf", "true")
+    git("config", "core.eol", "crlf")
+    git("checkout", "main")
+    assert git("rev-parse", "HEAD").stdout.decode("ascii").strip() == head
+    assert git("rev-parse", "--is-shallow-repository").stdout.strip() == b"true"
+    assert git("rev-list", "--count", "HEAD").stdout.strip() == b"1"
+    assert git("cat-file", "-e", "HEAD^", check=False).returncode != 0
+    assert "[remote " not in (fixture_root / ".git" / "config").read_text(encoding="utf-8").lower()
+    assert git("status", "--porcelain").stdout == b""
+    for _kind, _source_path, fixture_path, raw, _declaration in declarations:
+        checkout = fixture_root.joinpath(*fixture_path.split("/"))
+        checkout_raw = checkout.read_bytes()
+        assert b"\r\n" in checkout_raw
+        assert checkout_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n") == raw
+    verify_all()
+
+    # Worktree edits, missing paths, symlinks, wrong declarations/modes, and
+    # missing Git objects must fail closed instead of falling back to files.
+    e1_kind, e1_source, e1_fixture, e1_raw, e1_declaration = declarations[0]
+    e1_path = fixture_root.joinpath(*e1_fixture.split("/"))
+    tampered = bytearray(e1_path.read_bytes())
+    index = next(i for i, byte in enumerate(tampered) if 97 <= byte <= 122)
+    tampered[index] = ord("z") if tampered[index] != ord("z") else ord("y")
+    e1_path.write_bytes(tampered)
+    with pytest.raises(AssertionError):
+        e1._predecessor_bytes(e1_source, root=fixture_root)
+    with pytest.raises(AssertionError):
+        a2._e3_read_exact_head_fixture(
+            e1_fixture, expected_blob=e1_declaration["predecessor_git_blob_sha1"],
+            expected_lf=e1_declaration["predecessor_lf_sha256"], expected_size=len(e1_raw),
+        )
+    e1_path.write_bytes(e1_raw)
+
+    oversized = len(e1_raw) + e1_raw.count(b"\n") + 1
+    e1_path.write_bytes(b"x" * oversized)
+    with pytest.raises(AssertionError):
+        e1._predecessor_bytes(e1_source, root=fixture_root)
+    with pytest.raises(AssertionError):
+        a2._e3_read_exact_head_fixture(
+            e1_fixture, expected_blob=e1_declaration["predecessor_git_blob_sha1"],
+            expected_lf=e1_declaration["predecessor_lf_sha256"], expected_size=len(e1_raw),
+        )
+    e1_path.write_bytes(e1_raw)
+
+    symlink_target = fixture_root.joinpath(*declarations[2][2].split("/"))
+    e1_path.unlink()
+    try:
+        e1_path.symlink_to(symlink_target)
+    except OSError:
+        e1_path.write_bytes(e1_raw)
+    else:
+        with pytest.raises(AssertionError):
+            e1._predecessor_bytes(e1_source, root=fixture_root)
+        with pytest.raises(AssertionError):
+            a2._e3_read_exact_head_fixture(
+                e1_fixture, expected_blob=e1_declaration["predecessor_git_blob_sha1"],
+                expected_lf=e1_declaration["predecessor_lf_sha256"], expected_size=len(e1_raw),
+            )
+        e1_path.unlink()
+        e1_path.write_bytes(e1_raw)
+
+    original_lstat = Path.lstat
+
+    def symlink_lstat(candidate):
+        if candidate == e1_path:
+            return SimpleNamespace(
+                st_mode=stat.S_IFLNK | 0o777, st_nlink=1, st_file_attributes=0,
+            )
+        return original_lstat(candidate)
+
+    monkeypatch.setattr(Path, "lstat", symlink_lstat)
+    with pytest.raises(AssertionError, match="symlink or junction"):
+        e1._predecessor_bytes(e1_source, root=fixture_root)
+    with pytest.raises(AssertionError, match="symlink or junction"):
+        a2._e3_read_exact_head_fixture(
+            e1_fixture, expected_blob=e1_declaration["predecessor_git_blob_sha1"],
+            expected_lf=e1_declaration["predecessor_lf_sha256"], expected_size=len(e1_raw),
+        )
+    monkeypatch.setattr(Path, "lstat", original_lstat)
+
+    _a2_kind, _a2_source, a2_fixture, a2_raw, a2_declaration = declarations[2]
+    a2_path = fixture_root.joinpath(*a2_fixture.split("/"))
+    a2_path.unlink()
+    with pytest.raises(AssertionError):
+        a2._e3_read_exact_head_fixture(
+            a2_fixture, expected_blob=a2_declaration["predecessor_git_blob_sha1"],
+            expected_lf=a2_declaration["predecessor_lf_source_sha256"],
+            expected_size=a2_declaration["predecessor_byte_size"],
+        )
+    a2_path.write_bytes(a2_raw)
+
+    e1_path.unlink()
+    with pytest.raises(AssertionError):
+        e1._predecessor_bytes(e1_source, root=fixture_root)
+    with pytest.raises(AssertionError):
+        a2._e3_read_exact_head_fixture(
+            e1_fixture, expected_blob=e1_declaration["predecessor_git_blob_sha1"],
+            expected_lf=e1_declaration["predecessor_lf_sha256"], expected_size=len(e1_raw),
+        )
+    e1_path.write_bytes(e1_raw)
+
+    with pytest.raises(AssertionError, match="HEAD mode/path/blob mismatch"):
+        a2._e3_read_exact_head_fixture(
+            e1_fixture, expected_blob="0" * 40,
+            expected_lf=e1_declaration["predecessor_lf_sha256"], expected_size=len(e1_raw),
+        )
+    with pytest.raises(AssertionError, match="HEAD object size mismatch"):
+        a2._e3_read_exact_head_fixture(
+            a2_fixture, expected_blob=a2_declaration["predecessor_git_blob_sha1"],
+            expected_lf=a2_declaration["predecessor_lf_source_sha256"],
+            expected_size=a2_declaration["predecessor_byte_size"] + 1,
+        )
+
+    original_git = a2.git
+
+    def wrong_mode_git(*args, **kwargs):
+        result = original_git(*args, **kwargs)
+        if args[:1] == ("ls-tree",) and args[-1:] == (e1_fixture,):
+            return result.replace(b"100644 blob ", b"100755 blob ", 1)
+        return result
+
+    monkeypatch.setattr(a2, "git", wrong_mode_git)
+    with pytest.raises(AssertionError, match="HEAD mode/path/blob mismatch"):
+        a2._e3_read_exact_head_fixture(
+            e1_fixture, expected_blob=e1_declaration["predecessor_git_blob_sha1"],
+            expected_lf=e1_declaration["predecessor_lf_sha256"], expected_size=len(e1_raw),
+        )
+    monkeypatch.setattr(a2, "git", original_git)
+
+    second_e1_path = declarations[1][2]
+    second_e1_blob = e1.FORWARD_EVOLVED_SOURCES[declarations[1][1]]["predecessor_git_blob_sha1"]
+    second_e1_object = fixture_root / ".git" / "objects" / second_e1_blob[:2] / second_e1_blob[2:]
+    assert second_e1_object.is_file(), "E1 fixture object should remain loose in this bounded test repo"
+    second_e1_object.unlink()
+    with pytest.raises(AssertionError, match="cannot be authenticated from HEAD"):
+        e1._predecessor_bytes(declarations[1][1], root=fixture_root)
+    with pytest.raises(AssertionError, match="HEAD blob is unavailable"):
+        a2._e3_read_exact_head_fixture(
+            second_e1_path, expected_blob=second_e1_blob,
+            expected_lf=e1.FORWARD_EVOLVED_SOURCES[declarations[1][1]]["predecessor_lf_sha256"],
+            expected_size=len(declarations[1][3]),
+        )
+
+    blob = git("rev-parse", "HEAD:" + a2_fixture).stdout.decode("ascii").strip()
+    object_path = fixture_root / ".git" / "objects" / blob[:2] / blob[2:]
+    assert object_path.is_file(), "fixture object should remain a loose object in this bounded test repo"
+    object_path.unlink()
+    with pytest.raises(AssertionError, match="HEAD blob is unavailable"):
+        a2._e3_read_exact_head_fixture(
+            a2_fixture, expected_blob=a2_declaration["predecessor_git_blob_sha1"],
+            expected_lf=a2_declaration["predecessor_lf_source_sha256"],
+            expected_size=a2_declaration["predecessor_byte_size"],
+        )
 
 
 def _spawn_tree(tmp_path: Path, *, graceful: bool, parent_exits: bool = False):

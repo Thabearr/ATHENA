@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sqlite3
 import sys
 from dataclasses import replace
 import threading
@@ -88,6 +89,72 @@ def _admit_run(repository, item, envelope, run_label="test-run"):
         envelope.expires_at,
     )
     return repository.admit(candidate).run_id
+
+
+def _admit_second_distinct_run(repository, roots, clock, *, date="2030-01-02"):
+    resources = repository._resources
+    release_id = "development-checkout:" + repository.verified_identity.head_commit_sha
+    app = open_repo(resources, roots, release_id=release_id)
+    preview = AthenaPreviewAdmissionService(resources, clock=clock)
+    result = preview.preview(
+        dates=[date], target_legs=3, target_total_odds=None,
+        bookie="sportybet", profile="shadow", acquire_sources=False,
+        create_share_code=False,
+    )
+    item = preview.preview_store.get(result["preview_id"], now=clock())
+    assert item is not None
+    envelope = ExecutionEnvelope.from_json_bytes(item.envelope_bytes)
+    app.persist_preview_bundle(
+        item=item, envelope=envelope, release_id=release_id,
+        profile_id="local-default", now=clock(),
+    )
+    app.close()
+    return _admit_run(repository, item, envelope, "distinct-root-slot-run")
+
+
+def _prepared_product_get(
+    authority, repository, command, gate, *, send=False, confirm=False,
+    sequence=1, request_date="20300101",
+):
+    from runtime.current_shadow_operation_authority import (
+        ProviderGetResponse, _build_provider_get_intent, provider_get_idempotency_key,
+    )
+    from scripts.capture_fotmob_data_matches import (
+        REQUEST_HEADERS, REQUEST_TIMEOUT_SECONDS, request_target,
+    )
+    from domain.fotmob_data_matches_capture import MAX_RESPONSE_BYTES
+
+    context = authority._context
+    intent = _build_provider_get_intent(
+        context, provider="FOTMOB_DATA_MATCHES",
+        request_target=request_target(request_date, "UTC", "NGA"),
+        logical_id=request_date, headers=tuple(REQUEST_HEADERS),
+        timeout_seconds=REQUEST_TIMEOUT_SECONDS, maximum_bytes=MAX_RESPONSE_BYTES,
+        sequence=sequence,
+    )
+    intent_bytes = canonical_json_bytes(intent)
+    operation_id = repository.prepare_current_shadow_provider_get(
+        context=context, command=command, gate=gate,
+        gate_bytes=canonical_json_bytes(gate), intent=intent,
+        intent_bytes=intent_bytes,
+        idempotency_key=provider_get_idempotency_key(context, intent),
+    )
+    if send or confirm:
+        assert repository.authorize_current_shadow_provider_get_sent(
+            context=context, command=command, gate=gate,
+            gate_bytes=canonical_json_bytes(gate), operation_id=operation_id,
+        ) is True
+    if confirm:
+        repository.confirm_current_shadow_provider_get(
+            context=context, command=command, gate=gate,
+            gate_bytes=canonical_json_bytes(gate), operation_id=operation_id,
+            intent=intent,
+            response=ProviderGetResponse(
+                body=b"{}", status=200, observed_at="2030-01-01T00:00:00.000000Z",
+                content_type="application/json", content_length=2, content_length_header="2",
+            ),
+        )
+    return operation_id
 
 
 def _product_offline_handoff(
@@ -398,6 +465,187 @@ def test_cancel_queued_run_settles_immediately(tmp_path, clock, monkeypatch):
     ) is False
     assert launched == []
     assert not (roots.data_root / "runs" / run_id).exists()
+
+
+def test_cancel_after_claim_atomically_settles_only_the_prelaunch_slot(
+    tmp_path, clock, monkeypatch,
+):
+    from database.run_repository import DurableRunRepository
+
+    _identity, roots, repository, item, envelope = _development_shadow_run(tmp_path, clock)
+    run_id = _admit_run(repository, item, envelope, "cancel-after-claim")
+    attempt_id, lease_token, number = repository.claim_attempt(
+        run_id, worker_instance_id="f1-prelaunch-worker",
+        process_locator={"kind": "OFFLINE_TEST", "label": "offline-probe"},
+    )
+    assert number == 1
+    repository2 = DurableRunRepository(repository._resources, roots, clock=clock)
+
+    disposition, state, version = repository2.record_cancel_intent(run_id, expected_version=0)
+    assert (disposition, state, version) == ("requested", "CANCELLED", 1)
+    assert repository.record_cancel_intent(run_id) == ("already_terminal", "CANCELLED", 1)
+    with pytest.raises(RunLeaseFenced):
+        repository.transition_run(
+            run_id, expected_version=0, state="RUNNING",
+            attempt_id=attempt_id, lease_token=lease_token,
+        )
+
+    with repository._operation() as conn:
+        attempt = conn.execute(
+            "SELECT attempt_number,lease_token,finished_at,exit_code,recovery_disposition "
+            "FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
+            (run_id, attempt_id),
+        ).fetchone()
+        assert attempt is not None
+        assert attempt[0] == 1 and attempt[1] == lease_token
+        assert attempt[2] is not None and attempt[3:] == (None, "CANCELLED_BEFORE_WORKER_START")
+        assert conn.execute(
+            "SELECT 1 FROM app_external_operations WHERE run_id=?", (run_id,),
+        ).fetchone() is None
+        assert conn.execute(
+            "SELECT 1 FROM app_run_artifacts WHERE run_id=?", (run_id,),
+        ).fetchone() is None
+    assert [event[2] for event in repository.read_events(run_id)] == [
+        "RUN_QUEUED", "WORKER_CANCELLED_BEFORE_START", "RUN_CANCELLED",
+    ]
+    assert not repository.list_unfinished_attempts()
+
+    summary = RecoveryService(repository, roots.data_root).reconcile()
+    assert summary.reconciled_attempts == 0
+    assert summary.blocked_runs == 0
+
+    second_run = _admit_second_distinct_run(repository, roots, clock)
+    assert second_run != run_id
+    second_attempt, _second_lease, second_number = repository2.claim_attempt(
+        second_run, worker_instance_id="f1-next-worker",
+        process_locator={"kind": "OFFLINE_TEST", "label": "offline-probe"},
+    )
+    assert second_number == 1
+    assert repository2.list_unfinished_attempts()[0]["attempt_id"] == second_attempt
+    gate_path = (
+        roots.data_root / "runs" / run_id /
+        RunRequest.from_json_bytes(item.request_bytes).canonical_sha256 /
+        "athena-worker-startup-gate.json"
+    )
+    assert not gate_path.exists()
+
+
+@pytest.mark.parametrize("failure", ["native-locator", "event-rollback", "version"])
+def test_queued_cancel_fails_closed_or_rolls_back_without_releasing_claim(
+    tmp_path, clock, failure,
+):
+    _identity, roots, repository, item, envelope = _development_shadow_run(tmp_path, clock)
+    run_id = _admit_run(repository, item, envelope, "cancel-prelaunch-failure-" + failure)
+    attempt_id, lease_token, _number = repository.claim_attempt(
+        run_id, worker_instance_id="f1-fail-closed-worker",
+        process_locator={"kind": "OFFLINE_TEST", "label": "offline-probe"},
+    )
+
+    if failure == "native-locator":
+        with repository._operation(write=True) as conn:
+            conn.execute(
+                "UPDATE app_run_attempts SET process_locator_json=? WHERE run_id=? AND attempt_id=?",
+                (canonical_json_bytes({"kind": "POSIX_PROCESS_GROUP", "pid": 4100}).decode(), run_id, attempt_id),
+            )
+        with pytest.raises(RunStateConflict, match="native or unverified process locator"):
+            repository.record_cancel_intent(run_id, expected_version=0)
+    elif failure == "version":
+        with pytest.raises(RunStateConflict, match="cancellation CAS rejected"):
+            repository.record_cancel_intent(run_id, expected_version=9)
+    else:
+        original_event = repository._event
+        inserted = []
+
+        def fail_terminal_event(conn, event_run_id, version, event_type, payload, stamp):
+            if event_type == "RUN_CANCELLED":
+                raise sqlite3.IntegrityError("injected cancellation projection failure")
+            inserted.append(event_type)
+            return original_event(conn, event_run_id, version, event_type, payload, stamp)
+
+        repository._event = fail_terminal_event
+        with pytest.raises(sqlite3.IntegrityError, match="injected cancellation projection failure"):
+            repository.record_cancel_intent(run_id, expected_version=0)
+        repository._event = original_event
+        assert inserted == ["WORKER_CANCELLED_BEFORE_START"]
+
+    assert repository.run_snapshot(run_id)["state"] == "QUEUED"
+    assert repository.list_unfinished_attempts()[0]["attempt_id"] == attempt_id
+    assert [event[2] for event in repository.read_events(run_id)] == ["RUN_QUEUED"]
+
+
+@pytest.mark.parametrize("winner", ["cancel", "start"])
+def test_claim_start_and_cancel_linearize_across_repository_instances(
+    tmp_path, clock, winner,
+):
+    from database.run_repository import DurableRunRepository
+
+    _identity, roots, repository1, item, envelope = _development_shadow_run(tmp_path, clock)
+    run_id = _admit_run(repository1, item, envelope, "claim-start-race-" + winner)
+    attempt_id, lease_token, _number = repository1.claim_attempt(
+        run_id, worker_instance_id="f1-race-worker",
+        process_locator={"kind": "OFFLINE_TEST", "label": "offline-probe"},
+    )
+    repository2 = DurableRunRepository(repository1._resources, roots, clock=clock)
+    barrier = threading.Barrier(2)
+    winner_committed = threading.Event()
+    outcomes = {}
+
+    def cancel():
+        barrier.wait(timeout=5)
+        try:
+            if winner == "start":
+                assert winner_committed.wait(5)
+            outcomes["cancel"] = repository2.record_cancel_intent(
+                run_id, expected_version=1 if winner == "start" else 0,
+            )
+        except BaseException as exc:
+            outcomes["cancel_error"] = exc
+        finally:
+            if winner == "cancel":
+                winner_committed.set()
+
+    def start():
+        barrier.wait(timeout=5)
+        try:
+            if winner == "cancel":
+                assert winner_committed.wait(5)
+                repository1.transition_run(
+                    run_id, expected_version=0, state="RUNNING",
+                    attempt_id=attempt_id, lease_token=lease_token,
+                )
+            else:
+                outcomes["start"] = repository1.transition_run(
+                    run_id, expected_version=0, state="RUNNING",
+                    attempt_id=attempt_id, lease_token=lease_token,
+                )
+        except RunLeaseFenced as exc:
+            outcomes["start"] = type(exc).__name__
+        except BaseException as exc:
+            outcomes["start_error"] = exc
+        finally:
+            if winner == "start":
+                winner_committed.set()
+
+    threads = [threading.Thread(target=cancel), threading.Thread(target=start)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert all(not thread.is_alive() for thread in threads)
+    assert "cancel_error" not in outcomes, repr(outcomes.get("cancel_error"))
+    assert "start_error" not in outcomes, repr(outcomes.get("start_error"))
+    assert repository1.run_snapshot(run_id)["state"] == (
+        "CANCELLED" if winner == "cancel" else "CANCEL_REQUESTED"
+    )
+    assert len(repository1.list_unfinished_attempts()) == (0 if winner == "cancel" else 1)
+    event_types = [event[2] for event in repository1.read_events(run_id)]
+    if winner == "cancel":
+        assert outcomes["start"] == "RunLeaseFenced"
+        assert event_types == ["RUN_QUEUED", "WORKER_CANCELLED_BEFORE_START", "RUN_CANCELLED"]
+    else:
+        assert outcomes["start"] == 1
+        assert outcomes["cancel"] == ("requested", "CANCEL_REQUESTED", 2)
+        assert event_types == ["RUN_QUEUED", "RUN_RUNNING", "RUN_CANCEL_REQUESTED"]
 
 
 def test_cancel_running_run_and_settlement(tmp_path, clock):
@@ -1429,6 +1677,143 @@ def test_provider_get_recovery_preserves_never_sent_vs_unknown_crash_boundary(
     else:
         assert "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN" in event_types
     assert case["repository"].run_snapshot(case["run_id"])["state"] == "CANCELLED"
+
+
+@pytest.mark.parametrize("phase", ["PREPARED", "SENT", "CONFIRMED"])
+def test_ordinary_worker_interruption_settles_provider_ledger_before_releasing_attempt(
+    tmp_path, clock, monkeypatch, phase,
+):
+    from runtime import current_shadow_operation_authority as authority_module
+
+    monkeypatch.setattr(
+        authority_module, "_fixed_provider_get",
+        lambda *_args, **_kwargs: pytest.fail("interruption regression must never issue a provider GET"),
+    )
+
+    def prepare_boundary(authority, repository, command, gate):
+        return _prepared_product_get(
+            authority, repository, command, gate,
+            send=phase in {"SENT", "CONFIRMED"},
+            confirm=phase == "CONFIRMED",
+        )
+
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch, prepare_boundary,
+    )
+    assert "error" not in captured
+    repository = case["repository"]
+    attempt_id = captured["context"]["attempt_id"]
+    operation_id = captured["result"]
+    with repository._operation() as conn:
+        lease_token = conn.execute(
+            "SELECT lease_token FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
+            (case["run_id"], attempt_id),
+        ).fetchone()[0]
+        before_operation = conn.execute(
+            "SELECT state,completed_at,response_artifact_id,error_code FROM app_external_operations "
+            "WHERE run_id=? AND attempt_id=? AND operation_id=?",
+            (case["run_id"], attempt_id, operation_id),
+        ).fetchone()
+    assert before_operation[0] == phase
+
+    if phase == "SENT":
+        assert repository.record_cancel_intent(case["run_id"]) == (
+            "requested", "CANCEL_REQUESTED", 2,
+        )
+
+    before_events = repository.read_events(case["run_id"])
+    response_bytes_before = None
+    if phase == "CONFIRMED":
+        response_artifact_id = before_operation[2]
+        with repository._operation() as conn:
+            logical_path = conn.execute(
+                "SELECT logical_path FROM app_artifacts WHERE artifact_id=?",
+                (response_artifact_id,),
+            ).fetchone()[0]
+        response_bytes_before = (case["roots"].data_root / logical_path).read_bytes()
+
+    if phase == "PREPARED":
+        original_event = repository._event
+        failed_once = []
+
+        def fail_settlement_event(conn, run_id, version, event_type, payload, stamp):
+            if event_type == "CURRENT_SHADOW_GET_NEVER_SENT" and not failed_once:
+                failed_once.append(event_type)
+                raise sqlite3.IntegrityError("injected provider outcome event failure")
+            return original_event(conn, run_id, version, event_type, payload, stamp)
+
+        repository._event = fail_settlement_event
+        with pytest.raises(sqlite3.IntegrityError, match="injected provider outcome event failure"):
+            repository.interrupt_worker_without_receipt(
+                case["run_id"], attempt_id, lease_token, exit_code=7,
+                diagnostic_id="WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT", last_proven_stage=None,
+            )
+        repository._event = original_event
+        assert repository.run_snapshot(case["run_id"])["state"] == "RUNNING"
+        assert repository.list_unfinished_attempts()[0]["attempt_id"] == attempt_id
+        with repository._operation() as conn:
+            assert conn.execute(
+                "SELECT state,completed_at,error_code FROM app_external_operations WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone() == ("PREPARED", None, None)
+        assert not any(event[2] == "CURRENT_SHADOW_GET_NEVER_SENT" for event in repository.read_events(case["run_id"]))
+
+    repository.interrupt_worker_without_receipt(
+        case["run_id"], attempt_id, lease_token, exit_code=7,
+        diagnostic_id="WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT", last_proven_stage=None,
+    )
+    expected = {
+        "PREPARED": ("FAILED", "PROVIDER_GET_NEVER_SENT", "CURRENT_SHADOW_GET_NEVER_SENT", "INTERRUPTED"),
+        "SENT": ("OUTCOME_UNKNOWN", "PROVIDER_GET_OUTCOME_UNKNOWN", "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN", "CANCELLED"),
+        "CONFIRMED": ("CONFIRMED", None, "CURRENT_SHADOW_GET_RESPONSE_RETAINED", "INTERRUPTED"),
+    }[phase]
+    with repository._operation() as conn:
+        operation = conn.execute(
+            "SELECT state,completed_at,response_artifact_id,error_code FROM app_external_operations "
+            "WHERE run_id=? AND attempt_id=? AND operation_id=?",
+            (case["run_id"], attempt_id, operation_id),
+        ).fetchone()
+        attempt = conn.execute(
+            "SELECT finished_at,exit_code,recovery_disposition FROM app_run_attempts "
+            "WHERE run_id=? AND attempt_id=?",
+            (case["run_id"], attempt_id),
+        ).fetchone()
+    assert operation[0] == expected[0] and operation[1] is not None and operation[3] == expected[1]
+    assert attempt[0] is not None and attempt[1:] == (7, "CANCEL_REQUESTED_SETTLED" if phase == "SENT" else "E2_NO_VERIFIED_RECEIPT")
+    assert repository.run_snapshot(case["run_id"])["state"] == expected[3]
+    assert repository.list_unfinished_attempts() == []
+    after_events = repository.read_events(case["run_id"])
+    outcome_events = [
+        event for event in after_events
+        if event[2] == expected[2] and json.loads(event[3]).get("operation_id") == operation_id
+    ]
+    assert len(outcome_events) == sum(
+        event[2] == expected[2] and json.loads(event[3]).get("operation_id") == operation_id
+        for event in before_events
+    ) + (0 if phase == "CONFIRMED" else 1)
+    if phase != "CONFIRMED":
+        outcome = json.loads(outcome_events[0][3])
+        assert outcome["intent_sha256"] == next(
+            json.loads(event[3])["intent_sha256"] for event in before_events
+            if event[2] == "CURRENT_SHADOW_GET_PREPARED"
+            and json.loads(event[3]).get("operation_id") == operation_id
+        )
+        assert outcome["reason"] == (
+            "WORKER_INTERRUPTED_WITHOUT_RECEIPT" if phase == "PREPARED"
+            else "WORKER_INTERRUPTED_WITHOUT_RECEIPT_AFTER_SENT_WITHOUT_PROVEN_RESPONSE"
+        )
+    else:
+        assert sum(event[2] == "CURRENT_SHADOW_GET_RESPONSE_RETAINED" for event in after_events) == sum(
+            event[2] == "CURRENT_SHADOW_GET_RESPONSE_RETAINED" for event in before_events
+        )
+        response_artifact_id = operation[2]
+        with repository._operation() as conn:
+            logical_path = conn.execute(
+                "SELECT logical_path FROM app_artifacts WHERE artifact_id=?",
+                (response_artifact_id,),
+            ).fetchone()[0]
+        assert (case["roots"].data_root / logical_path).read_bytes() == response_bytes_before
+    assert RecoveryService(repository, case["roots"].data_root).reconcile().reconciled_attempts == 0
 
 
 def test_product_get_sent_permit_can_settle_after_cancel_but_cannot_start_next_get(

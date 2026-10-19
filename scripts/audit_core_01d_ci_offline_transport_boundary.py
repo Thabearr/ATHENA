@@ -826,18 +826,13 @@ def _authenticate_e3_v309_predecessor_fixture(extension):
         "lf_source_sha256": expected["lf_source_sha256"],
         "byte_size": expected["byte_size"],
     }, "E3 V309 source predecessor fixture authorization drift")
-    fixture = _e3_path_stat(fixture_path, label="V309 predecessor fixture")
-    raw = fixture.read_bytes()
-    normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    blob = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
-    require(len(raw) == expected["byte_size"]
-            and blob == expected["git_blob_sha1"]
-            and hashlib.sha256(normalized).hexdigest() == expected["lf_source_sha256"],
-            "E3 V309 source predecessor fixture identity mismatch")
-    try:
-        raw.decode("utf-8", errors="strict")
-    except UnicodeDecodeError as error:
-        raise AssertionError("E3 V309 source predecessor fixture is not UTF-8") from error
+    raw = _e3_read_exact_head_fixture(
+        fixture_path,
+        expected_blob=expected["git_blob_sha1"],
+        expected_lf=expected["lf_source_sha256"],
+        expected_size=expected["byte_size"],
+        label="V309 predecessor fixture",
+    )
     entry = git("ls-tree", "-z", "HEAD", "--", fixture_path)
     require(bool(entry), "E3 V309 source predecessor fixture is not tracked")
     metadata, path_bytes = entry.rstrip(b"\0").split(b"\t", 1)
@@ -1538,57 +1533,13 @@ def read_authenticated_forward_predecessor(path):
             "A2 source-forward current worktree differs from the approved successor: " + path)
 
     fixture = validate_repository_relative_path(transition["predecessor_fixture"])
-    fixture_path = ROOT / fixture
-    import stat
-    try:
-        resolved_root = ROOT.resolve(strict=True)
-        resolved_fixture = fixture_path.resolve(strict=True)
-        resolved_fixture.relative_to(resolved_root)
-        cursor = ROOT
-        fixture_parts = PurePosixPath(fixture).parts
-        fixture_stat = None
-        for index, part in enumerate(fixture_parts):
-            cursor = cursor / part
-            candidate_stat = cursor.lstat()
-            is_junction = getattr(cursor, "is_junction", lambda: False)()
-            reparse = bool(getattr(candidate_stat, "st_file_attributes", 0)
-                           & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
-            require(not stat.S_ISLNK(candidate_stat.st_mode) and not is_junction and not reparse,
-                    "A2 source-forward fixture path contains a symlink or junction")
-            if index < len(fixture_parts) - 1:
-                require(stat.S_ISDIR(candidate_stat.st_mode),
-                        "A2 source-forward fixture parent is not a regular directory")
-            else:
-                fixture_stat = candidate_stat
-    except (OSError, ValueError) as error:
-        raise AssertionError("A2 source-forward predecessor fixture is unavailable or escapes scope") from error
-    require(fixture_stat is not None and stat.S_ISREG(fixture_stat.st_mode),
-            "A2 source-forward predecessor fixture is not a regular file")
-    fixture_raw = fixture_path.read_bytes()
-    require(len(fixture_raw) == transition["predecessor_byte_size"],
-            "A2 source-forward predecessor fixture size mismatch")
-    try:
-        fixture_raw.decode("utf-8", errors="strict")
-    except UnicodeDecodeError as error:
-        raise AssertionError("A2 source-forward predecessor fixture encoding is invalid") from error
-    fixture_lf = fixture_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    fixture_blob = hashlib.sha1(b"blob " + str(len(fixture_raw)).encode("ascii") + b"\0" + fixture_raw).hexdigest()
-    require(fixture_blob == transition["predecessor_git_blob_sha1"]
-            and hashlib.sha256(fixture_lf).hexdigest() == transition["predecessor_lf_source_sha256"],
-            "A2 source-forward predecessor fixture identity mismatch")
-
-    # In a committed checkout, bind the fixture's Git mode and object bytes.
-    # During local authoring, the byte and path checks above still apply before
-    # the new evidence fixture is added to the next commit.
-    fixture_entry = git("ls-tree", "-z", "HEAD", "--", fixture)
-    if fixture_entry:
-        metadata, tree_path = fixture_entry.rstrip(b"\0").split(b"\t", 1)
-        mode, kind, blob = metadata.decode("ascii").split(" ")
-        committed = git("cat-file", "blob", blob)
-        require(tree_path.decode("utf-8") == fixture and mode == "100644" and kind == "blob"
-                and blob == transition["predecessor_git_blob_sha1"]
-                and committed == fixture_raw,
-                "A2 source-forward committed predecessor fixture identity mismatch")
+    fixture_raw = _e3_read_exact_head_fixture(
+        fixture,
+        expected_blob=transition["predecessor_git_blob_sha1"],
+        expected_lf=transition["predecessor_lf_source_sha256"],
+        expected_size=transition["predecessor_byte_size"],
+        label="B4/B6 predecessor fixture",
+    )
 
     # Reject a changed predecessor or successor before doing the more expensive
     # append-only inventory parse.
@@ -1817,6 +1768,68 @@ def _e3_path_stat(relative_path, *, label):
     return ROOT / relative
 
 
+def _e3_read_exact_head_fixture(
+    relative_path, *, expected_blob, expected_lf, expected_size, expected_mode="100644",
+    label="predecessor fixture",
+):
+    """Read a pinned fixture from HEAD and separately prove its checkout text.
+
+    Git filters may materialize CRLF on Windows. Historical identity always
+    comes from the tracked HEAD blob; the worktree is accepted only when its
+    reviewed LF-normalized text is byte-identical to that blob.
+    """
+    relative = validate_repository_relative_path(relative_path)
+    require(type(expected_blob) is str and re.fullmatch(r"[0-9a-f]{40}", expected_blob) is not None
+            and type(expected_lf) is str and re.fullmatch(r"[0-9a-f]{64}", expected_lf) is not None
+            and type(expected_size) is int and 1 <= expected_size <= 2_000_000
+            and expected_mode == "100644",
+            "E3 source-forward " + label + " declaration is malformed: " + relative)
+    candidate = _e3_path_stat(relative, label=label)
+    try:
+        entry = git("ls-tree", "-z", "HEAD", "--", relative)
+    except subprocess.SubprocessError as error:
+        raise AssertionError("E3 source-forward " + label + " HEAD tree is unavailable: " + relative) from error
+    require(bool(entry), "E3 source-forward " + label + " is not tracked at HEAD: " + relative)
+    try:
+        metadata, tree_path = entry.rstrip(b"\0").split(b"\t", 1)
+        mode, kind, blob = metadata.decode("ascii").split(" ")
+    except (UnicodeDecodeError, ValueError) as error:
+        raise AssertionError("E3 source-forward " + label + " HEAD tree entry is malformed: " + relative) from error
+    require(tree_path.decode("utf-8") == relative and mode == expected_mode
+            and kind == "blob" and blob == expected_blob,
+            "E3 source-forward " + label + " HEAD mode/path/blob mismatch: " + relative)
+    try:
+        object_size_raw = git("cat-file", "-s", blob).decode("ascii").strip()
+    except (subprocess.SubprocessError, UnicodeDecodeError) as error:
+        raise AssertionError("E3 source-forward " + label + " HEAD blob is unavailable: " + relative) from error
+    require(object_size_raw.isdecimal() and int(object_size_raw) == expected_size,
+            "E3 source-forward " + label + " HEAD object size mismatch: " + relative)
+    try:
+        raw, identity = read_tracked_head_blob(
+            ROOT, relative, verify_worktree_filtered_identity=False,
+        )
+    except SourceIdentityError as error:
+        raise AssertionError("E3 source-forward " + label + " HEAD object is unavailable: " + relative) from error
+    normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    require(len(raw) == expected_size and identity.git_blob_sha1 == expected_blob
+            and hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+                == expected_blob
+            and hashlib.sha256(normalized).hexdigest() == expected_lf,
+            "E3 source-forward " + label + " exact HEAD identity mismatch: " + relative)
+    try:
+        raw.decode("utf-8", errors="strict")
+        worktree_limit = len(raw) + raw.count(b"\n")
+        with candidate.open("rb") as handle:
+            worktree_raw = handle.read(worktree_limit + 1)
+    except (UnicodeDecodeError, OSError) as error:
+        raise AssertionError("E3 source-forward " + label + " checkout is unreadable: " + relative) from error
+    worktree_normalized = worktree_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    require(len(worktree_raw) <= worktree_limit
+            and worktree_normalized == normalized,
+            "E3 source-forward " + label + " checkout differs from exact HEAD text: " + relative)
+    return raw
+
+
 def _e3_directory_path(relative_path, *, label):
     relative = validate_repository_relative_path(relative_path)
     import stat
@@ -1840,19 +1853,18 @@ def _e3_source_forward_file_identity(
     path, *, fixture, expected_blob, expected_lf, expected_size, expected_mode="100644",
 ):
     relative = validate_repository_relative_path(path)
+    if fixture:
+        return _e3_read_exact_head_fixture(
+            relative, expected_blob=expected_blob, expected_lf=expected_lf,
+            expected_size=expected_size, expected_mode=expected_mode,
+            label="Pass-A predecessor fixture",
+        )
     candidate = _e3_path_stat(relative, label="current source")
     raw, identity = read_tracked_head_blob(ROOT, relative)
     normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    require(len(raw) == expected_size if fixture else True,
-            "E3 source-forward predecessor fixture size mismatch: " + relative)
-    if fixture:
-        blob = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
-        require(blob == expected_blob and hashlib.sha256(normalized).hexdigest() == expected_lf,
-                "E3 source-forward predecessor fixture identity mismatch: " + relative)
-    else:
-        require(identity.git_blob_sha1 == expected_blob
-                and hashlib.sha256(normalized).hexdigest() == expected_lf,
-                "E3 source-forward current successor identity mismatch: " + relative)
+    require(identity.git_blob_sha1 == expected_blob
+            and hashlib.sha256(normalized).hexdigest() == expected_lf,
+            "E3 source-forward current successor identity mismatch: " + relative)
     worktree_raw = candidate.read_bytes()
     worktree_normalized = worktree_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     require(worktree_normalized == normalized,
@@ -2428,28 +2440,13 @@ def read_authenticated_cross_contract_predecessor(path):
                     "E3 cross-contract predecessor rewrites prior B4/B6 identity: " + path)
 
     fixture_path = validate_repository_relative_path(transition["predecessor_fixture"])
-    fixture = _e3_path_stat(fixture_path, label="predecessor fixture")
-    fixture_raw = fixture.read_bytes()
-    require(len(fixture_raw) == transition["predecessor_byte_size"],
-            "E3 source-forward predecessor fixture size mismatch: " + fixture_path)
-    try:
-        fixture_raw.decode("utf-8", errors="strict")
-    except UnicodeDecodeError as error:
-        raise AssertionError("E3 source-forward predecessor fixture encoding is invalid: " + fixture_path) from error
-    fixture_lf = fixture_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    fixture_blob = hashlib.sha1(
-        b"blob " + str(len(fixture_raw)).encode("ascii") + b"\0" + fixture_raw
-    ).hexdigest()
-    require(fixture_blob == transition["predecessor_git_blob_sha1"]
-            and hashlib.sha256(fixture_lf).hexdigest() == transition["predecessor_lf_source_sha256"],
-            "E3 source-forward predecessor fixture identity mismatch: " + fixture_path)
-    fixture_entry = git("ls-tree", "-z", "HEAD", "--", fixture_path)
-    require(bool(fixture_entry), "E3 source-forward predecessor fixture is not committed: " + fixture_path)
-    metadata, tree_path = fixture_entry.rstrip(b"\0").split(b"\t", 1)
-    mode, kind, blob = metadata.decode("ascii").split(" ")
-    require(tree_path.decode("utf-8") == fixture_path and mode == "100644" and kind == "blob"
-            and blob == transition["predecessor_git_blob_sha1"],
-            "E3 source-forward committed predecessor fixture identity mismatch: " + fixture_path)
+    fixture_raw = _e3_read_exact_head_fixture(
+        fixture_path,
+        expected_blob=transition["predecessor_git_blob_sha1"],
+        expected_lf=transition["predecessor_lf_source_sha256"],
+        expected_size=transition["predecessor_byte_size"],
+        label="V284 predecessor fixture",
+    )
 
     # The newly added fixture directory is closed-world: missing, renamed, or
     # extra evidence files reject the transition.
@@ -2468,23 +2465,13 @@ def read_authenticated_cross_contract_predecessor(path):
         if path == anchor_path:
             raise AssertionError("unchanged source anchor is not a predecessor transition: " + path)
         if anchor_path in E3_CROSS_CONTRACT_SUPPORTING_SOURCE_ANCHORS:
-            anchor_fixture = _e3_path_stat(anchor["fixture_path"], label="supporting fixture")
-            anchor_raw = anchor_fixture.read_bytes()
-            require(len(anchor_raw) == anchor["byte_size"]
-                    and hashlib.sha1(b"blob " + str(len(anchor_raw)).encode("ascii") + b"\0" + anchor_raw).hexdigest()
-                        == anchor["git_blob_sha1"]
-                    and hashlib.sha256(anchor_raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")).hexdigest()
-                        == anchor["lf_source_sha256"],
-                    "E3 supporting source fixture identity mismatch: " + anchor["fixture_path"])
-            anchor_entry = git("ls-tree", "-z", "HEAD", "--", anchor["fixture_path"])
-            require(bool(anchor_entry),
-                    "E3 supporting source fixture is not committed: " + anchor["fixture_path"])
-            anchor_metadata, anchor_tree_path = anchor_entry.rstrip(b"\0").split(b"\t", 1)
-            anchor_mode, anchor_kind, anchor_blob = anchor_metadata.decode("ascii").split(" ")
-            require(anchor_tree_path.decode("utf-8") == anchor["fixture_path"]
-                    and anchor_mode == "100644" and anchor_kind == "blob"
-                    and anchor_blob == anchor["git_blob_sha1"],
-                    "E3 supporting source fixture mode or Git blob mismatch: " + anchor["fixture_path"])
+            anchor_raw = _e3_read_exact_head_fixture(
+                anchor["fixture_path"],
+                expected_blob=anchor["git_blob_sha1"],
+                expected_lf=anchor["lf_source_sha256"],
+                expected_size=anchor["byte_size"],
+                label="supporting fixture",
+            )
             _e3_path_stat(anchor_path, label="supporting source")
             anchor_current, anchor_identity = read_tracked_head_blob(ROOT, anchor_path)
             anchor_lf = anchor_current.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
