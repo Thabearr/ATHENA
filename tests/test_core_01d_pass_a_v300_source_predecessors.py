@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+import io
 from pathlib import Path
 import socket
 import stat
@@ -448,14 +449,17 @@ def test_v300_rejects_fixture_symlink_and_byte_drift(monkeypatch):
         a2.read_authenticated_pass_a_source_predecessor(path)
 
     monkeypatch.setattr(Path, "lstat", original_lstat)
-    original_read_bytes = Path.read_bytes
+    original_open = Path.open
+    with original_open(fixture, "rb") as handle:
+        fixture_bytes = handle.read()
 
-    def altered_fixture(candidate):
-        raw = original_read_bytes(candidate)
-        return raw + b"\n" if candidate == fixture else raw
+    def altered_fixture(candidate, *args, **kwargs):
+        if candidate == fixture and args and args[0] == "rb":
+            return io.BytesIO(fixture_bytes + b"\n")
+        return original_open(candidate, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_bytes", altered_fixture)
-    with pytest.raises(AssertionError, match="worktree bytes differ|fixture identity|size mismatch"):
+    monkeypatch.setattr(Path, "open", altered_fixture)
+    with pytest.raises(AssertionError, match="checkout differs from exact HEAD text"):
         a2.read_authenticated_pass_a_source_predecessor(path)
 
 
@@ -489,7 +493,7 @@ def test_v300_rejects_fixture_missing_from_head(monkeypatch):
         return original_git(*args, **kwargs)
 
     monkeypatch.setattr(a2, "git", missing_fixture)
-    with pytest.raises(AssertionError, match="path is not committed"):
+    with pytest.raises(AssertionError, match="not tracked at HEAD"):
         a2.read_authenticated_pass_a_source_predecessor(path)
 
 
@@ -500,9 +504,9 @@ def test_v300_rejects_forged_fixture_and_successor_identities(monkeypatch):
     original = a2.E3_PASS_A_SOURCE_FORWARD_TRANSITIONS
     altered = deepcopy(original)
     for field, bad_value, message in (
-        ("predecessor_git_blob_sha1", "0" * 40, "predecessor fixture identity mismatch"),
-        ("predecessor_lf_source_sha256", "0" * 64, "predecessor fixture identity mismatch"),
-        ("predecessor_byte_size", altered[path]["predecessor_byte_size"] + 1, "predecessor fixture size mismatch"),
+        ("predecessor_git_blob_sha1", "0" * 40, "HEAD mode/path/blob mismatch"),
+        ("predecessor_lf_source_sha256", "0" * 64, "exact HEAD identity mismatch"),
+        ("predecessor_byte_size", altered[path]["predecessor_byte_size"] + 1, "HEAD object size mismatch"),
         ("predecessor_git_mode", "100755", "predecessor mode or size is malformed"),
         ("successor_git_blob_sha1", "0" * 40, "current successor identity mismatch"),
         ("successor_lf_source_sha256", "0" * 64, "current successor identity mismatch"),

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from pathlib import Path
 
@@ -144,17 +145,27 @@ def test_unlisted_e1_source_drift_is_rejected(shallow_authenticated_a2_inventory
         )
 
 
-def test_predecessor_fixture_tampering_is_rejected(shallow_authenticated_a2_inventory, tmp_path):
-    _copy_sources_and_fixtures(tmp_path)
+def test_predecessor_fixture_tampering_is_rejected(
+        shallow_authenticated_a2_inventory, monkeypatch,
+):
     fixture = next(iter(e1.FORWARD_EVOLVED_SOURCES.values()))["predecessor_fixture"]
-    target = tmp_path / fixture
-    target.write_bytes(target.read_bytes() + b"tamper")
+    target = e1.ROOT / fixture
+    tampered = target.read_bytes() + b"tamper"
+    original_open = Path.open
 
-    with pytest.raises(AssertionError, match="predecessor fixture identity drift"):
+    def read_tampered_worktree(path, *args, **kwargs):
+        if path == target and args and args[0] == "rb":
+            return io.BytesIO(tampered)
+        return original_open(path, *args, **kwargs)
+
+    # Preserve the real HEAD object read; alter only the bounded checkout read
+    # so the assertion proves the fixture differs from its authenticated blob.
+    monkeypatch.setattr(Path, "open", read_tampered_worktree)
+
+    with pytest.raises(AssertionError, match="predecessor fixture worktree differs from exact HEAD text"):
         e1._authenticate_current_sources(
             _frozen_identities(),
             shallow_authenticated_a2_inventory["source_identities"],
-            root=tmp_path,
             tracked_paths=e1.FORWARD_EVOLVED_SOURCE_PATHS,
         )
 

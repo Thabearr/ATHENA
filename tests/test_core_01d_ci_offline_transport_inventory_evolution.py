@@ -6,6 +6,7 @@ authenticated against the latest reviewed generation.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from pathlib import Path
 import runpy
@@ -319,14 +320,22 @@ def test_e3_v309_predecessor_fixture_is_exact_and_tampering_fails_closed(monkeyp
     normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     assert hashlib.sha256(normalized).hexdigest() == expected["lf_source_sha256"]
 
-    class TamperedFixture:
-        @staticmethod
-        def read_bytes():
-            return raw + b"tampered"
+    fixture_path = boundary.ROOT / expected["fixture_path"]
+    original_open = Path.open
+
+    def read_tampered_worktree(path, *args, **kwargs):
+        if path == fixture_path and args and args[0] == "rb":
+            return io.BytesIO(raw + b"tampered")
+        return original_open(path, *args, **kwargs)
 
     with monkeypatch.context() as patch:
-        patch.setattr(boundary, "_e3_path_stat", lambda *_args, **_kwargs: TamperedFixture())
-        with pytest.raises(AssertionError, match="V309 source predecessor fixture identity mismatch"):
+        # Keep safe path and HEAD object checks real; tamper only the bounded
+        # worktree read so this proves checkout drift is rejected.
+        patch.setattr(Path, "open", read_tampered_worktree)
+        with pytest.raises(
+            AssertionError,
+            match="V309 predecessor fixture checkout differs from exact HEAD text",
+        ):
             boundary._authenticate_e3_v309_predecessor_fixture(extension)
 
     altered = json.loads(json.dumps(extension))
