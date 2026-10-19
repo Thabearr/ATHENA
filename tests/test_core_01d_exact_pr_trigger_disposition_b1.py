@@ -227,7 +227,11 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
         "tests/fixtures/core_01d/pass1-v1-source/test-core-01-schedule-date-disposition.py",
     }
     assert added == set(first_added_generation) - removed_after_addition
-    assert len(added) == 94
+    e3_projection_path = "tests/test_core_01d_workflow_consolidation_e3_source_projection.py"
+    assert e3_projection_path in added
+    assert first_added_generation[e3_projection_path] == 319
+    assert len(added - {e3_projection_path}) == 94
+    assert len(added) == 95
     assert first_added_generation["runtime/current_shadow_operation_authority.py"] == 263
     assert first_added_generation[
         "tests/test_core_01d_pass_a_v300_source_predecessors.py"
