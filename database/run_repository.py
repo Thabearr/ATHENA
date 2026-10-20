@@ -87,6 +87,17 @@ def _utc(value):
     return value.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+def _validate_provider_get_timestamp(value):
+    """Authenticate the bounded UTC text emitted by the lifecycle writer."""
+    if (type(value) is not str or len(value) != 27
+            or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z", value) is None):
+        raise RunRepositoryError("provider GET lifecycle timestamp is not canonical UTC")
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ")
+    except ValueError as exc:
+        raise RunRepositoryError("provider GET lifecycle timestamp is not valid UTC") from exc
+
+
 def _identity(value):
     if type(value) is not str or _RUN_ID.fullmatch(value) is None:
         raise RunRepositoryError("identity outside reviewed vocabulary")
@@ -1504,6 +1515,10 @@ class DurableRunRepository:
                                                       }))):
             raise RunRepositoryError("unsettled provider GET row identity or state drift")
 
+        for timestamp in (prepared_at, sent_at, completed_at):
+            if timestamp is not None:
+                _validate_provider_get_timestamp(timestamp)
+
         self._require_artifact_role(conn, run_id, input_artifact_id, "EXTERNAL_INPUT")
         artifact = conn.execute(
             "SELECT byte_sha256,canonical_sha256,byte_count,media_type,artifact_kind,logical_path,"
@@ -1650,8 +1665,22 @@ class DurableRunRepository:
                 raise RunRepositoryError("FAILED provider GET lacks one exact never-sent event")
         if state == "OUTCOME_UNKNOWN":
             if (len(sent) != 1 or never_sent or len(unknown) != 1 or retained
-                    or unknown[0][2].get("intent_sha256") != intent_sha256
-                    or unknown[0][2].get("error_code") != error_code):
+                    or unknown[0][0] <= sent[0][0]):
+                raise RunRepositoryError("uncertain provider GET lacks one exact outcome event")
+            expected_unknown = {
+                "operation_id": operation_id,
+                "intent_sha256": intent_sha256,
+                "error_code": error_code,
+            }
+            if error_code == "PROVIDER_GET_OUTCOME_UNKNOWN":
+                reason = unknown[0][2].get("reason")
+                if (type(reason) is not str or reason not in {
+                        "RECOVERY_FOUND_SENT_WITHOUT_PROVEN_RESPONSE",
+                        "WORKER_INTERRUPTED_WITHOUT_RECEIPT_AFTER_SENT_WITHOUT_PROVEN_RESPONSE",
+                }):
+                    raise RunRepositoryError("uncertain provider GET lacks one exact outcome event")
+                expected_unknown["reason"] = reason
+            if unknown[0][2] != expected_unknown:
                 raise RunRepositoryError("uncertain provider GET lacks one exact outcome event")
         if state == "CONFIRMED":
             self._verify_confirmed_provider_get_artifact(
