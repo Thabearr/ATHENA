@@ -1605,15 +1605,20 @@ class DurableRunRepository:
         sent = self._operation_events_for_attempt(
             conn, run_id, operation_id, "CURRENT_SHADOW_GET_SENT",
         )
-        if state == "PREPARED":
+        if state in {"PREPARED", "FAILED"}:
             if sent:
-                raise RunRepositoryError("PREPARED provider GET already has a SENT event")
-        elif (len(sent) != 1 or sent[0][2] != {
+                raise RunRepositoryError(
+                    f"{state} provider GET already has a SENT event"
+                )
+        elif state in {"SENT", "CONFIRMED", "OUTCOME_UNKNOWN"}:
+            if (len(sent) != 1 or sent[0][2] != {
                 "operation_id": operation_id,
                 "intent_sha256": intent_sha256,
                 "linearization": "ONE_IN_FLIGHT_GET_PERMIT",
-        } or sent[0][0] <= prepared[0][0]):
-            raise RunRepositoryError("SENT provider GET lacks one ordered exact SENT event")
+            } or sent[0][0] <= prepared[0][0]):
+                raise RunRepositoryError("SENT provider GET lacks one ordered exact SENT event")
+        else:
+            raise RunRepositoryError("provider GET state has no reviewed event projection")
         never_sent = self._operation_events_for_attempt(
             conn, run_id, operation_id, "CURRENT_SHADOW_GET_NEVER_SENT",
         )
@@ -1626,10 +1631,22 @@ class DurableRunRepository:
         if state in {"PREPARED", "SENT"} and (never_sent or unknown or retained):
             raise RunRepositoryError("unsettled provider GET already has a terminal event")
         if state == "FAILED":
-            if (sent or len(never_sent) != 1 or unknown or retained
-                    or never_sent[0][2].get("intent_sha256") != intent_sha256
-                    or type(never_sent[0][2].get("reason")) is not str
-                    or not never_sent[0][2]["reason"]):
+            if len(never_sent) != 1 or unknown or retained:
+                raise RunRepositoryError("FAILED provider GET lacks one exact never-sent event")
+            never_sent_event = never_sent[0][2]
+            never_sent_reason = never_sent_event.get("reason")
+            if (type(never_sent_reason) is not str
+                    or never_sent_reason not in {
+                        "CANCEL_REQUESTED_BEFORE_SENT",
+                        "WORKER_INTERRUPTED_WITHOUT_RECEIPT",
+                        "RECOVERY_FOUND_PREPARED_WITHOUT_SENT",
+                    }
+                    or never_sent_event != {
+                        "operation_id": operation_id,
+                        "intent_sha256": intent_sha256,
+                        "reason": never_sent_reason,
+                    }
+                    or never_sent[0][0] <= prepared[0][0]):
                 raise RunRepositoryError("FAILED provider GET lacks one exact never-sent event")
         if state == "OUTCOME_UNKNOWN":
             if (len(sent) != 1 or never_sent or len(unknown) != 1 or retained

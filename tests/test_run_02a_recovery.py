@@ -159,7 +159,8 @@ def _prepared_product_get(
 
 def _product_offline_handoff(
     tmp_path, clock, monkeypatch, *, on_bind=None, before_publish=None,
-    bind_failure=False, acquire_sources=False,
+    bind_failure=False, acquire_sources=False, real_root_process=False,
+    manual_worker=False,
 ):
     """Run the real product entry behind deterministic parent/child barriers."""
     from runtime import worker_entry, worker_startup_gate
@@ -190,6 +191,7 @@ def _product_offline_handoff(
     handoff_outcome = {}
     worker_errors = []
     launch_calls = []
+    launch_handles = []
     controls = []
     captured_threads = []
     real_wait_for_gate = worker_startup_gate.wait_for_gate
@@ -221,10 +223,26 @@ def _product_offline_handoff(
     def synthetic_launch(_launcher, built):
         launch_calls.append(built)
         persist_worker_command(built)
-        threading.Thread(target=run_worker, name="product-offline-probe-test").start()
-        if not gate_waiting.wait(10):
-            raise AssertionError("product child did not reach the deterministic gate barrier")
-        return WorkerProcessHandle(_MockChild(os.getpid(), exit_code=None))
+        if not manual_worker:
+            threading.Thread(target=run_worker, name="product-offline-probe-test").start()
+            if not gate_waiting.wait(10):
+                raise AssertionError("product child did not reach the deterministic gate barrier")
+        if real_root_process:
+            child = _spawn_process(
+                [sys.executable, "-c", "import sys; sys.stdin.buffer.read()"],
+                cwd=built.run_directory, shell=False, stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                **_process_group_options(),
+            )
+        else:
+            child = _MockChild(os.getpid(), exit_code=None)
+        handle = WorkerProcessHandle(child)
+        launch_handles.append(handle)
+        if manual_worker:
+            # In this ledger test the actual owned process is paused on stdin;
+            # the authenticated repository boundary is exercised in-process.
+            gate_waiting.set()
+        return handle
 
     monkeypatch.setattr(WorkerLauncher, "launch", synthetic_launch)
 
@@ -274,14 +292,15 @@ def _product_offline_handoff(
         def request_cancel(self, locator):
             return False
 
-    monkeypatch.setattr(worker_coordinator, "WorkerProcessControl", SyntheticControl)
-    monkeypatch.setattr(
-        worker_process_control.WorkerProcessControl,
-        "state",
-        staticmethod(lambda locator, owner: "ACTIVE" if all(
-            locator.get(key) == value for key, value in owner.items()
-        ) else "UNKNOWN"),
-    )
+    if not real_root_process:
+        monkeypatch.setattr(worker_coordinator, "WorkerProcessControl", SyntheticControl)
+        monkeypatch.setattr(
+            worker_process_control.WorkerProcessControl,
+            "state",
+            staticmethod(lambda locator, owner: "ACTIVE" if all(
+                locator.get(key) == value for key, value in owner.items()
+            ) else "UNKNOWN"),
+        )
     if before_publish is not None:
         original_publish = repository.publish_worker_startup_gate
 
@@ -323,6 +342,7 @@ def _product_offline_handoff(
         "coordinator": coordinator,
         "handoff_outcome": handoff_outcome,
         "launch_calls": launch_calls,
+        "launch_handles": launch_handles,
         "controls": controls,
         "worker_errors": worker_errors,
         "worker_finished": worker_finished,
@@ -340,6 +360,7 @@ def _assert_no_offline_worker_evidence(case):
 
 def _run_authenticated_product_authority_case(
     tmp_path, clock, monkeypatch, action, *, release_gate=True, wait=True,
+    real_root_process=False, manual_worker=False,
 ):
     """Build a real admitted gate/context and replace only the child transport."""
     from runtime.current_shadow_operation_authority import (
@@ -351,12 +372,15 @@ def _run_authenticated_product_authority_case(
 
     case = _product_offline_handoff(
         tmp_path, clock, monkeypatch, acquire_sources=True,
+        real_root_process=real_root_process,
+        manual_worker=manual_worker,
     )
     captured = {}
+    test_process_pid = os.getpid()
 
     class BlockedSyntheticChild:
         def __init__(self):
-            self.pid = os.getpid()
+            self.pid = test_process_pid
             self.stdin = io.BytesIO()
 
         def poll(self):
@@ -373,14 +397,19 @@ def _run_authenticated_product_authority_case(
         # owning process while retaining this process's actual creation identity.
         monkeypatch.setattr(os, "getppid", lambda: gate["pid"])
         executable, executable_sha = worker_executable_identity()
-        process = repository.launch_current_shadow_supervisor(
-            command=command,
-            gate=gate,
-            gate_bytes=gate_bytes,
-            launch=lambda _context_path: BlockedSyntheticChild(),
-            worker_executable_path=executable,
-            worker_executable_sha256=executable_sha,
-        )
+        actual_pid = os.getpid
+        monkeypatch.setattr(os, "getpid", lambda: gate["pid"])
+        try:
+            process = repository.launch_current_shadow_supervisor(
+                command=command,
+                gate=gate,
+                gate_bytes=gate_bytes,
+                launch=lambda _context_path: BlockedSyntheticChild(),
+                worker_executable_path=executable,
+                worker_executable_sha256=executable_sha,
+            )
+        finally:
+            monkeypatch.setattr(os, "getpid", actual_pid)
         context_file = context_path(command)
         context, context_bytes = read_context(context_file, command=command)
         stored_gate, stored_gate_bytes = read_gate_document(case["gate_path"])
@@ -403,10 +432,29 @@ def _run_authenticated_product_authority_case(
     monkeypatch.setattr(
         execute_current_shadow_request, "run_authenticated_product_worker", run_authenticated,
     )
-    if release_gate:
+    if manual_worker:
+        gate, gate_bytes = read_gate_document(case["gate_path"])
+        # This inline seam models worker_entry's root PID check. The Popen
+        # root stays real and its exact process identity is checked by the
+        # unpatched WorkerProcessControl before authorization and death recovery.
+        actual_pid = os.getpid
+        monkeypatch.setattr(os, "getpid", lambda: gate["pid"])
+        try:
+            case["repository"].authorize_worker_start(
+                command=case["command"], gate=gate, gate_bytes=gate_bytes,
+            )
+        finally:
+            monkeypatch.setattr(os, "getpid", actual_pid)
+        run_authenticated(
+            [], repository=case["repository"], command=case["command"],
+            gate=gate, gate_bytes=gate_bytes,
+        )
+        case["worker_finished"].set()
+    elif release_gate:
         case["release_gate"].set()
-    if wait:
+    if wait and not manual_worker:
         assert case["worker_finished"].wait(10)
+    if wait:
         assert case["worker_errors"] == []
         assert "authority" in captured
         assert "CURRENT_SHADOW_SUPERVISOR_STARTED" in [
@@ -429,6 +477,740 @@ def _fotmob_get(authority, request_date):
         timeout_seconds=REQUEST_TIMEOUT_SECONDS,
         maximum_bytes=MAX_RESPONSE_BYTES,
     )
+
+
+def _run_cancelled_never_sent_provider_get_case(
+    tmp_path, clock, monkeypatch, *, real_root_process=False,
+):
+    """Exercise the real prepare/cancel/authorize boundary without transport."""
+    from runtime import current_shadow_operation_authority as authority_module
+    from database.run_repository import DurableRunRepository
+
+    transport_calls = []
+    monkeypatch.setattr(
+        authority_module, "_fixed_provider_get",
+        lambda *args, **kwargs: transport_calls.append((args, kwargs))
+        or pytest.fail("cancel-before-SENT regression must never call provider transport"),
+    )
+    original_authorize = DurableRunRepository.authorize_current_shadow_provider_get_sent
+    cancel_results = []
+    send_decisions = []
+
+    def cancel_before_sent(repository, **kwargs):
+        context = kwargs["context"]
+        cancellation_repository = DurableRunRepository.for_worker_data_root(
+            ResourceResolver.for_development(repository.verified_identity),
+            repository._data_root,
+        )
+        cancel_results.append(cancellation_repository.record_cancel_intent(context["run_id"]))
+        decision = original_authorize(repository, **kwargs)
+        send_decisions.append(decision)
+        return decision
+
+    monkeypatch.setattr(
+        DurableRunRepository, "authorize_current_shadow_provider_get_sent",
+        cancel_before_sent,
+    )
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch,
+        lambda authority, *_: _fotmob_get(authority, "20300101"),
+        real_root_process=real_root_process,
+        manual_worker=real_root_process,
+    )
+    from runtime.current_shadow_operation_authority import ProductOperationAuthorityError
+    assert isinstance(captured.get("error"), ProductOperationAuthorityError)
+    assert str(captured["error"]) == "durable cancellation blocked provider GET before SENT"
+    assert cancel_results == [("requested", "CANCEL_REQUESTED", 2)]
+    assert send_decisions == [False]
+    assert transport_calls == []
+    assert case["repository"].run_snapshot(case["run_id"])["state"] == "CANCEL_REQUESTED"
+    assert case["repository"].list_unfinished_attempts()[0]["run_id"] == case["run_id"]
+
+    prepared = [
+        json.loads(event[3]) for event in case["repository"].read_events(case["run_id"])
+        if event[2] == "CURRENT_SHADOW_GET_PREPARED"
+    ]
+    assert len(prepared) == 1
+    operation_id = prepared[0]["operation_id"]
+    operation_events = [
+        (event[0], event[2], json.loads(event[3]))
+        for event in case["repository"].read_events(case["run_id"])
+        if event[2] in {
+            "CURRENT_SHADOW_GET_PREPARED", "CURRENT_SHADOW_GET_SENT",
+            "CURRENT_SHADOW_GET_NEVER_SENT", "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN",
+            "CURRENT_SHADOW_GET_RESPONSE_RETAINED",
+        } and json.loads(event[3]).get("operation_id") == operation_id
+    ]
+    assert [event[1] for event in operation_events] == [
+        "CURRENT_SHADOW_GET_PREPARED", "CURRENT_SHADOW_GET_NEVER_SENT",
+    ]
+    assert operation_events[1][0] > operation_events[0][0]
+    assert operation_events[1][2] == {
+        "operation_id": operation_id,
+        "intent_sha256": prepared[0]["intent_sha256"],
+        "reason": "CANCEL_REQUESTED_BEFORE_SENT",
+    }
+    return case, captured, operation_id, transport_calls
+
+
+def _provider_get_row(repository, run_id, operation_id):
+    with repository._operation() as conn:
+        return conn.execute(
+            "SELECT operation_id,operation_kind,intent_sha256,authority_sha256,input_artifact_id,"
+            "idempotency_key,state,prepared_at,sent_at,completed_at,response_artifact_id,error_code "
+            "FROM app_external_operations WHERE run_id=? AND operation_id=?",
+            (run_id, operation_id),
+        ).fetchone()
+
+
+def _raw_run_event_rows(repository, run_id):
+    """Read exact ledger bytes for rollback assertions, including tampered cases."""
+    with repository._operation() as conn:
+        return conn.execute(
+            "SELECT sequence,state_version,event_type,payload_bytes,payload_sha256,observed_at "
+            "FROM app_run_events WHERE run_id=? ORDER BY sequence",
+            (run_id,),
+        ).fetchall()
+
+
+def _stop_real_root_process(case):
+    for handle in case.get("launch_handles", ()):
+        process = handle._process
+        if process.poll() is None:
+            if process.stdin is not None and not process.stdin.closed:
+                process.stdin.close()
+            process.wait(timeout=5)
+    for control in case["coordinator"]._process_controls.values():
+        control.close()
+
+
+def _tamper_failed_provider_get_evidence(case, operation_id, mutation):
+    repository = case["repository"]
+    run_id = case["run_id"]
+
+    def rewrite_event(conn, event_type, *, operation_bound=True,
+                      rewrite=None, preserve_digest=False, noncanonical=False):
+        rows = conn.execute(
+            "SELECT sequence,payload_bytes,payload_sha256 FROM app_run_events "
+            "WHERE run_id=? AND event_type=? ORDER BY sequence",
+            (run_id, event_type),
+        ).fetchall()
+        target = None
+        for row in rows:
+            payload = json.loads(row[1])
+            if not operation_bound or payload.get("operation_id") == operation_id:
+                target = row
+                break
+        assert target is not None
+        payload = json.loads(target[1])
+        if rewrite is not None:
+            rewrite(payload)
+        raw = canonical_json_bytes(payload)
+        if noncanonical:
+            raw = b" " + raw
+        digest = target[2] if preserve_digest else hashlib.sha256(raw).hexdigest()
+        conn.execute(
+            "UPDATE app_run_events SET payload_bytes=?,payload_sha256=? "
+            "WHERE run_id=? AND sequence=?",
+            (raw, digest, run_id, target[0]),
+        )
+
+    with repository._operation(write=True) as conn:
+        operation = conn.execute(
+            "SELECT operation_id,operation_kind,intent_sha256,authority_sha256,input_artifact_id,"
+            "idempotency_key,state,prepared_at,sent_at,completed_at,response_artifact_id,error_code "
+            "FROM app_external_operations WHERE run_id=? AND operation_id=?",
+            (run_id, operation_id),
+        ).fetchone()
+        if mutation == "sent_at":
+            conn.execute(
+                "UPDATE app_external_operations SET sent_at='2030-01-01T00:00:00Z' "
+                "WHERE run_id=? AND operation_id=?", (run_id, operation_id),
+            )
+        elif mutation == "missing_completed_at":
+            conn.execute(
+                "UPDATE app_external_operations SET completed_at=NULL "
+                "WHERE run_id=? AND operation_id=?", (run_id, operation_id),
+            )
+        elif mutation == "wrong_error_code":
+            conn.execute(
+                "UPDATE app_external_operations SET error_code='OTHER_FAILURE' "
+                "WHERE run_id=? AND operation_id=?", (run_id, operation_id),
+            )
+        elif mutation == "response_artifact":
+            conn.execute(
+                "UPDATE app_external_operations SET response_artifact_id=? "
+                "WHERE run_id=? AND operation_id=?",
+                (operation[4], run_id, operation_id),
+            )
+        elif mutation == "input_artifact":
+            conn.execute(
+                "UPDATE app_external_operations SET input_artifact_id=? "
+                "WHERE run_id=? AND operation_id=?",
+                (None, run_id, operation_id),
+            )
+        elif mutation == "missing_never_sent":
+            rows = conn.execute(
+                "SELECT sequence,payload_bytes FROM app_run_events WHERE run_id=? "
+                "AND event_type='CURRENT_SHADOW_GET_NEVER_SENT' ORDER BY sequence",
+                (run_id,),
+            ).fetchall()
+            target = next(row for row in rows if json.loads(row[1]).get("operation_id") == operation_id)
+            conn.execute(
+                "DELETE FROM app_run_events WHERE run_id=? AND sequence=?",
+                (run_id, target[0]),
+            )
+        elif mutation == "duplicate_never_sent":
+            row = conn.execute(
+                "SELECT state_version,updated_at FROM app_runs WHERE run_id=?", (run_id,),
+            ).fetchone()
+            prepared_raw = conn.execute(
+                "SELECT payload_bytes FROM app_run_events WHERE run_id=? "
+                "AND event_type='CURRENT_SHADOW_GET_PREPARED' ORDER BY sequence",
+                (run_id,),
+            ).fetchall()
+            prepared = next(
+                json.loads(event[0]) for event in prepared_raw
+                if json.loads(event[0]).get("operation_id") == operation_id
+            )
+            repository._event(
+                conn, run_id, row[0], "CURRENT_SHADOW_GET_NEVER_SENT", {
+                    "operation_id": operation_id,
+                    "intent_sha256": prepared["intent_sha256"],
+                    "reason": "CANCEL_REQUESTED_BEFORE_SENT",
+                }, row[1],
+            )
+        elif mutation == "arbitrary_reason":
+            rewrite_event(
+                conn, "CURRENT_SHADOW_GET_NEVER_SENT",
+                rewrite=lambda payload: payload.__setitem__("reason", "ARBITRARY_NONEMPTY_REASON"),
+            )
+        elif mutation == "wrong_operation_id":
+            rewrite_event(
+                conn, "CURRENT_SHADOW_GET_NEVER_SENT",
+                rewrite=lambda payload: payload.__setitem__("operation_id", "provider-get-" + "0" * 64),
+            )
+        elif mutation == "wrong_intent_sha":
+            rewrite_event(
+                conn, "CURRENT_SHADOW_GET_NEVER_SENT",
+                rewrite=lambda payload: payload.__setitem__("intent_sha256", "0" * 64),
+            )
+        elif mutation == "bad_event_digest":
+            rewrite_event(
+                conn, "CURRENT_SHADOW_GET_NEVER_SENT", preserve_digest=True,
+                rewrite=lambda payload: payload.__setitem__("reason", "TAMPERED_WITHOUT_REHASH"),
+            )
+        elif mutation == "noncanonical_event":
+            rewrite_event(
+                conn, "CURRENT_SHADOW_GET_NEVER_SENT", noncanonical=True,
+            )
+        elif mutation == "wrong_event_order":
+            rows = conn.execute(
+                "SELECT sequence,event_type,payload_bytes FROM app_run_events WHERE run_id=? "
+                "AND event_type IN ('CURRENT_SHADOW_GET_PREPARED','CURRENT_SHADOW_GET_NEVER_SENT') "
+                "ORDER BY sequence", (run_id,),
+            ).fetchall()
+            prepared_sequence = next(
+                row[0] for row in rows if row[1] == "CURRENT_SHADOW_GET_PREPARED"
+                and json.loads(row[2]).get("operation_id") == operation_id
+            )
+            never_sequence = next(
+                row[0] for row in rows if row[1] == "CURRENT_SHADOW_GET_NEVER_SENT"
+                and json.loads(row[2]).get("operation_id") == operation_id
+            )
+            temporary_sequence = conn.execute(
+                "SELECT COALESCE(MAX(sequence),0)+1 FROM app_run_events WHERE run_id=?",
+                (run_id,),
+            ).fetchone()[0]
+            conn.execute(
+                "UPDATE app_run_events SET sequence=? WHERE run_id=? AND sequence=?",
+                (temporary_sequence, run_id, prepared_sequence),
+            )
+            conn.execute(
+                "UPDATE app_run_events SET sequence=? WHERE run_id=? AND sequence=?",
+                (prepared_sequence, run_id, never_sequence),
+            )
+            conn.execute(
+                "UPDATE app_run_events SET sequence=? WHERE run_id=? AND sequence=?",
+                (never_sequence, run_id, temporary_sequence),
+            )
+        elif mutation == "extra_sent":
+            state_version, stamp = conn.execute(
+                "SELECT state_version,updated_at FROM app_runs WHERE run_id=?", (run_id,),
+            ).fetchone()
+            repository._event(conn, run_id, state_version, "CURRENT_SHADOW_GET_SENT", {
+                "operation_id": operation_id,
+                "intent_sha256": operation[2],
+                "linearization": "ONE_IN_FLIGHT_GET_PERMIT",
+            }, stamp)
+        elif mutation == "extra_unknown":
+            state_version, stamp = conn.execute(
+                "SELECT state_version,updated_at FROM app_runs WHERE run_id=?", (run_id,),
+            ).fetchone()
+            repository._event(conn, run_id, state_version, "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN", {
+                "operation_id": operation_id, "intent_sha256": operation[2],
+                "error_code": "PROVIDER_GET_OUTCOME_UNKNOWN",
+            }, stamp)
+        elif mutation == "extra_retained":
+            state_version, stamp = conn.execute(
+                "SELECT state_version,updated_at FROM app_runs WHERE run_id=?", (run_id,),
+            ).fetchone()
+            repository._event(conn, run_id, state_version, "CURRENT_SHADOW_GET_RESPONSE_RETAINED", {
+                "operation_id": operation_id,
+            }, stamp)
+        elif mutation in {"owner_attempt", "owner_lease"}:
+            def corrupt_owner(payload):
+                key = "attempt_id" if mutation == "owner_attempt" else "lease_sha256"
+                payload[key] = "attempt-forged" if mutation == "owner_attempt" else "0" * 64
+
+            rewrite_event(
+                conn, "CURRENT_SHADOW_SUPERVISOR_STARTED",
+                operation_bound=False, rewrite=corrupt_owner,
+            )
+        elif mutation in {"input_bytes", "missing_input_file", "unreadable_input_file"}:
+            pass
+        else:
+            raise AssertionError("unknown R1 failed-row mutation: " + mutation)
+
+    if mutation in {"input_bytes", "missing_input_file", "unreadable_input_file"}:
+        with repository._operation() as conn:
+            logical_path = conn.execute(
+                "SELECT logical_path FROM app_artifacts WHERE artifact_id=(SELECT input_artifact_id "
+                "FROM app_external_operations WHERE run_id=? AND operation_id=?)",
+                (run_id, operation_id),
+            ).fetchone()[0]
+        input_path = case["roots"].data_root / logical_path
+        if mutation == "input_bytes":
+            input_path.write_bytes(input_path.read_bytes() + b"tampered")
+        elif mutation == "missing_input_file":
+            input_path.unlink()
+        else:
+            input_path.unlink()
+            input_path.mkdir()
+
+
+def _assert_r1_finalization_rolls_back(
+    case, operation_id, lease_token, *, expected_error=RunRepositoryError,
+):
+    repository = case["repository"]
+    run_id = case["run_id"]
+    attempt_id = next(
+        attempt["attempt_id"] for attempt in repository.list_unfinished_attempts()
+        if attempt["run_id"] == run_id
+    )
+    operation_before = _provider_get_row(repository, run_id, operation_id)
+    events_before = _raw_run_event_rows(repository, run_id)
+    unfinished_before = repository.list_unfinished_attempts()
+    with pytest.raises(expected_error):
+        repository.interrupt_worker_without_receipt(
+            run_id, attempt_id, lease_token, exit_code=7,
+            diagnostic_id="WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT",
+            last_proven_stage=None,
+        )
+    assert repository.run_snapshot(run_id)["state"] == "CANCEL_REQUESTED"
+    assert repository.list_unfinished_attempts() == unfinished_before
+    assert repository.list_unfinished_attempts()[0]["attempt_id"] == attempt_id
+    assert _provider_get_row(repository, run_id, operation_id) == operation_before
+    assert _raw_run_event_rows(repository, run_id) == events_before
+
+
+@pytest.mark.parametrize("finalizer", ["interrupt", "recover", "dead_recovery"])
+def test_r1_cancel_before_sent_failed_provider_get_finalizes_and_releases_slot(
+    tmp_path, clock, monkeypatch, finalizer,
+):
+    """An authenticated FAILED/NEVER_SENT row is terminal and safe to preserve."""
+    real_root_process = finalizer == "dead_recovery"
+    case, captured, operation_id, transport_calls = _run_cancelled_never_sent_provider_get_case(
+        tmp_path, clock, monkeypatch, real_root_process=real_root_process,
+    )
+    repository = case["repository"]
+    run_id = case["run_id"]
+    attempt_id = captured["context"]["attempt_id"]
+    try:
+        with repository._operation() as conn:
+            lease_token = conn.execute(
+                "SELECT lease_token FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
+                (run_id, attempt_id),
+            ).fetchone()[0]
+            input_artifact = conn.execute(
+                "SELECT byte_sha256,canonical_sha256,byte_count,logical_path "
+                "FROM app_artifacts WHERE artifact_id=(SELECT input_artifact_id "
+                "FROM app_external_operations WHERE run_id=? AND operation_id=?)",
+                (run_id, operation_id),
+            ).fetchone()
+        input_path = case["roots"].data_root / input_artifact[3]
+        input_bytes = input_path.read_bytes()
+        operation_before = _provider_get_row(repository, run_id, operation_id)
+        events_before = _raw_run_event_rows(repository, run_id)
+        operation_events_before = tuple(
+            event for event in events_before
+            if event[2].startswith("CURRENT_SHADOW_GET_")
+            and json.loads(event[3]).get("operation_id") == operation_id
+        )
+        assert operation_before[6] == "FAILED"
+        assert operation_before[8] is None and operation_before[9] is not None
+        assert operation_before[10] is None
+        assert operation_before[11] == "PROVIDER_GET_NEVER_SENT"
+        assert input_artifact[:3] == (
+            operation_before[2], operation_before[2], len(input_bytes),
+        )
+        assert hashlib.sha256(input_bytes).hexdigest() == operation_before[2]
+        assert [json.loads(event[3])["operation_id"] for event in operation_events_before] == [
+            operation_id, operation_id,
+        ]
+
+        # A stale lease cannot settle even an authentic already-FAILED row.
+        with pytest.raises(RunLeaseFenced):
+            repository.interrupt_worker_without_receipt(
+                run_id, attempt_id, lease_token + "-stale", exit_code=7,
+                diagnostic_id="WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT",
+                last_proven_stage=None,
+            )
+        assert repository.run_snapshot(run_id)["state"] == "CANCEL_REQUESTED"
+        assert repository.list_unfinished_attempts()[0]["attempt_id"] == attempt_id
+        assert _provider_get_row(repository, run_id, operation_id) == operation_before
+        assert _raw_run_event_rows(repository, run_id) == events_before
+
+        from runtime.worker_startup_gate import read_gate_document
+        gate, gate_bytes = read_gate_document(case["gate_path"])
+        with pytest.raises(ExternalOperationViolation, match="PREPARED owner/state mismatch"):
+            repository.authorize_current_shadow_provider_get_sent(
+                context=captured["context"], command=case["command"],
+                gate=gate, gate_bytes=gate_bytes, operation_id=operation_id,
+            )
+        assert _provider_get_row(repository, run_id, operation_id) == operation_before
+        assert _raw_run_event_rows(repository, run_id) == events_before
+
+        if finalizer == "interrupt":
+            repository.interrupt_worker_without_receipt(
+                run_id, attempt_id, lease_token, exit_code=7,
+                diagnostic_id="WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT",
+                last_proven_stage=None,
+            )
+        elif finalizer == "recover":
+            repository.recover_attempt(run_id, attempt_id, lease_token)
+        else:
+            unfinished = repository.list_unfinished_attempts()
+            assert len(unfinished) == 1
+            owner = owner_identity(
+                run_id=run_id, attempt_id=attempt_id,
+                worker_instance_id=unfinished[0]["worker_instance_id"],
+                lease_token=lease_token,
+            )
+            locator = unfinished[0]["process_locator"]
+            process = case["launch_handles"][0]._process
+            assert process.poll() is None
+            assert WorkerProcessControl.state(locator, owner) == "ACTIVE"
+            # EOF is the deterministic worker exit boundary; recovery must
+            # observe the actual launched root as DEAD before settling it.
+            process.stdin.close()
+            assert process.wait(timeout=5) == 0
+            assert WorkerProcessControl.state(locator, owner) == "DEAD"
+            summary = RecoveryService(repository, case["roots"].data_root).reconcile()
+            assert summary.reconciled_attempts == 1
+            assert summary.cancelled_runs == 1
+            assert summary.blocked_runs == 0
+
+        assert repository.run_snapshot(run_id)["state"] == "CANCELLED"
+        assert repository.run_snapshot(run_id)["receipt_artifact_id"] is None
+        assert repository.list_unfinished_attempts() == []
+        assert _provider_get_row(repository, run_id, operation_id) == operation_before
+        assert input_path.read_bytes() == input_bytes
+        assert tuple(
+            event for event in _raw_run_event_rows(repository, run_id)
+            if event[2].startswith("CURRENT_SHADOW_GET_")
+            and json.loads(event[3]).get("operation_id") == operation_id
+        ) == operation_events_before
+        assert len(case["launch_calls"]) == 1
+        assert transport_calls == []
+
+        # Both the completed lease and a wrong token remain fenced, and a
+        # second attempt can claim the released root-wide worker slot.
+        finalized_events = _raw_run_event_rows(repository, run_id)
+        for stale_token in (lease_token, lease_token + "-stale"):
+            with pytest.raises(RunLeaseFenced):
+                repository.recover_attempt(run_id, attempt_id, stale_token)
+        assert _raw_run_event_rows(repository, run_id) == finalized_events
+
+        repeated = RecoveryService(repository, case["roots"].data_root).reconcile()
+        assert repeated.reconciled_attempts == 0 and repeated.blocked_runs == 0
+        assert _raw_run_event_rows(repository, run_id) == finalized_events
+        assert len(case["launch_calls"]) == 1
+
+        second_run_id = _admit_second_distinct_run(
+            repository, case["roots"], clock, date="2030-01-02",
+        )
+        second_repository = DurableRunRepository(
+            repository._resources, case["roots"], clock=clock,
+        )
+        second_attempt, _second_lease, number = second_repository.claim_attempt(
+            second_run_id, worker_instance_id="r1-slot-reuse-worker",
+            process_locator={"kind": "OFFLINE_TEST", "label": "r1-slot-reuse"},
+        )
+        assert number == 1 and second_attempt
+        assert second_repository.record_cancel_intent(second_run_id) == (
+            "requested", "CANCELLED", 1,
+        )
+        assert repository.list_unfinished_attempts() == []
+    finally:
+        if real_root_process:
+            _stop_real_root_process(case)
+
+
+@pytest.mark.parametrize(
+    ("finalizer", "expected_reason"),
+    [
+        ("interrupt", "WORKER_INTERRUPTED_WITHOUT_RECEIPT"),
+        ("recover", "RECOVERY_FOUND_PREPARED_WITHOUT_SENT"),
+    ],
+)
+def test_r1_failed_verifier_accepts_existing_prepared_settlement_reasons(
+    tmp_path, clock, monkeypatch, finalizer, expected_reason,
+):
+    """Only documented PREPARED settlement reasons remain valid FAILED evidence."""
+    from runtime import current_shadow_operation_authority as authority_module
+    monkeypatch.setattr(
+        authority_module, "_fixed_provider_get",
+        lambda *_args, **_kwargs: pytest.fail("PREPARED settlement must never call provider transport"),
+    )
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch,
+        lambda authority, repository, command, gate: _prepared_product_get(
+            authority, repository, command, gate,
+        ),
+    )
+    assert "error" not in captured
+    repository = case["repository"]
+    run_id = case["run_id"]
+    attempt_id = captured["context"]["attempt_id"]
+    operation_id = captured["result"]
+    with repository._operation() as conn:
+        lease_token = conn.execute(
+            "SELECT lease_token FROM app_run_attempts WHERE run_id=? AND attempt_id=?",
+            (run_id, attempt_id),
+        ).fetchone()[0]
+    if finalizer == "interrupt":
+        repository.interrupt_worker_without_receipt(
+            run_id, attempt_id, lease_token, exit_code=7,
+            diagnostic_id="WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT",
+            last_proven_stage=None,
+        )
+    else:
+        repository.recover_attempt(run_id, attempt_id, lease_token)
+
+    operation = _provider_get_row(repository, run_id, operation_id)
+    with repository._operation() as conn:
+        intent = repository._verify_provider_get_evidence(
+            conn, run_id, attempt_id, operation,
+        )
+    never_sent = [
+        json.loads(event[3]) for event in repository.read_events(run_id)
+        if event[2] == "CURRENT_SHADOW_GET_NEVER_SENT"
+        and json.loads(event[3]).get("operation_id") == operation_id
+    ]
+    assert operation[6] == "FAILED" and len(never_sent) == 1
+    assert never_sent[0]["reason"] == expected_reason
+    assert hashlib.sha256(canonical_json_bytes(intent)).hexdigest() == operation[2]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "sent_at", "missing_completed_at", "wrong_error_code", "response_artifact",
+        "input_artifact", "missing_never_sent", "duplicate_never_sent",
+        "arbitrary_reason", "wrong_operation_id", "wrong_intent_sha", "bad_event_digest",
+        "noncanonical_event", "wrong_event_order", "extra_sent", "extra_unknown",
+        "extra_retained", "owner_attempt", "owner_lease", "input_bytes",
+        "missing_input_file", "unreadable_input_file",
+    ],
+)
+def test_r1_malformed_failed_never_sent_evidence_rolls_back_finalization(
+    tmp_path, clock, monkeypatch, mutation,
+):
+    """Malformed terminal evidence cannot release a run or its root-wide slot."""
+    case, _captured, operation_id, transport_calls = _run_cancelled_never_sent_provider_get_case(
+        tmp_path, clock, monkeypatch,
+    )
+    repository = case["repository"]
+    with repository._operation() as conn:
+        attempt_id, lease_token = conn.execute(
+            "SELECT attempt_id,lease_token FROM app_run_attempts WHERE run_id=? AND finished_at IS NULL",
+            (case["run_id"],),
+        ).fetchone()
+    _tamper_failed_provider_get_evidence(case, operation_id, mutation)
+    error = (RunRepositoryError, OSError) if mutation in {
+        "missing_input_file", "unreadable_input_file",
+    } else RunRepositoryError
+    _assert_r1_finalization_rolls_back(
+        case, operation_id, lease_token, expected_error=error,
+    )
+    assert transport_calls == []
+
+
+def _run_provider_get_phase_case(tmp_path, clock, monkeypatch, phase):
+    from runtime import current_shadow_operation_authority as authority_module
+
+    monkeypatch.setattr(
+        authority_module, "_fixed_provider_get",
+        lambda *_args, **_kwargs: pytest.fail("verifier regression must never call provider transport"),
+    )
+
+    def create_phase(authority, repository, command, gate):
+        operation_id = _prepared_product_get(
+            authority, repository, command, gate,
+            send=phase in {"SENT", "CONFIRMED", "OUTCOME_UNKNOWN"},
+            confirm=phase == "CONFIRMED",
+        )
+        if phase == "OUTCOME_UNKNOWN":
+            repository.mark_current_shadow_provider_get_unknown(
+                context=authority._context, command=command, gate=gate,
+                gate_bytes=canonical_json_bytes(gate), operation_id=operation_id,
+                error_code="PROVIDER_GET_TRANSPORT_UNKNOWN",
+            )
+        return operation_id
+
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch, create_phase,
+    )
+    assert "error" not in captured
+    assert case["repository"].record_cancel_intent(case["run_id"]) == (
+        "requested", "CANCEL_REQUESTED", 2,
+    )
+    return case, captured, captured["result"]
+
+
+@pytest.mark.parametrize(
+    ("phase", "mutation"),
+    [
+        ("PREPARED", "extra_sent"),
+        ("PREPARED", "extra_terminal"),
+        ("SENT", "missing_sent"),
+        ("CONFIRMED", "response_bytes"),
+        ("OUTCOME_UNKNOWN", "missing_sent"),
+    ],
+)
+def test_r1_other_provider_get_states_keep_their_strict_event_projection(
+    tmp_path, clock, monkeypatch, phase, mutation,
+):
+    case, _captured, operation_id = _run_provider_get_phase_case(
+        tmp_path, clock, monkeypatch, phase,
+    )
+    repository = case["repository"]
+    run_id = case["run_id"]
+    operation = _provider_get_row(repository, run_id, operation_id)
+    response_path = None
+    with repository._operation(write=True) as conn:
+        if mutation in {"extra_sent", "extra_terminal"}:
+            state_version, stamp = conn.execute(
+                "SELECT state_version,updated_at FROM app_runs WHERE run_id=?", (run_id,),
+            ).fetchone()
+            if mutation == "extra_sent":
+                event_type = "CURRENT_SHADOW_GET_SENT"
+                payload = {
+                    "operation_id": operation_id,
+                    "intent_sha256": operation[2],
+                    "linearization": "ONE_IN_FLIGHT_GET_PERMIT",
+                }
+            else:
+                event_type = "CURRENT_SHADOW_GET_NEVER_SENT"
+                payload = {
+                    "operation_id": operation_id,
+                    "intent_sha256": operation[2],
+                    "reason": "RECOVERY_FOUND_PREPARED_WITHOUT_SENT",
+                }
+            repository._event(conn, run_id, state_version, event_type, payload, stamp)
+        elif mutation == "missing_sent":
+            rows = conn.execute(
+                "SELECT sequence,payload_bytes FROM app_run_events WHERE run_id=? "
+                "AND event_type='CURRENT_SHADOW_GET_SENT' ORDER BY sequence", (run_id,),
+            ).fetchall()
+            target = next(row for row in rows if json.loads(row[1]).get("operation_id") == operation_id)
+            conn.execute(
+                "DELETE FROM app_run_events WHERE run_id=? AND sequence=?", (run_id, target[0]),
+            )
+        elif mutation == "response_bytes":
+            response_id = operation[10]
+            logical_path = conn.execute(
+                "SELECT logical_path FROM app_artifacts WHERE artifact_id=?", (response_id,),
+            ).fetchone()[0]
+            response_path = case["roots"].data_root / logical_path
+        else:
+            raise AssertionError("unknown provider GET phase mutation")
+    if response_path is not None:
+        response_path.write_bytes(response_path.read_bytes() + b"tampered")
+
+    with repository._operation() as conn:
+        lease_token = conn.execute(
+            "SELECT lease_token FROM app_run_attempts WHERE run_id=? AND finished_at IS NULL",
+            (run_id,),
+        ).fetchone()[0]
+    _assert_r1_finalization_rolls_back(case, operation_id, lease_token)
+
+
+@pytest.mark.parametrize("failure_point", ["worker_event", "attempt_update", "run_update"])
+def test_r1_valid_failed_evidence_finalization_is_transactional(
+    tmp_path, clock, monkeypatch, failure_point,
+):
+    case, _captured, operation_id, transport_calls = _run_cancelled_never_sent_provider_get_case(
+        tmp_path, clock, monkeypatch,
+    )
+    repository = case["repository"]
+    run_id = case["run_id"]
+    with repository._operation() as conn:
+        attempt_id, lease_token = conn.execute(
+            "SELECT attempt_id,lease_token FROM app_run_attempts WHERE run_id=? AND finished_at IS NULL",
+            (run_id,),
+        ).fetchone()
+    operation_before = _provider_get_row(repository, run_id, operation_id)
+    events_before = _raw_run_event_rows(repository, run_id)
+    trigger = {
+        "attempt_update": "r1_abort_attempt_update",
+        "run_update": "r1_abort_run_update",
+    }.get(failure_point)
+    original_event = repository._event
+    if failure_point == "worker_event":
+        def fail_worker_event(conn, event_run_id, version, event_type, payload, stamp):
+            if event_type == "WORKER_INTERRUPTED":
+                raise sqlite3.IntegrityError("injected R1 interruption event failure")
+            return original_event(conn, event_run_id, version, event_type, payload, stamp)
+
+        repository._event = fail_worker_event
+    else:
+        table, column = (
+            ("app_run_attempts", "finished_at") if failure_point == "attempt_update"
+            else ("app_runs", "state")
+        )
+        from contextlib import contextmanager
+        original_operation = repository._operation
+
+        @contextmanager
+        def operation_with_transactional_trigger(*, write=False):
+            with original_operation(write=write) as conn:
+                if write:
+                    conn.execute(
+                        f"CREATE TRIGGER {trigger} BEFORE UPDATE OF {column} ON {table} "
+                        "BEGIN SELECT RAISE(ABORT,'injected R1 finalization update failure'); END"
+                    )
+                yield conn
+
+        repository._operation = operation_with_transactional_trigger
+    try:
+        with pytest.raises(sqlite3.IntegrityError, match="injected R1"):
+            repository.interrupt_worker_without_receipt(
+                run_id, attempt_id, lease_token, exit_code=7,
+                diagnostic_id="WORKER_EXIT_WITHOUT_VERIFIED_RECEIPT",
+                last_proven_stage=None,
+            )
+    finally:
+        if failure_point == "worker_event":
+            repository._event = original_event
+        else:
+            repository._operation = original_operation
+    assert repository.run_snapshot(run_id)["state"] == "CANCEL_REQUESTED"
+    assert repository.list_unfinished_attempts()[0]["attempt_id"] == attempt_id
+    assert _provider_get_row(repository, run_id, operation_id) == operation_before
+    assert _raw_run_event_rows(repository, run_id) == events_before
+    assert transport_calls == []
 
 
 def test_cancel_queued_run_settles_immediately(tmp_path, clock, monkeypatch):
