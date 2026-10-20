@@ -1615,7 +1615,8 @@ class DurableRunRepository:
             "sequence": intent["sequence"],
             "provider": intent["provider"],
         }
-        if len(prepared) != 1 or prepared[0][2] != expected_prepared:
+        if (len(prepared) != 1
+                or canonical_json_bytes(prepared[0][2]) != canonical_json_bytes(expected_prepared)):
             raise RunRepositoryError("unsettled provider GET lacks one exact PREPARED event")
         sent = self._operation_events_for_attempt(
             conn, run_id, operation_id, "CURRENT_SHADOW_GET_SENT",
@@ -2733,6 +2734,21 @@ class DurableRunRepository:
         publish(self._data_root, "run-receipts/" + digest + ".json", raw)
         return digest
 
+    def _verify_receipt_provider_gets(self, conn, run_id, attempt_id):
+        """Read-only receipt gate: authenticate terminal GETs, never settle them."""
+        rows = conn.execute(
+            "SELECT operation_id,operation_kind,intent_sha256,authority_sha256,"
+            "input_artifact_id,idempotency_key,state,prepared_at,sent_at,completed_at,"
+            "response_artifact_id,error_code FROM app_external_operations "
+            "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' "
+            "ORDER BY prepared_at,operation_id",
+            (run_id, attempt_id),
+        ).fetchall()
+        for operation in rows:
+            self._verify_provider_get_evidence(conn, run_id, attempt_id, operation)
+            if operation[6] in {"PREPARED", "SENT"}:
+                raise RunRepositoryError("receipt cannot project an unsettled provider GET")
+
     def project_terminal_receipt(self, receipt_sha256):
         """Fenced receipt-first projection, also the single offline reconcile seam."""
         digest = _sha(receipt_sha256)
@@ -2789,6 +2805,10 @@ class DurableRunRepository:
             ).fetchall()
             if pending_links != [(run_id, "RUN_RECEIPT_PENDING", 1)]:
                 raise RunRepositoryError("receipt pending link is missing or cross-run")
+            # A receipt authenticates its producer, not the external ledger.
+            # Keep this read-only gate inside the fenced transaction and before
+            # the first projection write; rejection retains the pending slot.
+            self._verify_receipt_provider_gets(conn, run_id, value["attempt_id"])
             stamp = _utc(self._clock())
             conn.execute(
                 "UPDATE app_artifacts SET verified_at=? WHERE artifact_id=?",

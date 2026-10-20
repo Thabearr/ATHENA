@@ -3270,6 +3270,293 @@ def test_recovery_reconciles_genuinely_dead_owned_process(tmp_path, clock):
         control.close()
 
 
+@pytest.fixture(scope="module")
+def n1_receipt_documents(tmp_path_factory):
+    """Typed synthetic receipt documents; no actual product acquisition."""
+    from test_data_01a_app_schema import MutableClock
+    from test_run_01b_worker_lifecycle import _terminal_case
+
+    with pytest.MonkeyPatch.context() as patch:
+        *_, command, _inner = _terminal_case(
+            tmp_path_factory.mktemp("n1-receipt-template"), MutableClock(), patch,
+        )
+    return {path.name: path.read_bytes()
+            for path in (command.run_directory / "current-shadow").iterdir()}
+
+
+def _n1_pending_receipt_case(tmp_path, clock, monkeypatch, documents, phase, *, native=False):
+    """Real admitted GET producers; worker/supervisor execution is modeled."""
+    from runtime import current_shadow_operation_authority as authority_module
+    from runtime.current_shadow_operation_authority import (
+        ProviderGetResponse, _build_provider_get_intent, provider_get_idempotency_key,
+    )
+    from domain import sportybet_live_event_quote_evidence as event_source
+
+    transport_calls = []
+
+    def deny_transport(*args, **kwargs):
+        transport_calls.append((args, kwargs))
+        pytest.fail("N1 receipt projection must not invoke provider transport")
+
+    monkeypatch.setattr(authority_module, "_fixed_provider_get", deny_transport)
+
+    def create_operations(authority, repository, command, gate):
+        if phase == "NO_GET":
+            return []
+        operation_id = _prepared_product_get(
+            authority, repository, command, gate,
+            send=phase not in {"PREPARED", "FAILED"},
+            confirm=phase in {"CONFIRMED", "MULTIPLE"},
+        )
+        if phase == "TRANSPORT_UNKNOWN":
+            repository.mark_current_shadow_provider_get_unknown(
+                context=authority._context, command=command, gate=gate,
+                gate_bytes=canonical_json_bytes(gate), operation_id=operation_id,
+                error_code="PROVIDER_GET_TRANSPORT_UNKNOWN",
+            )
+        elif phase in {"FAILED", "RECOVERY_UNKNOWN", "INTERRUPTION_UNKNOWN"}:
+            # Actual publisher variants, retaining the attempt for the receipt test.
+            with repository._operation(write=True) as conn:
+                repository._settle_unresolved_external_operations(
+                    conn, case_run := authority._context["run_id"],
+                    authority._context["attempt_id"], 1,
+                    repository.run_snapshot(case_run)["updated_at"],
+                    reason=("RECOVERY_FOUND_PREPARED_WITHOUT_SENT" if phase == "RECOVERY_UNKNOWN"
+                            else "WORKER_INTERRUPTED_WITHOUT_RECEIPT"),
+                    sent_reason=("RECOVERY_FOUND_SENT_WITHOUT_PROVEN_RESPONSE"
+                                 if phase == "RECOVERY_UNKNOWN" else None),
+                )
+        operations = [operation_id]
+        if phase == "MULTIPLE":
+            # Different logical source GET; the first must be settled before this one.
+            intent = _build_provider_get_intent(
+                authority._context, provider="SPORTYBET_EVENT_DETAIL",
+                request_target=event_source.request_target("sr:match:123456789"),
+                logical_id="event:sr:match:123456789", headers=tuple(event_source.REQUEST_HEADERS),
+                timeout_seconds=45, maximum_bytes=event_source.MAX_RESPONSE_BYTES, sequence=2,
+            )
+            arguments = dict(context=authority._context, command=command, gate=gate,
+                             gate_bytes=canonical_json_bytes(gate))
+            second = repository.prepare_current_shadow_provider_get(
+                **arguments, intent=intent, intent_bytes=canonical_json_bytes(intent),
+                idempotency_key=provider_get_idempotency_key(authority._context, intent),
+            )
+            assert repository.authorize_current_shadow_provider_get_sent(
+                **arguments, operation_id=second,
+            ) is True
+            repository.confirm_current_shadow_provider_get(
+                **arguments, operation_id=second, intent=intent,
+                response=ProviderGetResponse(
+                    body=b"{}", status=200, observed_at="2030-01-01T00:00:00.000000Z",
+                    content_type="application/json", content_length=2, content_length_header="2",
+                ),
+            )
+            operations.append(second)
+        return operations
+
+    case, captured = _run_authenticated_product_authority_case(
+        tmp_path, clock, monkeypatch, create_operations,
+        real_root_process=native, manual_worker=native,
+    )
+    assert "error" not in captured, repr(captured.get("error"))
+    repository, run_id = case["repository"], case["run_id"]
+    attempt = repository.list_unfinished_attempts()[0]
+    operations = captured["result"]
+    with repository._operation() as conn:
+        for operation_id in operations:
+            repository._verify_provider_get_evidence(
+                conn, run_id, attempt["attempt_id"],
+                _provider_get_row(repository, run_id, operation_id),
+            )
+    output = case["command"].run_directory / "current-shadow"
+    output.mkdir(exist_ok=True)
+    for name, raw in documents.items():
+        (output / name).write_bytes(raw)
+    snapshot = repository.run_snapshot(run_id)
+    receipt, _, _ = case["coordinator"]._build_shadow_receipt(
+        run_id=run_id, attempt_id=attempt["attempt_id"], request=case["request"],
+        envelope=ExecutionEnvelope.from_json_bytes(snapshot["envelope_bytes"]),
+        snapshot=snapshot, command=case["command"],
+    )
+    digest = repository.publish_terminal_receipt(
+        run_id, receipt_bytes=canonical_json_bytes(receipt), expected_version=1,
+        attempt_id=attempt["attempt_id"], lease_token=attempt["lease_token"],
+    )
+    return case, attempt, operations, digest, transport_calls
+
+
+def _n1_snapshot(case, operations):
+    with case["repository"]._operation() as conn:
+        rows = conn.execute(
+            "SELECT * FROM app_external_operations WHERE run_id=? ORDER BY operation_id",
+            (case["run_id"],),
+        ).fetchall()
+    return _r2_r3_snapshot(case, operations[0] if operations else None), rows
+
+
+def _n1_mutate(case, operation_id, mutation):
+    repository, run_id = case["repository"], case["run_id"]
+    with repository._operation(write=True) as conn:
+        if mutation in {"timestamp", "invalid_first_of_multiple"}:
+            conn.execute("UPDATE app_external_operations SET completed_at='not-a-timestamp' "
+                         "WHERE operation_id=?", (operation_id,))
+            return
+        events = _raw_run_event_rows(repository, run_id)
+        if mutation == "order":
+            unknown = next(e for e in events if e[2] == "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN")
+            sent = next(e for e in events if e[2] == "CURRENT_SHADOW_GET_SENT")
+            for source, sequence in ((unknown, sent[0]), (sent, unknown[0])):
+                conn.execute(
+                    "UPDATE app_run_events SET state_version=?,event_type=?,payload_bytes=?,"
+                    "payload_sha256=?,observed_at=? WHERE run_id=? AND sequence=?",
+                    (*source[1:], run_id, sequence),
+                )
+            return
+        if mutation == "conflicting_terminal":
+            repository._event(conn, run_id, 1, "CURRENT_SHADOW_GET_NEVER_SENT",
+                              {"operation_id": operation_id}, "2030-01-01T00:00:00.000000Z")
+            return
+        event_type = ("CURRENT_SHADOW_GET_PREPARED" if mutation.startswith("sequence_") else
+                      "CURRENT_SHADOW_SUPERVISOR_STARTED" if mutation == "owner_attempt" else
+                      "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN")
+        event = next(e for e in events if e[2] == event_type)
+        payload = json.loads(event[3])
+        if mutation.startswith("sequence_"):
+            payload["sequence"] = True if mutation == "sequence_true" else 1.0
+        elif mutation == "owner_attempt":
+            payload["attempt_id"] = "attempt-from-another-run"
+        raw = canonical_json_bytes(payload)
+        if mutation == "noncanonical":
+            raw = b" " + raw
+        digest = "0" * 64 if mutation == "bad_digest" else hashlib.sha256(raw).hexdigest()
+        conn.execute("UPDATE app_run_events SET payload_bytes=?,payload_sha256=? "
+                     "WHERE run_id=? AND sequence=?", (raw, digest, run_id, event[0]))
+
+
+@pytest.mark.parametrize(("mutation", "native"), [
+    ("timestamp", False), ("order", False), ("PREPARED", False), ("SENT", False),
+    ("bad_digest", False), ("noncanonical", False), ("owner_attempt", False),
+    ("conflicting_terminal", False), ("sequence_true", False), ("sequence_float", False),
+    ("invalid_first_of_multiple", False),
+    ("timestamp", True), ("order", True), ("sequence_true", True),
+])
+def test_n1_receipt_gate_rejects_without_mutation_or_slot_release(
+    tmp_path, clock, monkeypatch, n1_receipt_documents, mutation, native,
+):
+    phase = (mutation if mutation in {"PREPARED", "SENT"} else
+             "MULTIPLE" if mutation == "invalid_first_of_multiple" else "TRANSPORT_UNKNOWN")
+    case, attempt, operations, digest, calls = _n1_pending_receipt_case(
+        tmp_path, clock, monkeypatch, n1_receipt_documents, phase, native=native,
+    )
+    repository = case["repository"]
+    try:
+        if mutation not in {"PREPARED", "SENT"}:
+            _n1_mutate(case, operations[0], mutation)
+        if native:
+            owner = owner_identity(**{key: attempt[key] for key in
+                                      ("run_id", "attempt_id", "worker_instance_id", "lease_token")})
+            process = case["launch_handles"][0]._process
+            assert WorkerProcessControl.state(attempt["process_locator"], owner) == "ACTIVE"
+            process.stdin.close()
+            assert process.wait(timeout=5) == 0
+            assert WorkerProcessControl.state(attempt["process_locator"], owner) == "DEAD"
+        before = _n1_snapshot(case, operations)
+        pending = repository.list_pending_terminal_receipts()
+        assert len(pending) == 1 and pending[0]["receipt_sha256"] == digest
+        with pytest.raises(RunRepositoryError):
+            repository.project_terminal_receipt(digest)
+        assert _n1_snapshot(case, operations) == before
+        # Native malformed evidence must also reject the DEAD-owner fallback.
+        assert RecoveryService(repository, case["roots"].data_root).reconcile() == RecoverySummary(0, 0, 0, 0, 1)
+        assert _n1_snapshot(case, operations) == before
+        assert repository.list_pending_terminal_receipts() == pending
+        assert repository.list_unfinished_attempts() == [attempt]
+        second = _admit_second_distinct_run(repository, case["roots"], clock)
+        with pytest.raises(RunLeaseFenced, match="local data root already has an unfinished worker attempt"):
+            repository.claim_attempt(second, worker_instance_id="n1-blocked",
+                                     process_locator={"kind": "OFFLINE_TEST", "label": "n1-blocked"})
+        assert calls == []
+    finally:
+        if native:
+            _stop_real_root_process(case)
+
+
+@pytest.mark.parametrize("phase", [
+    "NO_GET", "CONFIRMED", "FAILED", "TRANSPORT_UNKNOWN",
+    "RECOVERY_UNKNOWN", "INTERRUPTION_UNKNOWN", "MULTIPLE",
+])
+def test_n1_receipt_gate_preserves_terminal_gets_and_idempotent_slot_release(
+    tmp_path, clock, monkeypatch, n1_receipt_documents, phase,
+):
+    case, attempt, operations, digest, calls = _n1_pending_receipt_case(
+        tmp_path, clock, monkeypatch, n1_receipt_documents, phase,
+    )
+    repository, run_id = case["repository"], case["run_id"]
+    before = _n1_snapshot(case, operations)
+    assert RecoveryService(repository, case["roots"].data_root).reconcile() == RecoverySummary(1, 1, 0, 0, 0)
+    after = _n1_snapshot(case, operations)
+    assert after[1] == before[1]  # Every operation column, including owner and timestamps.
+    assert after[0][0] == before[0][0]
+    assert after[0][6] == before[0][6]  # All retained file bytes.
+    assert [e for e in after[0][1] if e[2].startswith("CURRENT_SHADOW_GET_")] == [
+        e for e in before[0][1] if e[2].startswith("CURRENT_SHADOW_GET_")
+    ]
+    assert [e[2] for e in after[0][1]].count("RUN_TERMINAL") == 1
+    assert repository.run_snapshot(run_id)["state"] == "TERMINAL"
+    assert repository.list_unfinished_attempts() == []
+    assert repository.list_pending_terminal_receipts() == []
+    with repository._operation() as conn:
+        assert conn.execute("SELECT role FROM app_run_artifacts WHERE artifact_id=?",
+                            ("receipt-" + digest,)).fetchall() == [("RUN_RECEIPT",)]
+        assert conn.execute("SELECT verified_at FROM app_artifacts WHERE artifact_id=?",
+                            ("receipt-" + digest,)).fetchone()[0] is not None
+    assert repository.project_terminal_receipt(digest) is False
+    assert RecoveryService(repository, case["roots"].data_root).reconcile() == RecoverySummary(0, 0, 0, 0, 0)
+    assert _n1_snapshot(case, operations) == after
+    with pytest.raises(RunLeaseFenced):
+        repository.recover_attempt(run_id, attempt["attempt_id"], attempt["lease_token"] + "-stale")
+    second = _admit_second_distinct_run(repository, case["roots"], clock)
+    repository.claim_attempt(second, worker_instance_id="n1-reuse",
+                             process_locator={"kind": "OFFLINE_TEST", "label": "n1-reuse"})
+    assert repository.record_cancel_intent(second) == ("requested", "CANCELLED", 1)
+    assert calls == []
+
+
+@pytest.mark.parametrize("finalizer", ["interrupt", "recover", "dead_recovery"])
+def test_n2_prepared_sequence_requires_exact_json_integer(
+    tmp_path, clock, monkeypatch, subtests, finalizer,
+):
+    case, _captured, operation_id, attempt = _r2_r3_case(
+        tmp_path, clock, monkeypatch, "OUTCOME_UNKNOWN", finalizer,
+    )
+    repository, run_id = case["repository"], case["run_id"]
+    operation = _provider_get_row(repository, run_id, operation_id)
+    events = _raw_run_event_rows(repository, run_id)
+    prepared = next(e for e in events if e[2] == "CURRENT_SHADOW_GET_PREPARED")
+    assert type(json.loads(prepared[3])["sequence"]) is int
+    try:
+        for value in (True, 1.0, False, "1"):
+            with subtests.test(value=repr(value)):
+                try:
+                    payload = json.loads(prepared[3])
+                    payload["sequence"] = value
+                    raw = canonical_json_bytes(payload)
+                    with repository._operation(write=True) as conn:
+                        conn.execute("UPDATE app_run_events SET payload_bytes=?,payload_sha256=? "
+                                     "WHERE run_id=? AND sequence=?",
+                                     (raw, hashlib.sha256(raw).hexdigest(), run_id, prepared[0]))
+                        with pytest.raises(RunRepositoryError, match="exact PREPARED event"):
+                            repository._verify_provider_get_evidence(conn, run_id, attempt["attempt_id"], operation)
+                    _r2_r3_assert_rejected(case, operation_id, attempt, finalizer)
+                finally:
+                    _r2_r3_restore_projection(case, operation, events)
+        # The unchanged actual producer integer remains acceptable.
+        _r2_r3_assert_preserved_and_slot_reusable(case, operation_id, attempt, finalizer, clock)
+    finally:
+        if finalizer == "dead_recovery":
+            _stop_real_root_process(case)
+
+
 def test_recovery_service_repairs_from_published_receipt(tmp_path_factory, clock, monkeypatch):
     from test_run_01b_worker_lifecycle import _terminal_case
 
