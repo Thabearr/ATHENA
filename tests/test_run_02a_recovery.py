@@ -1140,10 +1140,14 @@ def _r2_r3_snapshot(case, operation_id):
         artifacts = conn.execute("SELECT * FROM app_artifacts ORDER BY artifact_id").fetchall()
         paths = conn.execute("SELECT logical_path FROM app_artifacts ORDER BY artifact_id").fetchall()
         links = conn.execute("SELECT * FROM app_run_artifacts ORDER BY run_id,artifact_id,role").fetchall()
+        all_operations = conn.execute(
+            "SELECT * FROM app_external_operations ORDER BY operation_id",
+        ).fetchall()
     return (
         _provider_get_row(repository, run_id, operation_id),
         _raw_run_event_rows(repository, run_id), runs, attempts, artifacts, links,
         tuple((path, (case["roots"].data_root / path).read_bytes()) for (path,) in paths),
+        all_operations,
     )
 
 
@@ -3394,6 +3398,244 @@ def _n1_snapshot(case, operations):
     return _r2_r3_snapshot(case, operations[0] if operations else None), rows
 
 
+def _n3_mutate_provider_get_row(case, operation_id, mutation, clock):
+    """Seed one discoverability failure and return a precise fixture restore."""
+    repository, run_id = case["repository"], case["run_id"]
+    other_run_id = None
+    if mutation == "reassign_run":
+        other_run_id = _admit_second_distinct_run(
+            repository, case["roots"], clock, date="2030-01-02",
+        )
+    clone_attempt_id = None
+    with repository._operation(write=True) as conn:
+        row = conn.execute(
+            "SELECT * FROM app_external_operations WHERE operation_id=?", (operation_id,),
+        ).fetchone()
+        assert row is not None
+        if mutation == "reclassify_kind":
+            conn.execute("UPDATE app_external_operations SET operation_kind='TESTING_SYNTHETIC' "
+                         "WHERE operation_id=?", (operation_id,))
+        elif mutation == "reassign_attempt":
+            owner = conn.execute(
+                "SELECT * FROM app_run_attempts WHERE run_id=? AND finished_at IS NULL",
+                (run_id,),
+            ).fetchone()
+            assert owner is not None and owner[8] is None
+            owner = list(owner)
+            clone_attempt_id = "attempt-n3-reassigned"
+            owner[0] = clone_attempt_id
+            owner[2] = owner[2] + 1
+            owner[3] = owner[3] + "-n3-reassigned"
+            owner[8], owner[9], owner[10] = owner[7], 0, "N3_TEST_REASSIGNED_OWNER"
+            conn.execute("INSERT INTO app_run_attempts VALUES(?,?,?,?,?,?,?,?,?,?,?)", owner)
+            conn.execute("UPDATE app_external_operations SET attempt_id=? WHERE operation_id=?",
+                         (clone_attempt_id, operation_id))
+        elif mutation == "reassign_run":
+            conn.execute("UPDATE app_external_operations SET run_id=? WHERE operation_id=?",
+                         (other_run_id, operation_id))
+        elif mutation == "reassign_operation_id":
+            conn.execute("UPDATE app_external_operations SET operation_id=? WHERE operation_id=?",
+                         ("synthetic-n3-reassigned", operation_id))
+        elif mutation == "delete_row":
+            conn.execute("DELETE FROM app_external_operations WHERE operation_id=?", (operation_id,))
+        else:
+            raise AssertionError(mutation)
+
+    def restore():
+        with repository._operation(write=True) as conn:
+            if mutation == "delete_row":
+                conn.execute("INSERT INTO app_external_operations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
+            elif mutation == "reassign_operation_id":
+                conn.execute("UPDATE app_external_operations SET operation_id=? "
+                             "WHERE operation_id='synthetic-n3-reassigned'", (operation_id,))
+            elif mutation == "reassign_run":
+                conn.execute("UPDATE app_external_operations SET run_id=? WHERE operation_id=?",
+                             (run_id, operation_id))
+            elif mutation == "reassign_attempt":
+                conn.execute("UPDATE app_external_operations SET attempt_id=? WHERE operation_id=?",
+                             (row[2], operation_id))
+                conn.execute("DELETE FROM app_run_attempts WHERE attempt_id=?", (clone_attempt_id,))
+            else:
+                conn.execute("UPDATE app_external_operations SET operation_kind=? WHERE operation_id=?",
+                             (row[3], operation_id))
+
+    return restore, other_run_id
+
+
+def _n4_mutate_retained_event(case, operation_id, mutation):
+    repository, run_id = case["repository"], case["run_id"]
+    with repository._operation(write=True) as conn:
+        event = conn.execute(
+            "SELECT sequence,payload_bytes FROM app_run_events WHERE run_id=? "
+            "AND event_type='CURRENT_SHADOW_GET_RESPONSE_RETAINED' ORDER BY sequence",
+            (run_id,),
+        ).fetchall()
+        sequence, raw = next(
+            (sequence, raw) for sequence, raw in event
+            if json.loads(raw).get("operation_id") == operation_id
+        )
+        payload = json.loads(raw)
+        if mutation == "raw_size_float":
+            payload["raw_size"] = float(payload["raw_size"])
+        elif mutation == "status_float":
+            payload["status"] = float(payload["status"])
+        elif mutation == "content_length_float":
+            payload["content_length"] = float(payload["content_length"])
+        elif mutation == "extra_key":
+            payload["unexpected"] = True
+        elif mutation == "omit_nullable_key":
+            del payload["redirect_target_sha256"]
+        else:
+            raise AssertionError(mutation)
+        changed = canonical_json_bytes(payload)
+        conn.execute("UPDATE app_run_events SET payload_bytes=?,payload_sha256=? "
+                     "WHERE run_id=? AND sequence=?",
+                     (changed, hashlib.sha256(changed).hexdigest(), run_id, sequence))
+
+
+def _n4_mutate_response_artifact(case, operation_id, field):
+    """Re-seal a test-only retained response and matching event with a wrong JSON type."""
+    repository, run_id = case["repository"], case["run_id"]
+    operation = _provider_get_row(repository, run_id, operation_id)
+    assert operation is not None and operation[10] is not None
+    with repository._operation(write=True) as conn:
+        artifact = conn.execute(
+            "SELECT * FROM app_artifacts WHERE artifact_id=?", (operation[10],),
+        ).fetchone()
+        assert artifact is not None
+        path = case["roots"].data_root / artifact[6]
+        response = json.loads(path.read_bytes())
+        if field == "schema_version":
+            response[field] = 1.0
+        elif field == "schema_version_bool":
+            response["schema_version"] = True
+        else:
+            response[field] = float(response[field])
+            event = conn.execute(
+                "SELECT sequence,payload_bytes FROM app_run_events WHERE run_id=? "
+                "AND event_type='CURRENT_SHADOW_GET_RESPONSE_RETAINED' ORDER BY sequence",
+                (run_id,),
+            ).fetchall()
+            sequence, raw = next(
+                (sequence, raw) for sequence, raw in event
+                if json.loads(raw).get("operation_id") == operation_id
+            )
+            event_payload = json.loads(raw)
+            event_field = "raw_size" if field == "raw_size" else field
+            event_payload[event_field] = float(event_payload[event_field])
+            event_raw = canonical_json_bytes(event_payload)
+            conn.execute("UPDATE app_run_events SET payload_bytes=?,payload_sha256=? "
+                         "WHERE run_id=? AND sequence=?",
+                         (event_raw, hashlib.sha256(event_raw).hexdigest(), run_id, sequence))
+        changed = canonical_json_bytes(response)
+        path.write_bytes(changed)
+        conn.execute(
+            "UPDATE app_artifacts SET byte_sha256=?,canonical_sha256=?,byte_count=? "
+            "WHERE artifact_id=?",
+            (hashlib.sha256(changed).hexdigest(), hashlib.sha256(changed).hexdigest(),
+             len(changed), operation[10]),
+        )
+
+
+def _n4_mutate_provider_get_intent_schema_version(case, operation_id):
+    """Build a fully rehashed test ledger with a JSON boolean schema version."""
+    repository, run_id = case["repository"], case["run_id"]
+    with repository._operation() as conn:
+        operation_row = conn.execute(
+            "SELECT * FROM app_external_operations WHERE operation_id=?", (operation_id,),
+        ).fetchone()
+        artifact = conn.execute(
+            "SELECT * FROM app_artifacts WHERE artifact_id=?", (operation_row[6],),
+        ).fetchone()
+        links = conn.execute(
+            "SELECT run_id,artifact_id,role,retained_root FROM app_run_artifacts "
+            "WHERE artifact_id=?", (operation_row[6],),
+        ).fetchall()
+    assert operation_row is not None and artifact is not None and len(links) == 1
+    original_events = _raw_run_event_rows(repository, run_id)
+    original_raw = (case["roots"].data_root / artifact[6]).read_bytes()
+    intent = json.loads(original_raw)
+    intent["schema_version"] = True
+    malformed_raw = canonical_json_bytes(intent)
+    malformed_sha = hashlib.sha256(malformed_raw).hexdigest()
+    malformed_artifact_id = "provider-get-input-" + malformed_sha
+    original_locator = artifact[6]
+    backup_locator = original_locator + ".n4-original"
+    with repository._operation(write=True) as conn:
+        conn.execute("UPDATE app_artifacts SET logical_path=? WHERE artifact_id=?",
+                     (backup_locator, artifact[0]))
+        conn.execute(
+            "INSERT INTO app_artifacts VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (malformed_artifact_id, malformed_sha, malformed_sha, len(malformed_raw),
+             artifact[4], artifact[5], original_locator, artifact[7], artifact[8],
+             artifact[9], artifact[10]),
+        )
+        conn.execute("INSERT INTO app_run_artifacts VALUES(?,?,?,1)",
+                     (run_id, malformed_artifact_id, "EXTERNAL_INPUT"))
+        conn.execute("UPDATE app_external_operations SET intent_sha256=?,input_artifact_id=? "
+                     "WHERE operation_id=?",
+                     (malformed_sha, malformed_artifact_id, operation_id))
+        conn.execute("DELETE FROM app_run_artifacts WHERE artifact_id=?", (artifact[0],))
+        for sequence, _version, event_type, raw, _digest, _observed_at in original_events:
+            if not event_type.startswith("CURRENT_SHADOW_GET_"):
+                continue
+            payload = json.loads(raw)
+            if payload.get("operation_id") != operation_id or "intent_sha256" not in payload:
+                continue
+            payload["intent_sha256"] = malformed_sha
+            if event_type == "CURRENT_SHADOW_GET_PREPARED":
+                payload["input_artifact_id"] = malformed_artifact_id
+            changed = canonical_json_bytes(payload)
+            conn.execute("UPDATE app_run_events SET payload_bytes=?,payload_sha256=? "
+                         "WHERE run_id=? AND sequence=?",
+                         (changed, hashlib.sha256(changed).hexdigest(), run_id, sequence))
+    data_root = case["roots"].data_root
+    (data_root / backup_locator).write_bytes(original_raw)
+    (data_root / original_locator).write_bytes(malformed_raw)
+
+    def restore():
+        with repository._operation(write=True) as conn:
+            conn.execute("UPDATE app_external_operations SET intent_sha256=?,input_artifact_id=? "
+                         "WHERE operation_id=?",
+                         (operation_row[4], operation_row[6], operation_id))
+            conn.execute("DELETE FROM app_run_artifacts WHERE artifact_id=?",
+                         (malformed_artifact_id,))
+            conn.execute("DELETE FROM app_artifacts WHERE artifact_id=?",
+                         (malformed_artifact_id,))
+            conn.execute("UPDATE app_artifacts SET logical_path=? WHERE artifact_id=?",
+                         (original_locator, artifact[0]))
+            conn.execute("INSERT INTO app_run_artifacts VALUES(?,?,?,?)", links[0])
+            conn.execute("DELETE FROM app_run_events WHERE run_id=?", (run_id,))
+            conn.executemany(
+                "INSERT INTO app_run_events(run_id,sequence,state_version,event_type,"
+                "payload_bytes,payload_sha256,observed_at) VALUES (?,?,?,?,?,?,?)",
+                [(run_id, *event) for event in original_events],
+            )
+        (data_root / original_locator).write_bytes(original_raw)
+        (data_root / backup_locator).unlink(missing_ok=True)
+
+    return restore
+
+
+def _n4_restore_snapshot(case, operation_id, snapshot):
+    repository, run_id = case["repository"], case["run_id"]
+    operation, events, artifacts, file_bytes = snapshot[0], snapshot[1], snapshot[4], snapshot[6]
+    _r2_r3_restore_projection(case, operation, events)
+    # The operation ID is not the response artifact ID; recover it from the
+    # original operation row captured in the pre-mutation snapshot.
+    response_artifact_id = operation[10]
+    response_artifact = next(row for row in artifacts if row[0] == response_artifact_id)
+    with repository._operation(write=True) as conn:
+        conn.execute(
+            "UPDATE app_artifacts SET byte_sha256=?,canonical_sha256=?,byte_count=?,media_type=?,"
+            "artifact_kind=?,logical_path=?,evidence_class=?,verification_policy_id=?,verified_at=?,"
+            "created_at=? WHERE artifact_id=?",
+            (*response_artifact[1:], response_artifact_id),
+        )
+    path, raw = next((path, raw) for path, raw in file_bytes if path == response_artifact[6])
+    (case["roots"].data_root / path).write_bytes(raw)
+
+
 def _n1_mutate(case, operation_id, mutation):
     repository, run_id = case["repository"], case["run_id"]
     with repository._operation(write=True) as conn:
@@ -3520,6 +3762,185 @@ def test_n1_receipt_gate_preserves_terminal_gets_and_idempotent_slot_release(
                              process_locator={"kind": "OFFLINE_TEST", "label": "n1-reuse"})
     assert repository.record_cancel_intent(second) == ("requested", "CANCELLED", 1)
     assert calls == []
+
+
+@pytest.mark.parametrize("finalizer", ["interrupt", "recover", "dead_recovery"])
+def test_n3_no_receipt_finalizers_authenticate_reclassified_get_rows(
+    tmp_path, clock, monkeypatch, finalizer,
+):
+    case, _captured, operation_id, attempt = _r2_r3_case(
+        tmp_path, clock, monkeypatch, "OUTCOME_UNKNOWN", finalizer,
+    )
+    repository, run_id = case["repository"], case["run_id"]
+    original = _provider_get_row(repository, run_id, operation_id)
+    with repository._operation() as conn:
+        repository._verify_provider_get_evidence(conn, run_id, attempt["attempt_id"], original)
+    restore, _other_run = _n3_mutate_provider_get_row(
+        case, operation_id, "reclassify_kind", clock,
+    )
+    try:
+        _r2_r3_assert_rejected(case, operation_id, attempt, finalizer)
+    finally:
+        restore()
+        if finalizer == "dead_recovery":
+            _stop_real_root_process(case)
+
+
+@pytest.mark.parametrize("mutation", [
+    "reclassify_kind", "reassign_attempt", "reassign_run",
+    "reassign_operation_id", "delete_row",
+])
+def test_n3_receipt_projection_discovers_gets_without_mutable_row_filters(
+    tmp_path, clock, monkeypatch, n1_receipt_documents, mutation,
+):
+    case, attempt, operations, digest, calls = _n1_pending_receipt_case(
+        tmp_path, clock, monkeypatch, n1_receipt_documents,
+        "TRANSPORT_UNKNOWN", native=True,
+    )
+    repository = case["repository"]
+    owner = owner_identity(**{
+        key: attempt[key] for key in
+        ("run_id", "attempt_id", "worker_instance_id", "lease_token")
+    })
+    process = case["launch_handles"][0]._process
+    assert WorkerProcessControl.state(attempt["process_locator"], owner) == "ACTIVE"
+    process.stdin.close()
+    assert process.wait(timeout=5) == 0
+    assert WorkerProcessControl.state(attempt["process_locator"], owner) == "DEAD"
+    restore, other_run = _n3_mutate_provider_get_row(
+        case, operations[0], mutation, clock,
+    )
+    try:
+        before = _n1_snapshot(case, operations)
+        pending = repository.list_pending_terminal_receipts()
+        with pytest.raises(RunRepositoryError):
+            repository.project_terminal_receipt(digest)
+        assert _n1_snapshot(case, operations) == before
+        assert RecoveryService(repository, case["roots"].data_root).reconcile() == RecoverySummary(
+            0, 0, 0, 0, 1,
+        )
+        assert _n1_snapshot(case, operations) == before
+        assert repository.list_pending_terminal_receipts() == pending
+        assert repository.list_unfinished_attempts() == [attempt]
+        blocked_run = other_run or _admit_second_distinct_run(
+            repository, case["roots"], clock, date="2030-01-02",
+        )
+        with pytest.raises(RunLeaseFenced, match="local data root already has an unfinished worker attempt"):
+            repository.claim_attempt(
+                blocked_run, worker_instance_id="n3-retained-slot",
+                process_locator={"kind": "OFFLINE_TEST", "label": "n3-retained-slot"},
+            )
+        assert calls == []
+    finally:
+        restore()
+        _stop_real_root_process(case)
+
+
+@pytest.mark.parametrize(("mutation", "finalizer"), [
+    ("raw_size_float", "interrupt"),
+    ("status_float", "recover"),
+    ("content_length_float", "dead_recovery"),
+    ("extra_key", "interrupt"),
+    ("omit_nullable_key", "recover"),
+])
+def test_n4_confirmed_get_event_requires_exact_producer_projection(
+    tmp_path, clock, monkeypatch, mutation, finalizer,
+):
+    case, _captured, operation_id, attempt = _r2_r3_case(
+        tmp_path, clock, monkeypatch, "CONFIRMED", finalizer,
+    )
+    repository, run_id = case["repository"], case["run_id"]
+    operation = _provider_get_row(repository, run_id, operation_id)
+    original_events = _raw_run_event_rows(repository, run_id)
+    with repository._operation() as conn:
+        repository._verify_provider_get_evidence(conn, run_id, attempt["attempt_id"], operation)
+    _n4_mutate_retained_event(case, operation_id, mutation)
+    try:
+        with repository._operation() as conn:
+            with pytest.raises(RunRepositoryError):
+                repository._verify_provider_get_evidence(
+                    conn, run_id, attempt["attempt_id"], operation,
+                )
+        _r2_r3_assert_rejected(case, operation_id, attempt, finalizer)
+    finally:
+        _r2_r3_restore_projection(case, operation, original_events)
+        if finalizer == "dead_recovery":
+            _stop_real_root_process(case)
+
+
+@pytest.mark.parametrize("mutation", ["raw_size_float", "extra_key", "omit_nullable_key"])
+def test_n4_receipt_projection_rejects_nonproducer_confirmed_event(
+    tmp_path, clock, monkeypatch, n1_receipt_documents, mutation,
+):
+    case, attempt, operations, digest, calls = _n1_pending_receipt_case(
+        tmp_path, clock, monkeypatch, n1_receipt_documents, "CONFIRMED",
+    )
+    repository = case["repository"]
+    _n4_mutate_retained_event(case, operations[0], mutation)
+    before = _n1_snapshot(case, operations)
+    pending = repository.list_pending_terminal_receipts()
+    with pytest.raises(RunRepositoryError):
+        repository.project_terminal_receipt(digest)
+    assert _n1_snapshot(case, operations) == before
+    assert RecoveryService(repository, case["roots"].data_root).reconcile() == RecoverySummary(
+        0, 0, 0, 0, 1,
+    )
+    assert _n1_snapshot(case, operations) == before
+    assert repository.list_pending_terminal_receipts() == pending
+    assert repository.list_unfinished_attempts() == [attempt]
+    assert calls == []
+
+
+def test_n4_confirmed_response_artifact_rejects_boolean_and_float_field_types(
+    tmp_path, clock, monkeypatch, subtests,
+):
+    case, _captured, operation_id, attempt = _r2_r3_case(
+        tmp_path, clock, monkeypatch, "CONFIRMED", "interrupt",
+    )
+    repository, run_id = case["repository"], case["run_id"]
+    operation = _provider_get_row(repository, run_id, operation_id)
+    original = _r2_r3_snapshot(case, operation_id)
+    with repository._operation() as conn:
+        repository._verify_provider_get_evidence(conn, run_id, attempt["attempt_id"], operation)
+    for field in ("schema_version", "schema_version_bool", "status", "raw_size", "content_length"):
+        with subtests.test(field=field):
+            try:
+                _n4_mutate_response_artifact(case, operation_id, field)
+                tampered = _r2_r3_snapshot(case, operation_id)
+                with repository._operation() as conn:
+                    with pytest.raises(RunRepositoryError):
+                        repository._verify_provider_get_evidence(
+                            conn, run_id, attempt["attempt_id"], operation,
+                        )
+                assert _r2_r3_snapshot(case, operation_id) == tampered
+            finally:
+                _n4_restore_snapshot(case, operation_id, original)
+    assert _r2_r3_snapshot(case, operation_id) == original
+
+
+def test_n4_provider_get_intent_schema_version_rejects_json_boolean_before_release(
+    tmp_path, clock, monkeypatch,
+):
+    case, _captured, operation_id, attempt = _r2_r3_case(
+        tmp_path, clock, monkeypatch, "OUTCOME_UNKNOWN", "interrupt",
+    )
+    repository, run_id = case["repository"], case["run_id"]
+    original = _provider_get_row(repository, run_id, operation_id)
+    with repository._operation() as conn:
+        repository._verify_provider_get_evidence(conn, run_id, attempt["attempt_id"], original)
+    restore = _n4_mutate_provider_get_intent_schema_version(case, operation_id)
+    try:
+        operation = _provider_get_row(repository, run_id, operation_id)
+        before = _r2_r3_snapshot(case, operation_id)
+        with repository._operation() as conn:
+            with pytest.raises(RunRepositoryError, match="intent does not bind its exact owner"):
+                repository._verify_provider_get_evidence(
+                    conn, run_id, attempt["attempt_id"], operation,
+                )
+        _r2_r3_assert_rejected(case, operation_id, attempt, "interrupt")
+        assert _r2_r3_snapshot(case, operation_id) == before
+    finally:
+        restore()
 
 
 @pytest.mark.parametrize("finalizer", ["interrupt", "recover", "dead_recovery"])

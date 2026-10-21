@@ -1557,7 +1557,8 @@ class DurableRunRepository:
                 or set(intent) - required_intent_fields not in (set(), optional_intent_fields)
                 or canonical_json_bytes(intent) != intent_bytes
                 or hashlib.sha256(intent_bytes).hexdigest() != intent_sha256
-                or intent.get("schema_version") != 1
+                or type(intent.get("schema_version")) is not int
+                or intent["schema_version"] != 1
                 or intent.get("operation_kind") != operation_kind
                 or intent.get("method") != "GET"
                 or intent.get("run_id") != run_id
@@ -1690,6 +1691,135 @@ class DurableRunRepository:
             )
         return intent
 
+    def _verified_provider_get_inventory(self, conn, run_id, attempt_id):
+        """Authenticate every source-committed provider GET for this run.
+
+        Operation kind and owner columns are mutable ledger fields, so they
+        cannot be the discovery boundary for evidence that controls slot
+        release. The PREPARED event and reserved producer identities discover
+        the rows independently; the shared verifier then authenticates each
+        exact row against its immutable intent and owner evidence.
+        """
+        operation_rows = conn.execute(
+            "SELECT operation_id,run_id,attempt_id,operation_kind,intent_sha256,"
+            "authority_sha256,input_artifact_id,idempotency_key,state,prepared_at,"
+            "sent_at,completed_at,response_artifact_id,error_code "
+            "FROM app_external_operations WHERE run_id=? ORDER BY prepared_at,operation_id",
+            (run_id,),
+        ).fetchall()
+        candidates = {}
+
+        def is_provider_get_identity(operation_id, input_artifact_id, idempotency_key):
+            return (
+                type(operation_id) is str and operation_id.startswith("provider-get-")
+                or type(input_artifact_id) is str and input_artifact_id.startswith("provider-get-input-")
+                or type(idempotency_key) is str and idempotency_key.startswith("CSGET-")
+            )
+
+        for row in operation_rows:
+            operation_id, row_run_id, row_attempt_id, operation_kind = row[:4]
+            input_artifact_id, idempotency_key = row[6], row[7]
+            if (operation_kind != "CURRENT_SHADOW_PROVIDER_GET_V1"
+                    and not is_provider_get_identity(operation_id, input_artifact_id, idempotency_key)):
+                continue
+            if (row_run_id != run_id or row_attempt_id != attempt_id
+                    or operation_kind != "CURRENT_SHADOW_PROVIDER_GET_V1"
+                    or type(operation_id) is not str):
+                raise RunRepositoryError("provider GET row was reassigned or reclassified")
+            candidates[operation_id] = row
+
+        artifact_rows = conn.execute(
+            "SELECT a.artifact_id,a.artifact_kind,a.logical_path,a.verification_policy_id,"
+            "l.role,l.retained_root FROM app_artifacts a JOIN app_run_artifacts l "
+            "ON l.artifact_id=a.artifact_id WHERE l.run_id=? ORDER BY a.artifact_id,l.role",
+            (run_id,),
+        ).fetchall()
+        artifact_commits = set()
+        for artifact_id, artifact_kind, logical_path, policy_id, role, retained_root in artifact_rows:
+            if (policy_id != "CURRENT_SHADOW_PROVIDER_GET_V1"
+                    and not (type(artifact_id) is str and artifact_id.startswith("provider-get-"))):
+                continue
+            if (type(artifact_id) is not str or type(logical_path) is not str
+                    or not logical_path.startswith("external-operation-evidence/")
+                    or type(retained_root) is not int or retained_root != 1):
+                raise RunRepositoryError("provider GET artifact commitment identity drift")
+            name = logical_path.removeprefix("external-operation-evidence/")
+            if name.endswith("-input.json"):
+                operation_id = name[:-len("-input.json")]
+                expected_kind, expected_role = "EXTERNAL_INPUT", "EXTERNAL_INPUT"
+            elif name.endswith("-external_response.json"):
+                operation_id = name[:-len("-external_response.json")]
+                expected_kind, expected_role = "EXTERNAL_RESPONSE", "EXTERNAL_RESPONSE"
+            else:
+                raise RunRepositoryError("provider GET artifact has no producer operation path")
+            if (re.fullmatch(r"provider-get-[0-9a-f]{64}", operation_id) is None
+                    or artifact_kind != expected_kind or role != expected_role
+                    or policy_id != "CURRENT_SHADOW_PROVIDER_GET_V1"):
+                raise RunRepositoryError("provider GET artifact commitment schema drift")
+            artifact_commits.add(operation_id)
+
+        get_event_types = (
+            "CURRENT_SHADOW_GET_PREPARED", "CURRENT_SHADOW_GET_SENT",
+            "CURRENT_SHADOW_GET_NEVER_SENT", "CURRENT_SHADOW_GET_OUTCOME_UNKNOWN",
+            "CURRENT_SHADOW_GET_RESPONSE_RETAINED",
+        )
+        placeholders = ",".join("?" for _ in get_event_types)
+        event_rows = conn.execute(
+            "SELECT event_type,payload_bytes,payload_sha256 FROM app_run_events "
+            f"WHERE run_id=? AND event_type IN ({placeholders}) ORDER BY sequence",
+            (run_id, *get_event_types),
+        ).fetchall()
+        prepared_ids = set()
+        referenced_ids = set()
+        for event_type, raw, digest in event_rows:
+            try:
+                payload = json.loads(raw)
+            except (TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise RunRepositoryError("stored provider GET event is malformed") from exc
+            if (type(raw) is not bytes or type(digest) is not str
+                    or hashlib.sha256(raw).hexdigest() != digest
+                    or canonical_json_bytes(payload) != raw or type(payload) is not dict):
+                raise RunRepositoryError("stored provider GET event integrity mismatch")
+            operation_id = payload.get("operation_id")
+            if (type(operation_id) is not str
+                    or not operation_id.startswith("provider-get-")):
+                raise RunRepositoryError("provider GET event has no reserved operation identity")
+            referenced_ids.add(operation_id)
+            if event_type == "CURRENT_SHADOW_GET_PREPARED":
+                prepared_ids.add(operation_id)
+
+        if not referenced_ids <= prepared_ids:
+            raise RunRepositoryError("provider GET event has no PREPARED commitment")
+
+        # PREPARED events also discover a row moved to a different run, where
+        # a query constrained only by the row's current run_id would miss it.
+        for operation_id in prepared_ids | artifact_commits:
+            row = conn.execute(
+                "SELECT operation_id,run_id,attempt_id,operation_kind,intent_sha256,"
+                "authority_sha256,input_artifact_id,idempotency_key,state,prepared_at,"
+                "sent_at,completed_at,response_artifact_id,error_code "
+                "FROM app_external_operations WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone()
+            if (row is None or row[1] != run_id or row[2] != attempt_id
+                    or row[3] != "CURRENT_SHADOW_PROVIDER_GET_V1"):
+                raise RunRepositoryError("provider GET PREPARED commitment is detached from its owner row")
+            candidates[operation_id] = row
+
+        verified = []
+        sequences = []
+        for operation_id in sorted(candidates):
+            row = candidates[operation_id]
+            operation = (row[0], *row[3:])
+            intent = self._verify_provider_get_evidence(conn, run_id, attempt_id, operation)
+            sequences.append(intent["sequence"])
+            verified.append(operation)
+        if sorted(sequences) != list(range(1, len(sequences) + 1)):
+            raise RunRepositoryError("provider GET sequence inventory is not contiguous")
+        if not referenced_ids <= set(candidates):
+            raise RunRepositoryError("provider GET event is detached from its operation row")
+        return verified
+
     def _verify_confirmed_provider_get_artifact(
         self, conn, run_id, operation_id, intent_sha256, response_artifact_id,
         sent, never_sent, unknown, retained,
@@ -1729,27 +1859,71 @@ class DurableRunRepository:
             raise RunRepositoryError("CONFIRMED provider GET response artifact bytes drift")
         try:
             response = json.loads(raw)
-            response_body = base64.b64decode(response["raw_base64"], validate=True)
-        except (TypeError, KeyError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RunRepositoryError("CONFIRMED provider GET response payload is malformed") from exc
-        if (type(response) is not dict or canonical_json_bytes(response) != raw
-                or response.get("schema_version") != 1
-                or response.get("operation_kind") != "CURRENT_SHADOW_PROVIDER_GET_V1"
-                or response.get("operation_id") != operation_id
-                or response.get("intent_sha256") != intent_sha256
-                or type(response.get("status")) is not int
-                or type(response.get("raw_size")) is not int
+        response_keys = {
+            "schema_version", "operation_kind", "operation_id", "intent_sha256",
+            "status", "observed_at", "content_type", "content_length",
+            "content_length_header", "redirect_target_sha256", "raw_sha256",
+            "raw_size", "raw_base64",
+        }
+        if type(response) is not dict or set(response) != response_keys:
+            raise RunRepositoryError("CONFIRMED provider GET response schema drift")
+        try:
+            response_body = base64.b64decode(response["raw_base64"], validate=True)
+        except (TypeError, ValueError) as exc:
+            raise RunRepositoryError("CONFIRMED provider GET response payload is malformed") from exc
+        try:
+            _validate_provider_get_timestamp(response["observed_at"])
+        except RunRepositoryError as exc:
+            raise RunRepositoryError("CONFIRMED provider GET response timestamp is malformed") from exc
+        content_length_header = response["content_length_header"]
+        if (type(response["schema_version"]) is not int or response["schema_version"] != 1
+                or type(response["operation_kind"]) is not str
+                or response["operation_kind"] != "CURRENT_SHADOW_PROVIDER_GET_V1"
+                or type(response["operation_id"]) is not str or response["operation_id"] != operation_id
+                or type(response["intent_sha256"]) is not str
+                or response["intent_sha256"] != intent_sha256
+                or type(response["status"]) is not int or not 100 <= response["status"] <= 599
+                or (response["content_type"] is not None
+                    and (type(response["content_type"]) is not str or len(response["content_type"]) > 256))
+                or (response["content_length"] is not None
+                    and (type(response["content_length"]) is not int or response["content_length"] < 0))
+                or (content_length_header is not None
+                    and (type(content_length_header) is not str or len(content_length_header) > 32
+                         or any(ord(ch) < 32 or ord(ch) > 126 for ch in content_length_header)))
+                or (response["redirect_target_sha256"] is not None
+                    and (type(response["redirect_target_sha256"]) is not str
+                         or re.fullmatch(r"[0-9a-f]{64}", response["redirect_target_sha256"]) is None))
+                or type(response["raw_sha256"]) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", response["raw_sha256"]) is None
+                or type(response["raw_size"]) is not int
+                or not 0 <= response["raw_size"] <= 24 * 1024 * 1024
+                or type(response["raw_base64"]) is not str
+                or base64.b64encode(response_body).decode("ascii") != response["raw_base64"]
                 or response["raw_size"] != len(response_body)
-                or response.get("raw_sha256") != hashlib.sha256(response_body).hexdigest()
-                or event.get("operation_id") != operation_id
-                or event.get("response_artifact_sha256") != artifact[0]
-                or event.get("raw_sha256") != response["raw_sha256"]
-                or event.get("raw_size") != response["raw_size"]
-                or event.get("status") != response["status"]
-                or event.get("observed_at") != response.get("observed_at")
-                or event.get("content_type") != response.get("content_type")
-                or event.get("content_length") != response.get("content_length")
-                or event.get("redirect_target_sha256") != response.get("redirect_target_sha256")):
+                or response["raw_sha256"] != hashlib.sha256(response_body).hexdigest()
+                or canonical_json_bytes(response) != raw):
+            raise RunRepositoryError("CONFIRMED provider GET response schema or producer type drift")
+
+        run_state_at_retention = event.get("run_state_at_retention")
+        if (type(run_state_at_retention) is not str
+                or run_state_at_retention not in {"RUNNING", "CANCEL_REQUESTED"}):
+            raise RunRepositoryError("CONFIRMED provider GET response event state drift")
+        expected_event = {
+            "operation_id": operation_id,
+            "response_artifact_id": response_artifact_id,
+            "response_artifact_sha256": artifact[0],
+            "raw_sha256": response["raw_sha256"],
+            "raw_size": response["raw_size"],
+            "status": response["status"],
+            "observed_at": response["observed_at"],
+            "content_type": response["content_type"],
+            "content_length": response["content_length"],
+            "redirect_target_sha256": response["redirect_target_sha256"],
+            "run_state_at_retention": run_state_at_retention,
+        }
+        if canonical_json_bytes(event) != canonical_json_bytes(expected_event):
             raise RunRepositoryError("CONFIRMED provider GET response payload differs from its retained event")
 
     def _settle_unresolved_external_operations(
@@ -1761,6 +1935,10 @@ class DurableRunRepository:
         share this connection-bound transaction. A committed SENT operation
         becomes uncertain and is never retried.
         """
+        verified_provider_gets = {
+            operation[0]
+            for operation in self._verified_provider_get_inventory(conn, run_id, attempt_id)
+        }
         rows = conn.execute(
             "SELECT operation_id,operation_kind,intent_sha256,authority_sha256,input_artifact_id,"
             "idempotency_key,state,prepared_at,sent_at,completed_at,response_artifact_id,error_code "
@@ -1782,7 +1960,8 @@ class DurableRunRepository:
                     or type(prepared_at) is not str or not prepared_at):
                 raise RunRepositoryError("external operation kind or state is outside the reviewed schema")
             if operation_kind == "CURRENT_SHADOW_PROVIDER_GET_V1":
-                self._verify_provider_get_evidence(conn, run_id, attempt_id, operation)
+                if operation_id not in verified_provider_gets:
+                    raise RunRepositoryError("provider GET is absent from its authenticated inventory")
             if state in {"CONFIRMED", "FAILED", "OUTCOME_UNKNOWN"}:
                 continue
             if state == "PREPARED":
@@ -2736,16 +2915,7 @@ class DurableRunRepository:
 
     def _verify_receipt_provider_gets(self, conn, run_id, attempt_id):
         """Read-only receipt gate: authenticate terminal GETs, never settle them."""
-        rows = conn.execute(
-            "SELECT operation_id,operation_kind,intent_sha256,authority_sha256,"
-            "input_artifact_id,idempotency_key,state,prepared_at,sent_at,completed_at,"
-            "response_artifact_id,error_code FROM app_external_operations "
-            "WHERE run_id=? AND attempt_id=? AND operation_kind='CURRENT_SHADOW_PROVIDER_GET_V1' "
-            "ORDER BY prepared_at,operation_id",
-            (run_id, attempt_id),
-        ).fetchall()
-        for operation in rows:
-            self._verify_provider_get_evidence(conn, run_id, attempt_id, operation)
+        for operation in self._verified_provider_get_inventory(conn, run_id, attempt_id):
             if operation[6] in {"PREPARED", "SENT"}:
                 raise RunRepositoryError("receipt cannot project an unsettled provider GET")
 
