@@ -183,20 +183,20 @@ def test_checkpoint_test_predecessor_cannot_hide_tampering(monkeypatch, target):
 
 
 def test_v1_scope_rejects_a_forged_reviewed_workflow_blob():
-    raw = completion_v1.policy.v4.v3._git("ls-tree", "-r", "HEAD")
-    raw = app_history.historical_tree_projection(raw)
-    forged = []
-    altered = 0
-    for line in raw.splitlines(keepends=True):
-        metadata, separator, path = line.partition(b"\t")
-        if path.strip().decode() in b4.B4_WORKFLOW_PREDECESSORS:
-            line = b"100644 blob " + b"0" * 40 + separator + path
-            altered += 1
-        forged.append(line)
-    assert altered == 2
-    with pytest.raises(completion_v1.policy.RetentionAcceptanceError,
-                       match="PR459 source inventory identity is unverified"):
-        completion_v1.validate_bounded_inventory(b"".join(forged))
+    with pass_a_v2.historical_v1_git_view():
+        raw = completion_v1.policy.v4.v3._git("ls-tree", "-r", "HEAD")
+        forged = []
+        altered = 0
+        for line in raw.splitlines(keepends=True):
+            metadata, separator, path = line.partition(b"\t")
+            if path.strip().decode() in b4.B4_WORKFLOW_PREDECESSORS:
+                line = b"100644 blob " + b"0" * 40 + separator + path
+                altered += 1
+            forged.append(line)
+        assert altered == 2
+        with pytest.raises(completion_v1.policy.RetentionAcceptanceError,
+                           match="PR459 source inventory identity is unverified"):
+            completion_v1.validate_bounded_inventory(b"".join(forged))
 
 
 def test_pass_a_projection_does_not_override_authenticated_predecessors():
@@ -303,8 +303,9 @@ def test_october15_forward_projection_preserves_both_historical_scope_digests():
  raw=review.retention.v4.v3._git('ls-tree','-r','HEAD')
  projected=current.a2_historical_projection(raw)
  assert review.sha256(current.unchanged_inventory(projected))==current.UNCHANGED_SCOPE_SHA
- app_projected=app_history.historical_tree_projection(raw)
- current.v1.validate_bounded_inventory(app_projected)
+ with current.historical_v1_git_view():
+  v1_raw=review.retention.v4.v3._git('ls-tree','-r','HEAD')
+  current.v1.validate_bounded_inventory(v1_raw)
  paths={line.split(b'\t',1)[1].decode():line.split()[2].decode() for line in projected.splitlines()}
  for path,blob in current.v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS.items():
   assert paths[path]==blob
