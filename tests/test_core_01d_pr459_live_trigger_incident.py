@@ -304,8 +304,7 @@ def test_october15_forward_projection_preserves_both_historical_scope_digests():
  projected=current.a2_historical_projection(raw)
  assert review.sha256(current.unchanged_inventory(projected))==current.UNCHANGED_SCOPE_SHA
  with current.historical_v1_git_view():
-  v1_raw=review.retention.v4.v3._git('ls-tree','-r','HEAD')
-  current.v1.validate_bounded_inventory(v1_raw)
+  current.v1.validate_bounded_inventory(raw)
  paths={line.split(b'\t',1)[1].decode():line.split()[2].decode() for line in projected.splitlines()}
  for path,blob in current.v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS.items():
   assert paths[path]==blob
