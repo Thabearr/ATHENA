@@ -48,6 +48,13 @@ NATIVE_LOCAL_SYMBOLS = frozenset({
     # D5 exercises its same-volume durable generation switch through this
     # exact Win32 filesystem primitive on native Windows runners.
     "MoveFileExW",
+    # RUN-02A's worker control binds and observes one attempt-owned Job Object,
+    # checks the exact worker process creation time, and can signal or terminate
+    # only that bound process tree. Keep this to the kernel32 APIs used by that
+    # implementation; native transport symbols remain denied by default.
+    "CreateJobObjectW", "OpenJobObjectW", "AssignProcessToJobObject",
+    "QueryInformationJobObject", "TerminateJobObject", "OpenProcess",
+    "GetProcessTimes", "GenerateConsoleCtrlEvent",
     "GetNativeSystemInfo", "GetSystemInfo", "dl_iterate_phdr",
     "GetStdHandle", "GetConsoleScreenBufferInfo", "SetConsoleTextAttribute",
     "SetConsoleCursorPosition", "FillConsoleOutputCharacterA",

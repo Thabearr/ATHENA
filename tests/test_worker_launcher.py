@@ -51,6 +51,19 @@ def _request(*, shadow: bool = False, create_share_code: bool = False) -> RunReq
     )
 
 
+def _port_02c_request() -> RunRequest:
+    return RunRequest(
+        dates=(date(2026, 9, 23),),
+        target_legs=2,
+        target_total_odds=None,
+        bookie="sportybet",
+        mode="offline_identity_probe",
+        authority_profile="SHADOW",
+        create_share_code=False,
+        place_wager=False,
+    )
+
+
 def _stage_request(run_directory: Path, request: RunRequest) -> None:
     run_directory.mkdir(parents=True, exist_ok=True)
     (run_directory / "athena-run-request.json").write_bytes(canonical_json_bytes(request))
@@ -294,6 +307,7 @@ def _installed_setup(tmp_path: Path, *, request: RunRequest | None = None):
     from tests.portability.test_port_02_release_identity import build_synthetic_release
 
     tmp_path.mkdir(parents=True, exist_ok=True)
+    request = request or _request()
     release_root, trusted_sha, _manifest = build_synthetic_release(tmp_path)
     bin_root = release_root / "bin"
     bin_root.mkdir()
@@ -301,14 +315,23 @@ def _installed_setup(tmp_path: Path, *, request: RunRequest | None = None):
     executable_bytes = b"synthetic worker executable identity pin"
     exe_path.write_bytes(executable_bytes)
     identity = verify_installed_release(release_root, trusted_sha)
+    data_root = (
+        (tmp_path / "portable-data" / "ATHENA" / "data" if os.name == "nt"
+         else tmp_path / "portable-data" / "athena")
+        if request.mode == "offline_identity_probe"
+        else tmp_path / "user-data"
+    )
     roots = WritableRoots(
-        data_root=tmp_path / "user-data",
+        data_root=data_root,
         cache_root=tmp_path / "user-cache",
         state_root=tmp_path / "user-state",
         installed_release_root=release_root,
     ).ensure_created()
-    request = request or _request()
-    run_directory = roots.data_root / "runs" / request.canonical_sha256
+    run_directory = (
+        roots.data_root / "port02c-runs" / request.canonical_sha256
+        if request.mode == "offline_identity_probe"
+        else roots.data_root / "runs" / request.canonical_sha256
+    )
     command = _command(
         run_directory,
         request,
@@ -348,6 +371,36 @@ def test_installed_exact_argv_hash_pin_shell_false_and_no_python_bridge(monkeypa
     assert shell is False
     assert cwd == root
     assert "timeout" not in options
+
+
+def test_port_02c_launcher_remains_native_installed_and_has_no_intent_flag(
+    monkeypatch, tmp_path: Path,
+):
+    root, _trusted, identity, roots, _run_directory, command, executable = _installed_setup(
+        tmp_path, request=_port_02c_request(),
+    )
+    calls = []
+
+    def spawn(argv, *, cwd, shell, **kwargs):
+        calls.append((list(argv), cwd, shell, dict(kwargs)))
+        return _FakeProcess(returncode=0)
+
+    monkeypatch.setattr(worker_launcher, "_spawn_process", spawn)
+    launcher = WorkerLauncher.for_installed(
+        identity, worker_executable=executable, writable_roots=roots,
+    )
+    launcher.launch(command)
+    argv, cwd, shell, _options = calls[0]
+    assert "--port-02c-installed-qualification" not in argv
+    assert argv[0] == os.fspath(executable.path)
+    assert "--development-root" not in argv and sys.executable not in argv
+    assert cwd == root and shell is False
+    with pytest.raises(SystemExit):
+        worker_entry.build_parser().parse_args([
+            "--command-file", os.fspath(command.run_directory / WORKER_COMMAND_FILENAME),
+            "--release-root", os.fspath(root), "--trusted-manifest-sha256", identity.manifest_sha256,
+            "--port-02c-installed-qualification",
+        ])
 
 
 @pytest.mark.parametrize("mutate", ("missing", "wrong_sha", "directory", "relative", "outside_bin"))
@@ -466,28 +519,33 @@ def test_platform_process_group_ownership_interface(monkeypatch, platform_name: 
     assert options == expected
 
 
-def test_development_offline_probe_is_a_real_zero_external_process(tmp_path: Path):
+def test_product_offline_probe_requires_exact_owned_startup_gate(tmp_path: Path, monkeypatch):
+    from runtime import worker_startup_gate
+
     request = _request()
     identity = verify_development_checkout(ROOT)
     command = _command(
-        tmp_path / "development-run",
+        tmp_path / "runs" / "run-worker-launcher-test",
         request,
         operation="OFFLINE_IDENTITY_PROBE",
         identity_id=identity.head_commit_sha,
     )
-    result = WorkerLauncher.for_development(identity).launch(command).communicate()
-    assert result.returncode == 0
-    semantic = (command.run_directory / WORKER_OFFLINE_PROBE_FILENAME).read_bytes()
-    provenance = json.loads((command.run_directory / WORKER_PROVENANCE_FILENAME).read_bytes())
-    semantic_document = json.loads(semantic)
-    assert semantic_document["provider_calls"] == 0
-    assert semantic_document["delivery_calls"] == 0
-    assert semantic_document["wager"] is False
-    assert provenance["release_identity_kind"] == "DEVELOPMENT_CHECKOUT"
+    command_path = persist_worker_command(command)
+    def missing_gate(*_args, **_kwargs):
+        raise worker_startup_gate.StartupGateError("deterministic missing-gate rejection")
+
+    monkeypatch.setattr(worker_startup_gate, "wait_for_gate", missing_gate)
+    with pytest.raises(worker_entry.WorkerEntryError, match="ownership gate failed"):
+        worker_entry.execute_worker_command(
+            command_file=command_path,
+            development_root=ROOT,
+        )
+    assert not (command.run_directory / WORKER_OFFLINE_PROBE_FILENAME).exists()
+    assert not (command.run_directory / WORKER_PROVENANCE_FILENAME).exists()
 
 
-def test_installed_offline_probe_semantics_equal_development_but_provenance_differs(tmp_path: Path):
-    request = _request()
+def test_installed_offline_probe_semantics_equal_development_but_provenance_differs(tmp_path: Path, monkeypatch):
+    request = _port_02c_request()
     dev_identity = verify_development_checkout(ROOT)
     dev_command = _command(
         tmp_path / "development-run",
@@ -501,10 +559,23 @@ def test_installed_offline_probe_semantics_equal_development_but_provenance_diff
     dev_semantic_path.write_bytes(canonical_json_bytes(dev_semantic))
     dev_provenance_path.write_bytes(canonical_json_bytes(dev_provenance))
 
+    port_request = _port_02c_request()
+    portable_data = tmp_path / "synthetic-installed" / "portable-data"
+    if os.name == "nt":
+        monkeypatch.setenv("LOCALAPPDATA", os.fspath(portable_data))
+    else:
+        monkeypatch.setenv("XDG_DATA_HOME", os.fspath(portable_data))
     root, trusted, identity, roots, run_dir, installed_command, _exe = _installed_setup(
-        tmp_path / "synthetic-installed", request=request
+        tmp_path / "synthetic-installed", request=port_request
     )
+    # PORT-02C's standalone namespace is fixed under the installed runtime's
+    # default data root and remains separate from product ``runs`` storage.
+    from runtime.resources import default_writable_roots
+    assert default_writable_roots(installed_release_root=identity.release_root).data_root == roots.data_root
     persist_worker_command(installed_command)
+    assert worker_entry._invocation_intent(
+        installed_command, port_request, identity,
+    ) is worker_entry.WorkerInvocationIntent.PORT_02C_INSTALLED_QUALIFICATION
     assert worker_entry.execute_worker_command(
         command_file=run_dir / WORKER_COMMAND_FILENAME,
         release_root=root,
@@ -517,6 +588,58 @@ def test_installed_offline_probe_semantics_equal_development_but_provenance_diff
     assert installed_provenance["release_identity_kind"] == "INSTALLED_RELEASE"
     assert installed_provenance["release_identity_id"] == identity.manifest_sha256
     assert installed_provenance["canonical_sha256"] != dev_provenance["canonical_sha256"]
+
+
+def test_product_run_path_cannot_select_the_standalone_port_02c_intent(tmp_path: Path, monkeypatch):
+    from runtime import worker_startup_gate
+
+    request = _port_02c_request()
+    root, trusted, identity, _roots, run_dir, command, _exe = _installed_setup(
+        tmp_path, request=request,
+    )
+    command = _command(
+        run_dir.parent.parent / "runs" / "product-run" / request.canonical_sha256,
+        request,
+        kind="INSTALLED_RELEASE",
+        identity_id=identity.manifest_sha256,
+    )
+    persist_worker_command(command)
+    monkeypatch.setattr(
+        worker_startup_gate, "wait_for_gate",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            worker_startup_gate.StartupGateError("product path requires owner gate")
+        ),
+    )
+    assert worker_entry._invocation_intent(command, request, identity) is worker_entry.WorkerInvocationIntent.PRODUCT_ADMITTED
+    with pytest.raises(worker_entry.WorkerEntryError, match="ownership gate failed"):
+        worker_entry.execute_worker_command(
+            command_file=command.run_directory / WORKER_COMMAND_FILENAME,
+            release_root=root,
+            trusted_manifest_sha256=trusted,
+        )
+    assert not (command.run_directory / WORKER_OFFLINE_PROBE_FILENAME).exists()
+    assert not (command.run_directory / WORKER_PROVENANCE_FILENAME).exists()
+
+
+def test_current_shadow_worker_entry_still_requires_owned_process_gate(tmp_path: Path, monkeypatch):
+    from runtime import worker_startup_gate
+
+    request = _request(shadow=True)
+    command = _command(
+        tmp_path / "current-shadow-run",
+        request,
+        operation="CURRENT_SHADOW_REQUEST",
+    )
+    command_path = persist_worker_command(command)
+    def missing_gate(*_args, **_kwargs):
+        raise worker_startup_gate.StartupGateError("deterministic missing-gate rejection")
+
+    monkeypatch.setattr(worker_startup_gate, "wait_for_gate", missing_gate)
+    with pytest.raises(worker_entry.WorkerEntryError, match="process ownership gate failed"):
+        worker_entry.execute_worker_command(
+            command_file=command_path,
+            development_root=ROOT,
+        )
 
 
 def test_port_02b_receipt_and_audit_pin_offline_probe_vector(tmp_path: Path):
@@ -580,27 +703,29 @@ def test_port_02b_receipt_and_audit_pin_offline_probe_vector(tmp_path: Path):
 
 
 def test_worker_entry_derives_current_shadow_arguments_only_from_bound_request(monkeypatch, tmp_path: Path):
-    from scripts import execute_current_shadow_request as request_module
-
     request = _request(shadow=True, create_share_code=False)
     command = _command(
         tmp_path / "run", request, operation="CURRENT_SHADOW_REQUEST"
     )
-    captured = {}
-    def fake_main(argv):
-        captured["argv"] = list(argv)
-        return 0
-
-    monkeypatch.setattr(request_module, "main", fake_main)
-    monkeypatch.setenv(request_module.WORKER_ENV, "1")
-    result = worker_entry._run_current_shadow(command, request)
-    assert result == 0
-    assert captured["argv"] == [
+    assert worker_entry._current_shadow_arguments(command, request) == [
         "--target-size", "2", "--fixture-scope", "today", "--fixture-dates", "20260923",
         "--output-dir", os.fspath(command.run_directory / "current-shadow"),
         "--create-share-code", "false",
     ]
-    assert os.environ[request_module.WORKER_ENV] == "1"
+
+
+def test_worker_entry_never_starts_product_supervisor_without_exact_gate(monkeypatch, tmp_path: Path):
+    from scripts import execute_current_shadow_request as request_module
+
+    request = _request(shadow=True, create_share_code=False)
+    command = _command(tmp_path / "run", request, operation="CURRENT_SHADOW_REQUEST")
+    monkeypatch.setattr(
+        request_module,
+        "run_authenticated_product_worker",
+        lambda *args, **kwargs: pytest.fail("product supervisor started without owner gate"),
+    )
+    with pytest.raises(worker_entry.WorkerEntryError, match="exact product startup owner"):
+        worker_entry._run_current_shadow(command, request)
 
 
 def test_worker_entry_rejects_extra_cli_and_wrong_fixed_command_path(tmp_path: Path):

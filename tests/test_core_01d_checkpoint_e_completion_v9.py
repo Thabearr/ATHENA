@@ -99,3 +99,40 @@ def test_current_master_closes_with_v10_and_historical_v2_still_authenticates():
     assert result["checkpoint_e"] == result["p4_4"] == "COMPLETE"
     assert historical_v2.audit()["result"] == "PASS"
     assert v9.audit()["checkpoint_e"] == v9.audit()["p4_4"] == "INCOMPLETE"
+
+
+def test_pass1_supporting_source_keeps_exact_b6_predecessor_and_current_a2_identity():
+    from scripts import audit_core_01d_retained_workflow_status_v2 as retained
+
+    path = "domain/current_fotmob_latest_durable_fresh_history.py"
+    row = next(item for item in retained._supporting_source_inventory()
+               if item["path"] == path)
+    predecessor = retained.HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS[path]
+    assert row == {
+        "path": path,
+        "git_blob_sha1": predecessor["git_blob_sha1"],
+        "source_sha256": predecessor["source_sha256"],
+    }
+    receipt = boundary.read(retained.RECEIPT_PATH)
+    receipt_row = next(item for item in receipt["pass1_supporting_source_inventory"]
+                       if item["path"] == path)
+    assert row == receipt_row
+
+
+def test_pass1_b6_predecessor_and_current_a2_successor_tampering_fails_closed(monkeypatch):
+    from scripts import audit_core_01d_retained_workflow_status_v2 as retained
+
+    path = "domain/current_fotmob_latest_durable_fresh_history.py"
+    predecessor = deepcopy(retained.HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS[path])
+    predecessor["source_sha256"] = "0" * 64
+    monkeypatch.setitem(retained.HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS, path, predecessor)
+    with pytest.raises(AssertionError, match="historical supporting-source identity drift"):
+        retained._supporting_source_inventory()
+
+    chain = deepcopy(boundary.load_inventory_generations())
+    latest_rows = chain[-1][1]["source_identities"]
+    row = next(item for item in latest_rows if item["path"] == path)
+    row["lf_source_sha256"] = "0" * 64
+    monkeypatch.setattr(boundary, "load_inventory_generations", lambda: chain)
+    with pytest.raises(AssertionError, match="current supporting source differs from authenticated A2"):
+        retained._supporting_source_inventory()

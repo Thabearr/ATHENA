@@ -165,7 +165,11 @@ def _finalize_source_adapter_failure(
     """Replace a provisional receipt when reviewed current source parsing fails closed."""
 
     output_dir = args.output_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
+    from runtime.current_shadow_operation_authority import publish_product_evidence
+    publish_product_evidence(
+        evidence_kind="SOURCE_FAILURE_OUTPUT_DIRECTORY",
+        publish=lambda: output_dir.mkdir(parents=True, exist_ok=True),
+    )
     repository_root = Path(__file__).resolve().parents[1]
     exact_commit_sha = runner._git_head(repository_root)
     stage = runner._read_checkpoint_stage(output_dir)

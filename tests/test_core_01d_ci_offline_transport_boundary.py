@@ -14,6 +14,16 @@ import pytest
 import offline_transport as boundary
 
 
+def test_shallow_checkout_missing_historical_commit_probe_is_silent(capfd):
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+
+    # A deliberately absent object exercises the depth-1 hosted-checkout path.
+    # The fallback is a normal negative result and must not leak Git diagnostics
+    # into strict clean-process source replays on stderr.
+    assert not a2.historical_objects_available("f" * 40)
+    assert capfd.readouterr().err == ""
+
+
 def test_windows_durable_local_rename_is_allowlisted_without_network_symbols(monkeypatch):
     monkeypatch.setattr(boundary, "LINUX_HOST", False)
     boundary.audit_hook("ctypes.dlsym", (object(), "MoveFileExW"))

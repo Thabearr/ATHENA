@@ -178,12 +178,14 @@ PASS_A_HISTORICAL_SOURCE_BLOBS = {
     # The current regression source is A2-authenticated, while Checkpoint E
     # continues to reconstruct this exact original Pass-A inventory blob.
     "tests/test_p4_3d_retirement_audit_extensibility.py": "5e7de20231b2455f15fdc20c4fd21e1720714f64",
+    "tests/test_worker_launcher.py": "973e00174e8967569e98fbf15bc58d2c13a3a20d",
 }
 PASS_A_BASE_SOURCE_BLOBS = {
     "api/server.py": "21c9aa432aaccd8db041778a26365f12f6af80de",
     "run_desktop.py": "3495618a198ccde18cad7d578362b1366e4bcedc",
     "tests/test_api_error_handling.py": "a827e02b95779ca0478ffa74db34e41de1e04b42",
     "tests/test_product_baseline_v1.py": "2d552f49cf84462bd1b32e86eea2a96ee0570b64",
+    "tests/test_worker_launcher.py": "973e00174e8967569e98fbf15bc58d2c13a3a20d",
 }
 # These exact Pass-A base blobs are edited in the current PR and are also
 # tracked by A2. Their current source bytes are authenticated by A2; the
@@ -198,12 +200,16 @@ PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS = {
     "tests/test_p4_3d_retirement_audit_extensibility.py": (
         "5e7de20231b2455f15fdc20c4fd21e1720714f64"
     ),
+    "tests/test_worker_launcher.py": (
+        "973e00174e8967569e98fbf15bc58d2c13a3a20d"
+    ),
 }
 PASS_A_HISTORICAL_SOURCE_FIXTURES = {
     "api/server.py": "tests/fixtures/core_01d/app_01c_historical/api_server.py.b64",
     "run_desktop.py": "tests/fixtures/core_01d/app_01c_historical/run_desktop.py.txt",
     "tests/test_api_error_handling.py": "tests/fixtures/core_01d/app_01c_historical/test_api_error_handling.py.txt",
     "tests/test_product_baseline_v1.py": "tests/fixtures/core_01d/app_01c_historical/test_product_baseline_v1.py.txt",
+    "tests/test_worker_launcher.py": "tests/fixtures/core_01d/run_02a_pre_historical/test-worker-launcher-pr463-base.py.txt",
 }
 
 INCIDENT_20261010_PREDECESSOR_BLOBS = {
@@ -814,7 +820,7 @@ def _authenticate_pr119_release_only_workflow_forward(current, before):
     }
 
 
-def base_input():
+def base_input(*, include_scan_source_predecessors=False):
     raw = read(BASE_PATH)
     require(sha(raw) == BASE_INPUT_SHA, "exact-main base inventory identity drift")
     value = strict(raw)
@@ -830,6 +836,12 @@ def base_input():
         )
         fresh_workflow_after_blob = forward["workflow_blob"]
         supporting_source_blobs = forward["supporting_source_blobs"]
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as pass_a_v2
+    pass_a_predecessors = None
+    pass_a_v2_compat_predecessors = None
+    pass1_forward_predecessor_blobs = {}
+    pass1_forward_predecessor_sources = {}
     for path, identity in value["files"].items():
         if path == HISTORICAL_AUDIT:
             require(current.get(path) in (identity, {"mode": identity["mode"], "git_blob_sha1": audit_after}), "historical audit forward Git identity differs")
@@ -884,6 +896,86 @@ def base_input():
                 and current[path]["mode"] == identity["mode"],
                 "Pass-A preserved A2 successor differs from its exact V1 base identity: " + path,
             )
+        elif path in pass_a_v2.PASS_A_V2_AUTHENTICATED_SOURCE_PREDECESSORS:
+            if pass_a_v2_compat_predecessors is None:
+                latest_a2 = a2.authenticate_inventory()
+                pass_a_v2_compat_predecessors = pass_a_v2.authenticate_pass_a_e3_compat_predecessors(
+                    a2, latest_a2,
+                )
+            require(
+                identity == {
+                    "mode": "100644",
+                    "git_blob_sha1": pass_a_v2.PASS_A_E3_COMPAT_SOURCE_PREDECESSORS[path][1],
+                }
+                and current.get(path) is not None
+                and current[path]["mode"] == "100644"
+                and pass_a_v2_compat_predecessors[path] == identity["git_blob_sha1"],
+                "Pass-1 Pass-A V2 source predecessor identity drift: " + path,
+            )
+            pass1_forward_predecessor_blobs[path] = pass_a_v2_compat_predecessors[path]
+            fixture = pass_a_v2.PASS_A_E3_COMPAT_SOURCE_PREDECESSORS[path][0]
+            predecessor_source = a2.lf((ROOT / fixture).read_bytes())
+            predecessor_source_blob = hashlib.sha1(
+                b"blob " + str(len(predecessor_source)).encode("ascii") + b"\0" + predecessor_source
+            ).hexdigest()
+            require(
+                predecessor_source_blob == pass_a_v2_compat_predecessors[path],
+                "Pass-1 Pass-A V2 source predecessor bytes drift: " + path,
+            )
+            if path in value["scan_paths"]:
+                pass1_forward_predecessor_sources[path] = predecessor_source
+        elif path in (a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS
+                      | a2.E3_PASS_A_SOURCE_FORWARD_PATHS):
+            if path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
+                transition = a2.resolve_historical_source_transition(
+                    path,
+                    expected_generation=a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION,
+                )
+                predecessor_mode = successor_mode = "100644"
+                predecessor_reader = a2.read_authenticated_cross_contract_predecessor
+            else:
+                transition = a2.resolve_historical_source_transition(
+                    path,
+                    expected_generation=a2.E3_PASS_A_SOURCE_FORWARD_AUTHORIZATION_GENERATION,
+                )
+                predecessor_mode = transition["predecessor_git_mode"]
+                successor_mode = transition["successor_git_mode"]
+                predecessor_reader = None
+            expected_predecessor = {
+                "mode": predecessor_mode,
+                "git_blob_sha1": transition["predecessor_git_blob_sha1"],
+            }
+            if identity == expected_predecessor and current.get(path) != identity:
+                if predecessor_reader is not None:
+                    predecessor = predecessor_reader(path)
+                else:
+                    if pass_a_predecessors is None:
+                        pass_a_predecessors = a2.read_authenticated_pass_a_source_predecessors()
+                    predecessor = pass_a_predecessors[path]
+                predecessor_lf = predecessor.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+                predecessor_blob = hashlib.sha1(
+                    b"blob " + str(len(predecessor)).encode("ascii") + b"\0" + predecessor
+                ).hexdigest()
+                require(
+                    len(predecessor) == transition["predecessor_byte_size"]
+                    and predecessor_blob == transition["predecessor_git_blob_sha1"]
+                    and hashlib.sha256(predecessor_lf).hexdigest()
+                        == transition["predecessor_lf_source_sha256"]
+                    and current.get(path) == {
+                        "mode": successor_mode,
+                        "git_blob_sha1": transition["successor_git_blob_sha1"],
+                    },
+                    "Pass-1 V284/V300 source predecessor/successor identity drift: " + path,
+                )
+                pass1_forward_predecessor_blobs[path] = predecessor_blob
+                if path in value["scan_paths"]:
+                    pass1_forward_predecessor_sources[path] = predecessor
+            else:
+                # An earlier historical owner may project a different exact
+                # Pass-1 blob for a V284/V300 path. Preserve that precedence;
+                # only a base row equal to the authorized predecessor can use
+                # this transition.
+                require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
         else:
             require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
     # Git can be clean while the working tree has edits. Verify inspected source
@@ -894,7 +986,6 @@ def base_input():
         capture_output=True, check=True,
     ).stdout.decode().splitlines()
     require(len(hashed) == len(value["scan_paths"]), "worktree filtered hash inventory incomplete")
-    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     latest_a2 = a2.authenticate_inventory()
     latest_a2_paths = {row["path"] for row in latest_a2["source_identities"]}
     for path in PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS:
@@ -941,6 +1032,10 @@ def base_input():
             # by the complete latest A2 inventory above; preserve the exact
             # immutable Pass-A base identity for this historical scan.
             actual = PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS[path]
+        if path in pass1_forward_predecessor_blobs:
+            # The source was independently authenticated by its exact
+            # Pass-A/V284/V300 transition in the immutable base comparison.
+            actual = pass1_forward_predecessor_blobs[path]
         expected_blob = (
             audit_after if path == HISTORICAL_AUDIT
             else fresh_workflow_after_blob if path == fresh_workflow_path and fresh_workflow_after_blob
@@ -948,10 +1043,13 @@ def base_input():
             else PASS_A_HISTORICAL_SOURCE_BLOBS[path] if path in PASS_A_HISTORICAL_SOURCE_BLOBS
             else PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS[path] if path in PASS_A_PRESERVED_A2_BASE_SOURCE_BLOBS
             else INCIDENT_20261010_PREDECESSOR_BLOBS[path] if path in INCIDENT_20261010_PREDECESSOR_BLOBS
+            else pass1_forward_predecessor_blobs[path] if path in pass1_forward_predecessor_blobs
             else value["files"][path]["git_blob_sha1"]
         )
         require(actual == expected_blob, f"worktree source differs: {path}")
     require(value["workflow_tree_sha1"] == "134cdd8bfa54488770f562c93571e46ac84a8187", "immutable V1 workflow tree changed")
+    if include_scan_source_predecessors:
+        return value, pass1_forward_predecessor_sources
     return value
 
 
@@ -1056,8 +1154,36 @@ def reachability(path, name, artifact_names, texts):
             "retirement_reachability_pass": False}
 
 
-def build_matrix(base, history):
+def build_matrix(base, history, historical_source_predecessors):
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as pass_a_v2
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+
+    allowed_predecessor_paths = (
+        a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS
+        | a2.E3_PASS_A_SOURCE_FORWARD_PATHS
+        | pass_a_v2.PASS_A_V2_AUTHENTICATED_SOURCE_PREDECESSORS
+    )
+    require(
+        type(historical_source_predecessors) is dict
+        and set(historical_source_predecessors) <= allowed_predecessor_paths,
+        "historical reachability scan received an unapproved source predecessor",
+    )
+    for path, raw in historical_source_predecessors.items():
+        expected = base["files"].get(path)
+        require(
+            path in base["scan_paths"]
+            and expected is not None
+            and expected.get("mode") == "100644"
+            and type(raw) is bytes,
+            "historical reachability scan predecessor is outside the immutable source inventory: " + path,
+        )
+        blob = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+        require(
+            blob == expected.get("git_blob_sha1"),
+            "historical reachability scan predecessor differs from the immutable source inventory: " + path,
+        )
     texts = {path: read(path).decode("utf-8") for path in base["scan_paths"]}
+    texts.update({path: raw.decode("utf-8") for path, raw in historical_source_predecessors.items()})
     texts[HISTORICAL_AUDIT] = read(HISTORICAL_AUDIT_FIXTURE).decode("utf-8")
     old = strict(read("artifacts/architecture/p4_3_workflow_capability_matrix_v1.json"))
     old_rows = {row["workflow_path"]: row for row in old["workflow_rows"]}
@@ -1196,9 +1322,10 @@ def validate_documents(matrix, receipt):
 
 
 def expected_documents():
-    base, history = base_input(), history_input()
+    base, historical_source_predecessors = base_input(include_scan_source_predecessors=True)
+    history = history_input()
     require(set(history) == set(path for path in base["files"] if path.startswith(".github/workflows/") and path.endswith(".yml")), "history capture coverage differs")
-    matrix = build_matrix(base, history)
+    matrix = build_matrix(base, history, historical_source_predecessors)
     accepted = accepted_evidence()
     accepted_history = history[CANONICAL]["last_successful"]
     require((accepted_history["id"], accepted_history["head_sha"], accepted_history["event"],

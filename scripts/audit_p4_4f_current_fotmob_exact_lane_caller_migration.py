@@ -156,7 +156,11 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 
 def _identity_at(ref: str, path: str) -> dict[str, str]:
-    raw = _git("show", f"{ref}:{path}")
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    if ref == "HEAD" and path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
+        raw = a2.read_authenticated_cross_contract_predecessor(path)
+    else:
+        raw = _git("show", f"{ref}:{path}")
     return evolution.source_identity(raw)
 
 

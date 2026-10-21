@@ -149,6 +149,9 @@ SUCCESSOR_SOURCE_PATHS = frozenset({
     "tests/offline_transport.py",
     "tests/test_core_01d_ci_offline_transport_boundary.py",
 })
+EXACT_WORKFLOW_FORWARD_PATHS = frozenset({
+    ".github/workflows/port-02c-native-runtime.yml",
+})
 
 
 def canonical(value):
@@ -358,15 +361,56 @@ def audit(latest=None):
                     "scripts/audit_core_01d_retained_workflow_status_v2.py",
                     "scripts/audit_p4_workflow_evolution_ledger.py",
                     "scripts/audit_run_01a_durable_admission.py",
+                    # E3's native-test metadata assertion is an exact current
+                    # successor; its source bytes are authenticated by A2.
+                    "tests/test_data_01c_restore_portability.py",
+                    # E3 adds exactly its offline process-tree suite after the
+                    # retained D5 step; assert_prohibited_scope_unchanged()
+                    # authenticates the complete current workflow bytes.
+                    ".github/workflows/port-02c-native-runtime.yml",
                     "sitecustomize.py",
+                    # RUN-02A adds a shallow-checkout negative regression for
+                    # absent historical Git objects. D5 predecessor bytes stay
+                    # frozen; the current test source is authenticated by A2.
+                    "tests/test_core_01d_ci_offline_transport_boundary.py",
+                    # V255 updates the native D5 source-forward regression to
+                    # prove a later successor preserves the original D5 identity.
+                    # Its current bytes are authenticated by A2; D5 bytes remain
+                    # frozen in the retained source receipt.
+                    "tests/native/test_port_02c_audit_source_forward.py",
                     # The exact B2 predecessor-set regression tracks the same
                     # reviewed PR #461 pins; its current bytes remain A2-bound.
                     "tests/test_core_01d_historical_warehouse_transfer_authority_b2.py",
-                    "tests/test_data_01c_app_storage.py"}
+                        "tests/test_data_01c_app_storage.py",
+                        # E3 expands only the offline transport guard's exact
+                        # Windows process-control symbol allowlist. A2 authenticates
+                        # these current bytes; the retained D5 receipt stays frozen.
+                        "tests/offline_transport.py",
+                        # E3 updates the existing durable-run test receipts to bind
+                        # their live attempt identity; the historical D5 test bytes
+                        # remain frozen in the retained source receipt above.
+                        "tests/test_data_01b_durable_run_state.py",
+                        # RUN-02A's narrow B4/B6 source-forward regressions prove
+                        # the retained historical identity and current E3 successor.
+                        # Their committed bytes are bound by the latest A2 inventory.
+                        "tests/test_core_01d_sportybet_current_trigger_authority_b4.py",
+        "tests/test_core_01d_port02c_trigger_authority_b6.py",
+        # V298's append-only E3 successor extension has a dedicated A2 chain
+        # regression; its current bytes are authenticated by the latest A2 row.
+        "tests/test_core_01d_ci_offline_transport_inventory_evolution.py",
+        # E3's finite current successors for the retained B3, B5, and
+        # scheduled-shadow auditors remain source-bound by current A2 rows;
+        # their historical audit bytes and conclusions stay unchanged.
+        "scripts/audit_core_01d_owner_one_shot_issue_comment_authority_b3.py",
+        "scripts/audit_core_01d_frozen_artifact_replay_authority_b5.py",
+        "scripts/audit_core_01d_scheduled_shadow_ownership.py"}
         inventory = boundary.authenticate_inventory()
         identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
         if (set(current) != set(frozen)
-                or any(digest != frozen[path] and (path not in evolved or identities.get(path) != digest)
+                or any(digest != frozen[path] and (
+                    path not in evolved
+                    or (path not in EXACT_WORKFLOW_FORWARD_PATHS and identities.get(path) != digest)
+                )
                        for path, digest in current.items())):
             raise AssertionError("unreviewed D5 source evolution")
         return value
@@ -411,14 +455,16 @@ def main():
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
-    value = build_receipt()
-    raw = canonical(value)
-    target = ROOT / RECEIPT
+    latest = boundary.authenticate_inventory()
     if args.write:
+        if latest["generation"] >= 116:
+            raise AssertionError("D5 historical source receipt is immutable after A2 V116")
+        raw = canonical(build_receipt(latest=latest))
+        target = ROOT / RECEIPT
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(raw)
-    elif target.read_bytes() != raw:
-        raise AssertionError("D5 source receipt drift")
+    else:
+        audit(latest=latest)
     print("DATA_01C_SOURCE_RECEIPT_OK")
 
 

@@ -185,8 +185,11 @@ def test_missing_history_in_untrusted_local_context_fails_closed(monkeypatch) ->
         audit._verify_base()
 
 
-def test_historical_source_identity_uses_reviewed_ref_not_current_head(monkeypatch) -> None:
-    path = "services/athena_run_service.py"
+@pytest.mark.parametrize("path", [
+    "services/athena_run_service.py",
+    "scripts/execute_current_shadow_request.py",
+])
+def test_historical_source_identity_uses_reviewed_ref_not_current_head(monkeypatch, path) -> None:
     pair = audit.EXPECTED_IDENTITIES[path]
     historical = {"git_blob_sha1": pair[0], "source_sha256": pair[1]}
     monkeypatch.setattr(audit, "_commit_object_available", lambda commit: commit == audit.P44H_REVIEWED_HEAD)
@@ -199,6 +202,19 @@ def test_historical_source_identity_uses_reviewed_ref_not_current_head(monkeypat
         path,
         pair,
         trusted_current_ci=False,
+        receipt=audit.expected_receipt(),
+    )
+
+
+def test_shallow_historical_e3_source_uses_p44h_receipt_identity(monkeypatch) -> None:
+    path = "scripts/execute_current_shadow_request.py"
+    pair = audit.EXPECTED_IDENTITIES[path]
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _commit: False)
+    monkeypatch.setattr(audit, "_blob_object_available", lambda _blob: False)
+    audit._verify_historical_source_identity(
+        path,
+        pair,
+        trusted_current_ci=True,
         receipt=audit.expected_receipt(),
     )
 

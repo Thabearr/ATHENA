@@ -49,10 +49,14 @@ from domain.current_fotmob_fixture_review_policy import (
 )
 from domain.fixture_catalog import compile_fixture_catalog, sha256_bytes
 from domain.fotmob_data_matches_capture import (
+    MAX_RESPONSE_BYTES,
     RAW_FILENAME,
+    CapturedFotMobDataMatchesResponse,
     FotMobDataMatchesCaptureError,
+    validate_json_content_type,
     verify_data_matches_capture_directory,
 )
+from domain.fotmob_data_matches_probe import request_target as fotmob_request_target
 from domain.current_fotmob_fixture_candidate_adapter import (
     build_current_fotmob_fixture_candidate_bundle,
 )
@@ -86,7 +90,11 @@ from domain.reviewed_fixture_intelligence_bootstrap_artifact import (
 from scripts.capture_fotmob_data_matches import (
     ALLOWED_OUTPUT_RELATIVE as DATA_MATCHES_CAPTURE_ROOT,
     FotMobDataMatchesNetworkError,
+    REQUEST_HEADERS as FOTMOB_REQUEST_HEADERS,
+    REQUEST_TIMEOUT_SECONDS as FOTMOB_REQUEST_TIMEOUT_SECONDS,
     fetch_fotmob_data_matches,
+    parse_content_length,
+    _validated_inputs as _validate_capture_inputs,
     write_data_matches_capture_directory,
 )
 
@@ -140,6 +148,7 @@ def _repo_root(repository_root: Path | None) -> Path:
 def _safe_work_root(repository: Path) -> Path:
     root = repository / WORK_ROOT
     current = repository
+    from runtime.current_shadow_operation_authority import publish_product_evidence
     for part in WORK_ROOT.parts:
         current = current / part
         if current.exists() or current.is_symlink():
@@ -148,7 +157,10 @@ def _safe_work_root(repository: Path) -> Path:
                     "current source work root contains a forbidden symlink/non-directory"
                 )
         else:
-            current.mkdir()
+            publish_product_evidence(
+                evidence_kind="FOTMOB_REVIEW_WORK_DIRECTORY",
+                publish=lambda current=current: current.mkdir(),
+            )
     return root
 
 
@@ -170,8 +182,12 @@ def _write_result(path: Path, payload: Mapping[str, Any]) -> None:
     raw = (
         json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
     ).encode("utf-8")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(raw)
+    def publish() -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+
+    from runtime.current_shadow_operation_authority import publish_product_evidence
+    publish_product_evidence(evidence_kind="FOTMOB_REVIEW_RESULT", publish=publish)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -413,16 +429,23 @@ def _build_verified_current_fotmob_bootstrap_from_capture(
     work_root = _safe_work_root(repository)
     temporary_path: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="wb",
-            prefix="reviewed-catalog-input-",
-            suffix=".jsonl",
-            dir=work_root,
-            delete=False,
-        ) as handle:
-            handle.write(handoff.catalog_input_jsonl_bytes)
-            handle.flush()
-            temporary_path = Path(handle.name)
+        def publish_catalog_input() -> Path:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                prefix="reviewed-catalog-input-",
+                suffix=".jsonl",
+                dir=work_root,
+                delete=False,
+            ) as handle:
+                handle.write(handoff.catalog_input_jsonl_bytes)
+                handle.flush()
+                return Path(handle.name)
+
+        from runtime.current_shadow_operation_authority import publish_product_evidence
+        temporary_path = publish_product_evidence(
+            evidence_kind="FOTMOB_REVIEW_INPUT",
+            publish=publish_catalog_input,
+        )
         catalog_result = compile_fixture_catalog(
             input_path=temporary_path,
             evidence_root=capture_root,
@@ -436,7 +459,17 @@ def _build_verified_current_fotmob_bootstrap_from_capture(
                 raise CurrentFotMobReviewedSourceError(
                     "temporary catalog input became a symlink"
                 )
-            temporary_path.unlink()
+            from runtime.current_shadow_operation_authority import (
+                ProductOperationAuthorityError, publish_product_evidence,
+            )
+            try:
+                publish_product_evidence(
+                    evidence_kind="FOTMOB_REVIEW_INPUT_CLEANUP",
+                    publish=lambda: temporary_path.unlink(),
+                )
+            except ProductOperationAuthorityError:
+                # Cancellation leaves the exact temporary input inspectable.
+                pass
 
     admission_decision = ReviewedFixtureCatalogAdmissionDecision(
         candidate_bundle_sha256=handoff.candidate_bundle_sha256,
@@ -559,14 +592,39 @@ def _issue_current_fotmob_reviewed_source(
     if clock is not None:
         fetch_kwargs["clock"] = clock
     try:
-        response = fetch_fotmob_data_matches(**fetch_kwargs)
-        capture_directory, _manifest = write_data_matches_capture_directory(
-            response,
-            request_date=request_date,
-            timezone=timezone,
-            ccode3=ccode3,
-            repository_root=repository,
-        )
+        from runtime.current_shadow_operation_authority import current_product_authority
+
+        authority = current_product_authority()
+        if authority is None:
+            response = fetch_fotmob_data_matches(**fetch_kwargs)
+            capture_directory, _manifest = write_data_matches_capture_directory(
+                response,
+                request_date=request_date,
+                timezone=timezone,
+                ccode3=ccode3,
+                repository_root=repository,
+            )
+        else:
+            if connection_factory is not None:
+                raise CurrentFotMobReviewedSourceError(
+                    "product FotMob acquisition rejects caller-supplied transports"
+                )
+            response = _fetch_product_authorized_fotmob_source(
+                authority,
+                request_date=request_date,
+                timezone=timezone,
+                ccode3=ccode3,
+            )
+            capture_directory, _manifest = authority.publish_evidence(
+                evidence_kind="FOTMOB_CAPTURE_BUNDLE",
+                publish=lambda: write_data_matches_capture_directory(
+                    response,
+                    request_date=request_date,
+                    timezone=timezone,
+                    ccode3=ccode3,
+                    repository_root=repository,
+                ),
+            )
     except (FotMobDataMatchesCaptureError, FotMobDataMatchesNetworkError) as exc:
         raise CurrentFotMobReviewedSourceError(
             "transparent current FotMob data-matches acquisition failed"
@@ -577,6 +635,56 @@ def _issue_current_fotmob_reviewed_source(
         issued_at=issued,
         repository_root=repository,
     )
+
+
+def _fetch_product_authorized_fotmob_source(
+    authority: Any, *, request_date: str, timezone: str, ccode3: str,
+) -> CapturedFotMobDataMatchesResponse:
+    """Use the authenticated Current Shadow permit without changing direct capture."""
+    date, zone, country = _validate_capture_inputs(request_date, timezone, ccode3)
+    target = fotmob_request_target(date, zone, country)
+    try:
+        product_response = authority.perform_get(
+            provider="FOTMOB_DATA_MATCHES",
+            request_target=target,
+            logical_id=date,
+            headers=tuple(FOTMOB_REQUEST_HEADERS),
+            timeout_seconds=FOTMOB_REQUEST_TIMEOUT_SECONDS,
+            maximum_bytes=MAX_RESPONSE_BYTES,
+        )
+        if (type(product_response.status) is not int or product_response.status != 200
+                or product_response.location is not None):
+            raise FotMobDataMatchesNetworkError(
+                "Current Shadow FotMob request requires one exact HTTP 200 response"
+            )
+        content_type = validate_json_content_type(product_response.content_type)
+        content_length = parse_content_length(product_response.content_length_header)
+        if (type(product_response.body) is not bytes or not product_response.body
+                or len(product_response.body) > MAX_RESPONSE_BYTES):
+            raise FotMobDataMatchesNetworkError(
+                "Current Shadow FotMob response body is outside its fixed byte bound"
+            )
+        if content_length is not None and content_length != len(product_response.body):
+            raise FotMobDataMatchesNetworkError(
+                "Current Shadow FotMob Content-Length differs from received bytes"
+            )
+        observed_at = dt.datetime.fromisoformat(
+            product_response.observed_at[:-1] + "+00:00"
+        ).astimezone(dt.timezone.utc)
+        return CapturedFotMobDataMatchesResponse(
+            status=product_response.status,
+            content_type=content_type,
+            content_length=content_length,
+            body=product_response.body,
+            observed_at=observed_at,
+            network_acquisition_performed=True,
+        )
+    except (FotMobDataMatchesCaptureError, FotMobDataMatchesNetworkError):
+        raise
+    except Exception as exc:
+        raise FotMobDataMatchesNetworkError(
+            "Current Shadow FotMob operation authorization failed closed"
+        ) from exc
 
 
 def issue_current_fotmob_reviewed_source(

@@ -468,6 +468,18 @@ def validate_current_state() -> dict[str, Any]:
     summary = validate_receipt(document)
     for anchor in EXPECTED_ANCHORS:
         current = current_anchor_identity(anchor)
+        from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+        if anchor["path"] in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
+            payload = a2.read_authenticated_cross_contract_predecessor(anchor["path"])
+            blob = hashlib.sha1(
+                b"blob " + str(len(payload)).encode("ascii") + b"\0" + payload
+            ).hexdigest()
+            if (blob != current["git_blob_sha1"]
+                    or hashlib.sha256(payload).hexdigest() != current["git_blob_payload_sha256"]):
+                raise PortabilityAuditError(
+                    f"authenticated historical source identity changed: {anchor['anchor_id']}"
+                )
+            continue
         try:
             payload, identity = read_tracked_head_blob(ROOT, anchor["path"])
         except SourceIdentityError as exc:

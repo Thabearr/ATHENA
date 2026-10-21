@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import subprocess
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +19,25 @@ _A2_PREDECESSOR_FILE_SHA256 = {
     5: "750aeaf81d4ee3afc8b7ab13ebe41bb018bb22f5d6058a0532cf33e6eb20a54d",
     6: "4621db16b2f69502f28b5f04435c235c24d053bd36a53abd0c4f42a545f56872",
     7: "dbad92550fc0de2b99e7b4caa54aeecf2ba8855b944c552db854be3e236d0eca",
+}
+
+_E3_B6_SOURCE_FORWARD_ROWS = {
+    "domain/sportybet_live_event_quote_evidence.py": (
+        "096d54fe7493f6d81cdf3c4af7c4a9333c75fadc",
+        "5d64143321e12313bb239b6d3973c8b5da5fb28855649e9890194f233ff0b48f", 56007,
+    ),
+    "domain/current_fotmob_latest_durable_fresh_history.py": (
+        "4e5695711078acb06fba537f3f69ca1e2c9df470",
+        "2f3eb3473acdcab1bf10a0e6431708aa8225b2b2f279bf10405e669f453386ab", 43798,
+    ),
+    "domain/current_shadow_sportybet_pc_upcoming_discovery.py": (
+        "fa2069a2ea1201a93a84b5ce3856f9d9574dea71",
+        "0d4d1af14a47e935bf2669c8abf6dbf6409e9f8d72f4070c3bb0b8abc7eec1a3", 45046,
+    ),
+    "scripts/issue_current_fotmob_reviewed_source.py": (
+        "b50689971ee20cb6800145317a0e9fcb3486f40f",
+        "449e83af1a8e25bf5b054b88682b8559363196ca2d6e1dad87c742949b8d0484", 27513,
+    ),
 }
 
 
@@ -57,6 +77,132 @@ def test_depth_one_pr_checkout_uses_pinned_base_inventory_without_fetch(monkeypa
 
     assert inventory["canonical_sha256"] == b6.SOURCE_INVENTORY_SHA
     assert inventory == boundary.read(b6.SOURCE_INVENTORY_PATH)
+
+
+@pytest.mark.parametrize("mutation", ["missing_path", "wrong_mode", "wrong_head_blob"])
+def test_depth_one_source_forward_projection_rejects_checkout_tree_mutation(monkeypatch, mutation):
+    path = "domain/current_fotmob_latest_durable_fresh_history.py"
+    checkout = dict(b6._checkout_tree_entries())
+    mode, kind, blob = checkout[path]
+    if mutation == "missing_path":
+        del checkout[path]
+    elif mutation == "wrong_mode":
+        checkout[path] = ("100755", kind, blob)
+    else:
+        checkout[path] = (mode, kind, "0" * 40)
+
+    original_git = b6._git
+    original_boundary_git = boundary.git
+
+    def shallow_checkout_git(*args):
+        if b6.BASE_MAIN in args:
+            raise subprocess.CalledProcessError(128, ["git", *args])
+        return original_git(*args)
+
+    def wrong_head_boundary_git(*args):
+        result = original_boundary_git(*args)
+        if mutation == "wrong_head_blob" and args == ("ls-tree", "-z", "HEAD", "--", path):
+            metadata, tree_path = result.rstrip(b"\0").split(b"\t", 1)
+            mode, kind, _blob = metadata.decode("ascii").split(" ")
+            return f"{mode} {kind} {'0' * 40}\t".encode("ascii") + tree_path + b"\0"
+        return result
+
+    monkeypatch.setattr(b6, "_git", shallow_checkout_git)
+    monkeypatch.setattr(b6, "_checkout_tree_entries", lambda: checkout)
+    monkeypatch.setattr(boundary, "git", wrong_head_boundary_git)
+    b6._base_tree_entries.cache_clear()
+    try:
+        with pytest.raises(AssertionError):
+            b6._base_tree_entries()
+    finally:
+        b6._base_tree_entries.cache_clear()
+
+
+@pytest.mark.parametrize("field", ["role", "discovery_edges"])
+def test_depth_one_source_inventory_rejects_forged_historical_classification(monkeypatch, field):
+    inventory_path = b6.SOURCE_INVENTORY_PATH
+    original_read_bytes = Path.read_bytes
+    value = boundary.read(inventory_path)
+    row = next(item for item in value["source_identities"]
+               if item["path"] == "domain/current_fotmob_latest_durable_fresh_history.py")
+    row[field] = "FORGED" if field == "role" else ["FORGED EDGE"]
+    forged_raw = boundary.canonical(boundary.seal(value))
+
+    def forged_inventory(candidate):
+        if candidate == b6.ROOT / inventory_path:
+            return forged_raw
+        return original_read_bytes(candidate)
+
+    monkeypatch.setattr(Path, "read_bytes", forged_inventory)
+    original_git = b6._git
+
+    def shallow_checkout_git(*args):
+        if b6.BASE_MAIN in args:
+            raise subprocess.CalledProcessError(128, ["git", *args])
+        return original_git(*args)
+
+    monkeypatch.setattr(b6, "_git", shallow_checkout_git)
+    b6._base_tree_entries.cache_clear()
+    try:
+        with pytest.raises(AssertionError, match="pinned B6 source inventory identity drift"):
+            b6._base_tree_entries()
+    finally:
+        b6._base_tree_entries.cache_clear()
+
+
+def test_full_history_mode_reconstructs_pinned_base_source_identity(monkeypatch):
+    original_git = b6._git
+    pinned = boundary.read(b6.SOURCE_INVENTORY_PATH)
+    checkout = b6._checkout_tree_entries()
+    try:
+        # Use the real pinned base tree in a full checkout. The fallback keeps
+        # the deterministic full-history branch exercised in depth-one CI.
+        base_tree = original_git("ls-tree", "-r", "-z", b6.BASE_MAIN)
+        used_original_tree = True
+    except subprocess.CalledProcessError:
+        rows = []
+        for row in pinned["source_identities"]:
+            mode = checkout[row["path"]][0]
+            rows.append(f"{mode} blob {row['git_blob_sha1']}\t{row['path']}\0".encode("utf-8"))
+        base_tree = b"".join(rows)
+        used_original_tree = False
+
+    def full_history_git(*args):
+        if args == ("ls-tree", "-r", "-z", b6.BASE_MAIN):
+            return base_tree
+        return original_git(*args)
+
+    b6._base_tree_entries.cache_clear()
+    monkeypatch.setattr(b6, "_git", full_history_git)
+    try:
+        inventory = b6.build_source_inventory()
+    finally:
+        b6._base_tree_entries.cache_clear()
+
+    assert inventory == pinned
+    assert used_original_tree is (subprocess.run(
+        ["git", "cat-file", "-e", f"{b6.BASE_MAIN}^{{commit}}"], capture_output=True,
+    ).returncode == 0)
+    rows_by_path = {row["path"]: row for row in inventory["source_identities"]}
+    for path, (blob, source_sha, byte_size) in _E3_B6_SOURCE_FORWARD_ROWS.items():
+        assert rows_by_path[path]["git_blob_sha1"] == blob
+        assert rows_by_path[path]["normalized_source_sha256"] == source_sha
+        assert rows_by_path[path]["byte_size"] == byte_size
+
+
+def test_e3_forward_sources_preserve_exact_b6_inventory_and_receipt():
+    inventory = boundary.read(b6.SOURCE_INVENTORY_PATH)
+    assert inventory["canonical_sha256"] == "f0e3bbd523c0a75d47215d2b4f6cd732409c559f080d9391a6ae7520387368c6"
+    rows_by_path = {row["path"]: row for row in inventory["source_identities"]}
+    for path, (blob, source_sha, byte_size) in _E3_B6_SOURCE_FORWARD_ROWS.items():
+        assert rows_by_path[path]["git_blob_sha1"] == blob
+        assert rows_by_path[path]["normalized_source_sha256"] == source_sha
+        assert rows_by_path[path]["byte_size"] == byte_size
+    receipt = boundary.read(b6.RECEIPT_PATH)
+    assert receipt["canonical_sha256"] == "b9efafc34139a26de58da6cd2421dd43a174e375cabd0a2ccecdd5f21cb04966"
+    port_receipt = boundary.read(b6.PORT_RECEIPT_PATH)
+    assert port_receipt["canonical_sha256"] == b6.PORT_RECEIPT_SHA
+    assert port_receipt["qualification"]["fixture_manifest_sha256"] == b6.FIXTURE_MANIFEST_SHA
 
 
 def test_depth_one_workflow_invariance_uses_pinned_checked_out_subtree(monkeypatch):

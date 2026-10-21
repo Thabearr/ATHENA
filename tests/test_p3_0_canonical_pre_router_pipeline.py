@@ -411,7 +411,15 @@ def _install_upcoming_discovery(
         ensure_ascii=False, separators=(",", ":"),
     ).encode("utf-8")
 
-    def fetch(page_num: int, nonce: int) -> tuple[bytes, datetime]:
+    def fetch(
+        page_num: int,
+        nonce: int,
+        *,
+        operation_epoch: int | None = None,
+    ) -> tuple[bytes, datetime]:
+        if operation_epoch is not None:
+            assert type(operation_epoch) is int
+            assert 1 <= operation_epoch <= pc_upcoming_source.MAX_PRODUCT_CAPTURE_EPOCHS
         return raw, source_observed
 
     monkeypatch.setattr(pc_upcoming_source.time, "time", lambda: source_observed.timestamp() - 0.250)

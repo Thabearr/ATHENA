@@ -149,6 +149,9 @@ jobs:
         run: |
           python scripts/qualify_data_01c_restore_portability.py --runner-temp "${{ runner.temp }}"
 
+      - name: E3 native process-tree recovery tests (offline)
+        run: python -m pytest -q tests/native/test_run_02a_process_tree.py
+
       - name: Require variant semantic equality
         shell: bash
         run: |

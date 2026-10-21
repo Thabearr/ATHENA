@@ -273,12 +273,6 @@ def _read_runtime_json(path: Path, *, max_bytes: int = source.MAX_MANIFEST_BYTES
 
 
 def _write_json(path: Path, payload: Mapping[str, Any], *, replace_existing: bool = False) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise PcUpcomingRuntimeReconciliationError(
-            "could not create runtime capture evidence directory"
-        ) from exc
     raw = _canonical(dict(payload)) + b"\n"
     if not replace_existing:
         try:
@@ -288,24 +282,35 @@ def _write_json(path: Path, payload: Mapping[str, Any], *, replace_existing: boo
                 "could not persist runtime capture evidence"
             ) from exc
         return
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f"{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(raw)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    except OSError as exc:
+
+    def publish() -> None:
         try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise PcUpcomingRuntimeReconciliationError(
-            "could not persist runtime capture stabilization evidence"
-        ) from exc
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise PcUpcomingRuntimeReconciliationError(
+                "could not create runtime capture evidence directory"
+            ) from exc
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f"{path.name}.", suffix=".tmp", dir=path.parent
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(raw)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        except OSError as exc:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise PcUpcomingRuntimeReconciliationError(
+                "could not persist runtime capture stabilization evidence"
+            ) from exc
+
+    from runtime.current_shadow_operation_authority import publish_product_evidence
+    publish_product_evidence(evidence_kind="PC_UPCOMING_JOURNAL", publish=publish)
 
 
 def _page_observation(page: source.PcUpcomingPageEvidence, attempt_index: int) -> dict[str, Any]:
@@ -421,16 +426,20 @@ def _write_raw_response_observations(
 
 
 def _write_raw_response_exclusive(path: Path, raw: bytes) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("xb") as handle:
-            handle.write(raw)
-            handle.flush()
-            os.fsync(handle.fileno())
-    except OSError as exc:
-        raise PcUpcomingRuntimeReconciliationError(
-            "could not persist pre-parse raw provider response; semantic parsing was not attempted"
-        ) from exc
+    def publish() -> None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("xb") as handle:
+                handle.write(raw)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError as exc:
+            raise PcUpcomingRuntimeReconciliationError(
+                "could not persist pre-parse raw provider response; semantic parsing was not attempted"
+            ) from exc
+
+    from runtime.current_shadow_operation_authority import publish_product_evidence
+    publish_product_evidence(evidence_kind="PC_UPCOMING_RAW_RESPONSE", publish=publish)
 
 
 def _parse_failure_receipt(
@@ -621,10 +630,17 @@ def _promote_accepted_epoch(
     stage = root / "runtime-promotion-stage"
     if stage.exists() or (root / "pages").exists() or (root / "manifest.json").exists():
         raise PcUpcomingRuntimeReconciliationError("canonical pcUpcoming evidence destination already exists")
-    stage.mkdir(parents=False, exist_ok=False)
+    from runtime.current_shadow_operation_authority import publish_product_evidence
+    publish_product_evidence(
+        evidence_kind="PC_UPCOMING_PROMOTION_STAGE",
+        publish=lambda: stage.mkdir(parents=False, exist_ok=False),
+    )
     try:
         stage_pages = stage / "pages"
-        stage_pages.mkdir()
+        publish_product_evidence(
+            evidence_kind="PC_UPCOMING_PROMOTION_STAGE",
+            publish=stage_pages.mkdir,
+        )
         for page in manifest.pages:
             raw = (attempt_root / page.raw_relative_path).read_bytes()
             if hashlib.sha256(raw).hexdigest() != page.raw_sha256:
@@ -636,13 +652,22 @@ def _promote_accepted_epoch(
         _require_complete(staged)
         if staged.to_dict() != manifest.to_dict():
             raise PcUpcomingRuntimeReconciliationError("staged accepted V1 manifest differs from its capture epoch")
-        stage_pages.rename(root / "pages")
-        (stage / "manifest.json").rename(root / "manifest.json")
+        publish_product_evidence(
+            evidence_kind="PC_UPCOMING_PROMOTION",
+            publish=lambda: stage_pages.rename(root / "pages"),
+        )
+        publish_product_evidence(
+            evidence_kind="PC_UPCOMING_PROMOTION",
+            publish=lambda: (stage / "manifest.json").rename(root / "manifest.json"),
+        )
         promoted = source.verify_current_pc_upcoming_discovery(repository_root=repository_root)
         _require_complete(promoted)
         if promoted.to_dict() != manifest.to_dict():
             raise PcUpcomingRuntimeReconciliationError("canonical promoted V1 manifest differs from accepted epoch")
-        stage.rmdir()
+        publish_product_evidence(
+            evidence_kind="PC_UPCOMING_PROMOTION_STAGE_CLEANUP",
+            publish=stage.rmdir,
+        )
         return promoted
     except Exception:
         # Promotion never consumes attempt evidence. If canonical publication is
@@ -651,11 +676,19 @@ def _promote_accepted_epoch(
             promoted_manifest = root / "manifest.json"
             promoted_pages = root / "pages"
             if promoted_manifest.exists() and not (stage / "manifest.json").exists():
-                promoted_manifest.rename(stage / "manifest.json")
+                publish_product_evidence(
+                    evidence_kind="PC_UPCOMING_PROMOTION_ROLLBACK",
+                    publish=lambda: promoted_manifest.rename(stage / "manifest.json"),
+                )
             if promoted_pages.exists() and not (stage / "pages").exists():
-                promoted_pages.rename(stage / "pages")
-        except OSError:
-            pass
+                publish_product_evidence(
+                    evidence_kind="PC_UPCOMING_PROMOTION_ROLLBACK",
+                    publish=lambda: promoted_pages.rename(stage / "pages"),
+                )
+        except Exception as rollback_error:
+            from runtime.current_shadow_operation_authority import ProductOperationAuthorityError
+            if not isinstance(rollback_error, (OSError, ProductOperationAuthorityError)):
+                raise
         raise
 
 
@@ -1093,7 +1126,13 @@ def capture_current_pc_upcoming_discovery(
             "refusing to overwrite an existing pcUpcoming runtime evidence root"
         )
     try:
-        (root / RUNTIME_ATTEMPTS_DIRECTORY).mkdir(parents=True, exist_ok=False)
+        from runtime.current_shadow_operation_authority import publish_product_evidence
+        publish_product_evidence(
+            evidence_kind="PC_UPCOMING_RUNTIME_ROOT",
+            publish=lambda: (root / RUNTIME_ATTEMPTS_DIRECTORY).mkdir(
+                parents=True, exist_ok=False,
+            ),
+        )
     except OSError as exc:
         raise PcUpcomingRuntimeReconciliationError(
             "could not create pcUpcoming runtime evidence root"
@@ -1186,6 +1225,7 @@ def capture_current_pc_upcoming_discovery(
             manifest = source._capture_current_pc_upcoming_discovery_once(
                 evidence_root=attempt_root,
                 execute_live_network=True,
+                operation_epoch=attempt_index,
                 raw_response_observer=observe_raw_response,
                 page_observer=observe_page,
             )

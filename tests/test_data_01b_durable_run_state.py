@@ -73,6 +73,9 @@ def development_durable(tmp_path, clock):
 def _receipt(repo, candidate, run_id, clock, *, producer=None):
     request = RunRequest.from_json_bytes(candidate.request_bytes)
     envelope = ExecutionEnvelope.from_json_bytes(candidate.execution_envelope_bytes)
+    attempts = [row["attempt_id"] for row in repo.list_unfinished_attempts()
+                if row["run_id"] == run_id]
+    assert len(attempts) == 1
     if producer is None:
         assert envelope.source_identity.kind == "GIT_COMMIT"
         producer = envelope.source_identity.value
@@ -82,7 +85,8 @@ def _receipt(repo, candidate, run_id, clock, *, producer=None):
         shortfall=request.target_legs, share_code_result=None,
         authority_manifest=envelope.authority_manifest,
         evidence={"run_id": run_id, "execution_envelope_sha256": envelope.canonical_sha256,
-                  "release_id": repo.run_snapshot(run_id)["release_id"]})
+                  "release_id": repo.run_snapshot(run_id)["release_id"],
+                  "worker_attempt_id": attempts[0]})
 
 
 def _running(repo, candidate):
@@ -567,7 +571,8 @@ def test_installed_receipt_has_no_fabricated_git_producer(durable, roots, clock)
     assert not (roots.data_root / "run-receipts").exists()
 
 
-@pytest.mark.parametrize("binding", ["run_id", "release_id", "execution_envelope_sha256"])
+@pytest.mark.parametrize("binding", ["run_id", "release_id", "execution_envelope_sha256",
+                                      "worker_attempt_id"])
 def test_receipt_cross_identity_rejected(development_durable, clock, binding):
     repo, candidate, _, _ = development_durable
     run_id, attempt, lease = _running(repo, candidate)

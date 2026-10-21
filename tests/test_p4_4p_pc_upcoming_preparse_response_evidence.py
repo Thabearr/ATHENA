@@ -50,7 +50,12 @@ def _capture_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[P
     root.mkdir(parents=True, exist_ok=True)
     raw_pages = [_raw_page(i, total=757, invalid_id=(i == 7)) for i in range(1, 8)]
 
-    def fetch(page_num: int, nonce: int):
+    def fetch(
+        page_num: int,
+        nonce: int,
+        *,
+        operation_epoch: int | None = None,
+    ):
         return raw_pages[page_num - 1], datetime.now(timezone.utc)
 
     monkeypatch.setattr(source, "_fetch_page", fetch)
@@ -95,7 +100,12 @@ def test_six_valid_then_invalid_seventh_response_is_saved_before_parse(tmp_path:
     identity_calls: list[str] = []
     raw_pages = [_raw_page(i, total=757, invalid_id=(i == 7)) for i in range(1, 8)]
 
-    def fetch(page_num: int, nonce: int):
+    def fetch(
+        page_num: int,
+        nonce: int,
+        *,
+        operation_epoch: int | None = None,
+    ):
         events.append(("transport-return", page_num))
         return raw_pages[page_num - 1], datetime.now(timezone.utc)
 
@@ -172,7 +182,7 @@ def test_six_valid_then_invalid_seventh_response_is_saved_before_parse(tmp_path:
 def test_preparse_evidence_write_failure_prevents_semantic_parse_and_epoch_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     parsed: list[int] = []
     fetches: list[int] = []
-    monkeypatch.setattr(source, "_fetch_page", lambda page_num, nonce: (
+    monkeypatch.setattr(source, "_fetch_page", lambda page_num, nonce, *, operation_epoch=None: (
         fetches.append(page_num) or _raw_page(page_num, total=1, count=1), datetime.now(timezone.utc)
     ))
     monkeypatch.setattr(runtime, "_write_raw_response_exclusive", lambda *_args: (_ for _ in ()).throw(
@@ -197,7 +207,12 @@ def test_accepted_epoch_records_every_response_without_changing_manifest(tmp_pat
     raw_pages = [_raw_page(1, total=101), _raw_page(2, total=101, count=1)]
     fetches: list[int] = []
 
-    def fetch(page_num: int, nonce: int):
+    def fetch(
+        page_num: int,
+        nonce: int,
+        *,
+        operation_epoch: int | None = None,
+    ):
         fetches.append(page_num)
         return raw_pages[page_num - 1], datetime.now(timezone.utc)
 
@@ -219,7 +234,7 @@ def test_accepted_epoch_records_every_response_without_changing_manifest(tmp_pat
 
 def test_public_source_v1_still_rejects_invalid_provider_native_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     raw = _raw_page(1, total=1, count=1, invalid_id=True)
-    monkeypatch.setattr(source, "_fetch_page", lambda *_args: (raw, datetime.now(timezone.utc)))
+    monkeypatch.setattr(source, "_fetch_page", lambda *_args, operation_epoch=None: (raw, datetime.now(timezone.utc)))
     with pytest.raises(source.PcUpcomingDiscoveryError, match="tournament.id is not an exact provider-native ID"):
         source.capture_current_pc_upcoming_discovery(repository_root=tmp_path.resolve(), execute_live_network=True)
     assert not (tmp_path / source.EVIDENCE_ROOT / "manifest.json").exists()

@@ -62,6 +62,11 @@ RETAINED_AUDIT_PREDECESSORS = {'scripts/audit_checkpoint_e_workflows.py': ('test
  'scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py': ('tests/fixtures/core_01d/run_02a_pre_historical/b4-trigger-authority-predecessor.py.txt',
                                                                      '28e4963c668ab5992cd5760b499c0f69fd6f14db',
                                                                      'b10036a6fc5d56c9d718db3e14d0a998cffad3c3050530e28ed4e21630e2ac2b'),
+ # Exact source bytes at d133206e; the immutable V154 row supplies the LF pin.
+ 'scripts/audit_core_01d_exact_pr_trigger_disposition_b1.py': (
+     'tests/fixtures/core_01d/run_02a_pre_historical/b1-disposition-audit-v154.py.txt',
+     '5c2d3fec933aa75f49bb41c7f8e7774b4facef82',
+     'ce26a3530f3f2adbd8aa43c2e4b5dd0be6710c855003af930f0819b49c4808d8'),
  'scripts/audit_run_02a_pre_durable_share_send.py': ('tests/fixtures/core_01d/fresh_holdout_20261014/share-prerequisite-predecessor.py.txt',
                                                      '35617b52e020e9350b6de422dfd74171243990c6',
                                                      'eb2e8dbc6fcb464ab1dead01c0db3096ed85db0110e96e8c0c23a2f69d9d7974'),
@@ -71,19 +76,42 @@ RETAINED_AUDIT_PREDECESSORS = {'scripts/audit_checkpoint_e_workflows.py': ('test
  'scripts/audit_data_01c_app_store_complete.py': ('tests/fixtures/core_01d/run_02a_pre_historical/app-store-complete-v154.py.txt',
                                                   'f8fc830dfd3ab9a487d8245d6bf545ff2408cacf',
                                                   'c44aecd7405ba13d4f4156e400fe8de15cba89bfc4b4f4e48b0ad34833d3cffd')}
+RUN_02A_CURRENT_SOURCE_PREDECESSORS = {
+    "database/run_repository.py": (
+        "tests/fixtures/core_01d/run_02a_pre_historical/run-repository-pr463-base.py.txt",
+        "103bcbf4e06a90ef768a122408235b9d9267fe6b",
+        "abcce798ddcdfc9b650aadf9f369408831573e51e65d99afb96294e043e2e03f"),
+    "services/athena_job_service.py": (
+        "tests/fixtures/core_01d/run_02a_pre_historical/athena-job-service-pr463-base.py.txt",
+        "d0291cc9a25b1372d86464e2fb54ac97f1fc7f98",
+        "439c97a9b4d22e2e61724e349f20cad8e365787047f306af00f4d4690d60876d"),
+    "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py": (
+        "tests/fixtures/core_01d/run_02a_pre_historical/auth-worker-boundary-pr463-base.py.txt",
+        "8115c18631e445f825dee0b0fa78c1a7cd77e460",
+        "7b6532d9155f5a096c38c12ad003c6bd076e0f329cc0ee26898cf0b5b0b5e795"),
+    "runtime/worker_entry.py": (
+        "tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-pr463-base.py.txt",
+        "113acdf1ece29ca2977e4e3d2d84576a31fe7828",
+        "98d5b1d7cfbc524be876f7000f9e605caac013039893d4f028ac2452216a2a61"),
+    "scripts/audit_core_01d_port02c_trigger_authority_b6.py": (
+        "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-port02c-trigger-authority-b6.py.txt",
+        "a36066a0b03c03f76e416f1b9235146717b2f483",
+        "261692333467a99de066abe046ba61614dd1879d68856fec980781f884a7588a"),
+}
 
 
 def historical_prerequisite_source_bytes(path, *, latest=None):
     """Exact retained audit/test predecessors; never runtime execution authority."""
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     from scripts import audit_core_01d_authority_reachability_review_a as review
-    if path not in RETAINED_AUDIT_PREDECESSORS or ROOT != review.ROOT or ROOT != a2.ROOT:
+    predecessors = {**RETAINED_AUDIT_PREDECESSORS, **RUN_02A_CURRENT_SOURCE_PREDECESSORS}
+    if path not in predecessors or ROOT != review.ROOT or ROOT != a2.ROOT:
         raise AssertionError("unclassified retained prerequisite source/root")
     latest = a2.authenticate_inventory() if latest is None else latest
     retained = a2.read_generation(a2.inventory_generation_path(RETAINED_GENERATION))
     if retained["canonical_sha256"] != RETAINED_INVENTORY_SHA:
         raise AssertionError("retained prerequisite A2 identity drift")
-    fixture, blob, digest = RETAINED_AUDIT_PREDECESSORS[path]
+    fixture, blob, digest = predecessors[path]
     for logical in (path, fixture):
         candidate = ROOT / logical
         if not candidate.is_file() or any(p.is_symlink() for p in (candidate, *candidate.parents)):
@@ -92,6 +120,16 @@ def historical_prerequisite_source_bytes(path, *, latest=None):
     current = {r["path"]:r["lf_source_sha256"] for r in latest["source_identities"]}
     if hashlib.sha256(live.replace(b"\r\n", b"\n")).hexdigest() != current.get(path):
         raise AssertionError("current prerequisite source differs from authenticated A2")
+    if (path in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS
+            and a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]["predecessor_fixture"] == fixture):
+        transition = a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]
+        authenticated = a2.read_authenticated_cross_contract_predecessor(path)
+        fixture_lf = (ROOT / fixture).read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        if (transition["predecessor_fixture"] != fixture
+                or transition["predecessor_git_blob_sha1"] != blob
+                or transition["predecessor_lf_source_sha256"] != digest
+                or authenticated.replace(b"\r\n", b"\n").replace(b"\r", b"\n") != fixture_lf):
+            raise AssertionError("retained prerequisite E3 predecessor projection drift: " + path)
     review._tracked_payloads(((fixture, (ROOT / fixture).read_bytes()),))
     raw = (ROOT / fixture).read_bytes().replace(b"\r\n", b"\n")
     retained_sources = {r["path"]:r["lf_source_sha256"] for r in retained["source_identities"]}
@@ -155,7 +193,8 @@ def build_receipt(source_head, *, retained=False):
         digest = hashlib.sha256((ROOT / path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
         if current.get(path) != digest:
             raise AssertionError("source differs from authenticated A2: " + path)
-        if retained and path in RETAINED_AUDIT_PREDECESSORS:
+        if retained and path in (set(RETAINED_AUDIT_PREDECESSORS)
+                                 | set(RUN_02A_CURRENT_SOURCE_PREDECESSORS)):
             digest = hashlib.sha256(historical_prerequisite_source_bytes(path, latest=latest)).hexdigest()
         identities[path] = digest
     if (type(source_head) is not str or len(source_head) != 40

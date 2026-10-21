@@ -94,6 +94,15 @@ B4_WORKFLOW_PREDECESSORS = {
         "tests/fixtures/core_01d/pr459_live_trigger_incident/prove-direct-share-workflow-b4-predecessor.yml.txt"),
 }
 
+# This single Python source is projected from an authenticated, evidence-only
+# predecessor by A2. It is deliberately separate from the workflow tree
+# projection above.
+B4_SOURCE_PREDECESSORS = {
+    "domain/sportybet_live_event_quote_evidence.py": (
+        "tests/fixtures/core_01d/sportybet_event_detail_e3_forward/"
+        "original-b4-b6-sportybet-live-event-quote-evidence.py.txt"),
+}
+
 TARGET_REACHABILITY = {
     (TARGETS[0]): "CONDITIONALLY_REACHABLE_PULL_REQUEST_PATH_FILTERED",
     (TARGETS[1]): "MANUALLY_REACHABLE_WORKFLOW_DISPATCH",
@@ -291,11 +300,18 @@ def project_b4_workflow_tree(observed_tree: str) -> str:
 
 
 def _identity(path: str) -> dict[str, str]:
-    raw = (_historical_b4_workflow_bytes(path) if path in B4_WORKFLOW_PREDECESSORS
-           else (ROOT / path).read_bytes())
+    if path in B4_WORKFLOW_PREDECESSORS:
+        raw = _historical_b4_workflow_bytes(path)
+    elif path in B4_SOURCE_PREDECESSORS:
+        require(B4_SOURCE_PREDECESSORS[path]
+                == boundary.SOURCE_FORWARD_TRANSITIONS[path]["predecessor_fixture"],
+                "B4 source-forward fixture path differs from the A2 declaration: " + path)
+        raw = boundary.read_authenticated_forward_predecessor(path)
+    else:
+        raw = (ROOT / path).read_bytes()
     normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     blob, digest = SOURCE_PINS[path]
-    if path in B4_WORKFLOW_PREDECESSORS:
+    if path in B4_WORKFLOW_PREDECESSORS or path in B4_SOURCE_PREDECESSORS:
         git_blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
     else:
         git_blob = _git("rev-parse", "HEAD:" + path).decode().strip()

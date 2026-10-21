@@ -299,8 +299,23 @@ def test_missing_git_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 
 def test_historical_portability_and_baseline_anchors_remain_exact() -> None:
     document = audit.load_receipt()
+    audit.validate_receipt(document)
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+
     for anchor in document["immutable_anchors"]:
         current = audit.current_anchor_identity(anchor)
+        if anchor["path"] in a2.E3_CROSS_CONTRACT_V284_SOURCE_FORWARD_PATHS:
+            a2.resolve_historical_source_transition(
+                anchor["path"],
+                expected_generation=a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION,
+            )
+            payload = a2.read_authenticated_cross_contract_predecessor(anchor["path"])
+            blob = hashlib.sha1(
+                b"blob " + str(len(payload)).encode("ascii") + b"\0" + payload
+            ).hexdigest()
+            assert blob == current["git_blob_sha1"]
+            assert hashlib.sha256(payload).hexdigest() == current["git_blob_payload_sha256"]
+            continue
         payload, identity = source_identity.read_tracked_head_blob(ROOT, anchor["path"])
         assert identity.git_blob_sha1 == current["git_blob_sha1"]
         assert identity.git_blob_payload_sha256 == current["git_blob_payload_sha256"]

@@ -6,6 +6,7 @@ authenticated against the latest reviewed generation.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from pathlib import Path
 import runpy
@@ -241,6 +242,106 @@ def test_latest_generation_is_a_full_reviewed_copy_of_the_current_corpus():
             assert relative_path in current_paths
     assert latest["source_identities"] == [boundary.source(path)
                                            for path in boundary.current_source_paths()]
+
+
+def test_e3_pass_a_source_successor_extension_is_append_only_and_exact(monkeypatch):
+    path = boundary.E3_CROSS_CONTRACT_SUCCESSOR_EXTENSION_PATH
+    chain = boundary.load_inventory_generations()
+    latest = chain[-1][1]
+    extensions = boundary._e3_cross_contract_source_forward_successor_extensions()
+    assert latest["generation"] >= boundary.E3_CROSS_CONTRACT_SUCCESSOR_EXTENSION_GENERATION
+    assert latest["e3_cross_contract_source_forward_successor_extensions"] == extensions
+    record = extensions[0]
+    assert record["path"] == path
+    assert record["generation"] == boundary.E3_CROSS_CONTRACT_SUCCESSOR_EXTENSION_GENERATION
+    assert record["previous_successor"]["generation"] == boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION
+    assert record["previous_successor"]["git_blob_sha1"] == (
+        boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]["successor_git_blob_sha1"]
+    )
+    assert record["authority_granted"] is False
+    assert record["historical_bytes_changed"] is False
+    assert record["rewritten"] is False
+    # The source reader must still return the exact V284 predecessor bytes.
+    predecessor = boundary.read_authenticated_cross_contract_predecessor(path)
+    transition = boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]
+    assert hashlib.sha1(b"blob " + str(len(predecessor)).encode() + b"\0" + predecessor).hexdigest() == (
+        transition["predecessor_git_blob_sha1"]
+    )
+
+    original = boundary.load_inventory_generations
+    def altered(directory=None):
+        rows = list(original(directory))
+        generation, document = rows[-1]
+        changed = json.loads(json.dumps(document))
+        changed["e3_cross_contract_source_forward_successor_extensions"][0]["successor"]["git_blob_sha1"] = "0" * 40
+        rows[-1] = (generation, changed)
+        return rows
+    monkeypatch.setattr(boundary, "load_inventory_generations", altered)
+    # Latest-generation source/authentication integrity is checked before the
+    # extension reader returns any predecessor bytes. This is the stable
+    # fail-closed layer for a tampered persisted generation.
+    with pytest.raises(
+        AssertionError,
+        match="E3 Pass-A latest A2 authorization or generation link drift",
+    ):
+        boundary.read_authenticated_cross_contract_predecessor(path)
+
+
+def test_e3_pass_a_extension_reader_rejects_altered_successor_identity():
+    chain = boundary.load_inventory_generations()
+    latest = json.loads(json.dumps(chain[-1][1]))
+    path = boundary.E3_PASS_A_V309_SUCCESSOR_EXTENSION_PATH
+    extensions = latest["e3_cross_contract_source_forward_successor_extensions"]
+    record = next(
+        row for row in extensions
+        if row["path"] == path
+        and row["generation"] == boundary.E3_PASS_A_V309_SUCCESSOR_EXTENSION_GENERATION
+    )
+    record["successor"]["git_blob_sha1"] = "0" * 40
+    with pytest.raises(
+        AssertionError,
+        match="E3 source-forward successor extension is missing or altered",
+    ):
+        boundary._authenticated_e3_successor_identity(path, chain, latest)
+
+
+def test_e3_v309_predecessor_fixture_is_exact_and_tampering_fails_closed(monkeypatch):
+    chain = boundary.load_inventory_generations()
+    extension = next(
+        row for row in boundary._e3_cross_contract_source_forward_successor_extensions(
+            chain=chain,
+            generation=boundary.E3_PASS_A_V309_SUCCESSOR_EXTENSION_GENERATION,
+        )
+        if row["generation"] == boundary.E3_PASS_A_V309_SUCCESSOR_EXTENSION_GENERATION
+    )
+    expected = boundary.E3_PASS_A_V309_SUCCESSOR_EXTENSION_PREDECESSOR
+    raw = boundary._authenticate_e3_v309_predecessor_fixture(extension)
+    assert len(raw) == expected["byte_size"]
+    normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    assert hashlib.sha256(normalized).hexdigest() == expected["lf_source_sha256"]
+
+    fixture_path = boundary.ROOT / expected["fixture_path"]
+    original_open = Path.open
+
+    def read_tampered_worktree(path, *args, **kwargs):
+        if path == fixture_path and args and args[0] == "rb":
+            return io.BytesIO(raw + b"tampered")
+        return original_open(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        # Keep safe path and HEAD object checks real; tamper only the bounded
+        # worktree read so this proves checkout drift is rejected.
+        patch.setattr(Path, "open", read_tampered_worktree)
+        with pytest.raises(
+            AssertionError,
+            match="V309 predecessor fixture checkout differs from exact HEAD text",
+        ):
+            boundary._authenticate_e3_v309_predecessor_fixture(extension)
+
+    altered = json.loads(json.dumps(extension))
+    altered["predecessor_fixture"]["git_blob_sha1"] = "0" * 40
+    with pytest.raises(AssertionError, match="V309 source predecessor fixture authorization drift"):
+        boundary._authenticate_e3_v309_predecessor_fixture(altered)
 
 
 # --- E. additive source fails closed ---------------------------------------
