@@ -303,7 +303,7 @@ def test_october15_forward_projection_preserves_both_historical_scope_digests():
  raw=review.retention.v4.v3._git('ls-tree','-r','HEAD')
  projected=current.a2_historical_projection(raw)
  assert review.sha256(current.unchanged_inventory(projected))==current.UNCHANGED_SCOPE_SHA
- app_projected=app_history.historical_tree_projection(projected)
+ app_projected=app_history.historical_tree_projection(raw)
  current.v1.validate_bounded_inventory(app_projected)
  paths={line.split(b'\t',1)[1].decode():line.split()[2].decode() for line in projected.splitlines()}
  for path,blob in current.v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS.items():
