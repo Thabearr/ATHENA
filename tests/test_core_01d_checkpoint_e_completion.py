@@ -77,9 +77,12 @@ def test_boolean_and_inventory_criterion_contract_is_strict():
 
 
 def test_scope_rejects_an_extra_runtime_file_without_base_commit_in_ci():
+    from scripts import audit_app_01a_local_shell as app_history
+
     raw = policy.v4.v3._git("ls-tree", "-r", "HEAD")
-    completion.validate_bounded_inventory(raw)
-    forged = raw + b"100644 blob 0000000000000000000000000000000000000000\tmodels/unapproved.py\n"
+    historical = app_history.historical_tree_projection(raw)
+    completion.validate_bounded_inventory(historical)
+    forged = historical + b"100644 blob 0000000000000000000000000000000000000000\tmodels/unapproved.py\n"
     with pytest.raises(policy.RetentionAcceptanceError, match="unapproved repository change"):
         completion.validate_bounded_inventory(forged)
 

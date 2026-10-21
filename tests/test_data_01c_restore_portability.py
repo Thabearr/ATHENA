@@ -101,7 +101,9 @@ def test_checkpoint_e_projection_keeps_only_exact_v74_predecessor_paths():
     assert audit.project_historical_inventory(b"".join(raw_sources)) == b"".join(expected_sources)
 
     raw = retention.v4.v3._git("ls-tree", "-r", "HEAD")
-    assert checkpoint.validate_bounded_inventory(raw) is None
+    from scripts import audit_app_01a_local_shell as app_history
+    historical = app_history.historical_tree_projection(raw)
+    assert checkpoint.validate_bounded_inventory(historical) is None
 
 
 def test_v74_predecessor_source_fixture_rejects_tampering():

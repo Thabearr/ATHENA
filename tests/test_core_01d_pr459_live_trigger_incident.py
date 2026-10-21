@@ -184,6 +184,7 @@ def test_checkpoint_test_predecessor_cannot_hide_tampering(monkeypatch, target):
 
 def test_v1_scope_rejects_a_forged_reviewed_workflow_blob():
     raw = completion_v1.policy.v4.v3._git("ls-tree", "-r", "HEAD")
+    raw = app_history.historical_tree_projection(raw)
     forged = []
     altered = 0
     for line in raw.splitlines(keepends=True):
@@ -302,7 +303,8 @@ def test_october15_forward_projection_preserves_both_historical_scope_digests():
  raw=review.retention.v4.v3._git('ls-tree','-r','HEAD')
  projected=current.a2_historical_projection(raw)
  assert review.sha256(current.unchanged_inventory(projected))==current.UNCHANGED_SCOPE_SHA
- current.v1.validate_bounded_inventory(raw)
+ app_projected=app_history.historical_tree_projection(projected)
+ current.v1.validate_bounded_inventory(app_projected)
  paths={line.split(b'\t',1)[1].decode():line.split()[2].decode() for line in projected.splitlines()}
  for path,blob in current.v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS.items():
   assert paths[path]==blob
