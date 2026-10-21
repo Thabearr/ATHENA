@@ -512,6 +512,15 @@ def test_ux_successor_accepts_windows_checkout_line_endings(monkeypatch):
     assert audit.validate_ux_successor(predecessor)["canonical_sha256"] == audit.UX_SUCCESSOR_SHA256
 
 
+def test_ux_successor_retains_exact_stylesheet_predecessor_bytes():
+    from scripts import audit_app_01a_local_shell as audit
+    predecessor = json.loads((ROOT / audit.RECEIPT).read_bytes())
+    historical = audit.augment_ux_historical_runtime_sources(predecessor)
+    expected = audit.ux_predecessor_stylesheet_bytes(audit.validate_ux_successor(predecessor))
+    assert audit._decode_historical_runtime_payload(historical, audit.UX_STYLESHEET_PATH) == expected
+    assert audit.UX_STYLESHEET_PATH in audit.HISTORICAL_RUNTIME_PATHS
+
+
 def test_historical_app_projection_rejects_broken_current(monkeypatch):
     from scripts import audit_app_01a_local_shell as audit
     from scripts import audit_core_01d_ci_offline_transport_boundary as boundary

@@ -33,10 +33,13 @@ HISTORICAL_A2_INVENTORY_PATHS = frozenset(
 )
 HISTORICAL_RUNTIME_PATHS = {"api/server.py", "run_desktop.py", "ui/index.html", "ui/app.js"}
 UX_SUCCESSOR = "artifacts/product/ux_01a_workstation_shell_v1.json"
-UX_SUCCESSOR_SHA256 = "72c1481529eb4d4562f373952be8bd94e0f3d17c7a737512014e2ebfb891b1a9"
+UX_SUCCESSOR_SHA256 = "2c536746f5c2c85dc6d856cb4b457d90c599bcebd531e43d2695ec6d56ae891a"
 UX_PREDECESSOR_PATHS = ("ui/app.js", "ui/index.html")
 UX_CURRENT_PATHS = ("ui/app.js", "ui/index.html", "ui/styles.css")
+UX_STYLESHEET_PATH = "ui/styles.css"
+UX_STYLESHEET_FIXTURE = "tests/fixtures/core_01d/ux_01a_predecessor/ui_styles.css.b64"
 APP_01A_RECEIPT_SHA256 = "3e58c91f5af38615786d634e088ad4c0f53a05f272453930ebef27705a47c537"
+HISTORICAL_RUNTIME_PATHS.add(UX_STYLESHEET_PATH)
 
 
 def canonical(value):
@@ -45,6 +48,19 @@ def canonical(value):
 
 def source_sha256(path):
     return hashlib.sha256((ROOT / path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def ux_predecessor_stylesheet_bytes(successor):
+    encoded = (ROOT / UX_STYLESHEET_FIXTURE).read_bytes().replace(b"\r\n", b"\n")
+    if not encoded.endswith(b"\n"):
+        raise ValueError("UX-01A predecessor stylesheet fixture is not canonical")
+    try:
+        stylesheet = base64.b64decode(encoded[:-1], validate=True)
+    except Exception:
+        raise ValueError("UX-01A predecessor stylesheet fixture is invalid") from None
+    if base64.b64encode(stylesheet) + b"\n" != encoded:
+        raise ValueError("UX-01A predecessor stylesheet fixture is not canonical")
+    return stylesheet
 
 
 def validate_ux_successor(predecessor):
@@ -70,6 +86,24 @@ def validate_ux_successor(predecessor):
         raise ValueError("UX-01A predecessor receipt identity mismatch")
     if successor.get("predecessor_source_identities") != expected_predecessor_sources:
         raise ValueError("UX-01A predecessor source identity mismatch")
+    predecessor_stylesheet = predecessor["base_identities"][UX_STYLESHEET_PATH]
+    expected_runtime_sources = {
+        UX_STYLESHEET_PATH: {
+            "encoding": "base64",
+            "fixture_path": UX_STYLESHEET_FIXTURE,
+            "git_blob_sha1": predecessor_stylesheet["git_blob_sha1"],
+            "sha256": predecessor_stylesheet["sha256"],
+        }
+    }
+    if successor.get("predecessor_runtime_sources") != expected_runtime_sources:
+        raise ValueError("UX-01A predecessor runtime source identity mismatch")
+    stylesheet = ux_predecessor_stylesheet_bytes(successor)
+    stylesheet_blob = hashlib.sha1(
+        b"blob " + str(len(stylesheet)).encode("ascii") + b"\0" + stylesheet
+    ).hexdigest()
+    if (hashlib.sha256(stylesheet.replace(b"\r\n", b"\n")).hexdigest() != predecessor_stylesheet["sha256"]
+            or stylesheet_blob != predecessor_stylesheet["git_blob_sha1"]):
+        raise ValueError("UX-01A predecessor runtime source bytes mismatch")
 
     current_sources = {path: source_sha256(path) for path in UX_CURRENT_PATHS}
     if successor.get("source_identities") != current_sources:
@@ -77,6 +111,21 @@ def validate_ux_successor(predecessor):
     if successor.get("source_inventory_sha256") != hashlib.sha256(canonical(current_sources)).hexdigest():
         raise ValueError("UX-01A source inventory seal mismatch")
     return successor
+
+
+def augment_ux_historical_runtime_sources(predecessor):
+    """Expose the sealed predecessor stylesheet bytes to bounded historical readers."""
+    successor = validate_ux_successor(predecessor)
+    historical = dict(predecessor)
+    historical["base_identities"] = dict(predecessor["base_identities"])
+    historical["base_identities"][UX_STYLESHEET_PATH] = dict(
+        predecessor["base_identities"][UX_STYLESHEET_PATH]
+    )
+    historical["historical_runtime_payloads"] = dict(predecessor["historical_runtime_payloads"])
+    historical["historical_runtime_payloads"][UX_STYLESHEET_PATH] = base64.b64encode(
+        ux_predecessor_stylesheet_bytes(successor)
+    ).decode("ascii")
+    return historical
 
 
 def git(*args):
@@ -180,12 +229,14 @@ def authenticated_historical_paths():
     document = validate()
     from scripts import audit_data_01a_app_schema_core as data01a
     data01a.historical_build_config()
-    document = dict(document)
+    document = augment_ux_historical_runtime_sources(document)
     document["base_identities"] = dict(document["base_identities"])
     document["base_identities"][data01a.BUILD_CONFIG] = {
         "git_blob_sha1": data01a.BUILD_CONFIG_BLOB, "sha256": data01a.BUILD_CONFIG_SHA256,
     }
-    return set(PATHS) | {RECEIPT, INVENTORY, data01a.BUILD_CONFIG} | HISTORICAL_A2_INVENTORY_PATHS | data01a.NEW_PATHS | data01a.successor_paths(), document
+    return (set(PATHS) | {RECEIPT, INVENTORY, UX_SUCCESSOR, UX_STYLESHEET_FIXTURE,
+                          UX_STYLESHEET_PATH, data01a.BUILD_CONFIG}
+            | HISTORICAL_A2_INVENTORY_PATHS | data01a.NEW_PATHS | data01a.successor_paths(), document)
 
 
 def historical_runtime_payload(path):
