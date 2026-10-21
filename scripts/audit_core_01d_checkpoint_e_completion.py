@@ -394,6 +394,16 @@ def validate_bounded_inventory(raw: bytes) -> None:
     successor_paths = data01a.successor_paths()
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     latest = a2.authenticate_inventory()
+    # Preserve the frozen V1 inventory across the APP UX successor: restore
+    # only its three authenticated predecessor UI blobs and omit its two new
+    # evidence files.
+    from scripts import audit_app_01a_local_shell as app
+    app_historical = app.augment_ux_historical_runtime_sources(app.validate())
+    ux_predecessor_blobs = {
+        path: app_historical["base_identities"][path]["git_blob_sha1"]
+        for path in app.UX_CURRENT_PATHS
+    }
+    ux_additive_paths = {app.UX_SUCCESSOR, app.UX_STYLESHEET_FIXTURE}
     from runtime.source_identity import read_tracked_head_blob
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion_v2
     from scripts import audit_core_01d_pr459_live_trigger_incident as incident
@@ -488,11 +498,14 @@ def validate_bounded_inventory(raw: bytes) -> None:
     for path, (_fixture, blob, _digest) in prerequisite.TRANSPORT_PREDECESSORS.items():
         prerequisite.historical_transport_bytes(path)
         predecessor_blobs[path] = blob
+    policy.require(not (set(ux_predecessor_blobs) & set(predecessor_blobs)),
+                   "UX-01A predecessor overlaps an existing historical source pin")
+    predecessor_blobs.update(ux_predecessor_blobs)
     unchanged_lines = []
     for line in raw.splitlines(keepends=True):
         metadata, separator, path_bytes = line.partition(b"\t")
         path = path_bytes.strip().decode()
-        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | E3_RUN_02A_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | FRESH_HOLDOUT_20261015_ADDITIVE_PATHS | pr459_additive_paths:
+        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | E3_RUN_02A_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | FRESH_HOLDOUT_20261015_ADDITIVE_PATHS | pr459_additive_paths | ux_additive_paths:
             continue
         if path in PR459_PREDECESSOR_SOURCE_BLOBS:
             policy.require(metadata.split()[:2] == [b"100644", b"blob"]
