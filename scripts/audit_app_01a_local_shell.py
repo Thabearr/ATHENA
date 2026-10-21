@@ -32,10 +32,51 @@ HISTORICAL_A2_INVENTORY_PATHS = frozenset(
     for generation in range(10, 22)
 )
 HISTORICAL_RUNTIME_PATHS = {"api/server.py", "run_desktop.py", "ui/index.html", "ui/app.js"}
+UX_SUCCESSOR = "artifacts/product/ux_01a_workstation_shell_v1.json"
+UX_SUCCESSOR_SHA256 = "72c1481529eb4d4562f373952be8bd94e0f3d17c7a737512014e2ebfb891b1a9"
+UX_PREDECESSOR_PATHS = ("ui/app.js", "ui/index.html")
+UX_CURRENT_PATHS = ("ui/app.js", "ui/index.html", "ui/styles.css")
+APP_01A_RECEIPT_SHA256 = "3e58c91f5af38615786d634e088ad4c0f53a05f272453930ebef27705a47c537"
 
 
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode() + b"\n"
+
+
+def source_sha256(path):
+    return hashlib.sha256((ROOT / path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def validate_ux_successor(predecessor):
+    """Authenticate UX-01A as an append-only successor to the immutable shell receipt."""
+    raw = (ROOT / UX_SUCCESSOR).read_bytes()
+    successor = json.loads(raw)
+    unsealed = {key: value for key, value in successor.items() if key != "canonical_sha256"}
+    digest = hashlib.sha256(canonical(unsealed)).hexdigest()
+    normalized_raw = raw.replace(b"\r\n", b"\n")
+    if successor.get("canonical_sha256") != digest or normalized_raw != canonical(successor):
+        raise ValueError("UX-01A successor receipt seal mismatch")
+    if digest != UX_SUCCESSOR_SHA256:
+        raise ValueError("UX-01A successor receipt identity mismatch")
+
+    expected_predecessor_sources = {
+        path: predecessor["source_identities"][path] for path in UX_PREDECESSOR_PATHS
+    }
+    if successor.get("predecessor_receipt") != {
+        "path": RECEIPT,
+        "canonical_sha256": APP_01A_RECEIPT_SHA256,
+        "rewritten": False,
+    }:
+        raise ValueError("UX-01A predecessor receipt identity mismatch")
+    if successor.get("predecessor_source_identities") != expected_predecessor_sources:
+        raise ValueError("UX-01A predecessor source identity mismatch")
+
+    current_sources = {path: source_sha256(path) for path in UX_CURRENT_PATHS}
+    if successor.get("source_identities") != current_sources:
+        raise ValueError("UX-01A current source identity mismatch")
+    if successor.get("source_inventory_sha256") != hashlib.sha256(canonical(current_sources)).hexdigest():
+        raise ValueError("UX-01A source inventory seal mismatch")
+    return successor
 
 
 def git(*args):
@@ -98,6 +139,7 @@ def validate():
         raise ValueError("APP-01A base identity mismatch")
     from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
     latest = boundary.authenticate_inventory()
+    successor = validate_ux_successor(document)
     historical = boundary.read_generation(INVENTORY)
     if historical.get("generation") != 18:
         raise ValueError("APP-01A historical A2 generation mismatch")
@@ -118,8 +160,10 @@ def validate():
         pinned = expected.get(path)
         if path in historical_source_ids:
             observed = historical_source_ids[path]
+        elif path in successor["predecessor_source_identities"]:
+            observed = successor["predecessor_source_identities"][path]
         else:
-            observed = hashlib.sha256((ROOT / path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+            observed = source_sha256(path)
         if pinned != observed:
             raise ValueError("APP-01A source identity mismatch")
     if document.get("source_inventory_sha256") != hashlib.sha256(canonical(expected)).hexdigest():
