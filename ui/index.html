@@ -1,5 +1,166 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ATHENA Research Preview</title><link rel="stylesheet" href="/styles.css"><script src="/app.js" defer></script></head>
-<body><main><h1>ATHENA Research Preview</h1><p id="local-status">Verifying this local session…</p><section><h2>Local capabilities</h2><ul id="capabilities"></ul></section><p>Run preview and execution are pending later implementation. Legacy provider screens are retained development compatibility and unavailable in this shell.</p></main></body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A local football research workspace.">
+  <meta name="color-scheme" content="dark light">
+  <title>ATHENA Research Workspace</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body class="research-workspace-body">
+  <main id="workspace-root" class="research-workspace" aria-busy="true">
+    <div class="workspace-boot" role="status" aria-live="polite">
+      <span class="eyebrow">ATHENA · LOCAL RESEARCH</span>
+      <h1>Verifying this session</h1>
+      <p>Checking the local application and its declared capabilities.</p>
+    </div>
+
+    <div class="workspace-layout" hidden>
+      <aside class="workspace-sidebar" aria-label="ATHENA workspace navigation">
+        <div class="workspace-brand">
+          <span class="brand-mark" aria-hidden="true">A</span>
+          <div><strong>ATHENA</strong><span>Football intelligence</span></div>
+        </div>
+        <nav class="workspace-nav" aria-label="Primary navigation">
+          <button class="nav-item is-active" type="button" data-view="overview" aria-current="page">Overview</button>
+          <button class="nav-item" type="button" data-view="build">Build</button>
+          <button class="nav-item nav-item-later" type="button" disabled aria-disabled="true">Fixtures <span>Later</span></button>
+          <button class="nav-item nav-item-later" type="button" disabled aria-disabled="true">Runs <span>Later</span></button>
+          <button class="nav-item nav-item-later" type="button" disabled aria-disabled="true">Research <span>Later</span></button>
+          <button class="nav-item nav-item-later" type="button" disabled aria-disabled="true">Settings <span>Later</span></button>
+        </nav>
+        <div class="workspace-session" role="status">
+          <span class="session-dot" aria-hidden="true"></span>
+          <span><strong>Local session</strong><small>Verified for this launch</small></span>
+        </div>
+      </aside>
+
+      <div class="workspace-main">
+        <header class="workspace-topbar">
+          <div>
+            <span class="eyebrow">LOCAL RESEARCH WORKSPACE</span>
+            <h1 id="page-title">Overview</h1>
+          </div>
+          <div class="topbar-actions">
+            <div class="profile-indicator" aria-live="polite">
+              <span>Research profile</span>
+              <strong id="active-profile">Not selected</strong>
+            </div>
+            <button id="theme-toggle" class="quiet-button" type="button">Switch theme</button>
+          </div>
+        </header>
+
+        <p id="workspace-notice" class="workspace-notice" role="status" aria-live="polite" hidden></p>
+
+        <section class="workspace-page" data-screen="overview" aria-labelledby="overview-heading">
+          <div class="page-intro">
+            <p class="eyebrow">EVIDENCE FIRST</p>
+            <h2 id="overview-heading">Research status</h2>
+            <p>Capability and retained-run information comes from this local session. It does not refresh provider data.</p>
+          </div>
+          <div class="overview-grid">
+            <section class="workspace-card capability-card" aria-labelledby="capability-heading">
+              <div class="card-heading">
+                <div><p class="eyebrow">CURRENT SESSION</p><h3 id="capability-heading">Declared capabilities</h3></div>
+                <span class="read-only-tag">Read only</span>
+              </div>
+              <ul id="capability-list" class="capability-list" aria-live="polite"></ul>
+            </section>
+            <section class="workspace-card identity-card" aria-labelledby="identity-heading">
+              <div class="card-heading">
+                <div><p class="eyebrow">SOURCE IDENTITY</p><h3 id="identity-heading">Verified build</h3></div>
+              </div>
+              <dl id="release-identity" class="identity-list"></dl>
+            </section>
+            <section class="workspace-card latest-run-card" aria-labelledby="latest-run-heading">
+              <div class="card-heading">
+                <div><p class="eyebrow">RETAINED DATA</p><h3 id="latest-run-heading">Latest run</h3></div>
+                <span class="read-only-tag">No refresh</span>
+              </div>
+              <div id="latest-run-summary" class="retained-run-summary" role="status" aria-live="polite">
+                Checking retained run history…
+              </div>
+              <button id="open-latest-run" class="secondary-button" type="button" hidden>Open retained run</button>
+              <div id="latest-run-details" class="run-details" aria-live="polite" hidden></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="workspace-page" data-screen="build" aria-labelledby="build-heading" hidden>
+          <div class="page-intro">
+            <p class="eyebrow">REQUEST DESIGN</p>
+            <h2 id="build-heading">Build a research request</h2>
+            <p>Choose concrete dates and a selection limit. Preview is local and read only; it cannot start analysis or contact a provider.</p>
+          </div>
+
+          <form id="build-form" class="workspace-card build-card" novalidate>
+            <div class="form-grid">
+              <div class="field-group">
+                <label for="profile">Research profile</label>
+                <select id="profile" name="profile" required aria-describedby="profile-help">
+                  <option value="">Choose a profile</option>
+                  <option value="main">MAIN · promoted components only</option>
+                  <option value="shadow">SHADOW · research profile</option>
+                </select>
+                <p id="profile-help" class="field-help">The profile does not grant capabilities or authority.</p>
+              </div>
+              <div class="field-group">
+                <label for="target-legs">Maximum selections</label>
+                <input id="target-legs" name="target_legs" type="number" min="1" max="50" step="1" inputmode="numeric" required>
+                <p class="field-help">Choose a whole number from 1 to 50. Shortfall remains a valid result.</p>
+              </div>
+              <div class="field-group field-span-two">
+                <label for="target-total-odds">Total odds objective</label>
+                <input id="target-total-odds" type="text" value="Unavailable" disabled aria-describedby="odds-help">
+                <p id="odds-help" class="field-help">This objective is not supported. No stake or risk field is provided.</p>
+              </div>
+            </div>
+
+            <div class="field-group date-field">
+              <label for="request-date">Selected calendar dates <span class="label-note">1–7 dates</span></label>
+              <div class="date-entry-row">
+                <input id="request-date" type="date" aria-describedby="date-help">
+                <button id="add-date" class="secondary-button" type="button">Add date</button>
+              </div>
+              <p id="date-help" class="field-help">Use specific dates. The available request window is checked again by the local service.</p>
+              <ul id="selected-dates" class="selected-dates" aria-label="Selected dates"></ul>
+            </div>
+
+            <fieldset class="intent-fieldset">
+              <legend>Requested operations</legend>
+              <div class="intent-grid">
+                <label class="intent-option" for="acquire-sources">
+                  <input id="acquire-sources" type="checkbox">
+                  <span><strong>Source acquisition</strong><small>Include this intent in the preview. Preview does not contact data providers.</small></span>
+                </label>
+                <label class="intent-option" for="create-share-code">
+                  <input id="create-share-code" type="checkbox">
+                  <span><strong>Share-code delivery</strong><small>Include this intent in the preview. Preview cannot create or reload a code.</small></span>
+                </label>
+              </div>
+            </fieldset>
+
+            <div class="preview-actions">
+              <button id="preview-button" class="primary-button" type="submit" disabled>Preview request</button>
+              <button id="start-run" class="secondary-button" type="button" disabled aria-disabled="true">Start run</button>
+            </div>
+            <p id="preview-readiness" class="field-help" role="status" aria-live="polite">Checking preview capability…</p>
+            <p id="start-reason" class="field-help start-reason">Run execution is not enabled in this preview. A request preview grants no execution authority.</p>
+            <div id="preview-report" class="preview-report" role="status" aria-live="polite" hidden></div>
+          </form>
+        </section>
+
+        <footer class="workspace-footer">Research output is evidence dependent. No wager is placed by ATHENA.</footer>
+      </div>
+    </div>
+
+    <section class="workspace-failure" role="alert" hidden>
+      <p class="eyebrow">LOCAL SESSION</p>
+      <h1>Verification unavailable</h1>
+      <p>Close ATHENA and start a new local session.</p>
+    </section>
+  </main>
+</body>
 </html>
