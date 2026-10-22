@@ -100,6 +100,13 @@ MAINTENANCE_CONTRACTS.update({
         CORE01D_PR119_RELEASE_ONLY_CONTRACT,
     )
 })
+# Path-exact owner-authorized current retention maintenance; historical contracts
+# and the V1 ledger remain immutable. The outer adapter authenticates the delta.
+PHASE_A_RETENTION_CONTRACT = {
+    **MAINTENANCE_CONTRACT,
+    "policy_id": "ATHENA_P4_PHASE_A_LEGACY_PC_UPCOMING_RETENTION_MAINTENANCE_V1",
+}
+MAINTENANCE_CONTRACTS[PHASE_A_RETENTION_CONTRACT["policy_id"]] = PHASE_A_RETENTION_CONTRACT
 REVISED_WORKFLOW_FIXTURE_ROOT = "tests/fixtures/architecture/revised_workflows/"
 PROTECTED = retirement.PROTECTED_LIVE | {".github/workflows/current-shadow-sportybet-source-diagnostic.yml"}
 IDENTITY_KEYS = {"git_blob_sha1", "source_sha256"}
@@ -469,6 +476,11 @@ def apply_transitions(
                 raise WorkflowEvolutionError(f"MAINTENANCE_REVISE canonical family differs from P4.3A: {path}")
             _validate_maintenance_contract(transition["maintenance_contract"])
             core01d_policy = transition["maintenance_contract"]["policy_id"]
+            if core01d_policy == PHASE_A_RETENTION_CONTRACT["policy_id"] and (
+                phase != "P4_PHASE_A" or path != ".github/workflows/current-shadow-all-market.yml"
+                or transition["canonical_family"] != "ATHENA_RUN"
+            ):
+                raise WorkflowEvolutionError("Phase A retention maintenance is path-exact")
             core01d_path = CORE01D_CONTRACT_PATHS.get(core01d_policy)
             if core01d_path is not None and (
                 phase != "CORE-01D"
@@ -975,6 +987,13 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
     The historical ADD remains pinned. Only this exact later workflow tree and
     file identity are accepted; all other derived workflow identities stay exact.
     """
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    projected = retention.project_p4_observed(observed, head_tree)
+    if projected is not None:
+        result = _port02c_current_source_forward(
+            derived, projected, head_tree=retention.BEFORE_TREE, ledger_sha=ledger_sha)
+        result[retention.WORKFLOW] = dict(observed[retention.WORKFLOW])
+        return result
     from scripts import audit_data_01c_restore_portability as d5
     successor_identity, successor_tree = d5.successor_context()
     try:

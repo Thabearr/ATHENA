@@ -199,11 +199,16 @@ def authenticate_workflow():
     ).strip()
     from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
     projected_tree = b4.project_b4_workflow_tree(actual_tree)
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    projected_tree = retention.project_b4_tree(projected_tree)
     if projected_tree != tree:
         raise ValueError("direct-share workflow successors exceed the exact B4-to-D5 workflow projection")
     for row in entries:
         path = ".github/workflows/" + row["name"]
         if path in b4.B4_WORKFLOW_PREDECESSORS:
+            continue
+        if path == retention.WORKFLOW and actual_tree == retention.AFTER_TREE:
+            retention.authenticate()
             continue
         source = (directory / row["name"]).read_bytes().replace(b"\r\n", b"\n")
         expected_blob = after["git_blob_sha1"] if row["name"] == "port-02c-native-runtime.yml" else row["blob"]
