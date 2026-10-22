@@ -201,7 +201,8 @@ def test_partial_failed_parse_keeps_exact_bytes_without_complete_claim(tmp_path,
 
 
 @pytest.mark.parametrize('relative', [
-    '.cache', source.EVIDENCE_ROOT.as_posix(), 'artifacts',
+    '.', '.cache', source.EVIDENCE_ROOT.as_posix(), 'artifacts',
+    'artifacts/current-shadow-all-market',
     'artifacts/current-shadow-all-market/source-evidence',
     'artifacts/current-shadow-all-market/source-evidence/' + source.EVIDENCE_ROOT.name,
     'artifacts/current-shadow-all-market/current-shadow-all-market-run-receipt.json',
@@ -272,3 +273,40 @@ def test_successor_rejects_unrelated_tree(monkeypatch):
     monkeypatch.setattr(successor.subprocess, 'check_output', lambda *args, **kwargs: '0' * 40)
     with pytest.raises(ValueError, match='tree'):
         successor.authenticate()
+
+
+@pytest.mark.parametrize("raw", [
+    b'{"source_summary":{"provider_discovery_page_count":6},"source_summary":{}}',
+    b'{"source_summary":{"nested":{"provider_discovery_page_count":6}}}',
+    b'{"status":"RESEARCH_SHADOW_PORTFOLIO_READY","source_summary":{}}',
+])
+def test_hidden_or_success_claims_cannot_be_downgraded_to_not_acquired(tmp_path, raw):
+    out = tmp_path / archive.OUTPUT
+    out.mkdir(parents=True)
+    (out / 'current-shadow-all-market-run-receipt.json').write_bytes(raw)
+    with pytest.raises(archive.PcUpcomingArchiveError):
+        archive.verify_archive(repository_root=tmp_path, output_root=out)
+
+
+def test_nested_reconciliation_claims_match_the_accepted_source(tmp_path, monkeypatch):
+    repo, out, _, _, receipt = _build(tmp_path, monkeypatch)
+    doc = json.loads(receipt.read_bytes())
+    doc['source_summary']['current_reconciliation_by_request_date'] = {
+        '20261022': {'provider_discovery_manifest_sha256': '0' * 64}}
+    receipt.write_text(json.dumps(doc))
+    with pytest.raises(archive.PcUpcomingArchiveError, match='nested'):
+        archive.verify_archive(repository_root=repo, output_root=out)
+
+
+@pytest.mark.parametrize('mutation', ['omitted', 'changed'])
+def test_archive_only_corruption_cannot_borrow_valid_original_replay(tmp_path, monkeypatch, mutation):
+    repo, out, original, preserved, _ = _build(tmp_path, monkeypatch)
+    path = preserved / 'runtime-attempts/attempt-001/raw-responses/page-001.raw.json'
+    before = archive._file_inventory(original)
+    if mutation == 'omitted':
+        path.unlink()
+    else:
+        path.write_bytes(b'archive-only corruption')
+    with pytest.raises(archive.PcUpcomingArchiveError, match='byte-inconsistent'):
+        archive.verify_archive(repository_root=repo, output_root=out)
+    assert archive._file_inventory(original) == before

@@ -102,7 +102,13 @@ def _summary(receipt_path: Path) -> dict:
     value = _json_unique(receipt_path.read_bytes())
     if type(value) is not dict or type(value.get("source_summary", {})) is not dict:
         raise PcUpcomingArchiveError("run receipt/source_summary is not a mapping")
-    return value.get("source_summary", {})
+    summary = value.get("source_summary", {})
+    if value.get("status") in {
+        "RESEARCH_SHADOW_CODE_VERIFIED", "RESEARCH_SHADOW_CODE_VERIFIED_WITH_SHORTFALL",
+        "RESEARCH_SHADOW_PORTFOLIO_READY", "RESEARCH_SHADOW_PORTFOLIO_READY_WITH_SHORTFALL",
+    } and "provider_discovery_manifest_sha256" not in summary:
+        raise PcUpcomingArchiveError("successful discovery receipt lacks its source claims")
+    return summary
 
 
 def _claims(summary: dict) -> bool:
@@ -135,7 +141,15 @@ def _claims(summary: dict) -> bool:
             type(sha) is not str or re.fullmatch(r"[0-9a-f]{64}", sha) is None):
         raise PcUpcomingArchiveError("discovery manifest SHA must be lowercase SHA256")
     # Presence has meaning: even zero-valued discovery fields cannot mean no attempt.
-    return bool(keys or "provider_total_num" in summary or "provider_event_count" in summary)
+    nested_claim = False
+    for value in summary.values():
+        if type(value) is dict:
+            nested_claim = _claims(value) or nested_claim
+        elif type(value) is list:
+            for item in value:
+                if type(item) is dict:
+                    nested_claim = _claims(item) or nested_claim
+    return bool(keys or "provider_total_num" in summary or "provider_event_count" in summary or nested_claim)
 
 
 def _match_manifest(summary: dict, manifest) -> None:
@@ -158,9 +172,24 @@ def _match_manifest(summary: dict, manifest) -> None:
         "provider_discovery_last_observed_at": manifest.last_observed_at.isoformat().replace("+00:00", "Z"),
         "provider_discovery_observed_at": manifest.last_observed_at.isoformat().replace("+00:00", "Z"),
     }
+    for child in summary.values():
+        if type(child) is dict:
+            _match_nested_claims(child, {**expected, **optional})
     for key, value in optional.items():
         if key in summary and (type(summary[key]) is not type(value) or summary[key] != value):
             raise PcUpcomingArchiveError("run receipt source correspondence mismatch: " + key)
+
+
+def _match_nested_claims(mapping: dict, expected: dict) -> None:
+    for key, value in mapping.items():
+        if key in expected and (type(value) is not type(expected[key]) or value != expected[key]):
+            raise PcUpcomingArchiveError("nested receipt claim contradicts accepted discovery: " + key)
+        if type(value) is dict:
+            _match_nested_claims(value, expected)
+        elif type(value) is list:
+            for item in value:
+                if type(item) is dict:
+                    _match_nested_claims(item, expected)
 
 
 def _runtime_inventory(root: Path, state, files: dict) -> None:
@@ -219,10 +248,14 @@ def verify_archive(*, repository_root: Path, output_root: Path) -> dict[str, obj
         if state["accepted_attempt_index"] is None:
             if claimed:
                 raise PcUpcomingArchiveError("failed capture cannot support discovery claims")
+            if _file_inventory(original) != source_files or _file_inventory(preserved) != archive_files:
+                raise PcUpcomingArchiveError("partial evidence bytes changed during replay")
             return {"status": "VERIFIED_PARTIAL_CAPTURE", "file_count": len(archive_files),
                     "runtime_final_state": state["final_state"]}
         manifest = discovery._verify_manifest_at_root(evidence_root=preserved)
         _match_manifest(summary, manifest)
+        if _file_inventory(original) != source_files or _file_inventory(preserved) != archive_files:
+            raise PcUpcomingArchiveError("evidence bytes changed during replay")
         return {"status": "VERIFIED_COMPLETE", "file_count": len(archive_files),
                 "manifest_sha256": manifest.canonical_sha256,
                 "runtime_final_state": state["final_state"]}
