@@ -238,6 +238,7 @@ jobs:
           for source_dir in \
             '.cache/athena-research/current-shadow-sportybet-catalog-fanout' \
             '.cache/athena-research/current-shadow-sportybet-upcoming-discovery' \
+            '.cache/athena-research/current-shadow-sportybet-pc-upcoming-discovery' \
             '.cache/athena-research/sportybet-live-event-quote-evidence' \
             '.cache/athena-research/fotmob-data-matches-captures'
           do
@@ -245,6 +246,10 @@ jobs:
               cp -a "${source_dir}" "${evidence_root}/"
             fi
           done
+
+          # Verify copied raw pages, manifests and capture epochs against the
+          # exact source tree and the completed run receipt before artifact upload.
+          python -m scripts.verify_current_shadow_pc_upcoming_archive
 
           if [ -n "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH:-}" ] \
             && [ -f "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH}" ]
