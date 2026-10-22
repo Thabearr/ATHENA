@@ -175,6 +175,11 @@ def checkpoint_v2_retention_sources():
     """Exact old V313 source and one bounded, independently derived successor."""
     from runtime.source_identity import read_tracked_head_blob
     descriptor = HISTORICAL_PREDECESSORS[CHECKPOINT_V2_PATH]
+    modes = subprocess.check_output(
+        ["git", "ls-tree", "-r", "HEAD", "--", CHECKPOINT_V2_PATH, descriptor["fixture"]], cwd=ROOT)
+    if len(modes.splitlines()) != 2 or any(
+            line.split(b"\t", 1)[0].split()[:2] != [b"100644", b"blob"] for line in modes.splitlines()):
+        raise ValueError("V313 retention source/fixture mode changed")
     before, old_identity = read_tracked_head_blob(ROOT, descriptor["fixture"])
     before = before.replace(b"\r\n", b"\n")
     if (old_identity.git_blob_sha1 != V313_CHECKPOINT_BLOB
@@ -239,6 +244,13 @@ def project_retention_inventory(raw, *, latest=None):
         latest = a2.authenticate_inventory()
     if latest.get("generation", 0) < 340:
         raise ValueError("historical retention projection requires its A2 successor")
+    expected_paths = (set(HISTORICAL_PREDECESSORS) | set(ADDED_PYTHON_PATHS) | set(ADDED_METADATA)
+                      | {value["fixture"] for value in HISTORICAL_PREDECESSORS.values()})
+    tree = subprocess.check_output(["git", "ls-tree", "-r", "HEAD", "--", *sorted(expected_paths)], cwd=ROOT)
+    modes = {line.split(b"\t", 1)[1].decode(): line.split(b"\t", 1)[0].split()[:2]
+             for line in tree.splitlines()}
+    if set(modes) != expected_paths or any(value != [b"100644", b"blob"] for value in modes.values()):
+        raise ValueError("retention source/evidence inventory mode changed")
     current_rows = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
     current_blobs = {}
     for path in set(HISTORICAL_PREDECESSORS) | set(ADDED_PYTHON_PATHS):
