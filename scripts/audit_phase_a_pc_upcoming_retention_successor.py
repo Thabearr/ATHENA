@@ -106,6 +106,25 @@ def authenticate():
         raise ValueError("legacy workflow differs from the path-exact retention successor")
     raw_tree = subprocess.check_output(
         ["git", "rev-parse", "HEAD:.github/workflows"], cwd=ROOT, text=True).strip()
+    if raw_tree != AFTER_TREE:
+        raise ValueError("retention successor tree changed")
+    # Recompute the one-path inverse from HEAD; no ancestor object or mutable
+    # newly computed baseline is trusted, including in depth-one hosted CI.
+    entries = subprocess.check_output(["git", "ls-tree", raw_tree], cwd=ROOT)
+    body = b""
+    replaced = 0
+    for line in entries.splitlines():
+        header, name = line.split(b"\t", 1)
+        mode, kind, blob = header.split()
+        if name.decode("utf-8") == Path(WORKFLOW).name:
+            if mode != b"100644" or kind != b"blob" or blob.decode() != AFTER["git_blob_sha1"]:
+                raise ValueError("retention successor workflow mode/blob mismatch")
+            blob = BEFORE["git_blob_sha1"].encode()
+            replaced += 1
+        body += mode + b" " + name + b"\0" + bytes.fromhex(blob.decode())
+    inverse = hashlib.sha1(b"tree " + str(len(body)).encode() + b"\0" + body).hexdigest()
+    if replaced != 1 or inverse != BEFORE_TREE:
+        raise ValueError("retention successor is not the exact one-path replacement")
     if raw_tree != AFTER_TREE or subprocess.check_output(
             ["git", "diff", "--name-only", "HEAD", "--", ".github/workflows"], cwd=ROOT).strip():
         raise ValueError("retention successor tree or worktree changed")

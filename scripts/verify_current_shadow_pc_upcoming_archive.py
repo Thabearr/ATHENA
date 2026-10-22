@@ -172,9 +172,7 @@ def _match_manifest(summary: dict, manifest) -> None:
         "provider_discovery_last_observed_at": manifest.last_observed_at.isoformat().replace("+00:00", "Z"),
         "provider_discovery_observed_at": manifest.last_observed_at.isoformat().replace("+00:00", "Z"),
     }
-    for child in summary.values():
-        if type(child) is dict:
-            _match_nested_claims(child, {**expected, **optional})
+    _match_nested_claims(summary, {**expected, **optional})
     for key, value in optional.items():
         if key in summary and (type(summary[key]) is not type(value) or summary[key] != value):
             raise PcUpcomingArchiveError("run receipt source correspondence mismatch: " + key)

@@ -288,11 +288,15 @@ def test_hidden_or_success_claims_cannot_be_downgraded_to_not_acquired(tmp_path,
         archive.verify_archive(repository_root=tmp_path, output_root=out)
 
 
-def test_nested_reconciliation_claims_match_the_accepted_source(tmp_path, monkeypatch):
+@pytest.mark.parametrize("container", ["mapping", "list"])
+def test_nested_reconciliation_claims_match_the_accepted_source(tmp_path, monkeypatch, container):
     repo, out, _, _, receipt = _build(tmp_path, monkeypatch)
     doc = json.loads(receipt.read_bytes())
     doc['source_summary']['current_reconciliation_by_request_date'] = {
         '20261022': {'provider_discovery_manifest_sha256': '0' * 64}}
+    if container == 'list':
+        doc['source_summary']['current_reconciliation_by_request_date'] = [
+            doc['source_summary']['current_reconciliation_by_request_date']]
     receipt.write_text(json.dumps(doc))
     with pytest.raises(archive.PcUpcomingArchiveError, match='nested'):
         archive.verify_archive(repository_root=repo, output_root=out)
