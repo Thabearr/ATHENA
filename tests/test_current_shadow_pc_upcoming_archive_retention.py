@@ -350,3 +350,28 @@ def test_retention_historical_views_preserve_frozen_producer_and_inventory():
     schedule.validate_workflow_source()
     frozen = review.authenticate_inventory()
     assert frozen['canonical_sha256'] == review.INVENTORY_SHA
+
+
+def test_historical_projection_requires_exact_reviewed_after_bytes(monkeypatch):
+    """A matching self-described source row cannot authorize an arbitrary edit."""
+    from dataclasses import replace
+    import hashlib
+    from copy import deepcopy
+    from runtime import source_identity
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    latest = deepcopy(a2.authenticate_inventory())
+    target = 'scripts/audit_core_01d_scheduled_shadow_ownership.py'
+    original = source_identity.read_tracked_head_blob
+    payload, observed = original(successor.ROOT, target)
+    changed = payload + b'\n# unreviewed successor\n'
+    blob = hashlib.sha1(b'blob ' + str(len(changed)).encode() + b'\0' + changed).hexdigest()
+    changed_identity = replace(observed, git_blob_sha1=blob,
+                               git_blob_payload_sha256=hashlib.sha256(changed).hexdigest())
+    for row in latest['source_identities']:
+        if row['path'] == target:
+            row['lf_source_sha256'] = hashlib.sha256(changed).hexdigest()
+    monkeypatch.setattr(source_identity, 'read_tracked_head_blob',
+        lambda root, path, **kwargs: (changed, changed_identity) if path == target else original(root, path, **kwargs))
+    raw = subprocess.check_output(['git', 'ls-tree', '-r', 'HEAD'])
+    with pytest.raises(ValueError, match='exact reviewed retention successor'):
+        successor.project_retention_inventory(raw, latest=latest)
