@@ -454,6 +454,8 @@ def authenticate_main_prefix(chain=None):
             or len(prefix["files"]) != 347):
         raise ValueError("main inventory prefix manifest scope drift")
     tree = subprocess.check_output(["git", "ls-tree", "-r", "HEAD", "--", "tests/fixtures/core_01d"], cwd=ROOT)
+    if type(tree) is not bytes:
+        raise ValueError("main inventory prefix tree proof is missing")
     modes = {line.split(b"\t", 1)[1].decode(): line.split(b"\t", 1)[0].split() for line in tree.splitlines()}
     if chain is not None and len(chain) < 347:
         raise ValueError("main inventory prefix is missing canonical generations")
