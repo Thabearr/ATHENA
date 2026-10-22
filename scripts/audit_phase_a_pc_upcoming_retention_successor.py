@@ -446,7 +446,18 @@ def _raw_blob(path):
     return raw
 
 
+class RetentionSourceEvidenceError(ValueError, AssertionError):
+    """Invalid retained evidence: verifier ValueError and legacy A2 assertion API."""
+
+
 def authenticate_main_prefix(chain=None):
+    try:
+        return _authenticate_main_prefix(chain)
+    except ValueError as exc:
+        raise RetentionSourceEvidenceError(str(exc)) from exc
+
+
+def _authenticate_main_prefix(chain=None):
     """Bind all canonical main inventory objects; provisional records are excluded."""
     prefix = _json(MAIN_PREFIX_MANIFEST, MAIN_PREFIX_MANIFEST_SHA256)
     if (prefix["main_commit"] != MAIN_SHA or prefix["latest_generation"] != 347
