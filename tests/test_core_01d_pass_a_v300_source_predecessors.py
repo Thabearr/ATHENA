@@ -536,7 +536,7 @@ def test_v300_environment_flags_cannot_authorize_a_wrong_generation(monkeypatch)
         )
 
 
-@pytest.mark.parametrize("field,value", [("authority_granted", True), ("rewritten", True)])
+@pytest.mark.parametrize("field,value", [("authority_granted", True), ("rewritten", True), ("authority_granted", 0), ("historical_bytes_changed", 0)])
 def test_v348_retention_extension_rejects_resealed_authority_or_history_change(field, value):
     chain = deepcopy(a2.load_inventory_generations())
     path, latest = chain[-1]

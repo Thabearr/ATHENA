@@ -730,6 +730,10 @@ def _e3_pass_a_v313_source_successor_extension(chain):
     }
 
 
+# The root bootstrap pins this auditor: the adapter cannot choose its own after identity.
+RETENTION_MAIN347_CHECKPOINT_EXTENSION = {'path': 'scripts/audit_core_01d_checkpoint_e_completion_v2.py', 'generation': 348, 'predecessor_inventory': {'path': 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v347.json', 'generation': 347, 'canonical_sha256': '55d1aa9b8899b3d680b51117e1d596204ffae8536edeed3ceb453b40611d5a29', 'rewritten': False}, 'previous_successor': {'generation': 313, 'canonical_sha256': 'c71dd53f24e1bf70d216d7a71e9b914ed8a8cb9a452fc12455106bd921d5eac8', 'git_blob_sha1': '3768669aaa4400ead8cdf63978bf6da953b0062e', 'lf_source_sha256': 'c376e7c55ad95d4e182b2e4c6626e0c1605bf7834e6b81abeae432e1d06212f1', 'rewritten': False}, 'successor': {'git_blob_sha1': '1c8eb65538550f5f196b7af4520323c391f6291b', 'lf_source_sha256': '98608e88c84defa2dc7065a00108250bd0b891fabb503907aa7bfc82d3753773', 'git_mode': '100644'}, 'reason_type': 'PHASE_A_RETENTION_MAIN347_SOURCE_FORWARD_V348', 'reason': 'Path-exact retention projection after the unchanged V313 evaluator and canonical main V347', 'authority_granted': False, 'historical_bytes_changed': False, 'rewritten': False}
+
+
 def _e3_cross_contract_source_forward_successor_extensions(chain=None, generation=None):
     """Exact V298, V301, V309, V312 and V313 append-only source successors."""
     path = E3_CROSS_CONTRACT_SUCCESSOR_EXTENSION_PATH
@@ -816,7 +820,10 @@ def _e3_cross_contract_source_forward_successor_extensions(chain=None, generatio
         extensions.append(_e3_pass_a_v313_source_successor_extension(chain))
     if generation >= 348:
         from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
-        extensions.append(retention.checkpoint_retention_extension(chain))
+        current_retention = retention.checkpoint_retention_extension(chain)
+        require(canonical(current_retention) == canonical(RETENTION_MAIN347_CHECKPOINT_EXTENSION),
+                "retention source-forward extension exceeds the root-pinned contract")
+        extensions.append(current_retention)
     return extensions
 
 
@@ -1871,6 +1878,11 @@ def _e3_source_forward_file_identity(
             and identity.git_blob_sha1 != expected_blob):
         from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
         predecessor, _current = retention.checkpoint_v2_retention_sources()
+        fixed = RETENTION_MAIN347_CHECKPOINT_EXTENSION["successor"]
+        require(identity.git_blob_sha1 == fixed["git_blob_sha1"]
+                and hashlib.sha256(normalized).hexdigest() == fixed["lf_source_sha256"]
+                and _current == normalized,
+                "retention current successor identity drift")
         # V313 authenticates its original exact bytes; V348 separately binds
         # the only current replacement. Never substitute a new historic pin.
         require(expected_mode == "100644" and retention.identity(predecessor)["git_blob_sha1"] == expected_blob
@@ -2173,6 +2185,11 @@ def _authenticated_e3_successor_identity(path, chain, latest):
     require(len(matches) == 6 and latest_generation >= 348,
             "retention checkpoint has an unreviewed source-forward suffix")
     extension = retention.checkpoint_retention_extension(chain)
+    stored = [row for row in latest.get("e3_cross_contract_source_forward_successor_extensions", [])
+              if type(row) is dict and row.get("path") == path and row.get("generation") == 348]
+    require(canonical(extension) == canonical(RETENTION_MAIN347_CHECKPOINT_EXTENSION)
+            and len(stored) == 1 and canonical(stored[0]) == canonical(RETENTION_MAIN347_CHECKPOINT_EXTENSION),
+            "E3 source-forward successor extension is missing or altered")
     require(matches[-1] == extension and chain[347][0] == inventory_generation_path(348)
             and chain[347][1].get("predecessor_inventory") == extension["predecessor_inventory"]
             and chain[347][1].get("e3_cross_contract_source_forward_successor_extensions")

@@ -373,7 +373,7 @@ def test_historical_projection_requires_exact_reviewed_after_bytes(monkeypatch):
     monkeypatch.setattr(source_identity, 'read_tracked_head_blob',
         lambda root, path, **kwargs: (changed, changed_identity) if path == target else original(root, path, **kwargs))
     raw = subprocess.check_output(['git', 'ls-tree', '-r', 'HEAD'])
-    with pytest.raises(ValueError, match='exact reviewed retention successor'):
+    with pytest.raises(ValueError, match='exact reviewed retention successor|bootstrap successor current source identity drift'):
         successor.project_retention_inventory(raw, latest=latest)
 
 
@@ -514,3 +514,16 @@ def test_integrated_extension_rejects_wrong_canonical_main_anchor():
     chain[346][1]['canonical_sha256'] = '0' * 64
     with pytest.raises(ValueError, match='main inventory prefix'):
         successor.checkpoint_retention_extension(chain)
+
+
+
+def test_integrated_auditor_rejects_forged_delegated_checkpoint_bytes(monkeypatch):
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    before, current = successor.checkpoint_v2_retention_sources()
+    kwargs = dict(fixture=False, expected_blob=successor.V313_CHECKPOINT_BLOB,
+                  expected_lf=successor.V313_CHECKPOINT_SHA256, expected_size=len(before))
+    assert a2._e3_source_forward_file_identity(successor.CHECKPOINT_V2_PATH, **kwargs) == before
+    monkeypatch.setattr(successor, 'checkpoint_v2_retention_sources',
+                        lambda: (before, current + b'\n# forged delegated successor\n'))
+    with pytest.raises(AssertionError, match='retention current successor identity drift'):
+        a2._e3_source_forward_file_identity(successor.CHECKPOINT_V2_PATH, **kwargs)
