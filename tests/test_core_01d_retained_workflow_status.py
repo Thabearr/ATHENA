@@ -1,6 +1,7 @@
 """Fail-closed tests for immutable retained-status V1 and current V2."""
 from copy import deepcopy
 import json
+from pathlib import Path
 
 import pytest
 
@@ -207,3 +208,37 @@ def test_checkpoint_e_authenticates_current_v2_and_pass1_additive_artifacts():
     assert "artifacts/architecture/p4_workflow_evolution_snapshots/core_01d_fresh_holdout_pr119_release_only_bootstrap_v1.json" in paths
     assert "artifacts/architecture/core_01d_retained_workflow_status_v3.json" in paths
     assert "artifacts/architecture/core_01d_pr145_completed_one_shot_disposition_v1.json" in paths
+
+
+def test_test_p4_2_supporting_source_predecessor_is_pinned_and_exact():
+    mapping = audit.HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS.get("tests/test_p4_2_athena_run_workflow.py")
+    assert mapping is not None
+    assert mapping["fixture_path"] == "tests/fixtures/architecture/phase_a_retention/historical_consumers/tests--test_p4_2_athena_run_workflow.py.txt"
+    assert mapping["git_blob_sha1"] == "c8d83b0c39c8d8eff4abf698405e26d60bbeefbf"
+    assert mapping["source_sha256"] == "9502109759e17534bc11ce2052e6fa6f7852513f8118b0194af186349f626f70"
+    fixture = audit.ROOT / mapping["fixture_path"]
+    assert fixture.is_file() and not fixture.is_symlink()
+    raw = fixture.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    from scripts import audit_p4_workflow_evolution_ledger as evolution
+    assert evolution.source_identity(raw) == {
+        "git_blob_sha1": mapping["git_blob_sha1"],
+        "source_sha256": mapping["source_sha256"],
+    }
+
+
+def test_tampered_test_p4_2_predecessor_fails_closed(monkeypatch):
+    target = "tests/test_p4_2_athena_run_workflow.py"
+    mapping = audit.HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS[target]
+    fixture_path = audit.ROOT / mapping["fixture_path"]
+    real_read_bytes = Path.read_bytes
+
+    def tampered_read(self):
+        content = real_read_bytes(self)
+        if self == fixture_path:
+            return content + b"# tampered\n"
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", tampered_read)
+    with pytest.raises(Exception):
+        audit._supporting_source_inventory()
+
