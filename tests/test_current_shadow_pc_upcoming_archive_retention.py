@@ -375,3 +375,79 @@ def test_historical_projection_requires_exact_reviewed_after_bytes(monkeypatch):
     raw = subprocess.check_output(['git', 'ls-tree', '-r', 'HEAD'])
     with pytest.raises(ValueError, match='exact reviewed retention successor'):
         successor.project_retention_inventory(raw, latest=latest)
+
+
+@pytest.mark.parametrize('original_auditor', [False, True])
+def test_bootstrap_accepts_only_current_successor_or_preserved_original(monkeypatch, original_auditor):
+    import runpy
+    import offline_transport
+    read = Path.read_bytes
+    auditor = successor.BOOTSTRAP_AUDITOR
+    original = successor._read(successor.HISTORICAL_PREDECESSORS[auditor]['fixture'])
+    if original_auditor:
+        monkeypatch.setattr(Path, 'read_bytes', lambda p: original if p == successor.ROOT / auditor else read(p))
+    installed = []
+    monkeypatch.setattr(offline_transport, 'install', lambda: installed.append(True))
+    monkeypatch.setattr(sys, 'orig_argv', ['python', '-m', 'pytest'])
+    runpy.run_path(str(successor.ROOT / 'sitecustomize.py'))
+    assert installed == [True]
+
+
+@pytest.mark.parametrize('logical', [
+    'scripts/audit_core_01d_ci_offline_transport_boundary.py',
+    'tests/_offline_bootstrap/sitecustomize.py', 'tests/conftest.py',
+    'tests/offline_linux.py', 'tests/offline_transport.py',
+])
+def test_bootstrap_rejects_every_guard_drift_before_install(monkeypatch, logical):
+    import runpy
+    import offline_transport
+    read = Path.read_bytes
+    monkeypatch.setattr(Path, 'read_bytes', lambda p: b'# unreviewed replacement\n' if p == successor.ROOT / logical else read(p))
+    installed = []
+    monkeypatch.setattr(offline_transport, 'install', lambda: installed.append(True))
+    monkeypatch.setattr(sys, 'orig_argv', ['python', '-m', 'pytest'])
+    with pytest.raises(SystemExit, match='failed to activate'):
+        runpy.run_path(str(successor.ROOT / 'sitecustomize.py'))
+    assert installed == []
+
+
+@pytest.mark.parametrize('mutation', ['successor_path', 'successor_hash', 'original_pin', 'deny_check'])
+def test_bootstrap_source_recipe_rejects_neighboring_acceptance_changes(mutation):
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    text = (successor.ROOT / 'sitecustomize.py').read_text()
+    if mutation == 'successor_path':
+        text = text.replace('ROOT_TEST_SOURCE_SUCCESSORS = {',
+                            'ROOT_TEST_SOURCE_SUCCESSORS = {"tests/offline_transport.py": "' + '0' * 64 + '",')
+    elif mutation == 'successor_hash':
+        text = text.replace(successor.BOOTSTRAP_AFTER[successor.BOOTSTRAP_AUDITOR]['source_sha256'], '0' * 64)
+    elif mutation == 'original_pin':
+        text = text.replace('3a42c6e50fddecd482cb8e6dd3758e8c58f453885e133ecf68798f0a51832404', '0' * 64)
+    else:
+        text = text.replace('if _digest != _expected and _digest != ROOT_TEST_SOURCE_SUCCESSORS.get(_path):', 'if False:')
+    with pytest.raises(ValueError, match='bootstrap successor'):
+        successor.authenticate_bootstrap_successor(text, a2.source)
+
+
+@pytest.mark.parametrize('logical', ['sitecustomize.py', 'scripts/audit_core_01d_ci_offline_transport_boundary.py'])
+def test_bootstrap_predecessor_drift_is_not_resealed(monkeypatch, logical):
+    read = successor._bootstrap_blob
+    target = successor.BOOTSTRAP_PREDECESSORS[logical]['fixture']
+    monkeypatch.setattr(successor, '_bootstrap_blob',
+                        lambda p: read(p) + b'\n# changed predecessor\n' if p == target else read(p))
+    with pytest.raises(ValueError, match='bootstrap predecessor'):
+        successor.authenticate_bootstrap_sources()
+
+
+def test_bootstrap_source_contract_retains_original_boundary_and_inventory():
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    successor.authenticate_bootstrap_sources()
+    assert a2.authenticate_activation_and_no_bypass() is True
+    assert a2.authenticate_historical_activation_and_no_bypass() is True
+    latest = a2.authenticate_inventory()
+    assert latest['generation'] >= 341
+    raw = subprocess.check_output(['git', 'ls-tree', '-r', 'HEAD'])
+    projected = successor.project_retention_inventory(raw, latest=latest)
+    rows = {row.split(b'\t', 1)[1].decode(): row.split(b'\t', 1)[0] for row in projected.splitlines()}
+    for path in ('sitecustomize.py', 'tests/test_core_01d_ci_offline_transport_inventory_evolution.py'):
+        assert rows[path].split()[-1].decode() == successor.BOOTSTRAP_PREDECESSORS[path]['git_blob_sha1']
+    assert successor.project_retention_inventory(projected, latest=latest) == projected

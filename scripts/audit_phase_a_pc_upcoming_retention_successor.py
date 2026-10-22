@@ -247,8 +247,14 @@ def project_retention_inventory(raw, *, latest=None):
         latest = a2.authenticate_inventory()
     if latest.get("generation", 0) < 340:
         raise ValueError("historical retention projection requires its A2 successor")
-    expected_paths = (set(HISTORICAL_PREDECESSORS) | set(ADDED_PYTHON_PATHS) | set(ADDED_METADATA)
-                      | {value["fixture"] for value in HISTORICAL_PREDECESSORS.values()})
+    authenticate_bootstrap_sources()
+    predecessors = dict(HISTORICAL_PREDECESSORS)
+    for path, descriptor in BOOTSTRAP_PREDECESSORS.items():
+        if path not in predecessors:
+            predecessors[path] = dict(descriptor, after=BOOTSTRAP_AFTER[path])
+    added_metadata = dict(ADDED_METADATA, **BOOTSTRAP_METADATA)
+    expected_paths = (set(predecessors) | set(ADDED_PYTHON_PATHS) | set(added_metadata)
+                      | {value["fixture"] for value in predecessors.values()})
     tree = subprocess.check_output(["git", "ls-tree", "-r", "HEAD", "--", *sorted(expected_paths)], cwd=ROOT)
     modes = {line.split(b"\t", 1)[1].decode(): line.split(b"\t", 1)[0].split()[:2]
              for line in tree.splitlines()}
@@ -256,24 +262,24 @@ def project_retention_inventory(raw, *, latest=None):
         raise ValueError("retention source/evidence inventory mode changed")
     current_rows = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
     current_blobs = {}
-    for path in set(HISTORICAL_PREDECESSORS) | set(ADDED_PYTHON_PATHS):
+    for path in set(predecessors) | set(ADDED_PYTHON_PATHS):
         payload, observed = read_tracked_head_blob(ROOT, path)
         payload = payload.replace(b"\r\n", b"\n")
         if path.endswith(".py") and current_rows.get(path) != hashlib.sha256(payload).hexdigest():
             raise ValueError("retention current source is not A2 authenticated: " + path)
         if path == WORKFLOW and payload != expected_workflow():
             raise ValueError("retention workflow projection source drift")
-        expected_after = (HISTORICAL_PREDECESSORS[path]["after"] if path in HISTORICAL_PREDECESSORS
+        expected_after = BOOTSTRAP_AFTER.get(path) or (predecessors[path]["after"] if path in predecessors
                           else ADDED_PYTHON_IDENTITIES.get(path))
         if expected_after is not None and identity(payload) != expected_after:
             raise ValueError("source differs from the exact reviewed retention successor: " + path)
         current_blobs[path] = observed.git_blob_sha1
-    for path, descriptor in HISTORICAL_PREDECESSORS.items():
+    for path, descriptor in predecessors.items():
         payload, observed = read_tracked_head_blob(ROOT, descriptor["fixture"])
         if identity(payload.replace(b"\r\n", b"\n")) != {
                 key: descriptor[key] for key in BEFORE} or observed.git_blob_sha1 != descriptor["git_blob_sha1"]:
             raise ValueError("retention historical predecessor drift: " + path)
-    for path, expected in ADDED_METADATA.items():
+    for path, expected in added_metadata.items():
         payload, observed = read_tracked_head_blob(ROOT, path)
         if identity(payload.replace(b"\r\n", b"\n")) != expected or observed.git_blob_sha1 != expected["git_blob_sha1"]:
             raise ValueError("retention additive evidence identity drift: " + path)
@@ -282,14 +288,112 @@ def project_retention_inventory(raw, *, latest=None):
     for line in raw.splitlines(keepends=True):
         metadata, separator, logical = line.partition(b"\t")
         path = logical.strip().decode("utf-8")
-        if path in ADDED_METADATA or path in ADDED_PYTHON_PATHS:
+        if path in added_metadata or path in ADDED_PYTHON_PATHS:
             if metadata.split() != [b"100644", b"blob", current_blobs[path].encode()]:
                 raise ValueError("retention additive inventory mode/blob drift: " + path)
             continue
-        if path in HISTORICAL_PREDECESSORS and metadata.rsplit(b" ", 1)[-1].decode() == current_blobs[path]:
+        if path in predecessors and metadata.rsplit(b" ", 1)[-1].decode() == current_blobs[path]:
             if metadata.split()[:2] != [b"100644", b"blob"]:
                 raise ValueError("retention predecessor inventory mode changed: " + path)
-            metadata = b"100644 blob " + HISTORICAL_PREDECESSORS[path]["git_blob_sha1"].encode()
+            metadata = b"100644 blob " + predecessors[path]["git_blob_sha1"].encode()
             line = metadata + separator + logical
         result.append(line)
     return b"".join(result)
+
+
+# Separate owner-authorized startup edge; all earlier receipts remain immutable.
+BOOTSTRAP_AUDITOR = "scripts/audit_core_01d_ci_offline_transport_boundary.py"
+BOOTSTRAP_RECEIPT = 'artifacts/architecture/phase_a_retention_bootstrap_source_forward_v1.json'
+BOOTSTRAP_RECEIPT_SHA256 = 'fd925937d4415315f472d2b2dee87bca494847807931808579a328e130c694f3'
+BOOTSTRAP_PREDECESSORS = {'sitecustomize.py': {'fixture': 'tests/fixtures/architecture/phase_a_retention/bootstrap/sitecustomize-before.py.txt', 'git_blob_sha1': '15e3b8f1ed4f5b0ecbb216f466a730a3ad35614b', 'source_sha256': '3af9d45a4c473114939ba894b2ef11405391c14cec1dad2daef6a39ee5cdf037', 'byte_count': 2001}, 'scripts/audit_core_01d_ci_offline_transport_boundary.py': {'fixture': 'tests/fixtures/architecture/phase_a_retention/bootstrap/a2-auditor-before.py.txt', 'git_blob_sha1': 'db161ad45c8f8df08ab3b5e7dc0a229aff5e2378', 'source_sha256': 'f40324d351f302b1871daaae84d04dae33ae5413cac7a5166cf681bdd093342a', 'byte_count': 176062}, 'tests/test_core_01d_ci_offline_transport_inventory_evolution.py': {'fixture': 'tests/fixtures/architecture/phase_a_retention/bootstrap/inventory-evolution-test-before.py.txt', 'git_blob_sha1': 'e218fa76df4cb9c0c81ad8db7d3f62b880d8af14', 'source_sha256': 'ed4eb1a57ad5c0684c1ef9e24be4a34bb02ef561a91a1b25f2ae8a6c75f676ec', 'byte_count': 43004}}
+BOOTSTRAP_AFTER = {'sitecustomize.py': {'git_blob_sha1': 'a8b563de7c8a7b98b8b9ca4ddeb8ebfe123f43bf', 'source_sha256': 'b9947aaee990357a1017cdb66e91218b2ab96711efc1c1c1b1556c2d8849c24a', 'byte_count': 2405}, 'scripts/audit_core_01d_ci_offline_transport_boundary.py': {'git_blob_sha1': 'c084fe5d0d124f97068490caf9d92326c3393893', 'source_sha256': '282e1b9c5258eb4fcbe51581816e7894e5c9b581f085be1162aa6f9bca864299', 'byte_count': 176538}, 'tests/test_core_01d_ci_offline_transport_inventory_evolution.py': {'git_blob_sha1': '48465f8deb54a6127decb113a5309ccc97acb60a', 'source_sha256': '886b030015eed9864064af60dc7f5ba4d1c45118955ad9d7e7ff7f2a867642d7', 'byte_count': 43961}, 'tests/test_current_shadow_pc_upcoming_archive_retention.py': {'git_blob_sha1': '9e8ee5fde96d875f4cf0a71e5a67a4d458c773e8', 'source_sha256': 'd48830dae40f9ec9cab38c2e9f055295a2d2b9f41bc7939bc28b6373f134038c', 'byte_count': 24748}}
+BOOTSTRAP_METADATA = {'tests/fixtures/architecture/phase_a_retention/bootstrap/sitecustomize-before.py.txt': {'git_blob_sha1': '15e3b8f1ed4f5b0ecbb216f466a730a3ad35614b', 'source_sha256': '3af9d45a4c473114939ba894b2ef11405391c14cec1dad2daef6a39ee5cdf037', 'byte_count': 2001}, 'tests/fixtures/architecture/phase_a_retention/bootstrap/a2-auditor-before.py.txt': {'git_blob_sha1': 'db161ad45c8f8df08ab3b5e7dc0a229aff5e2378', 'source_sha256': 'f40324d351f302b1871daaae84d04dae33ae5413cac7a5166cf681bdd093342a', 'byte_count': 176062}, 'tests/fixtures/architecture/phase_a_retention/bootstrap/inventory-evolution-test-before.py.txt': {'git_blob_sha1': 'e218fa76df4cb9c0c81ad8db7d3f62b880d8af14', 'source_sha256': 'ed4eb1a57ad5c0684c1ef9e24be4a34bb02ef561a91a1b25f2ae8a6c75f676ec', 'byte_count': 43004}, 'artifacts/architecture/phase_a_retention_bootstrap_source_forward_v1.json': {'git_blob_sha1': '9579c81066acdedf8de3dc337b7114746c5221d5', 'source_sha256': '859130595f052db7dc856a9cd75eb3a793dff710cf0749d7631f9cfa171f02ff', 'byte_count': 2393}}
+BOOTSTRAP_AUDITOR_OLD_BLOCK = '    require(pins == {path: identity(path)["lf_source_sha256"] for path in sorted(protected)},\n            "root bootstrap does not bind exact patchable guard/auditor source")\n'
+BOOTSTRAP_AUDITOR_NEW_BLOCK = '    successor_declarations = [node for node in startup.body\n                              if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)\n                              and target.id == "ROOT_TEST_SOURCE_SUCCESSORS" for target in node.targets)]\n    if successor_declarations:\n        from scripts import audit_phase_a_pc_upcoming_retention_successor as retention\n        retention.authenticate_bootstrap_successor(startup_text, identity)\n    else:\n        require(pins == {path: identity(path)["lf_source_sha256"] for path in sorted(protected)},\n                "root bootstrap does not bind exact patchable guard/auditor source")\n'
+
+
+def _bootstrap_blob(path):
+    """Read only a tracked, regular source/fixture with no linked ancestors."""
+    import stat
+    from runtime.source_identity import read_tracked_head_blob
+    target = ROOT / path
+    for candidate in (target, *target.parents):
+        status = candidate.lstat()
+        if (stat.S_ISLNK(status.st_mode)
+                or getattr(status, "st_file_attributes", 0) & 0x400
+                or not (stat.S_ISREG(status.st_mode) if candidate == target else stat.S_ISDIR(status.st_mode))):
+            raise ValueError("bootstrap successor source/fixture is linked or nonregular: " + path)
+    mode = subprocess.check_output(["git", "ls-tree", "HEAD", "--", path], cwd=ROOT)
+    if len(mode.splitlines()) != 1 or mode.split(b"\t", 1)[0].split()[:2] != [b"100644", b"blob"]:
+        raise ValueError("bootstrap successor source/fixture mode drift: " + path)
+    raw, _ = read_tracked_head_blob(ROOT, path)
+    return raw.replace(b"\r\n", b"\n")
+
+
+def bootstrap_predecessor(path):
+    descriptor = BOOTSTRAP_PREDECESSORS[path]
+    raw = _bootstrap_blob(descriptor["fixture"])
+    if identity(raw) != {key: descriptor[key] for key in BEFORE}:
+        raise ValueError("bootstrap predecessor source identity drift: " + path)
+    return raw
+
+
+def expected_bootstrap_source():
+    """Derive exactly one added auditor pin; retain all original pins/hooks."""
+    before = bootstrap_predecessor("sitecustomize.py")
+    marker = b'\n_args = getattr(sys, "orig_argv", ())\n'
+    addition = ("\n# Owner-authorized, path-exact Phase A retention auditor successor. Original\n"
+                "# pins remain valid; no other guard path gains an alternate source identity.\n"
+                "ROOT_TEST_SOURCE_SUCCESSORS = {\n"
+                '    "' + BOOTSTRAP_AUDITOR + '": "' + BOOTSTRAP_AFTER[BOOTSTRAP_AUDITOR]["source_sha256"] + '",\n}\n').encode()
+    old = b"            if hashlib.sha256(_raw).hexdigest() != _expected:\n"
+    new = (b"            _digest = hashlib.sha256(_raw).hexdigest()\n"
+           b"            if _digest != _expected and _digest != ROOT_TEST_SOURCE_SUCCESSORS.get(_path):\n")
+    if before.count(marker) != 1 or before.count(old) != 1:
+        raise ValueError("bootstrap successor predecessor seam drift")
+    return before.replace(marker, addition + marker).replace(old, new)
+
+
+def authenticate_bootstrap_sources():
+    """No historical rehash: pinned predecessors plus one exact derived edge."""
+    _json(BOOTSTRAP_RECEIPT, BOOTSTRAP_RECEIPT_SHA256)
+    for path in BOOTSTRAP_PREDECESSORS:
+        bootstrap_predecessor(path)
+    for path, expected in BOOTSTRAP_METADATA.items():
+        if identity(_bootstrap_blob(path)) != expected:
+            raise ValueError("bootstrap successor evidence drift: " + path)
+    before = bootstrap_predecessor(BOOTSTRAP_AUDITOR)
+    if before.count(BOOTSTRAP_AUDITOR_OLD_BLOCK.encode()) != 1:
+        raise ValueError("bootstrap predecessor auditor seam drift")
+    expected_auditor = before.replace(BOOTSTRAP_AUDITOR_OLD_BLOCK.encode(), BOOTSTRAP_AUDITOR_NEW_BLOCK.encode())
+    if _bootstrap_blob(BOOTSTRAP_AUDITOR) != expected_auditor:
+        raise ValueError("bootstrap successor auditor exceeds exact activation edge")
+    if _bootstrap_blob("sitecustomize.py") != expected_bootstrap_source():
+        raise ValueError("bootstrap successor root exceeds exact added pin recipe")
+    for path, expected in BOOTSTRAP_AFTER.items():
+        if identity(_bootstrap_blob(path)) != expected:
+            raise ValueError("bootstrap successor current source identity drift: " + path)
+    return True
+
+
+def authenticate_bootstrap_successor(startup_text, current_identity):
+    """Authenticate before guard installation policy can be treated as proven."""
+    authenticate_bootstrap_sources()
+    if startup_text.encode("utf-8") != expected_bootstrap_source():
+        raise ValueError("bootstrap successor startup source differs from exact recipe")
+    import ast
+    startup = ast.parse(startup_text)
+    pins = next(ast.literal_eval(node.value) for node in startup.body
+                if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
+                and target.id == "ROOT_TEST_SOURCE_PINS" for target in node.targets))
+    before = ast.parse(bootstrap_predecessor("sitecustomize.py").decode())
+    original_pins = next(ast.literal_eval(node.value) for node in before.body
+                         if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
+                         and target.id == "ROOT_TEST_SOURCE_PINS" for target in node.targets))
+    if pins != original_pins:
+        raise ValueError("bootstrap successor changed original pins")
+    for path, expected in pins.items():
+        permitted = BOOTSTRAP_AFTER[BOOTSTRAP_AUDITOR]["source_sha256"] if path == BOOTSTRAP_AUDITOR else expected
+        if current_identity(path)["lf_source_sha256"] != permitted:
+            raise ValueError("bootstrap successor patchable guard identity drift: " + path)
+    return True

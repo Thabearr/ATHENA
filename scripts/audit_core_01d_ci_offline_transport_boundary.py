@@ -2813,8 +2813,15 @@ def activation_and_no_bypass(startup_text, workflow_text, guard_text, kernel_tex
                 and target.id == "ROOT_TEST_SOURCE_PINS" for target in node.targets))
     protected = set(GUARD_PATHS) - {"sitecustomize.py"}
     protected.add("scripts/audit_core_01d_ci_offline_transport_boundary.py")
-    require(pins == {path: identity(path)["lf_source_sha256"] for path in sorted(protected)},
-            "root bootstrap does not bind exact patchable guard/auditor source")
+    successor_declarations = [node for node in startup.body
+                              if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
+                              and target.id == "ROOT_TEST_SOURCE_SUCCESSORS" for target in node.targets)]
+    if successor_declarations:
+        from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+        retention.authenticate_bootstrap_successor(startup_text, identity)
+    else:
+        require(pins == {path: identity(path)["lf_source_sha256"] for path in sorted(protected)},
+                "root bootstrap does not bind exact patchable guard/auditor source")
     workflow = yaml.safe_load(workflow_text)
     step = next(step for step in workflow["jobs"]["validate"]["steps"]
                 if step.get("name") == "Enforce path and patch safety")
