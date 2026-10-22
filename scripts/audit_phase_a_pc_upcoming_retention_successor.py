@@ -468,8 +468,16 @@ def _authenticate_main_prefix(chain=None):
     if type(tree) is not bytes:
         raise ValueError("main inventory prefix tree proof is missing")
     modes = {line.split(b"\t", 1)[1].decode(): line.split(b"\t", 1)[0].split() for line in tree.splitlines()}
-    if chain is not None and len(chain) < 347:
-        raise ValueError("main inventory prefix is missing canonical generations")
+    if chain is not None:
+        # A2 has parsed/self-hash-checked the chain. Bind its current main
+        # anchor here; let the existing historical validators report their
+        # own predecessor errors. Expected identities come from the pinned
+        # manifest/HEAD, never from caller-selected source records.
+        if len(chain) < 347:
+            raise ValueError("main inventory prefix is missing canonical generations")
+        if (chain[346][0] != prefix["files"][346]["path"]
+                or chain[346][1].get("canonical_sha256") != MAIN_LATEST_SHA256):
+            raise ValueError("main inventory prefix has an altered canonical main anchor")
     for index, expected in enumerate(prefix["files"]):
         path = expected["path"]
         if expected["generation"] != index + 1 or modes.get(path) != [b"100644", b"blob", expected["git_blob_sha1"].encode()]:
@@ -480,8 +488,8 @@ def _authenticate_main_prefix(chain=None):
             raw = _read(path)
             if len(raw) != expected["byte_count"] or hashlib.sha256(raw).hexdigest() != expected["raw_sha256"]:
                 raise ValueError("main inventory prefix bytes changed: " + path)
-        elif chain[index][0] != path or chain[index][1].get("canonical_sha256") != expected["canonical_sha256"]:
-            raise ValueError("main inventory prefix has an altered predecessor: " + path)
+        else:
+            _safe_materialized(path)
     return prefix
 
 
