@@ -26,6 +26,13 @@ BEFORE = {'git_blob_sha1': 'a06a3166322ccb92b0bc3c05c87c5b3ca17298e1', 'source_s
 AFTER = {'git_blob_sha1': 'c6ca37afc8d35e9e16ccb9c66581b96b1107abf6', 'source_sha256': 'b555f7d602b5a6fc98f38d136d83ab22733c1ad9b64d7045bc1f771651551593', 'byte_count': 10830}
 PREDECESSORS = {'scripts/audit_data_01c_restore_portability.py': {'fixture': 'tests/fixtures/architecture/phase_a_retention/audit_data_01c_restore_portability.py.txt', 'git_blob_sha1': 'b6c22fd9c3bc9d120156dcc29d2dfcb4652d92da', 'source_sha256': 'bcf86a01b10255bbb629b95f16b4a13e0da9947893afb13916c6f6a0972fa89e', 'byte_count': 21223}, 'scripts/audit_p4_workflow_evolution_ledger.py': {'fixture': 'tests/fixtures/architecture/phase_a_retention/audit_p4_workflow_evolution_ledger.py.txt', 'git_blob_sha1': 'caf54adbed0a16460148c8a19466d24243be8d1b', 'source_sha256': '6666440cfb69261a33bccf70a3e52a19d60c36b045163fbcc8918084958042c9', 'byte_count': 67041}}
 
+B4_FORWARD_RECEIPT = 'artifacts/architecture/phase_a_retention_b4_consumer_source_forward_v1.json'
+B4_FORWARD_SHA256 = 'be8b3b433e821bdf6d173478b360bb0d526b23a45496d98148625c6508c6406e'
+B4_FORWARD_BEFORE = {'git_blob_sha1': '89fb32e561660a3dcdc70ae6d1df94f9d40027c9', 'source_sha256': '8d92fa8507535b6c42620458eac1ab6a2073574bf7d483a2e2d5deba1719d05f', 'byte_count': 52479}
+B4_FORWARD_AFTER = {'git_blob_sha1': '192bf0bd3210236a38b66daf733f334b4e600a40', 'source_sha256': '33f006fedecd79ebdbcb78d08a12ea1bdf2992ea3030af49b8e85fda2ebb0638', 'byte_count': 52848}
+B4_FORWARD_FIXTURE = 'tests/fixtures/architecture/phase_a_retention/audit_core_01d_sportybet_current_trigger_authority_b4.py.txt'
+B4_FORWARD_SOURCE = 'scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py'
+
 
 def _read(path):
     target = ROOT / path
@@ -77,6 +84,11 @@ def expected_workflow():
 def authenticate():
     from scripts import audit_p4_workflow_evolution_ledger as p4
     receipt = _json(RECEIPT, RECEIPT_SHA256)
+    forward = _json(B4_FORWARD_RECEIPT, B4_FORWARD_SHA256)
+    if (forward["retention_receipt_sha256"] != RECEIPT_SHA256
+            or identity(_read(B4_FORWARD_FIXTURE)) != B4_FORWARD_BEFORE
+            or identity(_read(B4_FORWARD_SOURCE)) != B4_FORWARD_AFTER):
+        raise ValueError("retention B4 consumer source-forward drift")
     snapshot = _json(SNAPSHOT, SNAPSHOT_SHA256)
     for path, row in PREDECESSORS.items():
         if identity(_read(row["fixture"])) != {key: row[key] for key in BEFORE}:

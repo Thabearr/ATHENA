@@ -776,7 +776,7 @@ def test_phase_a_one_path_retention_preserves_b4_projection():
     from scripts import audit_data_01c_restore_portability as d5
     retention.authenticate()
     projected = b4.project_b4_workflow_tree(retention.AFTER_TREE)
-    assert projected == retention.AFTER_B4_TREE
-    assert retention.project_b4_tree(projected) == d5.successor_context()[1]
+    assert projected == retention.BEFORE_B4_TREE
+    assert projected == d5.successor_context()[1]
     # Unknown neighboring trees have no new acceptance edge.
     assert retention.project_b4_tree('f' * 40) == 'f' * 40

@@ -314,3 +314,12 @@ def test_archive_only_corruption_cannot_borrow_valid_original_replay(tmp_path, m
     with pytest.raises(archive.PcUpcomingArchiveError, match='byte-inconsistent'):
         archive.verify_archive(repository_root=repo, output_root=out)
     assert archive._file_inventory(original) == before
+
+
+@pytest.mark.parametrize('which', ['predecessor', 'current'])
+def test_exact_b4_consumer_forward_rejects_source_identity_drift(monkeypatch, which):
+    read = successor._read
+    path = successor.B4_FORWARD_FIXTURE if which == 'predecessor' else successor.B4_FORWARD_SOURCE
+    monkeypatch.setattr(successor, '_read', lambda name: read(name) + b'\n# unreviewed drift\n' if name == path else read(name))
+    with pytest.raises(ValueError, match='B4 consumer source-forward'):
+        successor.authenticate()
