@@ -40,7 +40,7 @@ def _safe_materialized(path, *, directory=False):
     if logical.is_absolute() or ".." in logical.parts:
         raise ValueError("retention source path traversal")
     target = ROOT / logical
-    for node in (target, *target.parents):
+    for node in (*reversed(target.parents), target):
         status = node.lstat()
         regular = stat.S_ISDIR(status.st_mode) if node != target or directory else stat.S_ISREG(status.st_mode)
         if stat.S_ISLNK(status.st_mode) or getattr(status, "st_file_attributes", 0) & 0x400 or not regular:
