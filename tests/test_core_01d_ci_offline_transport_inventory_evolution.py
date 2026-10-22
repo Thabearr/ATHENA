@@ -499,8 +499,8 @@ def test_root_bootstrap_pin_binds_the_current_auditor_and_rejects_drift(monkeypa
                       if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
                       and target.id == "ROOT_TEST_SOURCE_SUCCESSORS" for target in node.targets))
     assert set(successors) == {auditor}
-    assert successors[auditor] == boundary.source(auditor)["lf_source_sha256"]
-    assert successors[auditor] == hashlib.sha256(_worktree_bytes(auditor)).hexdigest()
+    assert successors[auditor] == (retention.PRIOR_ADMITTED_AUDITOR_SHA, boundary.source(auditor)["lf_source_sha256"])
+    assert successors[auditor][-1] == hashlib.sha256(_worktree_bytes(auditor)).hexdigest()
     retention.authenticate_bootstrap_successor(
         (boundary.ROOT / "sitecustomize.py").read_text(encoding="utf-8"), boundary.source)
 

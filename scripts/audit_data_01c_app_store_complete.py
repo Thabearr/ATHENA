@@ -408,6 +408,9 @@ def audit(latest=None):
         retention.authenticate()
         evolved |= {"tests/test_p4_2_athena_run_workflow.py",
                     "tests/test_p4_4a_workflow_evolution_guard.py"}
+        # UX-01A's APP auditor now authenticates the UI successor while the
+        # immutable D5 predecessor remains unchanged; bind its current bytes by A2.
+        evolved |= {"scripts/audit_app_01a_local_shell.py"}
         inventory = boundary.authenticate_inventory()
         identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
         if (set(current) != set(frozen)

@@ -814,9 +814,9 @@ def _e3_cross_contract_source_forward_successor_extensions(chain=None, generatio
         extensions.append(_e3_pass_a_v312_source_successor_extension(chain))
     if generation >= E3_PASS_A_V313_SUCCESSOR_EXTENSION_GENERATION:
         extensions.append(_e3_pass_a_v313_source_successor_extension(chain))
-    if generation >= 340:
+    if generation >= 348:
         from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
-        extensions.append(retention.checkpoint_v340_extension(chain))
+        extensions.append(retention.checkpoint_retention_extension(chain))
     return extensions
 
 
@@ -1871,7 +1871,7 @@ def _e3_source_forward_file_identity(
             and identity.git_blob_sha1 != expected_blob):
         from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
         predecessor, _current = retention.checkpoint_v2_retention_sources()
-        # V313 authenticates its original exact bytes; V340 separately binds
+        # V313 authenticates its original exact bytes; V348 separately binds
         # the only current replacement. Never substitute a new historic pin.
         require(expected_mode == "100644" and retention.identity(predecessor)["git_blob_sha1"] == expected_blob
                 and hashlib.sha256(predecessor).hexdigest() == expected_lf,
@@ -2170,17 +2170,17 @@ def _authenticated_e3_successor_identity(path, chain, latest):
     if len(matches) == 5:
         return v313["successor"]
     from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
-    require(len(matches) == 6 and latest_generation >= 340,
+    require(len(matches) == 6 and latest_generation >= 348,
             "retention checkpoint has an unreviewed source-forward suffix")
-    extension = retention.checkpoint_v340_extension(chain)
-    require(matches[-1] == extension and chain[339][0] == inventory_generation_path(340)
-            and chain[339][1].get("predecessor_inventory") == extension["predecessor_inventory"]
-            and chain[339][1].get("e3_cross_contract_source_forward_successor_extensions")
-                == _e3_cross_contract_source_forward_successor_extensions(chain=chain, generation=340),
-            "retention V340 does not append the exact source-forward contract")
-    bound_rows = {row["path"]: row["lf_source_sha256"] for row in chain[339][1]["source_identities"]}
+    extension = retention.checkpoint_retention_extension(chain)
+    require(matches[-1] == extension and chain[347][0] == inventory_generation_path(348)
+            and chain[347][1].get("predecessor_inventory") == extension["predecessor_inventory"]
+            and chain[347][1].get("e3_cross_contract_source_forward_successor_extensions")
+                == _e3_cross_contract_source_forward_successor_extensions(chain=chain, generation=348),
+            "retention V348 does not append the exact source-forward contract")
+    bound_rows = {row["path"]: row["lf_source_sha256"] for row in chain[347][1]["source_identities"]}
     require(bound_rows.get(path) == extension["successor"]["lf_source_sha256"],
-            "retention V340 checkpoint source is not bound by its inventory")
+            "retention V348 checkpoint source is not bound by its inventory")
     return extension["successor"]
 
 

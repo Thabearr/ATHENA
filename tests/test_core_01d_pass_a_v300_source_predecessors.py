@@ -341,7 +341,7 @@ def test_v313_extension_binds_exact_v312_v2_auditor_source_row():
     assert a2._authenticated_e3_successor_identity(
         path, historical_chain, historical_chain[-1][1]) == extension["successor"]
     from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
-    current = retention.checkpoint_v340_extension(chain)
+    current = retention.checkpoint_retention_extension(chain)
     assert current["previous_successor"]["git_blob_sha1"] == successor[0]
     assert current["previous_successor"]["lf_source_sha256"] == successor[1]
     assert a2._authenticated_e3_successor_identity(path, chain, latest) == current["successor"]
@@ -537,11 +537,11 @@ def test_v300_environment_flags_cannot_authorize_a_wrong_generation(monkeypatch)
 
 
 @pytest.mark.parametrize("field,value", [("authority_granted", True), ("rewritten", True)])
-def test_v340_retention_extension_rejects_resealed_authority_or_history_change(field, value):
+def test_v348_retention_extension_rejects_resealed_authority_or_history_change(field, value):
     chain = deepcopy(a2.load_inventory_generations())
     path, latest = chain[-1]
     extension = next(row for row in latest["e3_cross_contract_source_forward_successor_extensions"]
-                     if row["generation"] == 340)
+                     if row["generation"] == 348)
     extension[field] = value
     latest = a2.seal({key: value for key, value in latest.items() if key != "canonical_sha256"})
     chain[-1] = (path, latest)

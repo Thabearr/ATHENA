@@ -733,7 +733,7 @@ def verified_additive_artifact_paths():
         b7.RECEIPT_PATH,
         completion_v10.RECEIPT_PATH,
         a2.inventory_generation_path(9),
-        app01a.RECEIPT,
+        app01a.RECEIPT, app01a.UX_SUCCESSOR,
         data01a.RECEIPT,
         data01b.RECEIPT,
         data01c.RECEIPT,

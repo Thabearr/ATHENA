@@ -34,11 +34,22 @@ B4_FORWARD_FIXTURE = 'tests/fixtures/architecture/phase_a_retention/audit_core_0
 B4_FORWARD_SOURCE = 'scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py'
 
 
+def _safe_materialized(path, *, directory=False):
+    import stat
+    logical = Path(path)
+    if logical.is_absolute() or ".." in logical.parts:
+        raise ValueError("retention source path traversal")
+    target = ROOT / logical
+    for node in (target, *target.parents):
+        status = node.lstat()
+        regular = stat.S_ISDIR(status.st_mode) if node != target or directory else stat.S_ISREG(status.st_mode)
+        if stat.S_ISLNK(status.st_mode) or getattr(status, "st_file_attributes", 0) & 0x400 or not regular:
+            raise ValueError("retention source/evidence is linked or nonregular: " + path)
+    return target
+
+
 def _read(path):
-    target = ROOT / path
-    if target.is_symlink() or not target.is_file():
-        raise ValueError("retention successor evidence is missing or linked: " + path)
-    return target.read_bytes().replace(b"\r\n", b"\n")
+    return _safe_materialized(path).read_bytes().replace(b"\r\n", b"\n")
 
 
 def identity(raw):
@@ -84,6 +95,8 @@ def expected_workflow():
 def authenticate():
     from scripts import audit_p4_workflow_evolution_ledger as p4
     receipt = _json(RECEIPT, RECEIPT_SHA256)
+    authenticate_main_prefix()
+    authenticate_provisional_archive()
     forward = _json(B4_FORWARD_RECEIPT, B4_FORWARD_SHA256)
     if (forward["retention_receipt_sha256"] != RECEIPT_SHA256
             or identity(_read(B4_FORWARD_FIXTURE)) != B4_FORWARD_BEFORE
@@ -201,21 +214,20 @@ def checkpoint_v2_retention_sources():
     return before, expected
 
 
-def checkpoint_v340_extension(chain):
-    """Append only after independently pinned V339; V313 remains unchanged."""
-    if len(chain) < 339 or chain[338][1]["canonical_sha256"] != "615df8a5c9af6eecdd95476010f9aa6ed238cc0d0fdb02874b0c1040ea992098":
-        raise ValueError("retention source-forward does not extend exact V339")
+def checkpoint_retention_extension(chain):
+    """A new canonical edge after main V347; provisional V340 is forensic only."""
+    authenticate_main_prefix(chain=chain)
     before, expected = checkpoint_v2_retention_sources()
     after = identity(expected)
     return {
-        "path": CHECKPOINT_V2_PATH, "generation": 340,
-        "predecessor_inventory": {"path": "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v339.json",
-            "generation": 339, "canonical_sha256": chain[338][1]["canonical_sha256"], "rewritten": False},
-        "previous_successor": {"generation": 313, "canonical_sha256": chain[312][1]["canonical_sha256"],
+        "path": CHECKPOINT_V2_PATH, "generation": 348,
+        "predecessor_inventory": {"path": "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v347.json",
+            "generation": 347, "canonical_sha256": MAIN_LATEST_SHA256, "rewritten": False},
+        "previous_successor": {"generation": 313, "canonical_sha256": _json(MAIN_PREFIX_MANIFEST, MAIN_PREFIX_MANIFEST_SHA256)["files"][312]["canonical_sha256"],
             "git_blob_sha1": V313_CHECKPOINT_BLOB, "lf_source_sha256": V313_CHECKPOINT_SHA256, "rewritten": False},
         "successor": {"git_blob_sha1": after["git_blob_sha1"], "lf_source_sha256": after["source_sha256"], "git_mode": "100644"},
-        "reason_type": "PHASE_A_RETENTION_HISTORICAL_CONSUMER_SOURCE_FORWARD_V340",
-        "reason": "Authenticate the exact retention-only outer projection after the unchanged V313 historical evaluator",
+        "reason_type": "PHASE_A_RETENTION_MAIN347_SOURCE_FORWARD_V348",
+        "reason": "Path-exact retention projection after the unchanged V313 evaluator and canonical main V347",
         "authority_granted": False, "historical_bytes_changed": False, "rewritten": False,
     }
 
@@ -245,7 +257,7 @@ def project_retention_inventory(raw, *, latest=None):
     _json(HISTORICAL_FORWARD_RECEIPT, HISTORICAL_FORWARD_SHA256)
     if latest is None:
         latest = a2.authenticate_inventory()
-    if latest.get("generation", 0) < 340:
+    if latest.get("generation", 0) < 348:
         raise ValueError("historical retention projection requires its A2 successor")
     authenticate_bootstrap_sources()
     predecessors = dict(HISTORICAL_PREDECESSORS)
@@ -313,21 +325,7 @@ BOOTSTRAP_AUDITOR_NEW_BLOCK = '    successor_declarations = [node for node in st
 
 
 def _bootstrap_blob(path):
-    """Read only a tracked, regular source/fixture with no linked ancestors."""
-    import stat
-    from runtime.source_identity import read_tracked_head_blob
-    target = ROOT / path
-    for candidate in (target, *target.parents):
-        status = candidate.lstat()
-        if (stat.S_ISLNK(status.st_mode)
-                or getattr(status, "st_file_attributes", 0) & 0x400
-                or not (stat.S_ISREG(status.st_mode) if candidate == target else stat.S_ISDIR(status.st_mode))):
-            raise ValueError("bootstrap successor source/fixture is linked or nonregular: " + path)
-    mode = subprocess.check_output(["git", "ls-tree", "HEAD", "--", path], cwd=ROOT)
-    if len(mode.splitlines()) != 1 or mode.split(b"\t", 1)[0].split()[:2] != [b"100644", b"blob"]:
-        raise ValueError("bootstrap successor source/fixture mode drift: " + path)
-    raw, _ = read_tracked_head_blob(ROOT, path)
-    return raw.replace(b"\r\n", b"\n")
+    return _raw_blob(path).replace(b"\r\n", b"\n")
 
 
 def bootstrap_predecessor(path):
@@ -339,16 +337,17 @@ def bootstrap_predecessor(path):
 
 
 def expected_bootstrap_source():
-    """Derive exactly one added auditor pin; retain all original pins/hooks."""
     before = bootstrap_predecessor("sitecustomize.py")
     marker = b'\n_args = getattr(sys, "orig_argv", ())\n'
-    addition = ("\n# Owner-authorized, path-exact Phase A retention auditor successor. Original\n"
-                "# pins remain valid; no other guard path gains an alternate source identity.\n"
+    addition = ("\n# Owner-authorized, path-exact retention successors. Preserve the original pins\n"
+                "# and the previously admitted auditor; no other guard gains an alternate identity.\n"
                 "ROOT_TEST_SOURCE_SUCCESSORS = {\n"
-                '    "' + BOOTSTRAP_AUDITOR + '": "' + BOOTSTRAP_AFTER[BOOTSTRAP_AUDITOR]["source_sha256"] + '",\n}\n').encode()
+                '    "' + BOOTSTRAP_AUDITOR + '": (\n'
+                '        "' + PRIOR_ADMITTED_AUDITOR_SHA + '",\n'
+                '        "' + BOOTSTRAP_AFTER[BOOTSTRAP_AUDITOR]["source_sha256"] + '",\n    ),\n}\n').encode()
     old = b"            if hashlib.sha256(_raw).hexdigest() != _expected:\n"
     new = (b"            _digest = hashlib.sha256(_raw).hexdigest()\n"
-           b"            if _digest != _expected and _digest != ROOT_TEST_SOURCE_SUCCESSORS.get(_path):\n")
+           b"            if _digest != _expected and _digest not in ROOT_TEST_SOURCE_SUCCESSORS.get(_path, ()):\n")
     if before.count(marker) != 1 or before.count(old) != 1:
         raise ValueError("bootstrap successor predecessor seam drift")
     return before.replace(marker, addition + marker).replace(old, new)
@@ -362,10 +361,11 @@ def authenticate_bootstrap_sources():
     for path, expected in BOOTSTRAP_METADATA.items():
         if identity(_bootstrap_blob(path)) != expected:
             raise ValueError("bootstrap successor evidence drift: " + path)
-    before = bootstrap_predecessor(BOOTSTRAP_AUDITOR)
-    if before.count(BOOTSTRAP_AUDITOR_OLD_BLOCK.encode()) != 1:
-        raise ValueError("bootstrap predecessor auditor seam drift")
-    expected_auditor = before.replace(BOOTSTRAP_AUDITOR_OLD_BLOCK.encode(), BOOTSTRAP_AUDITOR_NEW_BLOCK.encode())
+    expected_auditor = bootstrap_predecessor(BOOTSTRAP_AUDITOR)
+    for old, new in BOOTSTRAP_AUDITOR_PATCHES:
+        if expected_auditor.count(old.encode()) != 1:
+            raise ValueError("bootstrap predecessor auditor seam drift")
+        expected_auditor = expected_auditor.replace(old.encode(), new.encode())
     if _bootstrap_blob(BOOTSTRAP_AUDITOR) != expected_auditor:
         raise ValueError("bootstrap successor auditor exceeds exact activation edge")
     if _bootstrap_blob("sitecustomize.py") != expected_bootstrap_source():
@@ -373,6 +373,13 @@ def authenticate_bootstrap_sources():
     for path, expected in BOOTSTRAP_AFTER.items():
         if identity(_bootstrap_blob(path)) != expected:
             raise ValueError("bootstrap successor current source identity drift: " + path)
+    for path, descriptor in _CURRENT_INTEGRATION["current_source_predecessors"].items():
+        raw = _bootstrap_blob(descriptor["fixture"])
+        if identity(raw) != {key: descriptor[key] for key in BEFORE}:
+            raise ValueError("integrated current-main source predecessor drift: " + path)
+    prior = _bootstrap_blob(_CURRENT_INTEGRATION["prior_admitted_auditor_fixture"])
+    if hashlib.sha256(prior).hexdigest() != PRIOR_ADMITTED_AUDITOR_SHA:
+        raise ValueError("bootstrap predecessor admitted auditor identity drift")
     return True
 
 
@@ -397,3 +404,104 @@ def authenticate_bootstrap_successor(startup_text, current_identity):
         if current_identity(path)["lf_source_sha256"] != permitted:
             raise ValueError("bootstrap successor patchable guard identity drift: " + path)
     return True
+
+
+# Owner-authorized integration of actual merged main; earlier records above
+# remain immutable forensic evidence, never alternate active generations.
+MAIN_SHA = '016ae05b9f0fcc6991a5b7f28bdfea3688185729'
+MAIN_LATEST_SHA256 = '55d1aa9b8899b3d680b51117e1d596204ffae8536edeed3ceb453b40611d5a29'
+MAIN_PREFIX_MANIFEST = 'artifacts/architecture/phase_a_main_347_inventory_prefix_v1.json'
+MAIN_PREFIX_MANIFEST_SHA256 = '6377c0ea057266fbfdd4041136915a7feee87c1fdd8720a7e52ef0f9affc426e'
+ARCHIVE_MANIFEST = 'artifacts/architecture/phase_a_provisional_a2_archive_v1.json'
+ARCHIVE_MANIFEST_SHA256 = '224800764858b4ed688c0aa79f42653b9e1b27704d8f7ea7ae7ac2bcc3e14e0d'
+RECEIPT = 'artifacts/architecture/phase_a_pc_upcoming_retention_integrated_v1.json'
+RECEIPT_SHA256 = '4d03e94b3794adc041d40fd73a73ff074111ae53edb4cbd17cf5829adfba575c'
+SNAPSHOT = 'artifacts/architecture/p4_workflow_evolution_snapshots/phase_a_pc_upcoming_retention_integrated_v1.json'
+SNAPSHOT_SHA256 = '4f37e82e6e93a1a80d325d4b299c9966c711ed51a1ede7b21d46c8785bf859ff'
+B4_FORWARD_RECEIPT = 'artifacts/architecture/phase_a_retention_b4_integrated_source_forward_v1.json'
+B4_FORWARD_SHA256 = 'd61d879867199566b3d1928ea73398618d7db101c660398e328753955b68f2aa'
+BOOTSTRAP_RECEIPT = 'artifacts/architecture/phase_a_pc_upcoming_retention_integrated_v1.json'
+BOOTSTRAP_RECEIPT_SHA256 = '4d03e94b3794adc041d40fd73a73ff074111ae53edb4cbd17cf5829adfba575c'
+PRIOR_ADMITTED_AUDITOR_SHA = '282e1b9c5258eb4fcbe51581816e7894e5c9b581f085be1162aa6f9bca864299'
+LINKED_METADATA = {'artifacts/architecture/phase_a_pc_upcoming_retention_integrated_v1.json': {'git_blob_sha1': 'b96a4879a5ef4e4cffdae15b22b09d9b060dcdfb', 'source_sha256': 'dd09799fa37fc4a0e2bc5cadbe9aba66b1c6617bfba8f7998f5137ae5bb77f51', 'byte_count': 43474}, 'artifacts/architecture/p4_workflow_evolution_snapshots/phase_a_pc_upcoming_retention_integrated_v1.json': {'git_blob_sha1': 'f41c670c62aaec17b99c10988f5ef3abe5be1e4e', 'source_sha256': '200edb640cd75b7968a80ba294d8d744bba1896f155ff037462df3993c3b5844', 'byte_count': 23283}, 'artifacts/architecture/phase_a_retention_b4_integrated_source_forward_v1.json': {'git_blob_sha1': '4f5c458e4f07e5a041de58213751bf31a130ecd4', 'source_sha256': '6d2ae4ad759fbeb5bd84d4bee2cef7cde248b59843d05f872deafd6f0a3da9b4', 'byte_count': 1121}}
+_CURRENT_INTEGRATION = _json(RECEIPT, RECEIPT_SHA256)
+HISTORICAL_PREDECESSORS = _CURRENT_INTEGRATION["historical_view_predecessors"]
+BOOTSTRAP_PREDECESSORS = _CURRENT_INTEGRATION["bootstrap_predecessors"]
+BOOTSTRAP_AFTER = _CURRENT_INTEGRATION["current_source_after"]
+BOOTSTRAP_AUDITOR_PATCHES = _CURRENT_INTEGRATION["bootstrap_auditor_patch_recipe"]
+ADDED_METADATA = dict(_CURRENT_INTEGRATION["retained_metadata"], **LINKED_METADATA)
+BOOTSTRAP_METADATA = {p: ADDED_METADATA[p] for p in set(LINKED_METADATA) |
+                      {v["fixture"] for v in BOOTSTRAP_PREDECESSORS.values()}}
+
+
+
+def _raw_blob(path):
+    """Exact Git object bytes; filtered worktree identity is checked separately."""
+    from runtime.source_identity import read_tracked_head_blob
+    _safe_materialized(path)
+    mode = subprocess.check_output(["git", "ls-tree", "HEAD", "--", path], cwd=ROOT)
+    if len(mode.splitlines()) != 1 or mode.split(b"\t", 1)[0].split()[:2] != [b"100644", b"blob"]:
+        raise ValueError("retention source/evidence Git mode drift: " + path)
+    raw, _ = read_tracked_head_blob(ROOT, path)
+    return raw
+
+
+def authenticate_main_prefix(chain=None):
+    """Bind all canonical main inventory objects; provisional records are excluded."""
+    prefix = _json(MAIN_PREFIX_MANIFEST, MAIN_PREFIX_MANIFEST_SHA256)
+    if (prefix["main_commit"] != MAIN_SHA or prefix["latest_generation"] != 347
+            or prefix["latest_canonical_sha256"] != MAIN_LATEST_SHA256
+            or len(prefix["files"]) != 347):
+        raise ValueError("main inventory prefix manifest scope drift")
+    tree = subprocess.check_output(["git", "ls-tree", "-r", "HEAD", "--", "tests/fixtures/core_01d"], cwd=ROOT)
+    modes = {line.split(b"\t", 1)[1].decode(): line.split(b"\t", 1)[0].split() for line in tree.splitlines()}
+    if chain is not None and len(chain) < 347:
+        raise ValueError("main inventory prefix is missing canonical generations")
+    for index, expected in enumerate(prefix["files"]):
+        path = expected["path"]
+        if expected["generation"] != index + 1 or modes.get(path) != [b"100644", b"blob", expected["git_blob_sha1"].encode()]:
+            raise ValueError("main inventory prefix mode/blob mismatch: " + path)
+        if chain is None:
+            # Canonical source files may materialize as CRLF on Windows; the
+            # HEAD blob above remains exactly main's unfiltered original bytes.
+            raw = _read(path)
+            if len(raw) != expected["byte_count"] or hashlib.sha256(raw).hexdigest() != expected["raw_sha256"]:
+                raise ValueError("main inventory prefix bytes changed: " + path)
+        elif chain[index][0] != path or chain[index][1].get("canonical_sha256") != expected["canonical_sha256"]:
+            raise ValueError("main inventory prefix has an altered predecessor: " + path)
+    return prefix
+
+
+def authenticate_provisional_archive():
+    """Forensic evidence only: never an alternate active generation root."""
+    archive = _json(ARCHIVE_MANIFEST, ARCHIVE_MANIFEST_SHA256)
+    if (archive.get("authority_granted") is not False
+            or archive.get("historical_bytes_changed") is not False
+            or archive.get("active_chain_member") is not False
+            or archive.get("source_commit") != "88d82b29bfa22aecd8a3a97c0518ae3e3ba0d848"
+            or archive.get("canonical_main") != MAIN_SHA
+            or [row.get("generation") for row in archive["files"]] != [338, 339, 340, 341]):
+        raise ValueError("provisional archive provenance/status is not exact")
+    base = "tests/fixtures/architecture/phase_a_retention/provisional-a2-88d82b29"
+    directory = _safe_materialized(base, directory=True)
+    if {p.name for p in directory.iterdir()} != {f"provisional-v{g}.json" for g in range(338, 342)}:
+        raise ValueError("provisional archive contains missing or unexpected entries")
+    prefix = _json(MAIN_PREFIX_MANIFEST, MAIN_PREFIX_MANIFEST_SHA256)
+    for row in archive["files"]:
+        generation = row["generation"]
+        name = f"provisional-v{generation}.json"
+        path = base + "/" + name
+        if (row["archive_path"] != path or row["archive_basename"] != name
+                or row["original_basename"] != f"ci-offline-transport-boundary-source-inventory-v{generation}.json"
+                or row["original_path"] != "tests/fixtures/core_01d/" + row["original_basename"]
+                or row["source_commit"] != archive["source_commit"] or row["active_chain_member"] is not False):
+            raise ValueError("provisional archive path or origin mismatch")
+        raw = _raw_blob(path)
+        observed = identity(raw)
+        if (observed != {"source_sha256": row["sha256"], "git_blob_sha1": row["git_blob_sha1"], "byte_count": row["byte_count"]}
+                or json.loads(raw)["canonical_sha256"] != row["declared_canonical_sha256"]
+                or row["main_canonical_sha256"] != prefix["files"][generation-1]["canonical_sha256"]
+                or row["declared_canonical_sha256"] == row["main_canonical_sha256"]
+                or row["diverges_from_main"] is not True):
+            raise ValueError("provisional archive bytes or divergence proof changed")
+    return archive
