@@ -258,7 +258,7 @@ def test_path_exact_successor_and_frozen_prefix():
     p4.validate_current_state()
 
 
-@pytest.mark.parametrize('mutation', ['timeout-minutes:', 'permissions:', 'concurrency:', 'schedule:', 'execute_current_shadow_request', 'send_current_shadow_email', 'upload-artifact@v4'])
+@pytest.mark.parametrize('mutation', ['timeout-minutes:', 'permissions:', 'concurrency:', 'workflow_dispatch:', 'execute_current_shadow_request', 'send_current_shadow_email', 'upload-artifact@v4'])
 def test_successor_does_not_allow_authority_or_behavior_neighbor_edits(monkeypatch, mutation):
     raw = successor.expected_workflow()
     assert mutation.encode() in raw

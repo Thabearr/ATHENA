@@ -990,8 +990,12 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
     from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
     projected = retention.project_p4_observed(observed, head_tree)
     if projected is not None:
+        from scripts import audit_data_01c_restore_portability as d5
+        # The adapter proves the entire exact current tree first. Reuse the
+        # existing D5/E3 + direct-share evaluation on its one-path projection.
+        _identity, projected_context = d5.successor_context()
         result = _port02c_current_source_forward(
-            derived, projected, head_tree=retention.BEFORE_TREE, ledger_sha=ledger_sha)
+            derived, projected, head_tree=projected_context, ledger_sha=ledger_sha)
         result[retention.WORKFLOW] = dict(observed[retention.WORKFLOW])
         return result
     from scripts import audit_data_01c_restore_portability as d5

@@ -82,11 +82,24 @@ def _file_inventory(root: Path) -> dict[str, tuple[int, str]]:
     return files
 
 
+def _json_unique(raw):
+    def mapping(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise PcUpcomingArchiveError("duplicate receipt JSON key")
+            value[key] = item
+        return value
+    def invalid_constant(value):
+        raise PcUpcomingArchiveError("non-JSON numeric constant")
+    return json.loads(raw, object_pairs_hook=mapping, parse_constant=invalid_constant)
+
+
 def _summary(receipt_path: Path) -> dict:
     _safe_path(receipt_path)
     if not receipt_path.exists():
         return {}
-    value = json.loads(receipt_path.read_bytes())
+    value = _json_unique(receipt_path.read_bytes())
     if type(value) is not dict or type(value.get("source_summary", {})) is not dict:
         raise PcUpcomingArchiveError("run receipt/source_summary is not a mapping")
     return value.get("source_summary", {})
@@ -141,9 +154,9 @@ def _match_manifest(summary: dict, manifest) -> None:
     optional = {
         "provider_total_num": manifest.provider_total_num,
         "provider_event_count": manifest.captured_event_count,
-        "provider_discovery_first_observed_at": manifest.to_dict()["first_observed_at"],
-        "provider_discovery_last_observed_at": manifest.to_dict()["last_observed_at"],
-        "provider_discovery_observed_at": manifest.to_dict()["last_observed_at"],
+        "provider_discovery_first_observed_at": manifest.first_observed_at.isoformat().replace("+00:00", "Z"),
+        "provider_discovery_last_observed_at": manifest.last_observed_at.isoformat().replace("+00:00", "Z"),
+        "provider_discovery_observed_at": manifest.last_observed_at.isoformat().replace("+00:00", "Z"),
     }
     for key, value in optional.items():
         if key in summary and (type(summary[key]) is not type(value) or summary[key] != value):
