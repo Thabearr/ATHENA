@@ -462,19 +462,63 @@ def test_b7_historical_generation_never_falls_back_from_broken_current(monkeypat
         b7.authenticated_historical_a2_v9()
 
 
-def test_app_receipt_matches_exact_source():
+def test_app_receipt_and_ux_successor_preserve_exact_source_lineage():
     from scripts import audit_app_01a_local_shell as audit
     receipt = audit.validate()
     assert receipt["source_review_counter_open"] == "2/5"
+    assert receipt["canonical_sha256"] == audit.APP_01A_RECEIPT_SHA256
     assert receipt["authority"]["run_admission"] is False
     assert receipt["contracts"]["application_data_root"] == (
         "PORT_02A_WRITABLE_ROOTS_EXACT_TYPE_SEPARATE_FROM_RESOURCES"
     )
     assert "runtime/resources.py" in receipt["source_identities"]
     assert receipt["a2_inventory"]["path"] == audit.INVENTORY
+    successor = audit.validate_ux_successor(receipt)
+    assert successor["predecessor_receipt"]["canonical_sha256"] == receipt["canonical_sha256"]
+    assert successor["predecessor_source_identities"] == {
+        path: receipt["source_identities"][path] for path in audit.UX_PREDECESSOR_PATHS
+    }
+    assert successor["authority"]["provider_acquisition"] is False
+    assert successor["authority"]["run_admission"] is False
+    assert successor["authority"]["delivery"] is False
+    assert successor["authority"]["wagering"] is False
     for name, original in (("ui/legacy-index.html", "ui/index.html"), ("ui/legacy-app.js", "ui/app.js")):
         digest = hashlib.sha256((ROOT / name).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
         assert digest == receipt["base_identities"][original]["sha256"]
+
+
+def test_ux_successor_rejects_current_source_drift(monkeypatch):
+    from scripts import audit_app_01a_local_shell as audit
+    predecessor = json.loads((ROOT / audit.RECEIPT).read_bytes())
+    monkeypatch.setattr(audit, "source_sha256", lambda path: "0" * 64)
+    with pytest.raises(ValueError, match="UX-01A current source identity mismatch"):
+        audit.validate_ux_successor(predecessor)
+
+
+def test_ux_successor_accepts_windows_checkout_line_endings(monkeypatch):
+    from scripts import audit_app_01a_local_shell as audit
+    predecessor = json.loads((ROOT / audit.RECEIPT).read_bytes())
+    successor_path = audit.ROOT / audit.UX_SUCCESSOR
+    path_type = type(successor_path)
+    original_read_bytes = path_type.read_bytes
+
+    def read_bytes_with_crlf(path):
+        data = original_read_bytes(path)
+        if path == successor_path:
+            return data.replace(b"\n", b"\r\n")
+        return data
+
+    monkeypatch.setattr(path_type, "read_bytes", read_bytes_with_crlf)
+    assert audit.validate_ux_successor(predecessor)["canonical_sha256"] == audit.UX_SUCCESSOR_SHA256
+
+
+def test_ux_successor_retains_exact_stylesheet_predecessor_bytes():
+    from scripts import audit_app_01a_local_shell as audit
+    predecessor = json.loads((ROOT / audit.RECEIPT).read_bytes())
+    historical = audit.augment_ux_historical_runtime_sources(predecessor)
+    expected = audit.ux_predecessor_stylesheet_bytes(audit.validate_ux_successor(predecessor))
+    assert audit._decode_historical_runtime_payload(historical, audit.UX_STYLESHEET_PATH) == expected
+    assert audit.UX_STYLESHEET_PATH in audit.HISTORICAL_RUNTIME_PATHS
 
 
 def test_historical_app_projection_rejects_broken_current(monkeypatch):
