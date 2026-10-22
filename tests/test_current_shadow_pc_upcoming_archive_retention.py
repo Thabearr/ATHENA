@@ -323,3 +323,30 @@ def test_exact_b4_consumer_forward_rejects_source_identity_drift(monkeypatch, wh
     monkeypatch.setattr(successor, '_read', lambda name: read(name) + b'\n# unreviewed drift\n' if name == path else read(name))
     with pytest.raises(ValueError, match='B4 consumer source-forward'):
         successor.authenticate()
+
+
+def test_historical_projection_is_exact_idempotent_and_keeps_unknown_rows():
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    latest = a2.authenticate_inventory()
+    raw = subprocess.check_output(['git', 'ls-tree', '-r', 'HEAD'])
+    projected = successor.project_retention_inventory(raw, latest=latest)
+    assert successor.project_retention_inventory(projected, latest=latest) == projected
+    rows = {line.split(b'\t', 1)[1].decode(): line.split(b'\t', 1)[0]
+            for line in projected.splitlines()}
+    assert not set(successor.ADDED_METADATA) & set(rows)
+    assert not successor.ADDED_PYTHON_PATHS & set(rows)
+    for path, descriptor in successor.HISTORICAL_PREDECESSORS.items():
+        assert rows[path].split()[-1].decode() == descriptor['git_blob_sha1']
+    extra = b'100644 blob ' + b'0' * 40 + b'\truntime/unapproved-neighbor.py\n'
+    assert successor.project_retention_inventory(raw + extra, latest=latest).endswith(extra)
+
+
+def test_retention_historical_views_preserve_frozen_producer_and_inventory():
+    from scripts import core_01d_historical_source as historical
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    from scripts import audit_core_01d_scheduled_shadow_ownership as schedule
+    _, identity = historical.historical_tracked(successor.ROOT, successor.WORKFLOW)
+    assert identity.git_blob_sha1 == historical.identities()[successor.WORKFLOW]['git_blob_sha1']
+    schedule.validate_workflow_source()
+    frozen = review.authenticate_inventory()
+    assert frozen['canonical_sha256'] == review.INVENTORY_SHA

@@ -996,7 +996,8 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
         _identity, projected_context = d5.successor_context()
         result = _port02c_current_source_forward(
             derived, projected, head_tree=projected_context, ledger_sha=ledger_sha)
-        result[retention.WORKFLOW] = dict(observed[retention.WORKFLOW])
+        if retention.WORKFLOW in observed:
+            result[retention.WORKFLOW] = dict(observed[retention.WORKFLOW])
         return result
     from scripts import audit_data_01c_restore_portability as d5
     successor_identity, successor_tree = d5.successor_context()

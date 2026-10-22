@@ -152,6 +152,13 @@ def _fresh_holdout_predecessor_source(path):
  return raw
 
 def source_bytes(path):
+ if path == '.github/workflows/current-shadow-all-market.yml':
+  from scripts import audit_phase_a_pc_upcoming_retention_successor as forward
+  try:
+   forward.authenticate()
+   return (ROOT / forward.FIXTURE).read_bytes().replace(b'\r\n', b'\n')
+  except ValueError as exc:
+   require(False, 'exact retention source-forward failed: '+str(exc))
  if path in FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
   return _fresh_holdout_predecessor_source(path)
  if path in INCIDENT_20261010_PREDECESSOR_SOURCES:

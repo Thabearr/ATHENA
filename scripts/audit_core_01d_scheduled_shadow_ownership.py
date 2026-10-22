@@ -56,6 +56,10 @@ def require(value, message):
 
 
 def raw(path):
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    if path == retention.WORKFLOW:
+        retention.authenticate()
+        return (ROOT / retention.FIXTURE).read_bytes().replace(b"\r\n", b"\n")
     if path == evolution.PORT02C_REPLAY_WORKFLOW_PATH:
         from scripts import audit_data_01c_restore_portability as d5
         observed = (ROOT / path).read_bytes().replace(b"\r\n", b"\n")

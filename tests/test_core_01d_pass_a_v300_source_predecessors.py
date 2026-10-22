@@ -337,7 +337,14 @@ def test_v313_extension_binds_exact_v312_v2_auditor_source_row():
     assert extension["authority_granted"] is False
     assert extension["historical_bytes_changed"] is False
     assert extension["rewritten"] is False
-    assert a2._authenticated_e3_successor_identity(path, chain, latest) == extension["successor"]
+    historical_chain = chain[:313]
+    assert a2._authenticated_e3_successor_identity(
+        path, historical_chain, historical_chain[-1][1]) == extension["successor"]
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    current = retention.checkpoint_v340_extension(chain)
+    assert current["previous_successor"]["git_blob_sha1"] == successor[0]
+    assert current["previous_successor"]["lf_source_sha256"] == successor[1]
+    assert a2._authenticated_e3_successor_identity(path, chain, latest) == current["successor"]
 
 
 def test_v313_rejects_tampered_successor_extension(monkeypatch):
@@ -527,3 +534,16 @@ def test_v300_environment_flags_cannot_authorize_a_wrong_generation(monkeypatch)
             "scripts/unreviewed_historical_source.py",
             expected_generation=a2.E3_PASS_A_SOURCE_FORWARD_AUTHORIZATION_GENERATION,
         )
+
+
+@pytest.mark.parametrize("field,value", [("authority_granted", True), ("rewritten", True)])
+def test_v340_retention_extension_rejects_resealed_authority_or_history_change(field, value):
+    chain = deepcopy(a2.load_inventory_generations())
+    path, latest = chain[-1]
+    extension = next(row for row in latest["e3_cross_contract_source_forward_successor_extensions"]
+                     if row["generation"] == 340)
+    extension[field] = value
+    latest = a2.seal({key: value for key, value in latest.items() if key != "canonical_sha256"})
+    chain[-1] = (path, latest)
+    with pytest.raises(AssertionError, match="successor extension is missing or altered"):
+        a2._authenticated_e3_successor_identity(a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_PATH, chain, latest)

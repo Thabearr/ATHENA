@@ -230,8 +230,14 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
     e3_projection_path = "tests/test_core_01d_workflow_consolidation_e3_source_projection.py"
     assert e3_projection_path in added
     assert first_added_generation[e3_projection_path] == 319
-    assert len(added - {e3_projection_path}) == 94
-    assert len(added) == 95
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    retention.authenticate()
+    retention_additions = retention.ADDED_PYTHON_PATHS
+    assert len(retention_additions) == 3
+    assert retention_additions <= added
+    assert {first_added_generation[path] for path in retention_additions} == {338}
+    assert len(added - {e3_projection_path} - retention_additions) == 94
+    assert len(added - retention_additions) == 95
     assert first_added_generation["runtime/current_shadow_operation_authority.py"] == 263
     assert first_added_generation[
         "tests/test_core_01d_pass_a_v300_source_predecessors.py"

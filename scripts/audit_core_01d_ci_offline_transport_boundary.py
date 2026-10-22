@@ -814,6 +814,9 @@ def _e3_cross_contract_source_forward_successor_extensions(chain=None, generatio
         extensions.append(_e3_pass_a_v312_source_successor_extension(chain))
     if generation >= E3_PASS_A_V313_SUCCESSOR_EXTENSION_GENERATION:
         extensions.append(_e3_pass_a_v313_source_successor_extension(chain))
+    if generation >= 340:
+        from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+        extensions.append(retention.checkpoint_v340_extension(chain))
     return extensions
 
 
@@ -1862,6 +1865,18 @@ def _e3_source_forward_file_identity(
     candidate = _e3_path_stat(relative, label="current source")
     raw, identity = read_tracked_head_blob(ROOT, relative)
     normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    if (relative == E3_PASS_A_V313_SUCCESSOR_EXTENSION_PATH
+            and expected_blob == E3_PASS_A_V313_SUCCESSOR_EXTENSION_IDENTITY[0]
+            and expected_lf == E3_PASS_A_V313_SUCCESSOR_EXTENSION_IDENTITY[1]
+            and identity.git_blob_sha1 != expected_blob):
+        from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+        predecessor, _current = retention.checkpoint_v2_retention_sources()
+        # V313 authenticates its original exact bytes; V340 separately binds
+        # the only current replacement. Never substitute a new historic pin.
+        require(expected_mode == "100644" and retention.identity(predecessor)["git_blob_sha1"] == expected_blob
+                and hashlib.sha256(predecessor).hexdigest() == expected_lf,
+                "retention V313 predecessor identity drift")
+        return predecessor
     require(identity.git_blob_sha1 == expected_blob
             and hashlib.sha256(normalized).hexdigest() == expected_lf,
             "E3 source-forward current successor identity mismatch: " + relative)
@@ -1941,7 +1956,7 @@ def _authenticated_e3_successor_identity(path, chain, latest):
         return v298["successor"]
 
     require(path == E3_PASS_A_COMPAT_SUCCESSOR_EXTENSION_PATH
-            and len(matches) in {3, 4, 5}
+            and len(matches) in {3, 4, 5, 6}
             and latest_generation >= E3_PASS_A_COMPAT_SUCCESSOR_EXTENSION_GENERATION,
             "E3 source-forward path has an unsupported extension chain")
     v301 = next((row for row in matches
@@ -2152,7 +2167,21 @@ def _authenticated_e3_successor_identity(path, chain, latest):
                  if type(row) is dict}
     require(v313_rows.get(path) == current_successor[1],
             "E3 source-forward V313 successor is absent from its generation")
-    return v313["successor"]
+    if len(matches) == 5:
+        return v313["successor"]
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    require(len(matches) == 6 and latest_generation >= 340,
+            "retention checkpoint has an unreviewed source-forward suffix")
+    extension = retention.checkpoint_v340_extension(chain)
+    require(matches[-1] == extension and chain[339][0] == inventory_generation_path(340)
+            and chain[339][1].get("predecessor_inventory") == extension["predecessor_inventory"]
+            and chain[339][1].get("e3_cross_contract_source_forward_successor_extensions")
+                == _e3_cross_contract_source_forward_successor_extensions(chain=chain, generation=340),
+            "retention V340 does not append the exact source-forward contract")
+    bound_rows = {row["path"]: row["lf_source_sha256"] for row in chain[339][1]["source_identities"]}
+    require(bound_rows.get(path) == extension["successor"]["lf_source_sha256"],
+            "retention V340 checkpoint source is not bound by its inventory")
+    return extension["successor"]
 
 
 def _authenticated_pass_a_source_inventory_state(chain=None):

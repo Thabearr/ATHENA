@@ -404,6 +404,10 @@ def audit(latest=None):
         "scripts/audit_core_01d_owner_one_shot_issue_comment_authority_b3.py",
         "scripts/audit_core_01d_frozen_artifact_replay_authority_b5.py",
         "scripts/audit_core_01d_scheduled_shadow_ownership.py"}
+        from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+        retention.authenticate()
+        evolved |= {"tests/test_p4_2_athena_run_workflow.py",
+                    "tests/test_p4_4a_workflow_evolution_guard.py"}
         inventory = boundary.authenticate_inventory()
         identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
         if (set(current) != set(frozen)

@@ -515,7 +515,11 @@ def validate_bounded_inventory(raw: bytes) -> None:
             metadata = metadata.rsplit(b" ", 1)[0] + b" " + APP01C_PREDECESSOR_SOURCE_BLOBS[path].encode()
             line = metadata + separator + path_bytes
         unchanged_lines.append(line)
-    unchanged = b"".join(unchanged_lines)
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as forward
+    try:
+        unchanged = forward.project_retention_inventory(b"".join(unchanged_lines), latest=latest)
+    except ValueError as exc:
+        policy.require(False, "retention inventory projection failed: " + str(exc))
     policy.require(policy.sha256(unchanged) == UNCHANGED_REPOSITORY_INVENTORY_SHA,
                    "unapproved repository change: runtime/workflows/ledgers/history must remain exact")
 
