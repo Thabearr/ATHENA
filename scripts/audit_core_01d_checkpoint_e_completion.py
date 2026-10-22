@@ -318,6 +318,24 @@ FRESH_HOLDOUT_20261015_ADDITIVE_IDENTITIES = {
 FRESH_HOLDOUT_20261015_ADDITIVE_PATHS = set(FRESH_HOLDOUT_20261015_ADDITIVE_IDENTITIES)
 ALLOWED_PASS4_PATHS |= FRESH_HOLDOUT_20261015_ADDITIVE_PATHS
 
+UX_01A_PREDECESSOR_SOURCE_IDENTITIES = {
+    "ui/app.js": (
+        "fd96013b07339228a3ab1273a69e19e83b6c4a35",
+        "d9c8e62fd5327b1f65b99af154123526f3c78b6d6f1f5e66ba2f9d0e1a2ee7ae",
+    ),
+    "ui/index.html": (
+        "7ef1f575bfc67eff5cfbe640fe8e9789cbeb95a3",
+        "31233591bb50bbabb66c1659877c2fec59952912c7427efcf71ca37333b70b82",
+    ),
+    "ui/styles.css": (
+        "805c2832c712d2ed0977d279f4ba9156abc7b5f9",
+        "6e8e3243dbafcf351c6c8e5e1bbd15731d8537fde183be1f668d0ef0762b3215",
+    ),
+}
+UX_01A_PREDECESSOR_SOURCE_BLOBS = {
+    path: blob for path, (blob, _digest) in UX_01A_PREDECESSOR_SOURCE_IDENTITIES.items()
+}
+
 
 def authenticate_fresh_holdout_20261015_evidence():
     from runtime.source_identity import read_tracked_head_blob
@@ -399,10 +417,20 @@ def validate_bounded_inventory(raw: bytes) -> None:
     # evidence files.
     from scripts import audit_app_01a_local_shell as app
     app_historical = app.augment_ux_historical_runtime_sources(app.validate())
-    ux_predecessor_blobs = {
-        path: app_historical["base_identities"][path]["git_blob_sha1"]
-        for path in app.UX_CURRENT_PATHS
-    }
+    for path in ("ui/app.js", "ui/index.html"):
+        blob, digest = UX_01A_PREDECESSOR_SOURCE_IDENTITIES[path]
+        policy.require(
+            app_historical["source_identities"].get(path) == digest,
+            "APP-01A predecessor UI source identity drift: " + path,
+        )
+    styles_blob, styles_digest = UX_01A_PREDECESSOR_SOURCE_IDENTITIES["ui/styles.css"]
+    styles_meta = app_historical["base_identities"]["ui/styles.css"]
+    policy.require(
+        styles_meta["git_blob_sha1"] == styles_blob
+        and styles_meta["sha256"] == styles_digest,
+        "APP-01A predecessor UI stylesheet identity drift",
+    )
+    ux_predecessor_blobs = dict(UX_01A_PREDECESSOR_SOURCE_BLOBS)
     ux_additive_paths = {app.UX_SUCCESSOR, app.UX_STYLESHEET_FIXTURE}
     from runtime.source_identity import read_tracked_head_blob
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion_v2
