@@ -264,3 +264,40 @@ def test_no_replay_or_mutation_authority_was_exercised(receipt):
     assert receipt["workflow_retirement_count"] == receipt["workflow_deletion_count"] == 0
     assert receipt["checkpoint_e_status"] == receipt["p4_4_status"] == "INCOMPLETE"
     assert receipt["criteria_11_and_14_remain_false"] is True
+
+
+def test_phase_a_restoration_preserves_published_v1_and_archived_mutations():
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as forward
+    receipt = forward.authenticate_published_restoration()
+    assert receipt["authority_granted"] is False
+    assert receipt["workflow_changed"] is False
+    assert receipt["active_inventory_predecessor"]["generation"] == 350
+
+
+@pytest.mark.parametrize("which", ["restored", "archived", "predecessor", "current"])
+def test_phase_a_restoration_rejects_evidence_or_source_tamper(monkeypatch, which):
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as forward
+    receipt = forward._json(forward.RESTORATION_RECEIPT, forward.RESTORATION_SHA256)
+    logical = {
+        "restored": next(iter(receipt["restored_evidence"])),
+        "archived": next(iter(receipt["archived_mutations"])),
+        "predecessor": receipt["source_forward"][forward.RESTORED_V3_PATH]["fixture"],
+        "current": forward.RESTORED_V3_PATH,
+    }[which]
+    original = forward._raw_blob
+    monkeypatch.setattr(forward, "_raw_blob", lambda path: original(path) + b" " if path == logical else original(path))
+    with pytest.raises(ValueError, match="restoration"):
+        forward.authenticate_published_restoration()
+
+
+def test_phase_a_retained_v3_projects_only_the_authenticated_legacy_workflow(monkeypatch):
+    from scripts import audit_core_01d_retained_workflow_status_v3 as retained
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as forward
+    identity = retained._source_identity(forward.WORKFLOW)
+    assert identity == {"path": forward.WORKFLOW, **{key: forward.BEFORE[key] for key in
+                                                   ("git_blob_sha1", "source_sha256")}}
+    def forbidden():
+        raise AssertionError("unrelated path must not enter retention projection")
+    monkeypatch.setattr(forward, "authenticate", forbidden)
+    other = retained._source_identity(".github/workflows/athena-run.yml")
+    assert other["path"] == ".github/workflows/athena-run.yml"
