@@ -114,6 +114,8 @@ def expected_workflow(value=None):
 
 def predecessor_source(path, raw):
     """Restore one pinned source edge only; unknown paths/bytes gain no alias."""
+    from scripts import audit_phase_a_b4_test_source_successor as test_source
+    raw = test_source.predecessor_source(path, raw)
     row = receipt()['source_forward'].get(path)
     if row is None:
         return raw

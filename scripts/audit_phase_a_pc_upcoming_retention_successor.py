@@ -603,3 +603,14 @@ def authenticate():
 # and P4 snapshots remain immutable inputs.
 from scripts import audit_tests_shard_balance_successor as _tests_shards
 _tests_shards.install_context(globals())
+
+
+# Source-only correction of B4's stale caller; no verifier/workflow change.
+from scripts import audit_phase_a_b4_test_source_successor as _b4_test_source
+_b4_test_source.install_context(globals())
+_authenticate_before_b4_test_source = authenticate
+
+
+def authenticate():
+    _b4_test_source.authenticate_core()
+    return _authenticate_before_b4_test_source()

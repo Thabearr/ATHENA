@@ -774,9 +774,92 @@ def test_b4_never_changes_workflow_or_authorizes_live_operations(receipt):
 def test_phase_a_one_path_retention_preserves_b4_projection():
     from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
     from scripts import audit_data_01c_restore_portability as d5
+    from scripts import audit_tests_shard_balance_successor as shards
+    from scripts import audit_phase_a_b4_test_source_successor as test_source
+    actual_tree = b4._git("rev-parse", "HEAD:.github/workflows").decode().strip()
+    assert actual_tree == shards.AFTER_TREE
+    shards.authenticate()
+    test_source.authenticate()
     retention.authenticate()
-    projected = b4.project_b4_workflow_tree(retention.AFTER_TREE)
-    assert projected == retention.BEFORE_B4_TREE
-    assert projected == d5.successor_context()[1]
+    projected = b4.project_b4_workflow_tree(actual_tree)
+    assert projected == retention.BEFORE_B4_TREE == d5.successor_context()[1]
+    # A historical adapter is not authority to call the live-tree entrypoint
+    # with an old or caller-selected tree. The strict HEAD fence stays intact.
+    for rejected in (retention.AFTER_TREE, 'f' * 40):
+        with pytest.raises(AssertionError, match="not for the checked-out tree"):
+            b4.project_b4_workflow_tree(rejected)
     # Unknown neighboring trees have no new acceptance edge.
     assert retention.project_b4_tree('f' * 40) == 'f' * 40
+
+
+def test_phase_a_b4_test_source_retains_exact_predecessor():
+    from scripts import audit_phase_a_b4_test_source_successor as forward
+    receipt = forward.authenticate_core()
+    assert receipt["source_path"] == forward.SOURCE
+    assert receipt["authority_granted"] is False
+    assert receipt["workflow_changed"] is False
+    assert forward.predecessor_source(forward.SOURCE, forward.read_blob(forward.SOURCE)) == forward.read_blob(forward.FIXTURE)
+
+
+@pytest.mark.parametrize("which", ["current", "predecessor"])
+def test_phase_a_b4_test_source_rejects_changed_bytes(monkeypatch, which):
+    from scripts import audit_phase_a_b4_test_source_successor as forward
+    path = forward.SOURCE if which == "current" else forward.FIXTURE
+    original = forward.read_blob
+    monkeypatch.setattr(forward, "read_blob", lambda p: original(p) + (b" " if p == path else b""))
+    with pytest.raises(ValueError, match="source|predecessor"):
+        forward.authenticate_core()
+
+
+@pytest.mark.parametrize("kind", ["symlink", "reparse", "hardlink", "ancestor"])
+def test_phase_a_b4_test_source_rejects_linked_evidence_before_read(monkeypatch, kind):
+    from scripts import audit_phase_a_b4_test_source_successor as forward
+    target = forward.ROOT / forward.FIXTURE
+    affected = target.parent if kind == "ancestor" else target
+    original = Path.lstat
+    def linked(candidate):
+        status = original(candidate)
+        if candidate == target and kind == "ancestor":
+            raise AssertionError("followed linked ancestor")
+        if candidate != affected:
+            return status
+        return SimpleNamespace(
+            st_mode=(stat.S_IFLNK | 0o777) if kind in {"symlink", "ancestor"} else status.st_mode,
+            st_file_attributes=0x400 if kind == "reparse" else 0,
+            st_nlink=2 if kind == "hardlink" else 1,
+        )
+    monkeypatch.setattr(Path, "lstat", linked)
+    with pytest.raises(ValueError, match="linked|nonregular"):
+        forward.read_blob(forward.FIXTURE)
+
+
+@pytest.mark.parametrize("mode", ["100755", "120000", "160000"])
+def test_phase_a_b4_test_source_rejects_wrong_git_mode(monkeypatch, mode):
+    from scripts import audit_phase_a_b4_test_source_successor as forward
+    original = forward.subprocess.check_output
+    def wrong(args, **kwargs):
+        if args == ["git", "ls-tree", "HEAD", "--", forward.FIXTURE]:
+            return (mode + " blob " + "0" * 40 + "\t" + forward.FIXTURE + "\n").encode()
+        return original(args, **kwargs)
+    monkeypatch.setattr(forward.subprocess, "check_output", wrong)
+    with pytest.raises(ValueError, match="mode"):
+        forward.read_blob(forward.FIXTURE)
+
+
+@pytest.mark.parametrize("mutation", ["stale", "predecessor", "source", "seal"])
+def test_phase_a_b4_test_source_rejects_stale_or_forged_inventory(mutation):
+    import json
+    from scripts import audit_phase_a_b4_test_source_successor as forward
+    value = json.loads(forward.read_blob(forward.INVENTORY))
+    if mutation == "stale":
+        value["generation"] = 354
+    elif mutation == "predecessor":
+        value["predecessor_inventory"]["canonical_sha256"] = "0" * 64
+    elif mutation == "source":
+        next(row for row in value["source_identities"] if row["path"] == forward.SOURCE)["lf_source_sha256"] = "0" * 64
+    if mutation != "seal":
+        value["canonical_sha256"] = forward.canonical_digest(value)
+    else:
+        value["canonical_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="inventory"):
+        forward.verify_first_inventory(value)
