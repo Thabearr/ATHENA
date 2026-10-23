@@ -55,7 +55,7 @@ def read_blob(path):
     mode = subprocess.check_output(['git', 'ls-tree', 'HEAD', '--', path], cwd=ROOT)
     if (type(mode) is not bytes or len(mode.splitlines()) != 1
             or mode.split(b'\t', 1)[0].split()[:2] != [b'100644', b'blob']):
-        raise ValueError('B4 test source evidence Git mode drift: ' + path)
+        raise ValueError('B4 test source evidence Git tree mode drift: ' + path)
     from runtime.source_identity import read_tracked_head_blob
     # The reader authenticates exact Git bytes and clean LF/CRLF worktree
     # materialization; no frozen fixture is normalized or rewritten on disk.
