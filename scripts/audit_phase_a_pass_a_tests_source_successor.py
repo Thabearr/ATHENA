@@ -10,6 +10,7 @@ import json
 from scripts import audit_phase_a_b4_test_source_successor as safe
 
 ROOT = safe.ROOT
+FROZEN_IDENTITY = {'git_blob_sha1': '051c5061ce9a620c714cac4538bd6da97b00abae', 'source_sha256': 'c8fea2ac437a6dd167d9e0c4e555706d796f6ba74a22e12431a57d4444ac20e2', 'byte_count': 319457}
 SOURCE = 'scripts/audit_core_01d_authority_reachability_review_a.py'
 RECEIPT = 'artifacts/architecture/phase_a_pass_a_tests_source_successor_v1.json'
 RECEIPT_SHA256 = 'b0c7aa65d49413835137dff39b4c90b8d0aa530c8a2c0e36603451e612eb4f4c'
@@ -86,7 +87,10 @@ def historical_workflow_source():
     if safe.identity(current) != shards.AFTER or safe.identity(before) != shards.BEFORE:
         raise ValueError('Pass-A Tests workflow or historical predecessor drift')
     # The frozen Pass-A row is an independent, immutable source anchor.
-    frozen = json.loads(read_blob(receipt()['frozen_inventory']['path']))
+    frozen_raw = read_blob(receipt()['frozen_inventory']['path'])
+    if safe.identity(frozen_raw) != FROZEN_IDENTITY:
+        raise ValueError('Pass-A frozen inventory bytes drift')
+    frozen = json.loads(frozen_raw)
     if (safe.canonical_digest(frozen) != receipt()['frozen_inventory']['canonical_sha256']
             or frozen.get('canonical_sha256') != receipt()['frozen_inventory']['canonical_sha256']):
         raise ValueError('Pass-A frozen inventory identity drift')
