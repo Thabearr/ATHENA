@@ -122,10 +122,10 @@ def verify_first_inventory(value):
     rows = [row for row in value.get('source_identities', []) if row.get('path') == SOURCE]
     if (type(value.get('generation')) is not int or value['generation'] != 355
             or canonical_digest(value) != value.get('canonical_sha256')
-            or value.get('predecessor_inventory') != {
+            or canonical(value.get('predecessor_inventory')) != canonical({
                 'generation': 354,
                 'path': 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v354.json',
-                'canonical_sha256': PREDECESSOR_SHA256, 'rewritten': False}
+                'canonical_sha256': PREDECESSOR_SHA256, 'rewritten': False})
             or len(rows) != 1 or rows[0].get('lf_source_sha256') != AFTER['source_sha256']):
         raise ValueError('B4 test source A2 successor inventory drift')
 
