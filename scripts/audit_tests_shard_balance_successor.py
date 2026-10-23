@@ -17,7 +17,7 @@ WORKFLOW = '.github/workflows/tests.yml'
 FIXTURE = 'tests/fixtures/architecture/revised_workflows/tests-pre-shard-balance-v1.yml'
 RECEIPT = 'artifacts/architecture/tests_shard_balance_successor_v1.json'
 SNAPSHOT = 'artifacts/architecture/p4_workflow_evolution_snapshots/tests_shard_balance_v1.json'
-RECEIPT_SHA256 = '359f23499d76e6610b70fd4a07f7e5946604f3e3f25aa09c06f60c79d0345918'
+RECEIPT_SHA256 = 'cafe21063a9fb7e4cf560269ef1b4acdd2a4214557c907dda68e5962528117c3'
 BEFORE_TREE = '77c3a70e38833756766e43a4a31ba2a7cc55a45d'
 AFTER_TREE = 'cd25278ee9e89459a33faeadc21f54ca2b99a6e5'
 BEFORE_B4_TREE = 'dd703507488f1495767b8e0055d71a9f488390bf'
@@ -30,7 +30,7 @@ IDENTITY_KEYS = ('git_blob_sha1', 'source_sha256')
 
 
 def canonical(value):
-    return (json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False,
+    return (json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False,
                        allow_nan=False) + '\n').encode('utf-8')
 
 
@@ -240,7 +240,7 @@ def install_context(context):
                 context['HISTORICAL_PREDECESSORS'][path], after=row['after'])
     context['HISTORICAL_PREDECESSORS'][WORKFLOW] = {
         'fixture': FIXTURE, **BEFORE, 'after': AFTER}
-    metadata = {'artifacts/architecture/tests_shard_balance_successor_v1.json': {'git_blob_sha1': '78aca5f006d13f5a216b48349d575a580f33fd78', 'source_sha256': '49fb4fa1e13b62d942353199a7284b4d90c9b2e5bed87dddea6f951599a74904', 'byte_count': 14272}, 'artifacts/architecture/p4_workflow_evolution_snapshots/tests_shard_balance_v1.json': {'git_blob_sha1': '432ab5b92ee14f3bf28659aa4bbf4575d8b877ac', 'source_sha256': 'a3c07131840ec2bf01f69d71bab8e339da35f4fbc42813827d52444ec1148f7c', 'byte_count': 29604}, 'tests/fixtures/architecture/revised_workflows/tests-pre-shard-balance-v1.yml': {'git_blob_sha1': 'a5eafa0afebc01abe02389739abf71c9ece2d1b4', 'source_sha256': '62dc0cd30df67534f424fddc9706a0b50f9b22ea86bc5b3c6a005e8c57006606', 'byte_count': 3322}, 'tests/fixtures/architecture/tests_shard_balance_v1/scripts--audit_phase_a_pc_upcoming_retention_successor.py.before.txt': {'git_blob_sha1': 'e37cd985d456528fc2d14595bd3238fc0e442516', 'source_sha256': 'ebaf5bcb6caabe259a8e3375b41d589b7d4b94a49f69687d0c1f75cc40ba0204', 'byte_count': 58081}, 'tests/fixtures/architecture/tests_shard_balance_v1/scripts--audit_data_01c_restore_portability.py.before.txt': {'git_blob_sha1': '48088a35086ac8c15928fd2d6d0039adf47fbd87', 'source_sha256': '834d84ef290197283b74de48b65d20c68d57f7a7e3a0121a9b23bd58b5069b84', 'byte_count': 21506}, 'tests/fixtures/architecture/tests_shard_balance_v1/scripts--audit_p4_workflow_evolution_ledger.py.before.txt': {'git_blob_sha1': '5b808f4b915fac6146b21bce76dbb578b9fa5633', 'source_sha256': '0c99fd321dbcdc6f09ffce3c7e0d62be0580d12809da3270e0a1dc82692da4e6', 'byte_count': 68531}, 'tests/fixtures/architecture/tests_shard_balance_v1/scripts--audit_core_01d_retained_workflow_status_v3.py.before.txt': {'git_blob_sha1': '5c793bafd0e9b43bcebce213b67e808ecdb12803', 'source_sha256': '823b12aa6492eb03c881d161ce9e3c20f0f6239ff89c57cb1e18d2243ea46436', 'byte_count': 42468}}
+    metadata = {'artifacts/architecture/tests_shard_balance_successor_v1.json': {'git_blob_sha1': 'a99b67cea439809742a5c67226041f67cc9c2a02', 'source_sha256': '3e02e0d579c7e89ef6790d8f7d9ea55b1ed6ef0ed43e73372a96c7a7e0b292eb', 'byte_count': 12783}, 'artifacts/architecture/p4_workflow_evolution_snapshots/tests_shard_balance_v1.json': {'git_blob_sha1': '3e40bd6469fc1eab8f59834c6c3675a2a33a3b88', 'source_sha256': '16154d825f20648c5e1284b5b3bbfa190d8ead647df2d1143a7a6c0f12546c4c', 'byte_count': 24786}, 'tests/fixtures/architecture/revised_workflows/tests-pre-shard-balance-v1.yml': {'git_blob_sha1': 'a5eafa0afebc01abe02389739abf71c9ece2d1b4', 'source_sha256': '62dc0cd30df67534f424fddc9706a0b50f9b22ea86bc5b3c6a005e8c57006606', 'byte_count': 3322}, 'tests/fixtures/architecture/tests_shard_balance_v1/scripts--audit_phase_a_pc_upcoming_retention_successor.py.before.txt': {'git_blob_sha1': 'e37cd985d456528fc2d14595bd3238fc0e442516', 'source_sha256': 'ebaf5bcb6caabe259a8e3375b41d589b7d4b94a49f69687d0c1f75cc40ba0204', 'byte_count': 58081}, 'tests/fixtures/architecture/tests_shard_balance_v1/scripts--audit_data_01c_restore_portability.py.before.txt': {'git_blob_sha1': '48088a35086ac8c15928fd2d6d0039adf47fbd87', 'source_sha256': '834d84ef290197283b74de48b65d20c68d57f7a7e3a0121a9b23bd58b5069b84', 'byte_count': 21506}, 'tests/fixtures/architecture/tests_shard_balance_v1/scripts--audit_p4_workflow_evolution_ledger.py.before.txt': {'git_blob_sha1': '5b808f4b915fac6146b21bce76dbb578b9fa5633', 'source_sha256': '0c99fd321dbcdc6f09ffce3c7e0d62be0580d12809da3270e0a1dc82692da4e6', 'byte_count': 68531}, 'tests/fixtures/architecture/tests_shard_balance_v1/scripts--audit_core_01d_retained_workflow_status_v3.py.before.txt': {'git_blob_sha1': '5c793bafd0e9b43bcebce213b67e808ecdb12803', 'source_sha256': '823b12aa6492eb03c881d161ce9e3c20f0f6239ff89c57cb1e18d2243ea46436', 'byte_count': 42468}}
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **metadata)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **metadata)
     context['ADDED_PYTHON_PATHS'] |= frozenset({
