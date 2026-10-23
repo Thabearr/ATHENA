@@ -59,7 +59,7 @@ def read_blob(path):
     mode = subprocess.check_output(['git', 'ls-tree', 'HEAD', '--', path], cwd=ROOT)
     if (type(mode) is not bytes or len(mode.splitlines()) != 1
             or mode.split(b'\t', 1)[0].split()[:2] != [b'100644', b'blob']):
-        raise ValueError('Tests successor evidence Git mode drift: ' + path)
+        raise ValueError('Tests successor evidence Git tree mode drift: ' + path)
     from runtime.source_identity import read_tracked_head_blob
     raw, _ = read_tracked_head_blob(ROOT, path)
     # Fixtures are LF Git objects even in a clean Windows CRLF worktree.
@@ -118,7 +118,7 @@ def predecessor_source(path, raw):
     if row is None:
         return raw
     if identity(raw) != row['after']:
-        raise ValueError('Tests successor current source drift: ' + path)
+        raise ValueError('Tests successor restoration current source drift: ' + path)
     before = read_blob(row['fixture'])
     if identity(before) != row['before']:
         raise ValueError('Tests successor source predecessor drift: ' + path)
@@ -160,7 +160,10 @@ def authenticate():
             raise ValueError('Tests successor regression source drift: ' + path)
     prior_path = value['prior_snapshot']['path']
     prior = json.loads(read_blob(prior_path))
-    current = json.loads(read_blob(SNAPSHOT))
+    snapshot_raw = read_blob(SNAPSHOT)
+    current = json.loads(snapshot_raw)
+    if canonical(current) != snapshot_raw:
+        raise ValueError('Tests successor snapshot bytes are not canonical')
     if (digest(prior) != value['prior_snapshot']['canonical_sha256']
             or digest(prior) != prior['canonical_sha256']
             or digest(current) != current['canonical_sha256']
