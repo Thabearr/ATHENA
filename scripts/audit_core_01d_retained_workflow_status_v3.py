@@ -101,6 +101,11 @@ def _source_identity(path: str, *, must_match_head: bool = True) -> dict[str, st
         historical = forward.identity(forward._raw_blob(forward.FIXTURE))
         return {"path": path, **{key: historical[key] for key in
                                 ("git_blob_sha1", "source_sha256")}}
+    if path == ".github/workflows/tests.yml":
+        from scripts import audit_tests_shard_balance_successor as shards
+        shards.authenticate()
+        return {"path": path, **{key: shards.BEFORE[key] for key in
+                                ("git_blob_sha1", "source_sha256")}}
     working = (ROOT / path).read_bytes()
     normalized = working.replace(b"\r\n", b"\n")
     blob = subprocess.run(

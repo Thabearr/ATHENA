@@ -131,11 +131,12 @@ def authenticate():
         raise ValueError("legacy workflow differs from the path-exact retention successor")
     raw_tree = subprocess.check_output(
         ["git", "rev-parse", "HEAD:.github/workflows"], cwd=ROOT, text=True).strip()
+    from scripts import audit_tests_shard_balance_successor as shards
+    raw_tree, entries = shards.previous_workflow_context(raw_tree)
     if raw_tree != AFTER_TREE:
         raise ValueError("retention successor tree changed")
     # Recompute the one-path inverse from HEAD; no ancestor object or mutable
     # newly computed baseline is trusted, including in depth-one hosted CI.
-    entries = subprocess.check_output(["git", "ls-tree", raw_tree], cwd=ROOT)
     body = b""
     replaced = 0
     for line in entries.splitlines():
@@ -158,6 +159,8 @@ def authenticate():
 
 def project_b4_tree(observed):
     """Add precisely one current edge; every old B4/D5 identity stays pinned."""
+    from scripts import audit_tests_shard_balance_successor as shards
+    observed = shards.project_b4_tree(observed)
     if observed != AFTER_B4_TREE:
         return observed
     authenticate()
@@ -165,6 +168,8 @@ def project_b4_tree(observed):
 
 
 def project_p4_observed(observed, head_tree):
+    from scripts import audit_tests_shard_balance_successor as shards
+    observed, head_tree = shards.previous_p4_context(observed, head_tree)
     if head_tree != AFTER_TREE:
         return None
     authenticate()
@@ -566,8 +571,9 @@ def authenticate_published_restoration():
         if (expected["active_chain_member"] is not False or expected["authority_granted"] is not False
                 or identity(_raw_blob(path)) != {key: expected[key] for key in BEFORE}):
             raise ValueError("restoration archived mutation drift: " + path)
+    from scripts import audit_tests_shard_balance_successor as shards
     for path, descriptor in receipt["source_forward"].items():
-        if identity(_raw_blob(path)) != descriptor["after"]:
+        if identity(shards.predecessor_source(path, _raw_blob(path))) != descriptor["after"]:
             raise ValueError("restoration current source drift: " + path)
     for path, fixture_key in ((RESTORED_V3_PATH, "fixture"),
                               ("scripts/audit_data_01c_app_store_complete.py", "current_predecessor_fixture")):
@@ -576,7 +582,8 @@ def authenticate_published_restoration():
         if identity(before) != {key: descriptor[key] for key in BEFORE}:
             raise ValueError("restoration source predecessor drift: " + path)
         old, new = descriptor["patch_before"].encode(), descriptor["patch_after"].encode()
-        if before.count(old) != 1 or _raw_blob(path) != before.replace(old, new):
+        current = shards.predecessor_source(path, _raw_blob(path))
+        if before.count(old) != 1 or current != before.replace(old, new):
             raise ValueError("restoration source exceeds the exact historical projection: " + path)
     return receipt
 
@@ -586,5 +593,13 @@ _authenticate_original_retention = authenticate
 
 def authenticate():
     """Authenticate source-only restoration before the unchanged P4 proof."""
+    from scripts import audit_tests_shard_balance_successor as shards
+    shards.authenticate()
     authenticate_published_restoration()
     return _authenticate_original_retention()
+
+
+# Separate owner-authorized Tests-only edge; all published retention receipts
+# and P4 snapshots remain immutable inputs.
+from scripts import audit_tests_shard_balance_successor as _tests_shards
+_tests_shards.install_context(globals())

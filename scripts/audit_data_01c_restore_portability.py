@@ -207,7 +207,11 @@ def authenticate_workflow():
         path = ".github/workflows/" + row["name"]
         if path in b4.B4_WORKFLOW_PREDECESSORS:
             continue
-        if path == retention.WORKFLOW and actual_tree == retention.AFTER_TREE:
+        from scripts import audit_tests_shard_balance_successor as shards
+        if path == shards.WORKFLOW and actual_tree == shards.AFTER_TREE:
+            shards.authenticate()
+            continue
+        if path == retention.WORKFLOW and shards.project_tree(actual_tree) == retention.AFTER_TREE:
             retention.authenticate()
             continue
         source = (directory / row["name"]).read_bytes().replace(b"\r\n", b"\n")
@@ -231,7 +235,8 @@ def historical_workflow_tree(observed_tree):
     _, d5_tree = d5_successor_context()
     _, tree = authenticate_workflow()
     actual_tree = authenticated_current_workflow_tree()
-    if observed_tree not in {d5_tree, tree, actual_tree}:
+    from scripts import audit_tests_shard_balance_successor as shards
+    if observed_tree not in {d5_tree, tree, actual_tree, shards.BEFORE_TREE}:
         raise ValueError("unknown PORT-02C source-forward workflow tree")
     return PREDECESSOR_TREE
 
