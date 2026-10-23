@@ -440,8 +440,8 @@ def _raw_blob(path):
     from runtime.source_identity import read_tracked_head_blob
     _safe_materialized(path)
     mode = subprocess.check_output(["git", "ls-tree", "HEAD", "--", path], cwd=ROOT)
-    if len(mode.splitlines()) != 1 or mode.split(b"\t", 1)[0].split()[:2] != [b"100644", b"blob"]:
-        raise ValueError("retention source/evidence Git mode drift: " + path)
+    if type(mode) is not bytes or len(mode.splitlines()) != 1 or mode.split(b"\t", 1)[0].split()[:2] != [b"100644", b"blob"]:
+        raise ValueError("retention source/evidence Git tree mode drift: " + path)
     raw, _ = read_tracked_head_blob(ROOT, path)
     return raw
 
@@ -530,19 +530,21 @@ def authenticate_provisional_archive():
 
 # Source-only restoration successor. The original P4 receipt and transition
 # remain at their original paths and identities; no workflow transition is added.
-RESTORATION_RECEIPT = 'artifacts/architecture/phase_a_published_evidence_restoration_v2.json'
-RESTORATION_SHA256 = 'abdcc786c16d37ba39f68885ae6c6de7d779018567d2d3800dbfff2fe87fd4e7'
+RESTORATION_RECEIPT = 'artifacts/architecture/phase_a_published_evidence_restoration_v3.json'
+RESTORATION_SHA256 = '99bc32331353735fef512e45c788ba8a1dd8887cee75f94bb40ccf9d9b51d1d0'
 RESTORED_V3_PATH = 'scripts/audit_core_01d_retained_workflow_status_v3.py'
 _RESTORATION = _json(RESTORATION_RECEIPT, RESTORATION_SHA256)
 HISTORICAL_PREDECESSORS = dict(HISTORICAL_PREDECESSORS)
 HISTORICAL_PREDECESSORS['tests/test_core_01d_exact_pr_trigger_disposition_b1.py'] = dict(HISTORICAL_PREDECESSORS['tests/test_core_01d_exact_pr_trigger_disposition_b1.py'],
     after=_RESTORATION["source_forward"]['tests/test_core_01d_exact_pr_trigger_disposition_b1.py']["after"])
+HISTORICAL_PREDECESSORS["scripts/audit_data_01c_app_store_complete.py"] = dict(HISTORICAL_PREDECESSORS["scripts/audit_data_01c_app_store_complete.py"],
+    after=_RESTORATION["source_forward"]["scripts/audit_data_01c_app_store_complete.py"]["after"])
 _v3_forward = _RESTORATION["source_forward"][RESTORED_V3_PATH]
 HISTORICAL_PREDECESSORS[RESTORED_V3_PATH] = {key: _v3_forward[key] for key in
     ("fixture", "git_blob_sha1", "source_sha256", "byte_count", "after")}
 BOOTSTRAP_AFTER = dict(BOOTSTRAP_AFTER, **{path: row["after"] for path, row in
                                       _RESTORATION["source_forward"].items()})
-_RESTORATION_METADATA = {'tests/fixtures/architecture/phase_a_retention/published-mutations-8a727926/phase_a_pc_upcoming_retention_integrated_v1.json': {'git_blob_sha1': 'fec9ed0a31e3f1d8f1d21f67a101a744e29f4c15', 'source_sha256': '897f74bd23cb83ba3c2b479a01f7fe0f84516be01fe34a3667f2bb765914ae98', 'byte_count': 46230}, 'tests/fixtures/architecture/phase_a_retention/published-mutations-8a727926/phase_a_retention_b4_integrated_source_forward_v1.json': {'git_blob_sha1': '29940bec9bf60ccbd4c0a29a6701e8869ced2525', 'source_sha256': '32882dd15073d1d887221469059de6fb4ce69097e4dd2dfa416dc456556d9b13', 'byte_count': 1120}, 'tests/fixtures/architecture/phase_a_retention/historical_consumers/scripts--audit_core_01d_retained_workflow_status_v3.py.txt': {'git_blob_sha1': '6121d896de477c4384bcdb41a3d55f691227d2fd', 'source_sha256': 'c55e244adb14979b7da384ad46e9fdf7958f15ec03dfa4250747a8091088d600', 'byte_count': 41918}, 'artifacts/architecture/phase_a_published_evidence_restoration_v2.json': {'git_blob_sha1': '6640dd2a872fe9cd6d60a27b381f9860d0638da5', 'source_sha256': '3f989564c60a8586c496f50f7ff791ca59a6438a3f04255c7dd5cae1e53fcf97', 'byte_count': 8647}, 'tests/fixtures/architecture/phase_a_retention/published-mutations-8a727926/p4-snapshot--phase_a_pc_upcoming_retention_integrated_v1.json': {'git_blob_sha1': '96f427e9faa2a071548f43f805d52e41a78a2e44', 'source_sha256': 'f521fa30f72787aa1a61d102619160062414ac9ae3527b52d0103c50569759f4', 'byte_count': 23283}}
+_RESTORATION_METADATA = {'tests/fixtures/architecture/phase_a_retention/published-mutations-8a727926/phase_a_pc_upcoming_retention_integrated_v1.json': {'git_blob_sha1': 'fec9ed0a31e3f1d8f1d21f67a101a744e29f4c15', 'source_sha256': '897f74bd23cb83ba3c2b479a01f7fe0f84516be01fe34a3667f2bb765914ae98', 'byte_count': 46230}, 'tests/fixtures/architecture/phase_a_retention/published-mutations-8a727926/phase_a_retention_b4_integrated_source_forward_v1.json': {'git_blob_sha1': '29940bec9bf60ccbd4c0a29a6701e8869ced2525', 'source_sha256': '32882dd15073d1d887221469059de6fb4ce69097e4dd2dfa416dc456556d9b13', 'byte_count': 1120}, 'tests/fixtures/architecture/phase_a_retention/historical_consumers/scripts--audit_core_01d_retained_workflow_status_v3.py.txt': {'git_blob_sha1': '6121d896de477c4384bcdb41a3d55f691227d2fd', 'source_sha256': 'c55e244adb14979b7da384ad46e9fdf7958f15ec03dfa4250747a8091088d600', 'byte_count': 41918}, 'artifacts/architecture/phase_a_published_evidence_restoration_v2.json': {'git_blob_sha1': '6640dd2a872fe9cd6d60a27b381f9860d0638da5', 'source_sha256': '3f989564c60a8586c496f50f7ff791ca59a6438a3f04255c7dd5cae1e53fcf97', 'byte_count': 8647}, 'tests/fixtures/architecture/phase_a_retention/published-mutations-8a727926/p4-snapshot--phase_a_pc_upcoming_retention_integrated_v1.json': {'git_blob_sha1': '96f427e9faa2a071548f43f805d52e41a78a2e44', 'source_sha256': 'f521fa30f72787aa1a61d102619160062414ac9ae3527b52d0103c50569759f4', 'byte_count': 23283}, 'tests/fixtures/architecture/phase_a_retention/historical_consumers/scripts--audit_data_01c_app_store_complete-current-phase-a.py.txt': {'git_blob_sha1': 'b90f3a4895370767b8695f2a6a86064e4b264a7d', 'source_sha256': '3a28de68ef80d732d0167a169af7ac43e9e2849c2f6d844fd0bb5bb7bd5fa39b', 'byte_count': 28110}, 'artifacts/architecture/phase_a_published_evidence_restoration_v3.json': {'git_blob_sha1': '245b069e04e30d92810d257ffc43c21cdd61361e', 'source_sha256': '0794ca41f6c1fbb0cfe57939fd1b20fd356b269ae7f0eb89e5d768573ef1a056', 'byte_count': 9955}}
 ADDED_METADATA = dict(ADDED_METADATA, **_RESTORATION_METADATA)
 BOOTSTRAP_METADATA = dict(BOOTSTRAP_METADATA, **_RESTORATION_METADATA)
 
@@ -567,13 +569,15 @@ def authenticate_published_restoration():
     for path, descriptor in receipt["source_forward"].items():
         if identity(_raw_blob(path)) != descriptor["after"]:
             raise ValueError("restoration current source drift: " + path)
-    descriptor = receipt["source_forward"][RESTORED_V3_PATH]
-    before = _raw_blob(descriptor["fixture"])
-    if identity(before) != {key: descriptor[key] for key in BEFORE}:
-        raise ValueError("restoration source predecessor drift")
-    old, new = descriptor["patch_before"].encode(), descriptor["patch_after"].encode()
-    if before.count(old) != 1 or _raw_blob(RESTORED_V3_PATH) != before.replace(old, new):
-        raise ValueError("restoration source exceeds the exact historical projection")
+    for path, fixture_key in ((RESTORED_V3_PATH, "fixture"),
+                              ("scripts/audit_data_01c_app_store_complete.py", "current_predecessor_fixture")):
+        descriptor = receipt["source_forward"][path]
+        before = _raw_blob(descriptor[fixture_key])
+        if identity(before) != {key: descriptor[key] for key in BEFORE}:
+            raise ValueError("restoration source predecessor drift: " + path)
+        old, new = descriptor["patch_before"].encode(), descriptor["patch_after"].encode()
+        if before.count(old) != 1 or _raw_blob(path) != before.replace(old, new):
+            raise ValueError("restoration source exceeds the exact historical projection: " + path)
     return receipt
 
 

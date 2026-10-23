@@ -408,6 +408,9 @@ def audit(latest=None):
         retention.authenticate()
         evolved |= {"tests/test_p4_2_athena_run_workflow.py",
                     "tests/test_p4_4a_workflow_evolution_guard.py"}
+        # The source-only restoration contract authenticates this exact V3
+        # historical identity seam before the unchanged D5/A2 comparison.
+        evolved |= {retention.RESTORED_V3_PATH}
         # UX-01A's APP auditor now authenticates the UI successor while the
         # immutable D5 predecessor remains unchanged; bind its current bytes by A2.
         evolved |= {"scripts/audit_app_01a_local_shell.py"}
