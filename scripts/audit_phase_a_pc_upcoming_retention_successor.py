@@ -614,3 +614,14 @@ _authenticate_before_b4_test_source = authenticate
 def authenticate():
     _b4_test_source.authenticate_core()
     return _authenticate_before_b4_test_source()
+
+
+# Source-only Pass-A historical Tests view; current workflow stays unchanged.
+from scripts import audit_phase_a_pass_a_tests_source_successor as _pass_a_tests
+_pass_a_tests.install_context(globals())
+_authenticate_before_pass_a_tests = authenticate
+
+
+def authenticate():
+    _pass_a_tests.authenticate_core()
+    return _authenticate_before_pass_a_tests()

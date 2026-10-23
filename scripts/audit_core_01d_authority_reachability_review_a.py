@@ -152,6 +152,12 @@ def _fresh_holdout_predecessor_source(path):
  return raw
 
 def source_bytes(path):
+ if path == '.github/workflows/tests.yml':
+  from scripts import audit_phase_a_pass_a_tests_source_successor as forward
+  try:
+   return forward.historical_workflow_source()
+  except ValueError as exc:
+   require(False, 'exact Tests historical source-forward failed: '+str(exc))
  if path == '.github/workflows/current-shadow-all-market.yml':
   from scripts import audit_phase_a_pc_upcoming_retention_successor as forward
   try:

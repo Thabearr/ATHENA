@@ -80,6 +80,8 @@ def receipt():
 
 def predecessor_source(path, raw):
     """An exact new source may expose its own pinned previous view only."""
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    raw = pass_a.predecessor_source(path, raw)
     value = receipt()
     if path == SOURCE:
         row = {'fixture': FIXTURE, 'before': BEFORE, 'after': AFTER,
