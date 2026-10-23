@@ -235,7 +235,7 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
     retention_additions = retention.ADDED_PYTHON_PATHS
     assert len(retention_additions) == 3
     assert retention_additions <= added
-    assert {first_added_generation[path] for path in retention_additions} == {338}
+    assert {first_added_generation[path] for path in retention_additions} == {348}
     assert len(added - {e3_projection_path} - retention_additions) == 94
     assert len(added - retention_additions) == 95
     assert first_added_generation["runtime/current_shadow_operation_authority.py"] == 263
