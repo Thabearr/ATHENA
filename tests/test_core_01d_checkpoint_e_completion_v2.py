@@ -145,3 +145,86 @@ def test_local_test_products_are_not_authority_evidence(monkeypatch):
   return original(*args)
  monkeypatch.setattr(review.retention.v4.v3,'_git',extra)
  with pytest.raises(AssertionError,match='unapproved untracked source'):current.authenticate_current_scope()
+
+
+def test_checkpoint_e_uses_only_the_authenticated_historical_tests_workflow():
+ from scripts import audit_checkpoint_e_workflows as checkpoint
+ from scripts import audit_phase_a_pass_a_tests_source_successor as tests_source
+ from scripts import audit_tests_shard_balance_successor as shards
+
+ base, predecessors = checkpoint.base_input(include_scan_source_predecessors=True)
+ history = checkpoint.history_input()
+ predecessor = tests_source.historical_workflow_source()
+ assert predecessor == shards.read_blob(shards.FIXTURE)
+ assert shards.identity(predecessor) == shards.BEFORE
+ assert predecessors[shards.WORKFLOW] == predecessor
+ expected = checkpoint.build_matrix(base, history, predecessors)
+ assert expected == checkpoint.strict(checkpoint.read(checkpoint.MATRIX_PATH))
+
+ tampered = dict(predecessors)
+ tampered[shards.WORKFLOW] = predecessor + b"\n"
+ with pytest.raises(ValueError, match="predecessor|immutable source inventory"):
+  checkpoint.build_matrix(base, history, tampered)
+ unapproved = dict(predecessors)
+ unapproved["tests/unrelated.py"] = b"unapproved"
+ with pytest.raises(ValueError, match="unapproved source predecessor"):
+  checkpoint.build_matrix(base, history, unapproved)
+
+
+def test_a2_depth_one_tests_text_is_the_exact_v1_predecessor(monkeypatch):
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ from scripts import audit_tests_shard_balance_successor as shards
+
+ expected = shards.read_blob(shards.FIXTURE)
+ assert shards.identity(expected) == shards.BEFORE
+ assert a2.pinned_historical_text(shards.WORKFLOW).encode("utf-8") == expected
+ original = shards.read_blob
+ monkeypatch.setattr(
+  shards, "read_blob",
+  lambda path: original(path) + b"\n" if path == shards.FIXTURE else original(path),
+ )
+ with pytest.raises(ValueError, match="predecessor|identity|drift"):
+  a2.pinned_historical_text(shards.WORKFLOW)
+
+
+def test_b1_generation_assertion_uses_only_the_authenticated_historical_source(monkeypatch):
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+
+ current = pass_a.read_blob(pass_a.B1_SOURCE)
+ historical = pass_a.read_blob(pass_a.B1_FIXTURE)
+ assert pass_a.safe.identity(current) == pass_a.B1_V2_AFTER
+ assert pass_a.safe.identity(historical) == pass_a.B1_BEFORE
+ assert pass_a.predecessor_source(pass_a.B1_SOURCE, current) == historical
+ assert pass_a.predecessor_source("tests/unrelated.py", b"unrelated") == b"unrelated"
+
+ with pytest.raises(ValueError, match="identity drift"):
+  pass_a.predecessor_source(pass_a.B1_SOURCE, current + b"\n")
+
+ original = pass_a.read_blob
+ monkeypatch.setattr(
+  pass_a, "read_blob",
+  lambda path: original(path) + b"\n" if path == pass_a.B1_FIXTURE else original(path),
+ )
+ with pytest.raises(ValueError, match="identity drift|exact reviewed patch"):
+  pass_a.predecessor_source(pass_a.B1_SOURCE, current)
+
+
+def test_a2_historical_text_source_forward_is_exact_and_path_limited(monkeypatch):
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+
+ row = pass_a._a2_text_receipt()["source_forward"][pass_a.A2_TEXT_SOURCE]
+ current = pass_a.read_blob(pass_a.A2_TEXT_SOURCE)
+ historical = pass_a.read_blob(row["fixture"])
+ assert pass_a._a2_text_predecessor_source(pass_a.A2_TEXT_SOURCE, current) == historical
+ assert pass_a._a2_text_predecessor_source("scripts/unrelated.py", b"current") == b"current"
+
+ with pytest.raises(ValueError, match="identity drift"):
+  pass_a._a2_text_predecessor_source(pass_a.A2_TEXT_SOURCE, current + b"\n")
+
+ original = pass_a.read_blob
+ monkeypatch.setattr(
+  pass_a, "read_blob",
+  lambda path: original(path) + b"\n" if path == row["fixture"] else original(path),
+ )
+ with pytest.raises(ValueError, match="identity drift"):
+  pass_a._a2_text_predecessor_source(pass_a.A2_TEXT_SOURCE, current)

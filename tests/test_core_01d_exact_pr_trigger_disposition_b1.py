@@ -230,8 +230,39 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
     e3_projection_path = "tests/test_core_01d_workflow_consolidation_e3_source_projection.py"
     assert e3_projection_path in added
     assert first_added_generation[e3_projection_path] == 319
-    assert len(added - {e3_projection_path}) == 94
-    assert len(added) == 95
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    retention.authenticate()
+    retention_additions = frozenset({
+        "scripts/audit_phase_a_pc_upcoming_retention_successor.py",
+        "scripts/verify_current_shadow_pc_upcoming_archive.py",
+        "tests/test_current_shadow_pc_upcoming_archive_retention.py",
+    })
+    assert retention_additions <= added
+    assert {path: first_added_generation[path] for path in retention_additions} == {
+        path: 348 for path in retention_additions
+    }
+
+    # The V348 assertion is generation-specific. Later authenticated source
+    # successors append their own paths and must remain in the composed A2
+    # view instead of being miscounted as V348 retention additions.
+    from scripts import audit_tests_shard_balance_successor as shards
+    from scripts import audit_phase_a_b4_test_source_successor as b4_test_source
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a_tests
+    shards.authenticate()
+    b4_test_source.authenticate_core()
+    pass_a_tests.authenticate_core()
+    later_additions = {
+        "scripts/audit_tests_shard_balance_successor.py": 353,
+        "tests/test_tests_shard_balance_successor.py": 353,
+        "scripts/audit_phase_a_b4_test_source_successor.py": 355,
+        pass_a_tests.SOURCE: 358,
+        pass_a_tests.TEST: 358,
+    }
+    assert retention.ADDED_PYTHON_PATHS == retention_additions | set(later_additions)
+    assert set(later_additions) <= added
+    assert {path: first_added_generation[path] for path in later_additions} == later_additions
+    assert len(added - {e3_projection_path} - retention_additions - set(later_additions)) == 94
+    assert len(added - retention_additions - set(later_additions)) == 95
     assert first_added_generation["runtime/current_shadow_operation_authority.py"] == 263
     assert first_added_generation[
         "tests/test_core_01d_pass_a_v300_source_predecessors.py"
@@ -258,3 +289,40 @@ def test_no_replay_or_mutation_authority_was_exercised(receipt):
     assert receipt["workflow_retirement_count"] == receipt["workflow_deletion_count"] == 0
     assert receipt["checkpoint_e_status"] == receipt["p4_4_status"] == "INCOMPLETE"
     assert receipt["criteria_11_and_14_remain_false"] is True
+
+
+def test_phase_a_restoration_preserves_published_v1_and_archived_mutations():
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as forward
+    receipt = forward.authenticate_published_restoration()
+    assert receipt["authority_granted"] is False
+    assert receipt["workflow_changed"] is False
+    assert receipt["active_inventory_predecessor"]["generation"] == 350
+
+
+@pytest.mark.parametrize("which", ["restored", "archived", "predecessor", "current"])
+def test_phase_a_restoration_rejects_evidence_or_source_tamper(monkeypatch, which):
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as forward
+    receipt = forward._json(forward.RESTORATION_RECEIPT, forward.RESTORATION_SHA256)
+    logical = {
+        "restored": next(iter(receipt["restored_evidence"])),
+        "archived": next(iter(receipt["archived_mutations"])),
+        "predecessor": receipt["source_forward"][forward.RESTORED_V3_PATH]["fixture"],
+        "current": forward.RESTORED_V3_PATH,
+    }[which]
+    original = forward._raw_blob
+    monkeypatch.setattr(forward, "_raw_blob", lambda path: original(path) + b" " if path == logical else original(path))
+    with pytest.raises(ValueError, match="restoration"):
+        forward.authenticate_published_restoration()
+
+
+def test_phase_a_retained_v3_projects_only_the_authenticated_legacy_workflow(monkeypatch):
+    from scripts import audit_core_01d_retained_workflow_status_v3 as retained
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as forward
+    identity = retained._source_identity(forward.WORKFLOW)
+    assert identity == {"path": forward.WORKFLOW, **{key: forward.BEFORE[key] for key in
+                                                   ("git_blob_sha1", "source_sha256")}}
+    def forbidden():
+        raise AssertionError("unrelated path must not enter retention projection")
+    monkeypatch.setattr(forward, "authenticate", forbidden)
+    other = retained._source_identity(".github/workflows/athena-run.yml")
+    assert other["path"] == ".github/workflows/athena-run.yml"

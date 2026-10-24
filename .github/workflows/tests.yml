@@ -54,7 +54,43 @@ jobs:
           files = sorted(Path("tests").rglob("test_*.py"))
           if not files:
               raise SystemExit("no pytest files discovered under tests/")
-          selected = files[shard_number - 1 :: shard_count]
+          if shard_count != 8 or not 1 <= shard_number <= shard_count:
+              raise SystemExit("the reviewed partition requires exactly eight shards")
+          # Exact-head hosted timings from run 40086219683 showed the long V1
+          # checkpoint and retained-status reconstructions dominating shards 1
+          # and 7. Move the V2 checkpoint to 7 and retained-status work to the
+          # freed shard 3; use shard 1 for V10 and shard 6 for the V1 checkpoint.
+          # Consolidation moves with V2 to preserve headroom.
+          # All remaining files are still assigned once in sorted round-robin.
+          heavy = {
+              "tests/test_core_01d_checkpoint_e_completion.py": 6,
+              "tests/test_lg_a_worker_launch_failure_remediation.py": 2,
+              "tests/test_core_01d_checkpoint_e_completion_v2.py": 7,
+              "tests/test_core_01d_port02c_trigger_authority_b6.py": 4,
+              "tests/test_core_01d_checkpoint_e_completion_v9.py": 5,
+              "tests/test_core_01d_checkpoint_e_completion_v10.py": 1,
+              "tests/test_core_01d_retained_workflow_status.py": 3,
+              "tests/test_core_01d_canonical_drive_transfer_completed_history.py": 8,
+              "tests/test_core_01d_win_either_half_trigger_authority_b7.py": 5,
+              "tests/test_core_01d_workflow_consolidation.py": 7,
+              "tests/test_core_01d_authority_reachability_review_a.py": 1,
+              "tests/test_core_01d_workflow_consolidation_e3_source_projection.py": 4,
+          }
+          if set(heavy) - {path.as_posix() for path in files}:
+              raise SystemExit("reviewed heavy test file is missing")
+          ordinary = [path for path in files if path.as_posix() not in heavy]
+          assignments = {
+              path.as_posix(): index % shard_count + 1
+              for index, path in enumerate(ordinary)
+          }
+          assignments.update(heavy)
+          if (len(assignments) != len(files)
+                  or set(assignments) != {path.as_posix() for path in files}
+                  or any(type(value) is not int or not 1 <= value <= 8
+                         for value in assignments.values())):
+              raise SystemExit("test partition is not complete and exactly once")
+          selected = [path for path in files
+                      if assignments[path.as_posix()] == shard_number]
           if not selected:
               raise SystemExit(
                   f"test shard {shard_number}/{shard_count} selected no files"

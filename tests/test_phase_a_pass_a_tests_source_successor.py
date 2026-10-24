@@ -1,0 +1,124 @@
+"""Exact historical reachability, with current source qualification retained."""
+from copy import deepcopy
+from pathlib import Path
+from types import SimpleNamespace
+import stat
+
+import pytest
+
+from scripts import audit_phase_a_pass_a_tests_source_successor as forward
+from scripts import audit_tests_shard_balance_successor as shards
+
+
+def test_pass_a_inventory_matches_frozen_source_and_edges():
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    frozen = review.authenticate_inventory()
+    assert frozen['canonical_sha256'] == review.INVENTORY_SHA
+    assert review.source_bytes(shards.WORKFLOW) == forward.read_blob(shards.FIXTURE)
+    assert shards.identity(forward.read_blob(shards.WORKFLOW)) == shards.AFTER
+    # Metadata/caller discovery still reads actual YAML: no projection needed.
+    assert review.workflow_metadata(shards.WORKFLOW) == frozen['workflow_metadata'][shards.WORKFLOW]
+    assert review.discover(shards.WORKFLOW) == frozen['static_discovery_edges'][shards.WORKFLOW]
+
+
+def test_pass_a_source_successor_is_exact_and_does_not_map_unknown_paths():
+    value = forward.authenticate_core()
+    assert value['authority_granted'] is value['workflow_changed'] is False
+    for path, row in forward.EDGES.items():
+        assert forward.predecessor_source(path, forward.read_blob(path)) == forward.read_blob(row['fixture'])
+    assert forward.predecessor_source('domain/unrelated.py', b'unrelated') == b'unrelated'
+
+
+@pytest.mark.parametrize('which', ['current', 'predecessor', 'receipt'])
+def test_pass_a_source_successor_rejects_changed_evidence(monkeypatch, which):
+    row = forward.EDGES[forward.SOURCE]
+    target = {'current': forward.SOURCE, 'predecessor': row['fixture'], 'receipt': forward.RECEIPT}[which]
+    original = forward.read_blob
+    monkeypatch.setattr(forward, 'read_blob', lambda p: original(p) + (b' ' if p == target else b''))
+    with pytest.raises(ValueError, match='source|receipt|predecessor'):
+        forward.authenticate_core()
+
+
+@pytest.mark.parametrize('which', ['workflow', 'fixture', 'frozen'])
+def test_pass_a_historical_workflow_rejects_tampered_bytes(monkeypatch, which):
+    targets = {'workflow': shards.WORKFLOW, 'fixture': shards.FIXTURE,
+               'frozen': 'tests/fixtures/core_01d/authority-reachability-pass-a-source-inventory-v1.json'}
+    original = forward.read_blob
+    monkeypatch.setattr(forward, 'read_blob', lambda p: original(p) + (b' ' if p == targets[which] else b''))
+    with pytest.raises(ValueError, match='workflow|predecessor|inventory'):
+        forward.historical_workflow_source()
+
+
+@pytest.mark.parametrize('which', ['source', 'generation', 'missing'])
+def test_pass_a_requires_current_a2_before_historical_substitution(monkeypatch, which):
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    value = deepcopy(a2.authenticate_inventory())
+    if which == 'generation':
+        value['generation'] = 357
+    else:
+        for row in value['source_identities']:
+            if row['path'] == forward.SOURCE:
+                row['lf_source_sha256'] = '0' * 64
+        if which == 'missing':
+            value['source_identities'] = [r for r in value['source_identities'] if r['path'] != forward.SOURCE]
+    monkeypatch.setattr(a2, 'authenticate_inventory', lambda: value)
+    with pytest.raises(ValueError, match='latest A2'):
+        forward.historical_workflow_source()
+
+
+def test_pass_a_has_no_caller_selected_tree_and_keeps_live_fence():
+    from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+    with pytest.raises(TypeError):
+        forward.historical_workflow_source(shards.BEFORE_TREE)
+    for stale in (shards.BEFORE_TREE, 'f' * 40):
+        with pytest.raises(AssertionError, match='not for the checked-out tree'):
+            b4.project_b4_workflow_tree(stale)
+
+
+@pytest.mark.parametrize('kind', ['symlink', 'reparse', 'hardlink', 'ancestor'])
+def test_pass_a_fixture_rejects_linked_evidence_before_read(monkeypatch, kind):
+    target = forward.ROOT / forward.EDGES[forward.SOURCE]['fixture']
+    affected = target.parent if kind == 'ancestor' else target
+    original = Path.lstat
+    def linked(candidate):
+        status = original(candidate)
+        if candidate == target and kind == 'ancestor':
+            raise AssertionError('followed linked ancestor')
+        if candidate != affected:
+            return status
+        return SimpleNamespace(st_mode=(stat.S_IFLNK | 0o777) if kind in {'symlink', 'ancestor'} else status.st_mode,
+                               st_file_attributes=0x400 if kind == 'reparse' else 0,
+                               st_nlink=2 if kind == 'hardlink' else 1)
+    monkeypatch.setattr(Path, 'lstat', linked)
+    with pytest.raises(ValueError, match='linked|nonregular'):
+        forward.read_blob(forward.EDGES[forward.SOURCE]['fixture'])
+
+
+@pytest.mark.parametrize('mode', ['100755', '120000', '160000'])
+def test_pass_a_fixture_rejects_wrong_mode(monkeypatch, mode):
+    safe = forward.safe
+    fixture = forward.EDGES[forward.SOURCE]['fixture']
+    original = safe.subprocess.check_output
+    def changed(args, **kwargs):
+        if args == ['git', 'ls-tree', 'HEAD', '--', fixture]:
+            return (mode + ' blob ' + '0' * 40 + '\t' + fixture + '\n').encode()
+        return original(args, **kwargs)
+    monkeypatch.setattr(safe.subprocess, 'check_output', changed)
+    with pytest.raises(ValueError, match='mode'):
+        forward.read_blob(fixture)
+
+
+def test_pass_a_rejects_changed_discovery_line_or_frozen_inventory(monkeypatch):
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    expected = review.read_json(review.INVENTORY_PATH)
+    changed = deepcopy(expected)
+    changed['static_discovery_edges'][shards.WORKFLOW][6]['line'] += 1
+    monkeypatch.setattr(review, 'build_inventory', lambda: changed)
+    with pytest.raises(AssertionError, match='discovered edges drifted'):
+        review.authenticate_inventory()
+    changed = deepcopy(expected)
+    changed['canonical_sha256'] = '0' * 64
+    original = review.read_json
+    monkeypatch.setattr(review, 'read_json', lambda p: changed if p == review.INVENTORY_PATH else original(p))
+    with pytest.raises(AssertionError, match='inventory seal drift'):
+        review.authenticate_inventory()

@@ -404,6 +404,13 @@ def audit(latest=None):
         "scripts/audit_core_01d_owner_one_shot_issue_comment_authority_b3.py",
         "scripts/audit_core_01d_frozen_artifact_replay_authority_b5.py",
         "scripts/audit_core_01d_scheduled_shadow_ownership.py"}
+        from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+        retention.authenticate()
+        evolved |= {"tests/test_p4_2_athena_run_workflow.py",
+                    "tests/test_p4_4a_workflow_evolution_guard.py"}
+        # The source-only restoration contract authenticates this exact V3
+        # historical identity seam before the unchanged D5/A2 comparison.
+        evolved |= {retention.RESTORED_V3_PATH}
         # UX-01A's APP auditor now authenticates the UI successor while the
         # immutable D5 predecessor remains unchanged; bind its current bytes by A2.
         evolved |= {"scripts/audit_app_01a_local_shell.py"}

@@ -478,7 +478,11 @@ def a2_historical_projection(raw):
   elif path in e3_predecessor_blobs:
    line=('100644 blob '+e3_predecessor_blobs[path]+'\t'+path+'\n').encode()
   rows.append(line)
- return b''.join(rows)
+ from scripts import audit_phase_a_pc_upcoming_retention_successor as forward
+ try:
+  return forward.project_retention_inventory(b''.join(rows), latest=latest)
+ except ValueError as exc:
+  review.require(False, 'retention inventory projection failed: '+str(exc))
 
 def authenticate_pass_a_e3_compat_predecessors(a2,latest):
  """Bind exact Pass-A audit predecessors and their current A2 successors."""

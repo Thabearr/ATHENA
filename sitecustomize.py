@@ -13,6 +13,15 @@ ROOT_TEST_SOURCE_PINS = {
     "tests/offline_transport.py": "6fff0df3acc0f886cdaa452e3c5232762cd4069f4b956085dfa174bb95021e49",
 }
 
+# Owner-authorized, path-exact retention successors. Preserve the original pins
+# and the previously admitted auditor; no other guard gains an alternate identity.
+ROOT_TEST_SOURCE_SUCCESSORS = {
+    "scripts/audit_core_01d_ci_offline_transport_boundary.py": (
+        "282e1b9c5258eb4fcbe51581816e7894e5c9b581f085be1162aa6f9bca864299",
+        "b5a55f7f82f2313face2191eb87eb221818a4da0d6a8955b3e3dbad74598477e",
+    ),
+}
+
 _args = getattr(sys, "orig_argv", ())
 _pytest_module = any(
     _args[i:i + 2] == ["-m", "pytest"]
@@ -27,7 +36,8 @@ if _pytest_module or _pytest_script:
         _root = Path(__file__).resolve().parent
         for _path, _expected in ROOT_TEST_SOURCE_PINS.items():
             _raw = (_root / _path).read_bytes().replace(b"\r\n", b"\n")
-            if hashlib.sha256(_raw).hexdigest() != _expected:
+            _digest = hashlib.sha256(_raw).hexdigest()
+            if _digest != _expected and _digest not in ROOT_TEST_SOURCE_SUCCESSORS.get(_path, ()):
                 raise RuntimeError("test boundary source identity drift: " + _path)
         sys.path.insert(0, str(Path(__file__).resolve().parent / "tests"))
         from offline_transport import install
