@@ -892,7 +892,7 @@ def base_input(*, include_scan_source_predecessors=False):
             require(
                 identity == historical and current.get(path) == successor
                 and hashlib.sha1(
-                    b"blob " + str(len(predecessor)).encode("ascii") + b"\\0" + predecessor
+                    b"blob " + str(len(predecessor)).encode("ascii") + b"\0" + predecessor
                 ).hexdigest() == historical["git_blob_sha1"],
                 "Pass-1 exact Tests historical source-forward identity drift",
             )
