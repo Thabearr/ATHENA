@@ -4,46 +4,35 @@ on:
     branches:
       - athena/one-time-checkpoint-holdout-20261024
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: athena-one-time-offline-repair
   cancel-in-progress: false
 jobs:
-  inspect:
+  build-candidate:
+    if: github.event.head_commit.message == 'chore: run one-time offline Checkpoint-E candidate on isolated branch'
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 45
     steps:
-      - name: Checkout exact temporary head
+      - name: Checkout exact temporary branch head
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          persist-credentials: false
-      - name: Verify offline source lineage and reproduce historical identity mismatch
+          persist-credentials: true
+          fetch-depth: 1
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Install offline audit dependencies
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import hashlib, json, pathlib, subprocess
-          root=pathlib.Path.cwd()
-          run=lambda *args: subprocess.check_output(['git',*args],text=True).strip()
-          head=run('rev-parse','HEAD')
-          print('EXACT_WORKSPACE_HEAD='+head)
-          assert run('branch','--show-current')=='athena/one-time-checkpoint-holdout-20261024'
-          target='.github/workflows/tests.yml'
-          raw=(root/target).read_bytes()
-          actual=run('rev-parse',f'HEAD:{target}')
-          assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==actual
-          assert actual=='e8141712880fbae707ab96e02d5d7e0edb0f085f'
-          fixture='tests/fixtures/architecture/revised_workflows/tests-pre-shard-balance-v1.yml'
-          before=(root/fixture).read_bytes()
-          historic=hashlib.sha1(b'blob '+str(len(before)).encode()+b'\0'+before).hexdigest()
-          assert historic=='a5eafa0afebc01abe02389739abf71c9ece2d1b4'
-          print('CURRENT_WORKFLOW_BLOB='+actual)
-          print('AUTHENTICATED_PREDECESSOR_BLOB='+historic)
-          inventory=json.loads((root/'tests/fixtures/core_01d/exact-main-source-inventory.json').read_bytes())
-          assert inventory['files'][target]=={'mode':'100644','git_blob_sha1':historic}
-          assert target in inventory['scan_paths']
-          print('FROZEN_CHECKPOINT_V1_EXPECTS='+historic)
-          print('VERIFIED: distinct current and historical workflow blobs; no historical evidence altered')
-          PY
-          git diff --exit-code
-          git status --short
+          python -m pip install -r requirements.txt
+      - name: Build exact historical Tests repair and derive authenticated A2 successor
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/heads/athena/one-time-checkpoint-holdout-20261024"
+          python .github/athena_one_time_checkpoint_candidate.py
