@@ -878,6 +878,27 @@ def base_input(*, include_scan_source_predecessors=False):
                     current.get(path) == expected_support,
                     "Pass-1 supporting source differs from its V2 authenticated identity: " + path,
                 )
+        elif path == ".github/workflows/tests.yml":
+            # The immutable Checkpoint-E Pass-1 base predates the approved
+            # eight-shard Tests workflow successor. Authenticate both sources
+            # before projecting this *one path* into the historical census.
+            from scripts import audit_phase_a_pass_a_tests_source_successor as tests_forward
+            from scripts import audit_tests_shard_balance_successor as tests_shards
+            predecessor = tests_forward.historical_workflow_source()
+            historical = {"mode": "100644",
+                          "git_blob_sha1": tests_shards.BEFORE["git_blob_sha1"]}
+            successor = {"mode": "100644",
+                         "git_blob_sha1": tests_shards.AFTER["git_blob_sha1"]}
+            require(
+                identity == historical and current.get(path) == successor
+                and hashlib.sha1(
+                    b"blob " + str(len(predecessor)).encode("ascii") + b"\\0" + predecessor
+                ).hexdigest() == historical["git_blob_sha1"],
+                "Pass-1 exact Tests historical source-forward identity drift",
+            )
+            pass1_forward_predecessor_blobs[path] = historical["git_blob_sha1"]
+            if path in value["scan_paths"]:
+                pass1_forward_predecessor_sources[path] = predecessor
         elif path in PASS_A_HISTORICAL_SOURCE_FIXTURES:
             require(
                 identity == {
