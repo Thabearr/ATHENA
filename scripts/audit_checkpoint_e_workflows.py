@@ -161,6 +161,7 @@ BASE_INPUT_SHA = "5eacf1cb186579b5632a516a853d925c24b85c38fa67ec5d6b96656f40c836
 HISTORY_INPUT_SHA = "66ef6267af033a6e907aebe16ae44c20a15d9a4c5425960aa1da2003c89e39b6"
 CANONICAL = ".github/workflows/athena-run.yml"
 SHADOW = ".github/workflows/current-shadow-all-market.yml"
+TESTS_WORKFLOW = ".github/workflows/tests.yml"
 ALLOWED_STATUS = {"CANONICAL_SUPPORTED", "EXPLICIT_RETAINED_COMPATIBILITY", "DIAGNOSTIC_ONLY", "HISTORICAL_ONLY", "UNKNOWN"}
 PASS_A_HISTORICAL_SOURCE_BLOBS = {
     # D1 adds versioned identities/source projection support. Historical Pass-A
@@ -976,6 +977,27 @@ def base_input(*, include_scan_source_predecessors=False):
                 # only a base row equal to the authorized predecessor can use
                 # this transition.
                 require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
+        elif path == TESTS_WORKFLOW:
+            # Checkpoint-E V1 is a historical source view. Authenticate the
+            # present eight-shard workflow and A2 corpus first, then project
+            # only its exact frozen predecessor into this historical scan.
+            from scripts import audit_phase_a_pass_a_tests_source_successor as tests_source
+            from scripts import audit_tests_shard_balance_successor as tests_shards
+
+            predecessor = tests_source.historical_workflow_source()
+            require(
+                identity == {"mode": "100644", "git_blob_sha1": tests_shards.BEFORE["git_blob_sha1"]}
+                and current.get(path) == {
+                    "mode": "100644",
+                    "git_blob_sha1": tests_shards.AFTER["git_blob_sha1"],
+                }
+                and predecessor == tests_shards.read_blob(tests_shards.FIXTURE)
+                and tests_shards.identity(predecessor) == tests_shards.BEFORE,
+                "Checkpoint-E Tests workflow predecessor/successor identity drift",
+            )
+            pass1_forward_predecessor_blobs[path] = tests_shards.BEFORE["git_blob_sha1"]
+            if path in value["scan_paths"]:
+                pass1_forward_predecessor_sources[path] = predecessor
         else:
             require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
     # Git can be clean while the working tree has edits. Verify inspected source
@@ -1157,11 +1179,13 @@ def reachability(path, name, artifact_names, texts):
 def build_matrix(base, history, historical_source_predecessors):
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as pass_a_v2
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_phase_a_pass_a_tests_source_successor as tests_source
 
     allowed_predecessor_paths = (
         a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS
         | a2.E3_PASS_A_SOURCE_FORWARD_PATHS
         | pass_a_v2.PASS_A_V2_AUTHENTICATED_SOURCE_PREDECESSORS
+        | {TESTS_WORKFLOW}
     )
     require(
         type(historical_source_predecessors) is dict
@@ -1177,6 +1201,11 @@ def build_matrix(base, history, historical_source_predecessors):
             and type(raw) is bytes,
             "historical reachability scan predecessor is outside the immutable source inventory: " + path,
         )
+        if path == TESTS_WORKFLOW:
+            require(
+                raw == tests_source.historical_workflow_source(),
+                "Checkpoint-E Tests workflow predecessor was not independently authenticated",
+            )
         blob = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
         require(
             blob == expected.get("git_blob_sha1"),
@@ -1189,7 +1218,12 @@ def build_matrix(base, history, historical_source_predecessors):
     old_rows = {row["workflow_path"]: row for row in old["workflow_rows"]}
     rows = []
     for path in sorted(p for p in base["files"] if p.startswith(".github/workflows/") and p.endswith((".yml", ".yaml"))):
-        raw = read(path)
+        # This matrix reconstructs the immutable Checkpoint-E V1 view, so an
+        # authenticated predecessor is used for both reachability and YAML
+        # metadata. Current workflow authority is validated separately against
+        # the exact current tree and A2/shard-successor evidence.
+        raw = (historical_source_predecessors[path]
+               if path in historical_source_predecessors else read(path))
         doc = yaml.load(raw, Loader=yaml.BaseLoader)
         require(type(doc) is dict and type(doc.get("on")) is dict, f"unsupported trigger shape: {path}")
         name = doc.get("name", Path(path).stem)

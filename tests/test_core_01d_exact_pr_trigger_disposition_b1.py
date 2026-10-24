@@ -232,12 +232,37 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
     assert first_added_generation[e3_projection_path] == 319
     from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
     retention.authenticate()
-    retention_additions = retention.ADDED_PYTHON_PATHS
-    assert len(retention_additions) == 3
+    retention_additions = frozenset({
+        "scripts/audit_phase_a_pc_upcoming_retention_successor.py",
+        "scripts/verify_current_shadow_pc_upcoming_archive.py",
+        "tests/test_current_shadow_pc_upcoming_archive_retention.py",
+    })
+    assert retention.ADDED_PYTHON_PATHS == retention_additions
     assert retention_additions <= added
-    assert {first_added_generation[path] for path in retention_additions} == {348}
-    assert len(added - {e3_projection_path} - retention_additions) == 94
-    assert len(added - retention_additions) == 95
+    assert {path: first_added_generation[path] for path in retention_additions} == {
+        path: 348 for path in retention_additions
+    }
+
+    # The V348 assertion is generation-specific. Later authenticated source
+    # successors append their own paths and must remain in the composed A2
+    # view instead of being miscounted as V348 retention additions.
+    from scripts import audit_tests_shard_balance_successor as shards
+    from scripts import audit_phase_a_b4_test_source_successor as b4_test_source
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a_tests
+    shards.authenticate()
+    b4_test_source.authenticate_core()
+    pass_a_tests.authenticate_core()
+    later_additions = {
+        "scripts/audit_tests_shard_balance_successor.py": 353,
+        "tests/test_tests_shard_balance_successor.py": 353,
+        "scripts/audit_phase_a_b4_test_source_successor.py": 355,
+        pass_a_tests.SOURCE: 358,
+        pass_a_tests.TEST: 358,
+    }
+    assert set(later_additions) <= added
+    assert {path: first_added_generation[path] for path in later_additions} == later_additions
+    assert len(added - {e3_projection_path} - retention_additions - set(later_additions)) == 94
+    assert len(added - retention_additions - set(later_additions)) == 95
     assert first_added_generation["runtime/current_shadow_operation_authority.py"] == 263
     assert first_added_generation[
         "tests/test_core_01d_pass_a_v300_source_predecessors.py"

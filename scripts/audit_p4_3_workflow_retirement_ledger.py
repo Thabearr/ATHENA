@@ -371,6 +371,33 @@ def resolve_reviewed_workflow_source(
             raise RetirementLedgerError(f"retired workflow fixture identity differs from baseline: {path}")
         return raw
 
+    if path == ".github/workflows/tests.yml":
+        # P4.3A records the pre-shard workflow. Resolve that historical row
+        # only through the existing Pass-A accessor, which authenticates the
+        # current A2 corpus, the exact Tests successor/tree and the pinned
+        # predecessor fixture before returning old bytes.
+        from scripts import audit_tests_shard_balance_successor as shards
+        expected = {
+            "git_blob_sha1": shards.BEFORE["git_blob_sha1"],
+            "source_sha256": shards.BEFORE["source_sha256"],
+        }
+        if {key: row.get(key) for key in IDENTITY_KEYS} != expected:
+            raise RetirementLedgerError(
+                "frozen P4.3A Tests workflow identity is not the reviewed shard predecessor"
+            )
+        try:
+            from scripts import audit_phase_a_pass_a_tests_source_successor as tests_source
+            raw = tests_source.historical_workflow_source()
+        except Exception as exc:
+            raise RetirementLedgerError(
+                "authenticated historical Tests workflow source is unavailable"
+            ) from exc
+        if source_identity(raw) != expected:
+            raise RetirementLedgerError(
+                "historical Tests workflow source differs from frozen P4.3A identity"
+            )
+        return raw
+
     # P4.3A is historical evidence, not the current identity authority for a
     # survivor that has a reviewed P4.4A1 MAINTENANCE_REVISE. Resolve its
     # original bytes from that transition's immutable before-fixture; the

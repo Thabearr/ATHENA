@@ -18,6 +18,92 @@ EDGES = {'scripts/audit_core_01d_authority_reachability_review_a.py': {'fixture'
 METADATA = {'artifacts/architecture/phase_a_pass_a_tests_source_successor_v1.json': {'git_blob_sha1': '3b49db0bca4ef1b31dfe586415c94e13b98fc6cc', 'source_sha256': 'f112dad4cf1737e9bf281c4500daa0ff1fe4d47d8d9343a83c4c3540c780161c', 'byte_count': 6414}, 'tests/fixtures/architecture/phase_a_pass_a_tests_source_v1/scripts--audit_core_01d_authority_reachability_review_a.py.before.txt': {'git_blob_sha1': '1156f52e9dc78b1c8071a3c7d4e1cd5876b2b2cd', 'source_sha256': '320fa11109672ae1af23ef1ee5b62c5a007de195a8f3c5ad593d1e8f7437e748', 'byte_count': 46804}, 'tests/fixtures/architecture/phase_a_pass_a_tests_source_v1/scripts--audit_phase_a_b4_test_source_successor.py.before.txt': {'git_blob_sha1': 'ada6901b3d9d3c0de13eb145b31e2abd9f863b19', 'source_sha256': 'e5cad5dce9d9bf4fdca1603712524e1cb1623907de9e19e12fdd9fb4abf02bec', 'byte_count': 10577}, 'tests/fixtures/architecture/phase_a_pass_a_tests_source_v1/scripts--audit_phase_a_pc_upcoming_retention_successor.py.before.txt': {'git_blob_sha1': '670ce275b1560994fe636000444f915512b713d0', 'source_sha256': '08caf995647681b16ddea8f561e5f02fa570e0751b00a1bf70c601ef9e6bb82a', 'byte_count': 59259}}
 TEST = 'tests/test_phase_a_pass_a_tests_source_successor.py'
 TEST_IDENTITY = {'git_blob_sha1': '53a0e5633a480cc238b15a585d17c90ca975d012', 'source_sha256': '2288b6f179bf16ff0fc80ce0347d5a2fe48cd8759ff08b98566802c51484f3de', 'byte_count': 6317}
+B1_SOURCE = 'tests/test_core_01d_exact_pr_trigger_disposition_b1.py'
+B1_FIXTURE = 'tests/fixtures/architecture/phase_a_b1_test_source_v1/tests--test_core_01d_exact_pr_trigger_disposition_b1.py.before.txt'
+B1_RECEIPT = 'artifacts/architecture/phase_a_b1_test_source_successor_v1.json'
+B1_RECEIPT_SHA256 = '93c99d58eccefff00649c8dbf5a4e04930a107f1bbae76f81670880b4b771205'
+B1_BEFORE = {'git_blob_sha1': '16217d76259d7a2784d4a6168737226df45dd576', 'source_sha256': 'cee602e4eea0dd9b9bfb13f56be87f820d3f5c7dbd336923a9ec1d2bf7a4089a', 'byte_count': 17122}
+B1_AFTER = {'git_blob_sha1': '76890d944a83b122f3bf3e258cd67773eb7d88bc', 'source_sha256': '29ad602af336186642f3078c7550d2b3f04fbc45c79d442900a968873282659b', 'byte_count': 18418}
+B1_V3_RECEIPT = 'artifacts/architecture/phase_a_published_evidence_restoration_v3.json'
+B1_V3_RECEIPT_SHA256 = '99bc32331353735fef512e45c788ba8a1dd8887cee75f94bb40ccf9d9b51d1d0'
+B1_A2_PREDECESSOR = {'path': 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v359.json', 'generation': 359, 'canonical_sha256': '58042674ae09c4e2a92b48bdc99d4a08dc0a83c8e87702522496db026415501e', 'rewritten': False}
+B1_METADATA = {
+    B1_RECEIPT: {'git_blob_sha1': '6b528062ead8baadf3565c6a0490816fb524b3a6', 'source_sha256': '993d67dce0c23e4438b774a15bf252bbb8cf5d38fc4f308877de12a5af337323', 'byte_count': 3538},
+    B1_FIXTURE: B1_BEFORE,
+}
+
+
+def _b1_receipt():
+    raw = read_blob(B1_RECEIPT)
+    value = json.loads(raw)
+    if (safe.canonical(value) != raw or safe.canonical_digest(value) != B1_RECEIPT_SHA256
+            or value.get('canonical_sha256') != B1_RECEIPT_SHA256
+            or value.get('schema_version') != 1
+            or value.get('policy_id') != 'ATHENA_PHASE_A_B1_TEST_SOURCE_SUCCESSOR_V1'
+            or value.get('source_path') != B1_SOURCE
+            or value.get('predecessor_fixture') != B1_FIXTURE
+            or value.get('source_before') != B1_BEFORE
+            or value.get('source_after') != B1_AFTER
+            or value.get('historical_predecessor') != {
+                'path': B1_V3_RECEIPT,
+                'canonical_sha256': B1_V3_RECEIPT_SHA256,
+                'source_forward_after': B1_BEFORE,
+            }
+            or value.get('a2_predecessor') != B1_A2_PREDECESSOR
+            or any(value.get(key) is not False for key in (
+                'authority_granted', 'historical_bytes_changed',
+                'current_source_authority_changed', 'workflow_changed'))):
+        raise ValueError('B1 historical source successor receipt drift')
+    return value
+
+
+def _b1_predecessor_source(path, raw):
+    if path != B1_SOURCE:
+        return raw
+    value = _b1_receipt()
+    before = read_blob(B1_FIXTURE)
+    current = read_blob(B1_SOURCE)
+    if safe.identity(before) != B1_BEFORE or safe.identity(current) != B1_AFTER or raw != current:
+        raise ValueError('B1 current or historical source identity drift')
+    prior_raw = read_blob(B1_V3_RECEIPT)
+    prior = json.loads(prior_raw)
+    if (safe.canonical(prior) != prior_raw
+            or safe.canonical_digest(prior) != B1_V3_RECEIPT_SHA256
+            or prior.get('canonical_sha256') != B1_V3_RECEIPT_SHA256
+            or prior.get('source_forward', {}).get(B1_SOURCE, {}).get('after') != B1_BEFORE):
+        raise ValueError('B1 predecessor is not the immutable restoration V3 source')
+    recipe = value['exact_patch']
+    old, new = recipe['before'].encode('utf-8'), recipe['after'].encode('utf-8')
+    if before.count(old) != 1 or before.replace(old, new) != current:
+        raise ValueError('B1 historical source exceeds the exact reviewed patch')
+    return before
+
+
+def _install_a2_v1_tests_text():
+    """Install the exact V1 workflow bytes for A2's frozen text replay only."""
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_tests_shard_balance_successor as shards
+
+    value = shards.receipt()
+    before = shards.read_blob(shards.FIXTURE)
+    current = shards.read_blob(shards.WORKFLOW)
+    entries = shards.tree_entries()
+    if (safe.identity(before) != shards.BEFORE
+            or safe.identity(current) != shards.AFTER
+            or current != shards.expected_workflow(value)
+            or shards.tree_identity(entries) != shards.AFTER_TREE
+            or shards.tree_identity(entries, {'tests.yml': shards.BEFORE['git_blob_sha1']}) != shards.BEFORE_TREE
+            or a2.pinned_historical_identity(shards.WORKFLOW) != shards.BEFORE['source_sha256']):
+        raise ValueError('A2 V1 Tests source is not the authenticated shard predecessor')
+    if shards.subprocess.check_output(
+            ['git', 'diff', '--name-only', 'HEAD', '--', '.github/workflows'],
+            cwd=shards.ROOT).strip():
+        raise ValueError('A2 Tests historical projection requires the clean authenticated workflow tree')
+    fallbacks = a2.HISTORICAL_TEXT_BYTES
+    existing = fallbacks.get(shards.WORKFLOW)
+    if existing is not None and bytes(existing).replace(b'\r\n', b'\n') != before:
+        raise ValueError('A2 V1 Tests historical fallback conflicts with the pinned predecessor')
+    fallbacks[shards.WORKFLOW] = before
 
 
 def read_blob(path):
@@ -40,7 +126,7 @@ def receipt():
 def predecessor_source(path, raw):
     row = EDGES.get(path)
     if row is None:
-        return raw
+        return _b1_predecessor_source(path, raw)
     receipt()
     if safe.identity(raw) != row['after']:
         raise ValueError('Pass-A Tests current source identity drift: ' + path)
@@ -63,9 +149,13 @@ def authenticate_core():
     value = receipt()
     for path in EDGES:
         predecessor_source(path, read_blob(path))
+    _b1_predecessor_source(B1_SOURCE, read_blob(B1_SOURCE))
     for path, expected in METADATA.items():
         if safe.identity(read_blob(path)) != expected:
             raise ValueError('Pass-A Tests successor metadata drift: ' + path)
+    for path, expected in B1_METADATA.items():
+        if safe.identity(read_blob(path)) != expected:
+            raise ValueError('B1 source successor metadata drift: ' + path)
     if safe.identity(read_blob(TEST)) != TEST_IDENTITY:
         raise ValueError('Pass-A Tests successor regression source drift')
     return value
@@ -81,6 +171,10 @@ def historical_workflow_source():
     if (type(latest.get('generation')) is not int or latest['generation'] < 358
             or rows != [{'path': SOURCE, 'lf_source_sha256': EDGES[SOURCE]['after']['source_sha256']}]):
         raise ValueError('Pass-A current auditor is not authenticated by latest A2')
+    b1_rows = [row for row in latest['source_identities'] if row['path'] == B1_SOURCE]
+    if (latest['generation'] < 360
+            or b1_rows != [{'path': B1_SOURCE, 'lf_source_sha256': B1_AFTER['source_sha256']}]):
+        raise ValueError('B1 current test source is not authenticated by the A2 successor')
     shards.authenticate()  # Proves actual HEAD tree plus one-path inverse.
     current = read_blob(shards.WORKFLOW)
     before = read_blob(shards.FIXTURE)
@@ -103,10 +197,13 @@ def historical_workflow_source():
 
 def install_context(context):
     receipt()
+    _install_a2_v1_tests_text()
     context['HISTORICAL_PREDECESSORS'][SOURCE] = dict(
         context['HISTORICAL_PREDECESSORS'][SOURCE], after=EDGES[SOURCE]['after'])
     context['BOOTSTRAP_AFTER'] = dict(context['BOOTSTRAP_AFTER'], **{
         **{path: row['after'] for path, row in EDGES.items()}, TEST: TEST_IDENTITY})
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **METADATA)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **METADATA)
+    context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **B1_METADATA)
+    context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **B1_METADATA)
     context['ADDED_PYTHON_PATHS'] |= frozenset({__name__.replace('.', '/') + '.py', TEST})
