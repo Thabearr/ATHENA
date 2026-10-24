@@ -18,6 +18,12 @@ EDGES = {'scripts/audit_core_01d_authority_reachability_review_a.py': {'fixture'
 METADATA = {'artifacts/architecture/phase_a_pass_a_tests_source_successor_v1.json': {'git_blob_sha1': '3b49db0bca4ef1b31dfe586415c94e13b98fc6cc', 'source_sha256': 'f112dad4cf1737e9bf281c4500daa0ff1fe4d47d8d9343a83c4c3540c780161c', 'byte_count': 6414}, 'tests/fixtures/architecture/phase_a_pass_a_tests_source_v1/scripts--audit_core_01d_authority_reachability_review_a.py.before.txt': {'git_blob_sha1': '1156f52e9dc78b1c8071a3c7d4e1cd5876b2b2cd', 'source_sha256': '320fa11109672ae1af23ef1ee5b62c5a007de195a8f3c5ad593d1e8f7437e748', 'byte_count': 46804}, 'tests/fixtures/architecture/phase_a_pass_a_tests_source_v1/scripts--audit_phase_a_b4_test_source_successor.py.before.txt': {'git_blob_sha1': 'ada6901b3d9d3c0de13eb145b31e2abd9f863b19', 'source_sha256': 'e5cad5dce9d9bf4fdca1603712524e1cb1623907de9e19e12fdd9fb4abf02bec', 'byte_count': 10577}, 'tests/fixtures/architecture/phase_a_pass_a_tests_source_v1/scripts--audit_phase_a_pc_upcoming_retention_successor.py.before.txt': {'git_blob_sha1': '670ce275b1560994fe636000444f915512b713d0', 'source_sha256': '08caf995647681b16ddea8f561e5f02fa570e0751b00a1bf70c601ef9e6bb82a', 'byte_count': 59259}}
 TEST = 'tests/test_phase_a_pass_a_tests_source_successor.py'
 TEST_IDENTITY = {'git_blob_sha1': '53a0e5633a480cc238b15a585d17c90ca975d012', 'source_sha256': '2288b6f179bf16ff0fc80ce0347d5a2fe48cd8759ff08b98566802c51484f3de', 'byte_count': 6317}
+TESTS_SHARD_V2_RECEIPT = 'artifacts/architecture/tests_shard_balance_successor_v2.json'
+TESTS_SHARD_V2_RECEIPT_SHA256 = '63d7284158562e5f4dcabc93aca896ef009340cbbadb0724ad942c97aacdd4f3'
+TESTS_SHARD_V2_SOURCE_PATHS = frozenset({
+    'scripts/audit_tests_shard_balance_successor.py',
+    'tests/test_tests_shard_balance_successor.py',
+})
 B1_SOURCE = 'tests/test_core_01d_exact_pr_trigger_disposition_b1.py'
 B1_FIXTURE = 'tests/fixtures/architecture/phase_a_b1_test_source_v1/tests--test_core_01d_exact_pr_trigger_disposition_b1.py.before.txt'
 B1_RECEIPT = 'artifacts/architecture/phase_a_b1_test_source_successor_v1.json'
@@ -214,6 +220,40 @@ def read_blob(path):
     return safe.read_blob(path)
 
 
+def _tests_shard_v2_receipt():
+    raw = read_blob(TESTS_SHARD_V2_RECEIPT)
+    value = json.loads(raw)
+    source_forward = value.get('source_forward')
+    if (safe.canonical(value) != raw
+            or safe.canonical_digest(value) != TESTS_SHARD_V2_RECEIPT_SHA256
+            or value.get('canonical_sha256') != TESTS_SHARD_V2_RECEIPT_SHA256
+            or value.get('policy_id') != 'ATHENA_P4_TESTS_EIGHT_SHARD_BALANCE_MAINTENANCE_V2'
+            or value.get('schema_version') != 1
+            or type(source_forward) is not dict
+            or set(source_forward) != TESTS_SHARD_V2_SOURCE_PATHS
+            or value.get('authority_granted') is not False
+            or value.get('historical_bytes_changed') is not False
+            or value.get('required_contexts_changed') is not False
+            or value.get('source_authority_changed') is not False):
+        raise ValueError('Tests shard V2 source-forward receipt drift')
+    return value
+
+
+def _tests_shard_v2_predecessor_source(path, raw):
+    if path not in TESTS_SHARD_V2_SOURCE_PATHS:
+        return raw
+    value = _tests_shard_v2_receipt()
+    row = value['source_forward'][path]
+    current = read_blob(path)
+    before = read_blob(row['fixture'])
+    if (type(row) is not dict or set(row) != {'fixture', 'before', 'after'}
+            or safe.identity(current) != row.get('after')
+            or safe.identity(raw) != row.get('after') or raw != current
+            or safe.identity(before) != row.get('before')):
+        raise ValueError('Tests shard V2 current/predecessor source identity drift: ' + path)
+    return before
+
+
 def receipt():
     raw = read_blob(RECEIPT)
     value = json.loads(raw)
@@ -228,6 +268,7 @@ def receipt():
 
 
 def predecessor_source(path, raw):
+    raw = _tests_shard_v2_predecessor_source(path, raw)
     if path == B1_SOURCE:
         return _b1_predecessor_source(path, raw)
     row = EDGES.get(path)
@@ -329,4 +370,13 @@ def install_context(context):
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **B1_V2_METADATA)
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **A2_TEXT_METADATA)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **A2_TEXT_METADATA)
+    # The shard V2 adapter installed its exact current source-forward rows
+    # before this historical Pass-A context. Reapply those rows after the
+    # Pass-A V1 identities above so current bootstrap checks bind the current
+    # adapter/test bytes; historical callers still receive only the pinned
+    # V2 predecessor through _tests_shard_v2_predecessor_source().
+    from scripts import audit_tests_shard_balance_successor as shards
+    shard_successor = shards.authenticate()
+    context['BOOTSTRAP_AFTER'] = dict(context['BOOTSTRAP_AFTER'], **{
+        path: row['after'] for path, row in shard_successor['source_forward'].items()})
     context['ADDED_PYTHON_PATHS'] |= frozenset({__name__.replace('.', '/') + '.py', TEST})

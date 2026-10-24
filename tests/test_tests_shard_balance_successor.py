@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
 from pathlib import Path
 
 import pytest
@@ -44,8 +45,18 @@ def test_every_real_test_file_is_assigned_exactly_once(monkeypatch, tmp_path):
     assert Counter(p for group in groups for p in group) == Counter(paths)
     assert len(groups) == 8
     assert 'tests/test_core_01d_checkpoint_e_completion_v9.py' in groups[4]
-    assert 'tests/test_core_01d_checkpoint_e_completion_v10.py' in groups[5]
+    assert 'tests/test_core_01d_checkpoint_e_completion_v10.py' in groups[0]
     assert 'tests/test_lg_a_worker_launch_failure_remediation.py' in groups[1]
+    # Evidence-based whole-file moves from exact-head run 40086219683.
+    expected_shards = {
+        'tests/test_core_01d_checkpoint_e_completion.py': 6,
+        'tests/test_core_01d_checkpoint_e_completion_v2.py': 7,
+        'tests/test_core_01d_retained_workflow_status.py': 3,
+        'tests/test_core_01d_workflow_consolidation.py': 7,
+        'tests/test_core_01d_checkpoint_e_completion_v10.py': 1,
+    }
+    for path, shard in expected_shards.items():
+        assert path in groups[shard - 1]
     # Replay is deterministic; no probabilistic placement or cache state.
     _, repeated = run_partition(monkeypatch, tmp_path)
     assert groups == repeated
@@ -79,6 +90,62 @@ def test_exact_successor_and_original_p4_prefix():
     from scripts import audit_data_01c_restore_portability as d5
     assert d5.historical_workflow_tree(audit.AFTER_TREE) == d5.PREDECESSOR_TREE
     assert d5.historical_workflow_tree(audit.BEFORE_TREE) == d5.PREDECESSOR_TREE
+
+
+def test_v2_rebalance_is_an_append_only_exact_v1_successor():
+    value = audit.authenticate()
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    from scripts import audit_p4_workflow_evolution_ledger as p4
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    from scripts import audit_data_01c_restore_portability as d5
+
+    assert value['canonical_sha256'] == pass_a.TESTS_SHARD_V2_RECEIPT_SHA256
+    assert value['workflow_before'] == audit.V1_AFTER
+    assert value['workflow_after'] == audit.AFTER
+    assert value['workflow_tree_before_sha1'] == audit.V1_AFTER_TREE
+    assert value['workflow_tree_after_sha1'] == audit.AFTER_TREE
+    assert value['b4_projected_before_sha1'] == audit.V1_AFTER_B4_TREE
+    assert value['b4_projected_after_sha1'] == audit.AFTER_B4_TREE
+    assert value['source_forward'].keys() == pass_a.TESTS_SHARD_V2_SOURCE_PATHS
+    assert value['timing_evidence']['projected_completed_shard_max_seconds'] < 5 * 60 * 60
+    assert value['timing_evidence']['projection_uncertainty'].startswith(
+        'cancelled shards provide progress only')
+    snapshot = audit.read_blob(audit.V2_SNAPSHOT)
+    snapshot_value = json.loads(snapshot)
+    prior = json.loads(audit.read_blob(audit.V1_SNAPSHOT))
+    assert snapshot_value['transitions'][:-1] == prior['transitions']
+    assert p4.canonical_sha256(snapshot_value) == snapshot_value['canonical_sha256']
+    assert audit.project_tree(audit.AFTER_TREE) == audit.BEFORE_TREE
+    assert audit.project_b4_tree(audit.AFTER_B4_TREE) == audit.BEFORE_B4_TREE
+    assert retention.authenticate()['canonical_sha256'] == retention.RECEIPT_SHA256
+    assert retention.authenticate_bootstrap_sources() is True
+    for path, row in value['source_forward'].items():
+        assert retention.BOOTSTRAP_AFTER[path] == row['after']
+    assert d5.historical_workflow_tree(audit.AFTER_TREE) == d5.PREDECESSOR_TREE
+
+
+@pytest.mark.parametrize('which', [
+    'v2_receipt', 'v2_snapshot', 'current_workflow', 'workflow_fixture',
+    'current_adapter', 'adapter_fixture', 'current_test', 'test_fixture',
+])
+def test_v2_rebalance_rejects_tampered_current_or_predecessor(monkeypatch, which):
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    target = {
+        'v2_receipt': (pass_a, audit.V2_RECEIPT),
+        'v2_snapshot': (audit, audit.V2_SNAPSHOT),
+        'current_workflow': (audit, audit.WORKFLOW),
+        'workflow_fixture': (audit, audit.V2_FIXTURE),
+        'current_adapter': (pass_a, 'scripts/audit_tests_shard_balance_successor.py'),
+        'adapter_fixture': (pass_a, audit.V2_SOURCE_FIXTURE),
+        'current_test': (pass_a, 'tests/test_tests_shard_balance_successor.py'),
+        'test_fixture': (pass_a, audit.V2_TEST_FIXTURE),
+    }[which]
+    module, path = target
+    original = module.read_blob
+    monkeypatch.setattr(module, 'read_blob',
+                        lambda candidate: original(candidate) + (b'\n' if candidate == path else b''))
+    with pytest.raises((ValueError, AssertionError)):
+        audit.authenticate()
 
 
 @pytest.mark.parametrize('which', ['workflow', 'fixture', 'receipt', 'snapshot', 'source', 'source_fixture'])
