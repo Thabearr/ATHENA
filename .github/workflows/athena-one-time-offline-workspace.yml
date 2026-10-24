@@ -27,7 +27,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install -r requirements.txt
+          python -m pip install PyYAML
       - name: Build exact historical Tests repair and derive authenticated A2 successor
         shell: bash
         env:
