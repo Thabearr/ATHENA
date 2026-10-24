@@ -84,8 +84,13 @@ def main():
     command("git","commit","-m","fix: authenticate Checkpoint-E historical Tests shard predecessor")
     # All current source bytes now exist at HEAD, and immutable V1-V359 are
     # unchanged. The project's own reviewed A2 generator must derive V360.
-    generated=command("python","-m","scripts.audit_core_01d_ci_offline_transport_boundary",
-                      "--emit-successor-inventory",capture_output=True)
+    try:
+        generated=command("python","-m","scripts.audit_core_01d_ci_offline_transport_boundary",
+                          "--emit-successor-inventory",capture_output=True)
+    except subprocess.CalledProcessError as exc:
+        print("A2_PROVENANCE_GENERATOR_STDERR="+(exc.stderr or "")[-14000:],flush=True)
+        print("A2_PROVENANCE_GENERATOR_STDOUT="+(exc.stdout or "")[-2500:],flush=True)
+        raise
     document=json.loads(generated.stdout)
     assert document["generation"]==360
     assert document["predecessor_inventory"]["generation"]==359
