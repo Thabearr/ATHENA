@@ -31,6 +31,15 @@ B1_METADATA = {
     B1_RECEIPT: {'git_blob_sha1': '6b528062ead8baadf3565c6a0490816fb524b3a6', 'source_sha256': '993d67dce0c23e4438b774a15bf252bbb8cf5d38fc4f308877de12a5af337323', 'byte_count': 3538},
     B1_FIXTURE: B1_BEFORE,
 }
+B1_V2_RECEIPT = 'artifacts/architecture/phase_a_b1_test_source_successor_v2.json'
+B1_V2_RECEIPT_SHA256 = 'fdeeba1d16ae12359fd6f373231c10573e27be4063802509dccd5135c91604dd'
+B1_V2_FIXTURE = 'tests/fixtures/architecture/phase_a_b1_test_source_v2/tests--test_core_01d_exact_pr_trigger_disposition_b1.py.before.txt'
+B1_V2_AFTER = {'git_blob_sha1': 'a25b573a982c26c893714fce2c6342abd3c653b3', 'source_sha256': '1d0d861f7653748989bf8a1e1af2f81f5c7b14ea6bc9f66c4dd61c7eb54d831a', 'byte_count': 18441}
+B1_V2_A2_PREDECESSOR = {'path': 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v361.json', 'generation': 361, 'canonical_sha256': '5e6da09db4a8a883e3da75ae0c4451f2ba853d5615c09db6a9984917a02efb63', 'rewritten': False}
+B1_V2_METADATA = {
+    B1_V2_RECEIPT: {'git_blob_sha1': 'e055453425f5238978a94059901d5a3630b520c3', 'source_sha256': 'c74c60c661f4e91d832db76b27bad78c8b7df5b2d81398a1656dbd2ce7cfdb7c', 'byte_count': 1767},
+    B1_V2_FIXTURE: B1_AFTER,
+}
 A2_TEXT_SOURCE = 'scripts/audit_core_01d_ci_offline_transport_boundary.py'
 A2_TEXT_RECEIPT = 'artifacts/architecture/phase_a_a2_historical_tests_text_source_forward_v1.json'
 A2_TEXT_RECEIPT_SHA256 = 'b3d0660fe8cde79e836cb129afd50abe7a259ab5a88e377c0f67c85aa84fea14'
@@ -59,6 +68,8 @@ def _a2_text_receipt():
 
 
 def _a2_text_predecessor_source(path, raw):
+    if path not in {A2_TEXT_SOURCE, 'sitecustomize.py'}:
+        return raw
     value = _a2_text_receipt()
     row = value['source_forward'].get(path)
     if row is None:
@@ -88,8 +99,12 @@ def _authenticate_a2_text_successor():
             or inventory.get('canonical_sha256') != A2_TEXT_V360['canonical_sha256']
             or inventory.get('predecessor_inventory') != B1_A2_PREDECESSOR):
         raise ValueError('A2 V360 predecessor is not the authenticated V359 chain point')
+    historical_rows = {row['path']: row['lf_source_sha256']
+                       for row in inventory.get('source_identities', [])}
     for path in value['source_forward']:
         row = value['source_forward'][path]
+        if historical_rows.get(path) != row['before']['source_sha256']:
+            raise ValueError('A2 V360 source does not match the exact successor predecessor: ' + path)
         if _a2_text_predecessor_source(path, read_blob(path)) != read_blob(row['fixture']):
             raise ValueError('A2 historical source projection mismatch: ' + path)
     for path, expected in A2_TEXT_METADATA.items():
@@ -122,14 +137,11 @@ def _b1_receipt():
     return value
 
 
-def _b1_predecessor_source(path, raw):
-    if path != B1_SOURCE:
-        return raw
+def _b1_v1_predecessor(raw):
     value = _b1_receipt()
     before = read_blob(B1_FIXTURE)
-    current = read_blob(B1_SOURCE)
-    if safe.identity(before) != B1_BEFORE or safe.identity(current) != B1_AFTER or raw != current:
-        raise ValueError('B1 current or historical source identity drift')
+    if safe.identity(before) != B1_BEFORE or safe.identity(raw) != B1_AFTER:
+        raise ValueError('B1 V1 source identity drift')
     prior_raw = read_blob(B1_V3_RECEIPT)
     prior = json.loads(prior_raw)
     if (safe.canonical(prior) != prior_raw
@@ -139,9 +151,63 @@ def _b1_predecessor_source(path, raw):
         raise ValueError('B1 predecessor is not the immutable restoration V3 source')
     recipe = value['exact_patch']
     old, new = recipe['before'].encode('utf-8'), recipe['after'].encode('utf-8')
-    if before.count(old) != 1 or before.replace(old, new) != current:
+    if before.count(old) != 1 or before.replace(old, new) != raw:
         raise ValueError('B1 historical source exceeds the exact reviewed patch')
     return before
+
+
+def _b1_v2_receipt():
+    raw = read_blob(B1_V2_RECEIPT)
+    value = json.loads(raw)
+    if (safe.canonical(value) != raw or safe.canonical_digest(value) != B1_V2_RECEIPT_SHA256
+            or value.get('canonical_sha256') != B1_V2_RECEIPT_SHA256
+            or value.get('schema_version') != 1
+            or value.get('policy_id') != 'ATHENA_PHASE_A_B1_TEST_SOURCE_SUCCESSOR_V2'
+            or value.get('source_path') != B1_SOURCE
+            or value.get('predecessor_fixture') != B1_V2_FIXTURE
+            or value.get('source_before') != B1_AFTER
+            or value.get('source_after') != B1_V2_AFTER
+            or value.get('historical_predecessor') != {
+                'path': B1_RECEIPT,
+                'canonical_sha256': B1_RECEIPT_SHA256,
+                'source_forward_after': B1_AFTER,
+            }
+            or value.get('a2_predecessor') != B1_V2_A2_PREDECESSOR
+            or any(value.get(key) is not False for key in (
+                'authority_granted', 'historical_bytes_changed',
+                'current_source_authority_changed', 'workflow_changed'))):
+        raise ValueError('B1 V2 source successor receipt drift')
+    inventory_raw = read_blob(B1_V2_A2_PREDECESSOR['path'])
+    inventory = json.loads(inventory_raw)
+    rows = [row for row in inventory.get('source_identities', []) if row.get('path') == B1_SOURCE]
+    if (safe.canonical(inventory) != inventory_raw
+            or safe.canonical_digest(inventory) != B1_V2_A2_PREDECESSOR['canonical_sha256']
+            or inventory.get('generation') != B1_V2_A2_PREDECESSOR['generation']
+            or inventory.get('canonical_sha256') != B1_V2_A2_PREDECESSOR['canonical_sha256']
+            or inventory.get('predecessor_inventory') != A2_TEXT_V360
+            or rows != [{'path': B1_SOURCE, 'lf_source_sha256': B1_AFTER['source_sha256']}]):
+        raise ValueError('B1 V2 A2 predecessor does not authenticate the exact before-source')
+    return value
+
+
+def _b1_predecessor_source(path, raw):
+    if path != B1_SOURCE:
+        return raw
+    value = _b1_v2_receipt()
+    before_v1 = read_blob(B1_V2_FIXTURE)
+    current = read_blob(B1_SOURCE)
+    if safe.identity(before_v1) != B1_AFTER or safe.identity(current) != B1_V2_AFTER or raw != current:
+        raise ValueError('B1 V2 current or historical source identity drift')
+    recipe = value['exact_patches']
+    expected = before_v1
+    for patch in recipe:
+        old, new = patch['before'].encode('utf-8'), patch['after'].encode('utf-8')
+        if expected.count(old) != 1:
+            raise ValueError('B1 V2 source patch seam drift')
+        expected = expected.replace(old, new)
+    if expected != current:
+        raise ValueError('B1 V2 source exceeds its exact reviewed patch')
+    return _b1_v1_predecessor(before_v1)
 
 
 def read_blob(path):
@@ -162,11 +228,10 @@ def receipt():
 
 
 def predecessor_source(path, raw):
+    if path == B1_SOURCE:
+        return _b1_predecessor_source(path, raw)
     row = EDGES.get(path)
     if row is None:
-        b1_source = _b1_predecessor_source(path, raw)
-        if b1_source is not raw:
-            return b1_source
         return _a2_text_predecessor_source(path, raw)
     receipt()
     if safe.identity(raw) != row['after']:
@@ -198,6 +263,10 @@ def authenticate_core():
     for path, expected in B1_METADATA.items():
         if safe.identity(read_blob(path)) != expected:
             raise ValueError('B1 source successor metadata drift: ' + path)
+    _b1_v2_receipt()
+    for path, expected in B1_V2_METADATA.items():
+        if safe.identity(read_blob(path)) != expected:
+            raise ValueError('B1 V2 source successor metadata drift: ' + path)
     for path, expected in A2_TEXT_METADATA.items():
         if safe.identity(read_blob(path)) != expected:
             raise ValueError('A2 historical source-forward metadata drift: ' + path)
@@ -217,8 +286,8 @@ def historical_workflow_source():
             or rows != [{'path': SOURCE, 'lf_source_sha256': EDGES[SOURCE]['after']['source_sha256']}]):
         raise ValueError('Pass-A current auditor is not authenticated by latest A2')
     b1_rows = [row for row in latest['source_identities'] if row['path'] == B1_SOURCE]
-    if (latest['generation'] < 360
-            or b1_rows != [{'path': B1_SOURCE, 'lf_source_sha256': B1_AFTER['source_sha256']}]):
+    if (latest['generation'] < 362
+            or b1_rows != [{'path': B1_SOURCE, 'lf_source_sha256': B1_V2_AFTER['source_sha256']}]):
         raise ValueError('B1 current test source is not authenticated by the A2 successor')
     shards.authenticate()  # Proves actual HEAD tree plus one-path inverse.
     current = read_blob(shards.WORKFLOW)
@@ -248,7 +317,7 @@ def install_context(context):
     a2_text_after = {path: row['after'] for path, row in _a2_text_receipt()['source_forward'].items()}
     context['BOOTSTRAP_AFTER'] = dict(context['BOOTSTRAP_AFTER'], **{
         **{path: row['after'] for path, row in EDGES.items()}, TEST: TEST_IDENTITY,
-        B1_SOURCE: B1_AFTER, **a2_text_after})
+        B1_SOURCE: B1_V2_AFTER, **a2_text_after})
     auditor_patches = a2_text_successor['source_forward'][A2_TEXT_SOURCE]['patches']
     context['BOOTSTRAP_AUDITOR_PATCHES'] = tuple(context['BOOTSTRAP_AUDITOR_PATCHES']) + tuple(
         (patch['before'], patch['after']) for patch in auditor_patches)
@@ -256,6 +325,8 @@ def install_context(context):
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **METADATA)
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **B1_METADATA)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **B1_METADATA)
+    context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **B1_V2_METADATA)
+    context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **B1_V2_METADATA)
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **A2_TEXT_METADATA)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **A2_TEXT_METADATA)
     context['ADDED_PYTHON_PATHS'] |= frozenset({__name__.replace('.', '/') + '.py', TEST})

@@ -192,7 +192,7 @@ def test_b1_generation_assertion_uses_only_the_authenticated_historical_source(m
 
  current = pass_a.read_blob(pass_a.B1_SOURCE)
  historical = pass_a.read_blob(pass_a.B1_FIXTURE)
- assert pass_a.safe.identity(current) == pass_a.B1_AFTER
+ assert pass_a.safe.identity(current) == pass_a.B1_V2_AFTER
  assert pass_a.safe.identity(historical) == pass_a.B1_BEFORE
  assert pass_a.predecessor_source(pass_a.B1_SOURCE, current) == historical
  assert pass_a.predecessor_source("tests/unrelated.py", b"unrelated") == b"unrelated"

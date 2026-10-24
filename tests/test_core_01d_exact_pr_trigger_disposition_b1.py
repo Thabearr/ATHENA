@@ -237,7 +237,6 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
         "scripts/verify_current_shadow_pc_upcoming_archive.py",
         "tests/test_current_shadow_pc_upcoming_archive_retention.py",
     })
-    assert retention.ADDED_PYTHON_PATHS == retention_additions
     assert retention_additions <= added
     assert {path: first_added_generation[path] for path in retention_additions} == {
         path: 348 for path in retention_additions
@@ -259,6 +258,7 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
         pass_a_tests.SOURCE: 358,
         pass_a_tests.TEST: 358,
     }
+    assert retention.ADDED_PYTHON_PATHS == retention_additions | set(later_additions)
     assert set(later_additions) <= added
     assert {path: first_added_generation[path] for path in later_additions} == later_additions
     assert len(added - {e3_projection_path} - retention_additions - set(later_additions)) == 94
