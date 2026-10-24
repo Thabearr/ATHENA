@@ -167,7 +167,7 @@ def test_checkpoint_e_uses_only_the_authenticated_historical_tests_workflow():
   checkpoint.build_matrix(base, history, tampered)
  unapproved = dict(predecessors)
  unapproved["tests/unrelated.py"] = b"unapproved"
- with pytest.raises(AssertionError, match="unapproved source predecessor"):
+ with pytest.raises(ValueError, match="unapproved source predecessor"):
   checkpoint.build_matrix(base, history, unapproved)
 
 
