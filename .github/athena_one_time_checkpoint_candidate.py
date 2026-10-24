@@ -52,28 +52,7 @@ def main():
                 pass1_forward_predecessor_sources[path] = predecessor
 '''
     replace_exact(checkpoint,anchor,insert+anchor)
-    v2="scripts/audit_core_01d_checkpoint_e_completion_v2.py"
-    raw=(ROOT/v2).read_text()
-    prefix,sep,tail=raw.partition("def a2_historical_projection(raw):")
-    if not sep:
-        raise RuntimeError("A2 historical projection missing")
-    marker="  elif path in RUN_02A_PRE_PREDECESSOR_BLOBS:\n"
-    if tail.count(marker)!=1:
-        raise RuntimeError("A2 historical tests projection anchor changed")
-    insert2='''  elif path=='.github/workflows/tests.yml':
-   # Preserve the immutable Pass-A/V1 Git-tree identity, but only after the
-   # actual head and current A2/shard receipt have been authenticated.
-   from scripts import audit_phase_a_pass_a_tests_source_successor as tests_view
-   from scripts import audit_tests_shard_balance_successor as tests_shards
-   predecessor=tests_view.historical_workflow_source()
-   review.require(
-    hashlib.sha1(b'blob '+str(len(predecessor)).encode()+b'\\0'+predecessor).hexdigest()
-       == tests_shards.BEFORE['git_blob_sha1']
-    and tests_shards.AFTER['git_blob_sha1']!=tests_shards.BEFORE['git_blob_sha1'],
-    'Checkpoint-E historical Tests predecessor identity drift')
-   line=('100644 blob '+tests_shards.BEFORE['git_blob_sha1']+'\\t'+path+'\\n').encode()
-'''
-    (ROOT/v2).write_text(prefix+sep+tail.replace(marker,insert2+marker),encoding="utf-8",newline="\n")
+    # The historical V2 verifier stays byte-identical; never bypass its strict A2 lineage.
     # The candidate MUST exclude this one-time workflow and its runner helper.
     (ROOT/WORKFLOW).unlink()
     (ROOT/SELF).unlink()
