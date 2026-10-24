@@ -242,12 +242,15 @@ def historical_workflow_source():
 
 def install_context(context):
     receipt()
-    _authenticate_a2_text_successor()
+    a2_text_successor = _authenticate_a2_text_successor()
     context['HISTORICAL_PREDECESSORS'][SOURCE] = dict(
         context['HISTORICAL_PREDECESSORS'][SOURCE], after=EDGES[SOURCE]['after'])
     a2_text_after = {path: row['after'] for path, row in _a2_text_receipt()['source_forward'].items()}
     context['BOOTSTRAP_AFTER'] = dict(context['BOOTSTRAP_AFTER'], **{
         **{path: row['after'] for path, row in EDGES.items()}, TEST: TEST_IDENTITY, **a2_text_after})
+    auditor_patches = a2_text_successor['source_forward'][A2_TEXT_SOURCE]['patches']
+    context['BOOTSTRAP_AUDITOR_PATCHES'] = tuple(context['BOOTSTRAP_AUDITOR_PATCHES']) + tuple(
+        (patch['before'], patch['after']) for patch in auditor_patches)
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **METADATA)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **METADATA)
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **B1_METADATA)
