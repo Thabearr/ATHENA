@@ -36,3 +36,5 @@ jobs:
           set -euo pipefail
           test "${GITHUB_REF}" = "refs/heads/athena/one-time-checkpoint-holdout-20261024"
           python .github/athena_one_time_checkpoint_candidate.py
+
+# Exact temporary execution trigger; deleted before candidate publication.
