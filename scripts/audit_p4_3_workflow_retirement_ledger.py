@@ -381,7 +381,7 @@ def resolve_reviewed_workflow_source(
             "git_blob_sha1": shards.BEFORE["git_blob_sha1"],
             "source_sha256": shards.BEFORE["source_sha256"],
         }
-        if {key: row.get(key) for key in IDENTITY_KEYS} != expected:
+        if {key: row.get(key) for key in shards.IDENTITY_KEYS} != expected:
             raise RetirementLedgerError(
                 "frozen P4.3A Tests workflow identity is not the reviewed shard predecessor"
             )
@@ -392,7 +392,10 @@ def resolve_reviewed_workflow_source(
             raise RetirementLedgerError(
                 "authenticated historical Tests workflow source is unavailable"
             ) from exc
-        if source_identity(raw) != expected:
+        if {
+            "git_blob_sha1": _git_blob_sha1(raw),
+            "source_sha256": _sha256(raw),
+        } != expected:
             raise RetirementLedgerError(
                 "historical Tests workflow source differs from frozen P4.3A identity"
             )
