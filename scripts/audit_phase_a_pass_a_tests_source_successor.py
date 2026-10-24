@@ -31,6 +31,71 @@ B1_METADATA = {
     B1_RECEIPT: {'git_blob_sha1': '6b528062ead8baadf3565c6a0490816fb524b3a6', 'source_sha256': '993d67dce0c23e4438b774a15bf252bbb8cf5d38fc4f308877de12a5af337323', 'byte_count': 3538},
     B1_FIXTURE: B1_BEFORE,
 }
+A2_TEXT_SOURCE = 'scripts/audit_core_01d_ci_offline_transport_boundary.py'
+A2_TEXT_RECEIPT = 'artifacts/architecture/phase_a_a2_historical_tests_text_source_forward_v1.json'
+A2_TEXT_RECEIPT_SHA256 = 'b3d0660fe8cde79e836cb129afd50abe7a259ab5a88e377c0f67c85aa84fea14'
+A2_TEXT_V360 = {'path': 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v360.json', 'generation': 360, 'canonical_sha256': '484f05fc839699c26a03cf12493bbc4bb06068ce1fa6c4de18df195d34053173', 'rewritten': False}
+A2_TEXT_METADATA = {
+    A2_TEXT_RECEIPT: {'git_blob_sha1': '5eb93cdf52f1a83b3bf50f10a18e767c0494eabf', 'source_sha256': '785997e568787c1dab8f5bbf157b18947f92e85653b598d9950706bb5e1f0f77', 'byte_count': 3207},
+    'tests/fixtures/architecture/phase_a_historical_tests_projection_v1/a2-auditor-before.py.txt': {'git_blob_sha1': '1ee7a0660be131ba7deff01e4cce45fbfd663073', 'source_sha256': '61056b7e5d233bcfe259716985dd8626d2be38bd00f0015329725b0da6a080c5', 'byte_count': 178778},
+    'tests/fixtures/architecture/phase_a_historical_tests_projection_v1/sitecustomize-before.py.txt': {'git_blob_sha1': 'b5d4a19c5fb5596158d6cab6bd63dc7dfc98d7c4', 'source_sha256': '1c3ba0d4d8d799279f18214a4797aa40f8e1fd07160705bc8ba749fce224b315', 'byte_count': 2515},
+}
+
+
+def _a2_text_receipt():
+    raw = read_blob(A2_TEXT_RECEIPT)
+    value = json.loads(raw)
+    if (safe.canonical(value) != raw or safe.canonical_digest(value) != A2_TEXT_RECEIPT_SHA256
+            or value.get('canonical_sha256') != A2_TEXT_RECEIPT_SHA256
+            or value.get('schema_version') != 1
+            or value.get('policy_id') != 'ATHENA_PHASE_A_A2_HISTORICAL_TESTS_TEXT_SOURCE_FORWARD_V1'
+            or value.get('a2_predecessor') != A2_TEXT_V360
+            or set(value.get('source_forward', {})) != {A2_TEXT_SOURCE, 'sitecustomize.py'}
+            or any(value.get(key) is not False for key in (
+                'authority_granted', 'historical_bytes_changed',
+                'current_workflow_authority_changed', 'provider_or_delivery_authority_changed'))):
+        raise ValueError('A2 historical Tests source-forward receipt drift')
+    return value
+
+
+def _a2_text_predecessor_source(path, raw):
+    value = _a2_text_receipt()
+    row = value['source_forward'].get(path)
+    if row is None:
+        return raw
+    before = read_blob(row['fixture'])
+    current = read_blob(path)
+    if safe.identity(before) != row['before'] or safe.identity(current) != row['after'] or raw != current:
+        raise ValueError('A2 historical Tests source identity drift: ' + path)
+    expected = before
+    for patch in row['patches']:
+        old, new = patch['before'].encode('utf-8'), patch['after'].encode('utf-8')
+        if expected.count(old) != 1:
+            raise ValueError('A2 historical Tests source patch seam drift: ' + path)
+        expected = expected.replace(old, new)
+    if expected != current:
+        raise ValueError('A2 historical Tests source exceeds exact successor: ' + path)
+    return before
+
+
+def _authenticate_a2_text_successor():
+    value = _a2_text_receipt()
+    inventory_raw = read_blob(A2_TEXT_V360['path'])
+    inventory = json.loads(inventory_raw)
+    if (safe.canonical(inventory) != inventory_raw
+            or safe.canonical_digest(inventory) != A2_TEXT_V360['canonical_sha256']
+            or inventory.get('generation') != 360
+            or inventory.get('canonical_sha256') != A2_TEXT_V360['canonical_sha256']
+            or inventory.get('predecessor_inventory') != B1_A2_PREDECESSOR):
+        raise ValueError('A2 V360 predecessor is not the authenticated V359 chain point')
+    for path in value['source_forward']:
+        row = value['source_forward'][path]
+        if _a2_text_predecessor_source(path, read_blob(path)) != read_blob(row['fixture']):
+            raise ValueError('A2 historical source projection mismatch: ' + path)
+    for path, expected in A2_TEXT_METADATA.items():
+        if safe.identity(read_blob(path)) != expected:
+            raise ValueError('A2 historical source-forward metadata drift: ' + path)
+    return value
 
 
 def _b1_receipt():
@@ -79,33 +144,6 @@ def _b1_predecessor_source(path, raw):
     return before
 
 
-def _install_a2_v1_tests_text():
-    """Install the exact V1 workflow bytes for A2's frozen text replay only."""
-    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
-    from scripts import audit_tests_shard_balance_successor as shards
-
-    value = shards.receipt()
-    before = shards.read_blob(shards.FIXTURE)
-    current = shards.read_blob(shards.WORKFLOW)
-    entries = shards.tree_entries()
-    if (safe.identity(before) != shards.BEFORE
-            or safe.identity(current) != shards.AFTER
-            or current != shards.expected_workflow(value)
-            or shards.tree_identity(entries) != shards.AFTER_TREE
-            or shards.tree_identity(entries, {'tests.yml': shards.BEFORE['git_blob_sha1']}) != shards.BEFORE_TREE
-            or a2.pinned_historical_identity(shards.WORKFLOW) != shards.BEFORE['source_sha256']):
-        raise ValueError('A2 V1 Tests source is not the authenticated shard predecessor')
-    if shards.subprocess.check_output(
-            ['git', 'diff', '--name-only', 'HEAD', '--', '.github/workflows'],
-            cwd=shards.ROOT).strip():
-        raise ValueError('A2 Tests historical projection requires the clean authenticated workflow tree')
-    fallbacks = a2.HISTORICAL_TEXT_BYTES
-    existing = fallbacks.get(shards.WORKFLOW)
-    if existing is not None and bytes(existing).replace(b'\r\n', b'\n') != before:
-        raise ValueError('A2 V1 Tests historical fallback conflicts with the pinned predecessor')
-    fallbacks[shards.WORKFLOW] = before
-
-
 def read_blob(path):
     return safe.read_blob(path)
 
@@ -126,7 +164,10 @@ def receipt():
 def predecessor_source(path, raw):
     row = EDGES.get(path)
     if row is None:
-        return _b1_predecessor_source(path, raw)
+        b1_source = _b1_predecessor_source(path, raw)
+        if b1_source is not raw:
+            return b1_source
+        return _a2_text_predecessor_source(path, raw)
     receipt()
     if safe.identity(raw) != row['after']:
         raise ValueError('Pass-A Tests current source identity drift: ' + path)
@@ -150,12 +191,16 @@ def authenticate_core():
     for path in EDGES:
         predecessor_source(path, read_blob(path))
     _b1_predecessor_source(B1_SOURCE, read_blob(B1_SOURCE))
+    _authenticate_a2_text_successor()
     for path, expected in METADATA.items():
         if safe.identity(read_blob(path)) != expected:
             raise ValueError('Pass-A Tests successor metadata drift: ' + path)
     for path, expected in B1_METADATA.items():
         if safe.identity(read_blob(path)) != expected:
             raise ValueError('B1 source successor metadata drift: ' + path)
+    for path, expected in A2_TEXT_METADATA.items():
+        if safe.identity(read_blob(path)) != expected:
+            raise ValueError('A2 historical source-forward metadata drift: ' + path)
     if safe.identity(read_blob(TEST)) != TEST_IDENTITY:
         raise ValueError('Pass-A Tests successor regression source drift')
     return value
@@ -197,13 +242,16 @@ def historical_workflow_source():
 
 def install_context(context):
     receipt()
-    _install_a2_v1_tests_text()
+    _authenticate_a2_text_successor()
     context['HISTORICAL_PREDECESSORS'][SOURCE] = dict(
         context['HISTORICAL_PREDECESSORS'][SOURCE], after=EDGES[SOURCE]['after'])
+    a2_text_after = {path: row['after'] for path, row in _a2_text_receipt()['source_forward'].items()}
     context['BOOTSTRAP_AFTER'] = dict(context['BOOTSTRAP_AFTER'], **{
-        **{path: row['after'] for path, row in EDGES.items()}, TEST: TEST_IDENTITY})
+        **{path: row['after'] for path, row in EDGES.items()}, TEST: TEST_IDENTITY, **a2_text_after})
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **METADATA)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **METADATA)
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **B1_METADATA)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **B1_METADATA)
+    context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **A2_TEXT_METADATA)
+    context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **A2_TEXT_METADATA)
     context['ADDED_PYTHON_PATHS'] |= frozenset({__name__.replace('.', '/') + '.py', TEST})

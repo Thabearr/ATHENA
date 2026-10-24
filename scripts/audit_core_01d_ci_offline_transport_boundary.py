@@ -958,6 +958,7 @@ HISTORICAL_TEXT_BYTES = {
 }
 HISTORICAL_TEXT_FIXTURES = {
     "tests/offline_transport.py": "tests/fixtures/core_01d/a2-v1-offline-transport.txt",
+    ".github/workflows/tests.yml": "tests/fixtures/architecture/revised_workflows/tests-pre-shard-balance-v1.yml",
 }
 PREDECESSORS = {
  "artifacts/architecture/core_01d_authority_reachability_review_a_v1.json": "9db3362af83eda04b6f005328b5d44f253fcd15ef5f39a62983cc6c3ff402521",
@@ -1216,9 +1217,18 @@ def pinned_historical_text(path, commit=A2_REVIEWED_HEAD):
         return raw.decode("utf-8")
     if path in HISTORICAL_TEXT_FIXTURES:
         fixture_path = ROOT / HISTORICAL_TEXT_FIXTURES[path]
-        require(fixture_path.is_file() and not fixture_path.is_symlink(),
-                "pinned historical text fixture is missing: " + path)
-        raw = lf(fixture_path.read_bytes())
+        if path == ".github/workflows/tests.yml":
+            from scripts import audit_tests_shard_balance_successor as shards
+            require(HISTORICAL_TEXT_FIXTURES[path] == shards.FIXTURE,
+                    "pinned historical Tests fixture differs from the reviewed shard predecessor")
+            shards.authenticate()
+            raw = shards.read_blob(shards.FIXTURE)
+            require(shards.identity(raw) == shards.BEFORE,
+                    "pinned historical Tests source identity differs from the shard predecessor")
+        else:
+            require(fixture_path.is_file() and not fixture_path.is_symlink(),
+                    "pinned historical text fixture is missing: " + path)
+            raw = lf(fixture_path.read_bytes())
         require(hashlib.sha256(raw).hexdigest() == pinned_historical_identity(path),
                 "pinned historical text fixture identity mismatch: " + path)
         return raw.decode("utf-8")

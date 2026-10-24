@@ -18,7 +18,7 @@ ROOT_TEST_SOURCE_PINS = {
 ROOT_TEST_SOURCE_SUCCESSORS = {
     "scripts/audit_core_01d_ci_offline_transport_boundary.py": (
         "282e1b9c5258eb4fcbe51581816e7894e5c9b581f085be1162aa6f9bca864299",
-        "61056b7e5d233bcfe259716985dd8626d2be38bd00f0015329725b0da6a080c5",
+        "b5a55f7f82f2313face2191eb87eb221818a4da0d6a8955b3e3dbad74598477e",
     ),
 }
 
