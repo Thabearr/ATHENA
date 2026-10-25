@@ -255,7 +255,7 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
         "scripts/audit_tests_shard_balance_successor.py": 353,
         "tests/test_tests_shard_balance_successor.py": 353,
         "scripts/audit_phase_a_b4_test_source_successor.py": 355,
-        pass_a_tests.SOURCE: 358,
+        pass_a_tests.__name__.replace(".", "/") + ".py": 358,
         pass_a_tests.TEST: 358,
     }
     assert retention.ADDED_PYTHON_PATHS == retention_additions | set(later_additions)

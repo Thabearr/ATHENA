@@ -336,7 +336,10 @@ def test_historical_projection_is_exact_idempotent_and_keeps_unknown_rows():
     assert not set(successor.ADDED_METADATA) & set(rows)
     assert not successor.ADDED_PYTHON_PATHS & set(rows)
     for path, descriptor in successor.HISTORICAL_PREDECESSORS.items():
-        assert rows[path].split()[-1].decode() == descriptor['git_blob_sha1']
+        if path in successor.ADDED_PYTHON_PATHS:
+            assert path not in rows
+        else:
+            assert rows[path].split()[-1].decode() == descriptor['git_blob_sha1']
     extra = b'100644 blob ' + b'0' * 40 + b'\truntime/unapproved-neighbor.py\n'
     assert successor.project_retention_inventory(raw + extra, latest=latest).endswith(extra)
 

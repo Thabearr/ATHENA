@@ -611,8 +611,10 @@ def verified_additive_artifact_paths():
         value = strict(raw)
         require(raw == canonical(value) and value.get("canonical_sha256") == expected == self_sha(value),
                 "unreviewed additive C4 artifact identity: " + path)
+    from scripts import audit_phase_a_pass_a_tests_source_successor as phase_a
+    phase_a_artifacts = phase_a.authenticated_retention_artifact_paths()
     if _VERIFIED_ADDITIVE_PATHS is not None:
-        return _VERIFIED_ADDITIVE_PATHS
+        return tuple(sorted(set(_VERIFIED_ADDITIVE_PATHS) | phase_a_artifacts))
     from scripts.audit_core_01d_scheduled_shadow_ownership import verified_receipt_path, additive_paths
     verified_receipt_path()
     from scripts.audit_core_01d_retained_workflow_status import audit as audit_retained_status
@@ -719,7 +721,7 @@ def verified_additive_artifact_paths():
         share_pre.RECEIPT_PATH,
         *(path for path in sorted(e1_paths) if path.startswith("artifacts/")),
     )
-    return _VERIFIED_ADDITIVE_PATHS
+    return tuple(sorted(set(_VERIFIED_ADDITIVE_PATHS) | phase_a_artifacts))
 
 
 def _authenticate_pr119_release_only_workflow_forward(current, before):

@@ -197,11 +197,12 @@ def _b1_v2_receipt():
 
 
 def _b1_predecessor_source(path, raw):
+    raw = _integrated_lineage_predecessor(path, raw)
     if path != B1_SOURCE:
         return raw
     value = _b1_v2_receipt()
     before_v1 = read_blob(B1_V2_FIXTURE)
-    current = read_blob(B1_SOURCE)
+    current = _integrated_lineage_predecessor(B1_SOURCE, read_blob(B1_SOURCE))
     if safe.identity(before_v1) != B1_AFTER or safe.identity(current) != B1_V2_AFTER or raw != current:
         raise ValueError('B1 V2 current or historical source identity drift')
     recipe = value['exact_patches']
@@ -268,9 +269,10 @@ def receipt():
 
 
 def predecessor_source(path, raw):
+    raw = _integrated_lineage_predecessor(path, raw)
     raw = _tests_shard_v2_predecessor_source(path, raw)
     if path == B1_SOURCE:
-        return _b1_predecessor_source(path, raw)
+        return _b1_predecessor_source(path, read_blob(path))
     row = EDGES.get(path)
     if row is None:
         return _a2_text_predecessor_source(path, raw)
@@ -293,6 +295,7 @@ def predecessor_source(path, raw):
 
 
 def authenticate_core():
+    _integrated_lineage_receipt()
     value = receipt()
     for path in EDGES:
         predecessor_source(path, read_blob(path))
@@ -328,7 +331,8 @@ def historical_workflow_source():
         raise ValueError('Pass-A current auditor is not authenticated by latest A2')
     b1_rows = [row for row in latest['source_identities'] if row['path'] == B1_SOURCE]
     if (latest['generation'] < 362
-            or b1_rows != [{'path': B1_SOURCE, 'lf_source_sha256': B1_V2_AFTER['source_sha256']}]):
+            or b1_rows != [{'path': B1_SOURCE, 'lf_source_sha256':
+                _integrated_lineage_receipt()['source_forward'][B1_SOURCE]['after']['source_sha256']}]):
         raise ValueError('B1 current test source is not authenticated by the A2 successor')
     shards.authenticate()  # Proves actual HEAD tree plus one-path inverse.
     current = read_blob(shards.WORKFLOW)
@@ -380,3 +384,78 @@ def install_context(context):
     context['BOOTSTRAP_AFTER'] = dict(context['BOOTSTRAP_AFTER'], **{
         path: row['after'] for path, row in shard_successor['source_forward'].items()})
     context['ADDED_PYTHON_PATHS'] |= frozenset({__name__.replace('.', '/') + '.py', TEST})
+    integrated = _integrated_lineage_receipt()
+    metadata = {INTEGRATED_LINEAGE_RECEIPT: safe.identity(read_blob(INTEGRATED_LINEAGE_RECEIPT))}
+    for path, row in integrated['source_forward'].items():
+        metadata[row['fixture']] = row['before']
+        context['BOOTSTRAP_AFTER'][path] = row['after']
+        if path in context['HISTORICAL_PREDECESSORS']:
+            context['HISTORICAL_PREDECESSORS'][path] = dict(context['HISTORICAL_PREDECESSORS'][path], after=row['after'])
+    context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **metadata)
+    context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **metadata)
+
+
+INTEGRATED_LINEAGE_RECEIPT = 'artifacts/architecture/phase_a_integrated_lineage_source_successor_v1.json'
+INTEGRATED_LINEAGE_SHA = '8d2f16ca61afd45d1ad43a03c5cfcad28563e3edbd04a65cfb478360d304d6d4'
+INTEGRATED_LINEAGE_PATHS = frozenset({
+    'scripts/audit_checkpoint_e_workflows.py',
+    'tests/test_core_01d_exact_pr_trigger_disposition_b1.py',
+    'tests/test_current_shadow_pc_upcoming_archive_retention.py',
+})
+
+
+def _integrated_lineage_receipt():
+    raw = read_blob(INTEGRATED_LINEAGE_RECEIPT)
+    value = json.loads(raw)
+    if (safe.canonical(value) != raw or safe.canonical_digest(value) != INTEGRATED_LINEAGE_SHA
+            or value.get('canonical_sha256') != INTEGRATED_LINEAGE_SHA
+            or value.get('policy_id') != 'ATHENA_PHASE_A_INTEGRATED_LINEAGE_SOURCE_SUCCESSOR_V1'
+            or set(value.get('source_forward', {})) != INTEGRATED_LINEAGE_PATHS
+            or any(value.get(k) is not False for k in ('authority_granted', 'historical_bytes_changed', 'workflow_changed'))):
+        raise ValueError('integrated lineage receipt drift')
+    predecessor = value['predecessor_inventory']
+    inventory_raw = read_blob(predecessor['path'])
+    inventory = json.loads(inventory_raw)
+    if (predecessor['generation'] != 367 or predecessor['rewritten'] is not False
+            or safe.canonical(inventory) != inventory_raw
+            or safe.canonical_digest(inventory) != predecessor['canonical_sha256']
+            or inventory.get('generation') != 367):
+        raise ValueError('integrated lineage A2 predecessor drift')
+    sources = {r['path']: r['lf_source_sha256'] for r in inventory['source_identities']}
+    for path, row in value['source_forward'].items():
+        before, current = read_blob(row['fixture']), read_blob(path)
+        if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
+                or sources.get(path) != row['before']['source_sha256']):
+            raise ValueError('integrated lineage source identity drift: ' + path)
+        expected = before
+        for patch in row['patches']:
+            old, new = patch['before'].encode(), patch['after'].encode()
+            if expected.count(old) != 1:
+                raise ValueError('integrated lineage patch seam drift: ' + path)
+            expected = expected.replace(old, new)
+        if expected != current:
+            raise ValueError('integrated lineage exceeds exact recipe: ' + path)
+    return value
+
+
+def _integrated_lineage_predecessor(path, raw):
+    if path not in INTEGRATED_LINEAGE_PATHS:
+        return raw
+    row = _integrated_lineage_receipt()['source_forward'][path]
+    if safe.identity(raw) != row['after']:
+        raise ValueError('integrated lineage caller source drift: ' + path)
+    return read_blob(row['fixture'])
+
+
+def authenticated_retention_artifact_paths():
+    # No expensive audit cache authorizes bytes: replay exact metadata on every call.
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    retention.authenticate()
+    retention.authenticate_bootstrap_sources()
+    paths = set()
+    for path, expected in retention.ADDED_METADATA.items():
+        if path.startswith('artifacts/'):
+            if safe.identity(read_blob(path)) != expected:
+                raise ValueError('retention additive artifact identity drift: ' + path)
+            paths.add(path)
+    return paths
