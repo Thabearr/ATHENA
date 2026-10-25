@@ -7,7 +7,6 @@ Git filters or newline normalization.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
 import hashlib
 import os
 from pathlib import Path, PurePosixPath
@@ -99,7 +98,6 @@ def _ascii_git_output(repository_root: Path, *arguments: str) -> str:
         raise SourceIdentityError("local Git returned malformed identity text") from exc
 
 
-@lru_cache(maxsize=16)
 def _ensure_repository_root(repository_root: str | os.PathLike[str]) -> Path:
     try:
         root = Path(repository_root).resolve(strict=True)
@@ -135,9 +133,6 @@ def _tracked_worktree_path(root: Path, relative_path: str) -> Path:
     return resolved
 
 
-_TRACKED_HEAD_CACHE: dict[tuple[str, str, bool, int, int], tuple[bytes, DevelopmentSourceIdentity]] = {}
-
-
 def read_tracked_head_blob(
     repository_root: str | os.PathLike[str],
     relative_path: str,
@@ -157,22 +152,6 @@ def read_tracked_head_blob(
     if type(verify_worktree_filtered_identity) is not bool:
         raise SourceIdentityError("verify_worktree_filtered_identity must be exact bool")
     root = _ensure_repository_root(repository_root)
-
-    worktree_path: Path | None = None
-    cache_key: tuple[str, str, bool, int, int] | None = None
-    if verify_worktree_filtered_identity:
-        worktree_path = _tracked_worktree_path(root, relative)
-        try:
-            st = worktree_path.stat()
-            cache_key = (str(root), relative, True, st.st_mtime_ns, st.st_size)
-        except OSError:
-            cache_key = None
-    else:
-        cache_key = (str(root), relative, False, 0, 0)
-
-    if cache_key is not None and cache_key in _TRACKED_HEAD_CACHE:
-        return _TRACKED_HEAD_CACHE[cache_key]
-
     try:
         blob_sha1 = _ascii_git_output(root, "rev-parse", "--verify", f"HEAD:{relative}")
     except SourceIdentityError as exc:
@@ -190,8 +169,7 @@ def read_tracked_head_blob(
     filtered_sha1: str | None = None
     raw_sha256: str | None = None
     if verify_worktree_filtered_identity:
-        if worktree_path is None:
-            worktree_path = _tracked_worktree_path(root, relative)
+        worktree_path = _tracked_worktree_path(root, relative)
         raw_payload = read_raw_file_bytes(worktree_path)
         raw_sha256 = hashlib.sha256(raw_payload).hexdigest()
         filtered_sha1 = _ascii_git_output(
@@ -214,7 +192,4 @@ def read_tracked_head_blob(
         filtered_worktree_git_blob_sha1=filtered_sha1,
         raw_worktree_sha256=raw_sha256,
     )
-    result = (payload, identity)
-    if cache_key is not None:
-        _TRACKED_HEAD_CACHE[cache_key] = result
-    return result
+    return payload, identity
