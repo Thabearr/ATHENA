@@ -91,14 +91,17 @@ def test_current_master_closes_with_v10_and_historical_v2_still_authenticates():
     from scripts import audit_core_01d_checkpoint_e_completion_v10 as v10
 
     result = master.audit()
-    assert result["current_completion_receipt_sha256"] == v10.audit()["receipt_sha256"]
+    v10_audit = v10.audit()
+    v2_audit = historical_v2.audit()
+    v9_audit = v9.audit()
+    assert result["current_completion_receipt_sha256"] == v10_audit["receipt_sha256"]
     assert result["historical_completion_v2_receipt_sha256"] == \
-        historical_v2.audit()["receipt_sha256"]
+        v2_audit["receipt_sha256"]
     assert result["remaining_unreviewed_surface_count"] == 0
     assert result["blockers"] == []
     assert result["checkpoint_e"] == result["p4_4"] == "COMPLETE"
-    assert historical_v2.audit()["result"] == "PASS"
-    assert v9.audit()["checkpoint_e"] == v9.audit()["p4_4"] == "INCOMPLETE"
+    assert v2_audit["result"] == "PASS"
+    assert v9_audit["checkpoint_e"] == v9_audit["p4_4"] == "INCOMPLETE"
 
 
 def test_pass1_supporting_source_keeps_exact_b6_predecessor_and_current_a2_identity():
