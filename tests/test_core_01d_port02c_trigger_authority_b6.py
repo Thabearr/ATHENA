@@ -11,6 +11,18 @@ from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
 from scripts import audit_core_01d_port02c_trigger_authority_b6 as b6
 
 
+@pytest.fixture(scope="module")
+def _verified_positive_receipt():
+    """Run the complete source audit once for unchanged positive assertions."""
+    return b6.validate_receipt()
+
+
+@pytest.fixture
+def reviewed_receipt(_verified_positive_receipt):
+    # Each test owns its copy; mutation/forgery tests retain real validators.
+    return deepcopy(_verified_positive_receipt)
+
+
 _A2_PREDECESSOR_FILE_SHA256 = {
     1: "eb8e3f78a87836f328620cc1bf34f34c3e68da0c7700fea85eb476ff45793a97",
     2: "611dd630d2ea0223134f742192641988571d83350e30f016f804d6e43d437046",
@@ -41,8 +53,8 @@ _E3_B6_SOURCE_FORWARD_ROWS = {
 }
 
 
-def test_b6_scope_is_exactly_two_port_triggers_and_excludes_win_either_half():
-    receipt = b6.validate_receipt()
+def test_b6_scope_is_exactly_two_port_triggers_and_excludes_win_either_half(reviewed_receipt):
+    receipt = reviewed_receipt
     assert b6.TARGETS == (
         (".github/workflows/port-02c-native-runtime.yml", "pull_request"),
         (".github/workflows/port-02c-native-runtime.yml", "workflow_dispatch"),
@@ -222,8 +234,8 @@ def test_depth_one_workflow_invariance_uses_pinned_checked_out_subtree(monkeypat
     assert result["retired_workflow_count"] == 3
 
 
-def test_trigger_surfaces_remain_separate_with_exact_current_reachability():
-    receipt = b6.validate_receipt()
+def test_trigger_surfaces_remain_separate_with_exact_current_reachability(reviewed_receipt):
+    receipt = reviewed_receipt
     rows = {row["identity"]["trigger_kind"]: row for row in receipt["review_rows"]}
     assert set(rows) == {"pull_request", "workflow_dispatch"}
     pr = rows["pull_request"]["trigger_contract"]["reachability"]
@@ -250,8 +262,8 @@ def test_trigger_surfaces_remain_separate_with_exact_current_reachability():
         "historical_non_main_dispatch"]["branch"] == "feat/port-02c-native-installed-runtime-slice"
 
 
-def test_concurrency_cancel_in_progress_is_platform_authority_not_explicit_api_cancel():
-    receipt = b6.validate_receipt()
+def test_concurrency_cancel_in_progress_is_platform_authority_not_explicit_api_cancel(reviewed_receipt):
+    receipt = reviewed_receipt
     concurrency = receipt["workflow_contract"]["concurrency"]
     assert concurrency["group"] == \
         "port-02c-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
@@ -265,8 +277,8 @@ def test_concurrency_cancel_in_progress_is_platform_authority_not_explicit_api_c
         receipt["workflow_contract"]["workflow_dispatch"]["classification"]
 
 
-def test_toolchain_network_is_separate_from_the_qualification_transport_sentinel():
-    receipt = b6.validate_receipt()
+def test_toolchain_network_is_separate_from_the_qualification_transport_sentinel(reviewed_receipt):
+    receipt = reviewed_receipt
     for row in receipt["review_rows"]:
         network = row["network_authority"]
         assert network["workflow_infrastructure_network"] == "YES"
@@ -280,8 +292,8 @@ def test_toolchain_network_is_separate_from_the_qualification_transport_sentinel
     assert receipt["runtime_source_contract"]["nested_retained_replay_guards"] is True
 
 
-def test_build_git_subprocesses_are_local_read_only_and_checkout_credential_is_not_write_authority():
-    receipt = b6.validate_receipt()
+def test_build_git_subprocesses_are_local_read_only_and_checkout_credential_is_not_write_authority(reviewed_receipt):
+    receipt = reviewed_receipt
     runtime = receipt["runtime_source_contract"]
     assert runtime["build_git_authority"] == "LOCAL_GIT_REPOSITORY_READ_ONLY"
     assert runtime["entire_repo_bundled"] is False
@@ -300,8 +312,8 @@ def test_build_git_subprocesses_are_local_read_only_and_checkout_credential_is_n
             "NO_SOURCE_PATH_AND_TOKEN_CONTENTS_READ_ONLY"
 
 
-def test_retained_provider_evidence_is_not_new_provider_acquisition():
-    receipt = b6.validate_receipt()
+def test_retained_provider_evidence_is_not_new_provider_acquisition(reviewed_receipt):
+    receipt = reviewed_receipt
     replay_source = (b6.ROOT / "scripts/port_02c_offline_composed_replay.py").read_text()
     assert "require_network_acquisition_performed=True" in replay_source
     for row in receipt["review_rows"]:
@@ -314,8 +326,8 @@ def test_retained_provider_evidence_is_not_new_provider_acquisition():
         assert delivery["network_attempts"] == 0
 
 
-def test_delivery_owner_resolution_does_not_claim_share_code_execution():
-    receipt = b6.validate_receipt()
+def test_delivery_owner_resolution_does_not_claim_share_code_execution(reviewed_receipt):
+    receipt = reviewed_receipt
     for row in receipt["review_rows"]:
         delivery = row["delivery_and_wager"]
         assert delivery["canonical_component_resolution_includes_delivery_owner"] is True
@@ -329,8 +341,8 @@ def test_delivery_owner_resolution_does_not_claim_share_code_execution():
         assert delivery["live_delivery_authority"] == "NO_EXECUTED_DELIVERY"
 
 
-def test_local_price_router_portfolio_replay_does_not_gain_production_authority():
-    receipt = b6.validate_receipt()
+def test_local_price_router_portfolio_replay_does_not_gain_production_authority(reviewed_receipt):
+    receipt = reviewed_receipt
     port = boundary.read(b6.PORT_RECEIPT_PATH)
     assert port["qualification"]["production_model_authority"] is False
     assert port["qualification"]["production_probability_authority"] is False
@@ -344,8 +356,8 @@ def test_local_price_router_portfolio_replay_does_not_gain_production_authority(
         assert replay["complete_current_history_reconstruction"] is False
 
 
-def test_filesystem_native_process_artifact_and_external_write_authorities_are_separate():
-    receipt = b6.validate_receipt()
+def test_filesystem_native_process_artifact_and_external_write_authorities_are_separate(reviewed_receipt):
+    receipt = reviewed_receipt
     for row in receipt["review_rows"]:
         assert row["local_filesystem_and_process_authority"]["filesystem_write"].startswith("YES_")
         assert row["local_filesystem_and_process_authority"]["native_subprocess"] == "YES"
@@ -363,8 +375,8 @@ def test_filesystem_native_process_artifact_and_external_write_authorities_are_s
     }
 
 
-def test_historical_windows_host_and_local_windows_11_evidence_are_not_conflated():
-    receipt = b6.validate_receipt()
+def test_historical_windows_host_and_local_windows_11_evidence_are_not_conflated(reviewed_receipt):
+    receipt = reviewed_receipt
     history = receipt["historical_actions_metadata"]
     assert history["id"] == 36792107722
     assert history["event"] == "workflow_dispatch"
@@ -382,8 +394,8 @@ def test_historical_windows_host_and_local_windows_11_evidence_are_not_conflated
     assert platforms["linux"]["evidence_source"] == "GITHUB_ACTIONS_UBUNTU_24_04_NATIVE"
 
 
-def test_current_product_release_support_and_no_caller_or_retirement_are_preserved():
-    receipt = b6.validate_receipt()
+def test_current_product_release_support_and_no_caller_or_retirement_are_preserved(reviewed_receipt):
+    receipt = reviewed_receipt
     scan = receipt["repository_caller_scan"]
     assert receipt["repository_caller_scan"]["result"] == \
         "NO_CURRENT_REPOSITORY_CALLER_FOUND_SOURCE_SCAN"
@@ -466,8 +478,8 @@ def test_a2_generation_v8_is_immutable_prefix_and_b6_python_remains_in_latest_in
     } <= paths
 
 
-def test_workflow_tree_evolution_retirement_and_live_action_invariants_are_zero():
-    receipt = b6.validate_receipt()
+def test_workflow_tree_evolution_retirement_and_live_action_invariants_are_zero(reviewed_receipt):
+    receipt = reviewed_receipt
     invariant = receipt["workflow_evolution_and_retirement_invariants"]
     assert invariant["workflow_tree_sha1"] == "9b08653f1a12bb1b3d964fbd910396ff955740da"
     assert invariant["workflow_diff_count"] == 0

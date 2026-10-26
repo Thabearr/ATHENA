@@ -295,6 +295,7 @@ def predecessor_source(path, raw):
 
 
 def authenticate_core():
+    _positive_fixture_receipt()
     _integrated_lineage_receipt()
     value = receipt()
     for path in EDGES:
@@ -393,6 +394,16 @@ def install_context(context):
             context['HISTORICAL_PREDECESSORS'][path] = dict(context['HISTORICAL_PREDECESSORS'][path], after=row['after'])
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **metadata)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **metadata)
+    positive_fixture = _positive_fixture_receipt()
+    fixture_metadata = {POSITIVE_FIXTURE_RECEIPT: safe.identity(read_blob(POSITIVE_FIXTURE_RECEIPT))}
+    for path, row in positive_fixture['source_forward'].items():
+        fixture_metadata[row['fixture']] = row['before']
+        context['BOOTSTRAP_AFTER'][path] = row['after']
+        if path == 'pytest.ini':
+            context['HISTORICAL_PREDECESSORS'][path] = {
+                'fixture': row['fixture'], **row['before'], 'after': row['after']}
+    context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **fixture_metadata)
+    context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **fixture_metadata)
 
 
 INTEGRATED_LINEAGE_RECEIPT = 'artifacts/architecture/phase_a_integrated_lineage_source_successor_v1.json'
@@ -459,3 +470,49 @@ def authenticated_retention_artifact_paths():
                 raise ValueError('retention additive artifact identity drift: ' + path)
             paths.add(path)
     return paths
+
+POSITIVE_FIXTURE_RECEIPT = 'artifacts/architecture/positive_audit_fixture_reuse_v1.json'
+POSITIVE_FIXTURE_SHA = 'eb3de3dcea19e75b131c6757617525f50b2540d6da82cd92d19268c68d746501'
+POSITIVE_FIXTURE_PATHS = frozenset({'pytest.ini', 'tests/test_core_01d_port02c_trigger_authority_b6.py',
+                                    'tests/test_core_01d_checkpoint_e_completion_v9.py'})
+
+
+def _positive_fixture_receipt():
+    raw = read_blob(POSITIVE_FIXTURE_RECEIPT)
+    value = json.loads(raw)
+    if (safe.canonical(value) != raw or safe.canonical_digest(value) != POSITIVE_FIXTURE_SHA
+            or value.get('canonical_sha256') != POSITIVE_FIXTURE_SHA
+            or value.get('policy_id') != 'ATHENA_POSITIVE_AUDIT_FIXTURE_REUSE_V1'
+            or set(value.get('source_forward', {})) != POSITIVE_FIXTURE_PATHS
+            or any(value.get(k) is not False for k in ('authority_granted', 'historical_bytes_changed', 'workflow_changed'))):
+        raise ValueError('positive fixture reuse receipt drift')
+    predecessor = value['predecessor_inventory']
+    inventory_raw = read_blob(predecessor['path'])
+    inventory = json.loads(inventory_raw)
+    if (predecessor['generation'] != 368 or predecessor['rewritten'] is not False
+            or safe.canonical(inventory) != inventory_raw
+            or safe.canonical_digest(inventory) != predecessor['canonical_sha256']
+            or inventory.get('generation') != 368):
+        raise ValueError('positive fixture reuse A2 predecessor drift')
+    sources = {r['path']: r['lf_source_sha256'] for r in inventory['source_identities']}
+    anchor = value['historical_configuration_anchor']
+    frozen_raw = read_blob(anchor['path'])
+    if (anchor['path'] != 'tests/fixtures/core_01d/exact-main-source-inventory.json'
+            or safe.identity(frozen_raw) != anchor['identity']
+            or json.loads(frozen_raw)['files']['pytest.ini'] != {
+                'mode': '100644', 'git_blob_sha1': value['source_forward']['pytest.ini']['before']['git_blob_sha1']}):
+        raise ValueError('positive fixture historical configuration anchor drift')
+    for path, row in value['source_forward'].items():
+        before, current = read_blob(row['fixture']), read_blob(path)
+        if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
+                or (path != 'pytest.ini' and sources.get(path) != row['before']['source_sha256'])):
+            raise ValueError('positive fixture reuse source identity drift: ' + path)
+        expected = before
+        for patch in row['patches']:
+            old, new = patch['before'].encode(), patch['after'].encode()
+            if expected.count(old) != 1:
+                raise ValueError('positive fixture reuse patch seam drift: ' + path)
+            expected = expected.replace(old, new)
+        if expected != current:
+            raise ValueError('positive fixture reuse exceeds exact recipe: ' + path)
+    return value
