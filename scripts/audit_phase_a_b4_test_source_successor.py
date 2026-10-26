@@ -40,6 +40,10 @@ def identity(raw):
             'source_sha256': hashlib.sha256(raw).hexdigest(), 'byte_count': len(raw)}
 
 
+# Bounded immutable blob bytes, never source/receipt authorization verdicts.
+_BLOB_PAYLOADS = {}
+
+
 def read_blob(path):
     logical = Path(path)
     if logical.is_absolute() or logical.as_posix() != path or '..' in logical.parts:
@@ -52,14 +56,43 @@ def read_blob(path):
                 or getattr(status, 'st_file_attributes', 0) & 0x400
                 or (node == target and getattr(status, 'st_nlink', 1) != 1)):
             raise ValueError('B4 test source evidence is linked or nonregular: ' + path)
-    mode = subprocess.check_output(['git', 'ls-tree', 'HEAD', '--', path], cwd=ROOT)
-    if (type(mode) is not bytes or len(mode.splitlines()) != 1
-            or mode.split(b'\t', 1)[0].split()[:2] != [b'100644', b'blob']):
+    from runtime.source_identity import (
+        _ensure_repository_root, _ascii_git_output, read_tracked_head_blob,
+        validate_repository_relative_path,
+    )
+    validate_repository_relative_path(path)
+    root = _ensure_repository_root(ROOT)  # Fresh root and HEAD commit fence.
+    mode = subprocess.check_output(['git', 'ls-tree', '-z', 'HEAD', '--', path], cwd=ROOT)
+    if type(mode) is not bytes or mode.count(b'\0') != 1 or not mode.endswith(b'\0'):
         raise ValueError('B4 test source evidence Git tree mode drift: ' + path)
-    from runtime.source_identity import read_tracked_head_blob
-    # The reader authenticates exact Git bytes and clean LF/CRLF worktree
-    # materialization; no frozen fixture is normalized or rewritten on disk.
-    raw, _ = read_tracked_head_blob(ROOT, path)
+    metadata, logical_path = mode[:-1].split(b'\t', 1)
+    fields = metadata.split()
+    if (len(fields) != 3 or fields[:2] != [b'100644', b'blob']
+            or logical_path != path.encode('utf-8')
+            or len(fields[2]) != 40 or any(c not in b'0123456789abcdef' for c in fields[2])):
+        raise ValueError('B4 test source evidence Git tree mode drift: ' + path)
+    blob = fields[2].decode('ascii')
+    key = (blob, read_tracked_head_blob)
+    raw = _BLOB_PAYLOADS.get(key)
+    if raw is None:
+        # Cold reads retain the complete reviewed Git-object/materialization proof.
+        raw, observed = read_tracked_head_blob(ROOT, path)
+        if observed.git_blob_sha1 != blob:
+            raise ValueError('B4 test source HEAD changed during blob read: ' + path)
+    else:
+        # Only immutable bytes are reused. No receipt/authority verdict is cached.
+        # Git re-evaluates current path filters and reads current worktree bytes.
+        filtered = _ascii_git_output(root, 'hash-object', f'--path={path}',
+                                     '--filters', '--', str(target))
+        if filtered != blob:
+            raise ValueError('B4 test source filtered worktree identity drift: ' + path)
+    if (type(raw) is not bytes
+            or hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() != blob):
+        raise ValueError('B4 test source cached blob payload identity drift: ' + path)
+    if key not in _BLOB_PAYLOADS:
+        if len(_BLOB_PAYLOADS) >= 64:
+            _BLOB_PAYLOADS.pop(next(iter(_BLOB_PAYLOADS)))
+        _BLOB_PAYLOADS[key] = raw
     return raw
 
 

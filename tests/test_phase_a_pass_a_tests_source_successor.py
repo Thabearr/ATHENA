@@ -122,3 +122,103 @@ def test_pass_a_rejects_changed_discovery_line_or_frozen_inventory(monkeypatch):
     monkeypatch.setattr(review, 'read_json', lambda p: changed if p == review.INVENTORY_PATH else original(p))
     with pytest.raises(AssertionError, match='inventory seal drift'):
         review.authenticate_inventory()
+
+
+@pytest.fixture
+def blob_reuse_checkout(tmp_path, monkeypatch):
+ import subprocess
+ from scripts import audit_phase_a_b4_test_source_successor as safe
+ def git(*args):
+  return subprocess.check_output(['git', *args], cwd=tmp_path)
+ git('init', '-q')
+ git('config', 'user.name', 'Offline Fixture')
+ git('config', 'user.email', 'offline@example.invalid')
+ git('config', 'core.autocrlf', 'false')
+ file = tmp_path / 'proof.txt'
+ file.write_bytes(b'reviewed\n')
+ git('add', 'proof.txt')
+ git('commit', '-q', '-m', 'Deterministic offline source fixture')
+ monkeypatch.setattr(safe, 'ROOT', tmp_path)
+ safe._BLOB_PAYLOADS.clear()
+ yield safe, file, git
+ safe._BLOB_PAYLOADS.clear()
+
+
+def test_blob_reuse_reads_current_worktree_after_warm_cache(blob_reuse_checkout):
+ import os
+ safe, file, _git = blob_reuse_checkout
+ assert safe.read_blob('proof.txt') == safe.read_blob('proof.txt') == b'reviewed\n'
+ state = file.stat()
+ file.write_bytes(b'tampered\n')
+ os.utime(file, ns=(state.st_atime_ns, state.st_mtime_ns))
+ with pytest.raises(ValueError, match='filtered worktree identity drift'):
+  safe.read_blob('proof.txt')
+
+
+def test_blob_reuse_preserves_cold_reader_and_rejects_reader_replacement(blob_reuse_checkout, monkeypatch):
+ from runtime import source_identity
+ safe, _file, _git = blob_reuse_checkout
+ original = source_identity.read_tracked_head_blob
+ calls = []
+ def counted(*args, **kwargs):
+  calls.append(args)
+  return original(*args, **kwargs)
+ monkeypatch.setattr(source_identity, 'read_tracked_head_blob', counted)
+ assert safe.read_blob('proof.txt') == safe.read_blob('proof.txt') == b'reviewed\n'
+ assert len(calls) == 1
+ def denied(*args, **kwargs):
+  raise ValueError('replacement reader must run')
+ monkeypatch.setattr(source_identity, 'read_tracked_head_blob', denied)
+ with pytest.raises(ValueError, match='replacement reader must run'):
+  safe.read_blob('proof.txt')
+
+
+def test_blob_reuse_rechecks_git_mode(blob_reuse_checkout, monkeypatch):
+ safe, _file, _git = blob_reuse_checkout
+ safe.read_blob('proof.txt')
+ original = safe.subprocess.check_output
+ def executable(args, **kwargs):
+  raw = original(args, **kwargs)
+  return raw.replace(b'100644 blob ', b'100755 blob ') if args[:2] == ['git', 'ls-tree'] else raw
+ monkeypatch.setattr(safe.subprocess, 'check_output', executable)
+ with pytest.raises(ValueError, match='mode drift'):
+  safe.read_blob('proof.txt')
+
+
+def test_blob_reuse_preserves_crlf_and_observes_filter_change(blob_reuse_checkout):
+ safe, file, git = blob_reuse_checkout
+ assert safe.read_blob('proof.txt') == b'reviewed\n'
+ git('config', 'core.autocrlf', 'true')
+ file.write_bytes(b'reviewed\r\n')
+ assert safe.read_blob('proof.txt') == b'reviewed\n'
+ (file.parent / '.gitattributes').write_bytes(b'proof.txt -text\n')
+ with pytest.raises(ValueError, match='filtered worktree identity drift'):
+  safe.read_blob('proof.txt')
+
+
+def test_blob_reuse_observes_new_head_and_rejects_corrupted_cache(blob_reuse_checkout):
+ safe, file, git = blob_reuse_checkout
+ assert safe.read_blob('proof.txt') == b'reviewed\n'
+ file.write_bytes(b'successor\n')
+ git('add', 'proof.txt')
+ git('commit', '-q', '-m', 'Offline exact source successor')
+ assert safe.read_blob('proof.txt') == b'successor\n'
+ for key in list(safe._BLOB_PAYLOADS):
+  safe._BLOB_PAYLOADS[key] = b'forged'
+ with pytest.raises(ValueError, match='cached blob payload identity drift'):
+  safe.read_blob('proof.txt')
+
+
+@pytest.mark.parametrize('which', ['receipt', 'source', 'fixture', 'test', 'test_fixture', 'inventory'])
+def test_blob_reuse_source_successor_rejects_changed_evidence(monkeypatch, which):
+ value = forward._blob_reuse_receipt()
+ source = 'scripts/audit_phase_a_b4_test_source_successor.py'
+ test = 'tests/test_phase_a_pass_a_tests_source_successor.py'
+ target = {'receipt': forward.BLOB_REUSE_RECEIPT, 'source': source,
+           'fixture': value['source_forward'][source]['fixture'], 'test': test,
+           'test_fixture': value['source_forward'][test]['fixture'],
+           'inventory': value['predecessor_inventory']['path']}[which]
+ original = forward.read_blob
+ monkeypatch.setattr(forward, 'read_blob', lambda p: original(p) + (b' ' if p == target else b''))
+ with pytest.raises(ValueError, match='blob reuse'):
+  forward._blob_reuse_receipt()

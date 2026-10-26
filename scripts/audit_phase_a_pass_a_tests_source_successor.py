@@ -269,6 +269,7 @@ def receipt():
 
 
 def predecessor_source(path, raw):
+    raw = _blob_reuse_predecessor(path, raw)
     raw = _integrated_lineage_predecessor(path, raw)
     raw = _tests_shard_v2_predecessor_source(path, raw)
     if path == B1_SOURCE:
@@ -295,6 +296,7 @@ def predecessor_source(path, raw):
 
 
 def authenticate_core():
+    _blob_reuse_receipt()
     _positive_fixture_receipt()
     _integrated_lineage_receipt()
     value = receipt()
@@ -315,7 +317,7 @@ def authenticate_core():
     for path, expected in A2_TEXT_METADATA.items():
         if safe.identity(read_blob(path)) != expected:
             raise ValueError('A2 historical source-forward metadata drift: ' + path)
-    if safe.identity(read_blob(TEST)) != TEST_IDENTITY:
+    if safe.identity(_blob_reuse_predecessor(TEST, read_blob(TEST))) != TEST_IDENTITY:
         raise ValueError('Pass-A Tests successor regression source drift')
     return value
 
@@ -416,6 +418,15 @@ def install_context(context):
                 'fixture': row['fixture'], **row['before'], 'after': row['after']}
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **restored_metadata)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **restored_metadata)
+    reuse = _blob_reuse_receipt()
+    metadata = {BLOB_REUSE_RECEIPT: safe.identity(read_blob(BLOB_REUSE_RECEIPT))}
+    for path, row in reuse['source_forward'].items():
+        metadata[row['fixture']] = row['before']
+        context['BOOTSTRAP_AFTER'][path] = row['after']
+        if path in context['HISTORICAL_PREDECESSORS']:
+            context['HISTORICAL_PREDECESSORS'][path]['after'] = row['after']
+    context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **metadata)
+    context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **metadata)
 
 
 INTEGRATED_LINEAGE_RECEIPT = 'artifacts/architecture/phase_a_integrated_lineage_source_successor_v1.json'
@@ -597,4 +608,53 @@ def historical_census_test_source():
             or [r for r in latest['source_identities'] if r['path'] == CENSUS_TEST]
                != [{'path': CENSUS_TEST, 'lf_source_sha256': row['after']['source_sha256']}]):
         raise ValueError('census historical projection requires current A2 source identity')
+    return read_blob(row['fixture'])
+
+
+BLOB_REUSE_RECEIPT = 'artifacts/architecture/phase_a_blob_payload_reuse_v1.json'
+BLOB_REUSE_SHA = '9c7ed921306d7c34104442b72817288ea16254100951528be955b1a6d6ee8be9'
+BLOB_REUSE_PATHS = frozenset({'scripts/audit_phase_a_b4_test_source_successor.py',
+                               'tests/test_phase_a_pass_a_tests_source_successor.py'})
+
+
+def _blob_reuse_receipt():
+    raw = read_blob(BLOB_REUSE_RECEIPT)
+    value = json.loads(raw)
+    if (safe.canonical(value) != raw or safe.canonical_digest(value) != BLOB_REUSE_SHA
+            or value.get('canonical_sha256') != BLOB_REUSE_SHA
+            or value.get('policy_id') != 'ATHENA_PHASE_A_IMMUTABLE_BLOB_PAYLOAD_REUSE_V1'
+            or set(value.get('source_forward', {})) != BLOB_REUSE_PATHS
+            or any(value.get(k) is not False for k in ('authority_granted', 'historical_bytes_changed',
+                                                     'workflow_changed', 'authority_verdict_cached'))):
+        raise ValueError('blob reuse receipt drift')
+    prior = value['predecessor_inventory']
+    raw_prior = read_blob(prior['path'])
+    inventory = json.loads(raw_prior)
+    if (prior['generation'] != 370 or prior['rewritten'] is not False
+            or safe.canonical(inventory) != raw_prior or inventory.get('generation') != 370
+            or safe.canonical_digest(inventory) != prior['canonical_sha256']):
+        raise ValueError('blob reuse A2 predecessor drift')
+    sources = {r['path']: r['lf_source_sha256'] for r in inventory['source_identities']}
+    for path, row in value['source_forward'].items():
+        before, current = read_blob(row['fixture']), read_blob(path)
+        if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
+                or sources.get(path) != row['before']['source_sha256']):
+            raise ValueError('blob reuse source identity drift: ' + path)
+        expected = before
+        for patch in row['patches']:
+            old, new = patch['before'].encode(), patch['after'].encode()
+            if expected.count(old) != 1:
+                raise ValueError('blob reuse patch seam drift: ' + path)
+            expected = expected.replace(old, new)
+        if expected != current:
+            raise ValueError('blob reuse exceeds exact recipe: ' + path)
+    return value
+
+
+def _blob_reuse_predecessor(path, raw):
+    if path not in BLOB_REUSE_PATHS:
+        return raw
+    row = _blob_reuse_receipt()['source_forward'][path]
+    if safe.identity(raw) != row['after']:
+        raise ValueError('blob reuse caller source identity drift: ' + path)
     return read_blob(row['fixture'])
