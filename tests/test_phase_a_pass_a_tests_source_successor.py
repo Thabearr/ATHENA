@@ -98,14 +98,21 @@ def test_pass_a_fixture_rejects_linked_evidence_before_read(monkeypatch, kind):
 def test_pass_a_fixture_rejects_wrong_mode(monkeypatch, mode):
     safe = forward.safe
     fixture = forward.EDGES[forward.SOURCE]['fixture']
+    forward.read_blob(fixture)  # Positive control and warm-cache mode check.
     original = safe.subprocess.check_output
+    intercepted = []
     def changed(args, **kwargs):
-        if args == ['git', 'ls-tree', 'HEAD', '--', fixture]:
-            return (mode + ' blob ' + '0' * 40 + '\t' + fixture + '\n').encode()
-        return original(args, **kwargs)
+        raw = original(args, **kwargs)
+        if args[:2] == ['git', 'ls-tree'] and args[-2:] == ['--', fixture]:
+            before, separator, rest = raw.partition(b' ')
+            assert before == b'100644' and separator == b' '
+            intercepted.append(True)
+            return mode.encode() + separator + rest
+        return raw
     monkeypatch.setattr(safe.subprocess, 'check_output', changed)
     with pytest.raises(ValueError, match='mode'):
         forward.read_blob(fixture)
+    assert intercepted == [True]
 
 
 def test_pass_a_rejects_changed_discovery_line_or_frozen_inventory(monkeypatch):
@@ -222,3 +229,37 @@ def test_blob_reuse_source_successor_rejects_changed_evidence(monkeypatch, which
  monkeypatch.setattr(forward, 'read_blob', lambda p: original(p) + (b' ' if p == target else b''))
  with pytest.raises(ValueError, match='blob reuse'):
   forward._blob_reuse_receipt()
+
+
+@pytest.mark.parametrize('which', ['receipt', 'b4_current', 'b4_fixture', 'pass_a_current', 'pass_a_fixture', 'reader_current', 'reader_fixture', 'inventory'])
+def test_git_mode_regression_successor_rejects_changed_evidence(monkeypatch, which):
+ value = forward._git_mode_regression_receipt()
+ b4 = 'tests/test_core_01d_sportybet_current_trigger_authority_b4.py'
+ target = {'receipt': forward.GIT_MODE_REGRESSION_RECEIPT,
+           'b4_current': b4, 'b4_fixture': value['source_forward'][b4]['fixture'],
+           'pass_a_current': forward.TEST, 'pass_a_fixture': value['source_forward'][forward.TEST]['fixture'],
+           'reader_current': 'scripts/audit_phase_a_b4_test_source_successor.py',
+           'reader_fixture': value['source_forward']['scripts/audit_phase_a_b4_test_source_successor.py']['fixture'],
+           'inventory': value['predecessor_inventory']['path']}[which]
+ original = forward.read_blob
+ monkeypatch.setattr(forward, 'read_blob', lambda p: original(p) + (b' ' if p == target else b''))
+ with pytest.raises(ValueError, match='Git-mode regression'):
+  forward._git_mode_regression_receipt()
+
+
+@pytest.mark.parametrize('which', ['generation', 'missing', 'forged', 'predecessor'])
+def test_git_mode_current_qualification_rejects_unqualified_a2(monkeypatch, which):
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ safe = forward.safe
+ latest = deepcopy(a2.authenticate_inventory())
+ if which == 'generation':
+  latest['generation'] = 371
+ elif which == 'missing':
+  latest['source_identities'] = [r for r in latest['source_identities'] if r['path'] != safe.SOURCE]
+ else:
+  for row in latest['source_identities']:
+   if row['path'] == safe.SOURCE:
+    row['lf_source_sha256'] = safe.AFTER['source_sha256'] if which == 'predecessor' else '0' * 64
+ monkeypatch.setattr(a2, 'authenticate_inventory', lambda: latest)
+ with pytest.raises(ValueError, match='current source is not authenticated by latest A2'):
+  safe.authenticate()

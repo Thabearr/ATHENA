@@ -836,14 +836,22 @@ def test_phase_a_b4_test_source_rejects_linked_evidence_before_read(monkeypatch,
 @pytest.mark.parametrize("mode", ["100755", "120000", "160000"])
 def test_phase_a_b4_test_source_rejects_wrong_git_mode(monkeypatch, mode):
     from scripts import audit_phase_a_b4_test_source_successor as forward
+    # Authenticate a positive control and warm the immutable-payload cache.
+    forward.read_blob(forward.FIXTURE)
     original = forward.subprocess.check_output
+    intercepted = []
     def wrong(args, **kwargs):
-        if args == ["git", "ls-tree", "HEAD", "--", forward.FIXTURE]:
-            return (mode + " blob " + "0" * 40 + "\t" + forward.FIXTURE + "\n").encode()
-        return original(args, **kwargs)
+        raw = original(args, **kwargs)
+        if args[:2] == ["git", "ls-tree"] and args[-2:] == ["--", forward.FIXTURE]:
+            before, separator, rest = raw.partition(b" ")
+            assert before == b"100644" and separator == b" "
+            intercepted.append(True)
+            return mode.encode() + separator + rest
+        return raw
     monkeypatch.setattr(forward.subprocess, "check_output", wrong)
     with pytest.raises(ValueError, match="mode"):
         forward.read_blob(forward.FIXTURE)
+    assert intercepted == [True]
 
 
 @pytest.mark.parametrize("mutation", ["stale", "predecessor", "source", "seal"])

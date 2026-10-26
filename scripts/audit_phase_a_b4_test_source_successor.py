@@ -171,9 +171,11 @@ def authenticate():
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     latest = a2.authenticate_inventory()
     verify_first_inventory(json.loads(read_blob(INVENTORY)))
-    if (type(latest.get('generation')) is not int or latest['generation'] < 355
+    from scripts import audit_phase_a_pass_a_tests_source_successor as current_source
+    expected_current = current_source._git_mode_regression_receipt()['source_forward'][SOURCE]['after']
+    if (type(latest.get('generation')) is not int or latest['generation'] < 372
             or [row for row in latest['source_identities'] if row['path'] == SOURCE]
-                != [{'path': SOURCE, 'lf_source_sha256': AFTER['source_sha256']}]):
+                != [{'path': SOURCE, 'lf_source_sha256': expected_current['source_sha256']}]):
         raise ValueError('B4 test current source is not authenticated by latest A2 inventory')
     return value
 

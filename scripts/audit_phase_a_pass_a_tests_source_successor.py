@@ -269,6 +269,8 @@ def receipt():
 
 
 def predecessor_source(path, raw):
+    if path == safe.SOURCE:
+        raw = _git_mode_regression_predecessor(path, raw)
     raw = _blob_reuse_predecessor(path, raw)
     raw = _integrated_lineage_predecessor(path, raw)
     raw = _tests_shard_v2_predecessor_source(path, raw)
@@ -296,6 +298,7 @@ def predecessor_source(path, raw):
 
 
 def authenticate_core():
+    _git_mode_regression_receipt()
     _blob_reuse_receipt()
     _positive_fixture_receipt()
     _integrated_lineage_receipt()
@@ -427,6 +430,15 @@ def install_context(context):
             context['HISTORICAL_PREDECESSORS'][path]['after'] = row['after']
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **metadata)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **metadata)
+    modes = _git_mode_regression_receipt()
+    mode_metadata = {GIT_MODE_REGRESSION_RECEIPT: safe.identity(read_blob(GIT_MODE_REGRESSION_RECEIPT))}
+    for path, row in modes['source_forward'].items():
+        mode_metadata[row['fixture']] = row['before']
+        context['BOOTSTRAP_AFTER'][path] = row['after']
+        if path in context['HISTORICAL_PREDECESSORS']:
+            context['HISTORICAL_PREDECESSORS'][path]['after'] = row['after']
+    context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **mode_metadata)
+    context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **mode_metadata)
 
 
 INTEGRATED_LINEAGE_RECEIPT = 'artifacts/architecture/phase_a_integrated_lineage_source_successor_v1.json'
@@ -636,7 +648,11 @@ def _blob_reuse_receipt():
         raise ValueError('blob reuse A2 predecessor drift')
     sources = {r['path']: r['lf_source_sha256'] for r in inventory['source_identities']}
     for path, row in value['source_forward'].items():
-        before, current = read_blob(row['fixture']), read_blob(path)
+        before = read_blob(row['fixture'])
+        try:
+            current = _git_mode_regression_predecessor(path, read_blob(path))
+        except ValueError as exc:
+            raise ValueError('blob reuse source identity drift: ' + path) from exc
         if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
                 or sources.get(path) != row['before']['source_sha256']):
             raise ValueError('blob reuse source identity drift: ' + path)
@@ -654,7 +670,58 @@ def _blob_reuse_receipt():
 def _blob_reuse_predecessor(path, raw):
     if path not in BLOB_REUSE_PATHS:
         return raw
+    raw = _git_mode_regression_predecessor(path, raw)
     row = _blob_reuse_receipt()['source_forward'][path]
     if safe.identity(raw) != row['after']:
         raise ValueError('blob reuse caller source identity drift: ' + path)
+    return read_blob(row['fixture'])
+
+
+GIT_MODE_REGRESSION_RECEIPT = 'artifacts/architecture/phase_a_git_mode_regression_source_successor_v1.json'
+GIT_MODE_REGRESSION_SHA = '1ce4abf87e85c4d15e49dac8dac8bc879db2fe2273d66c4122f74a7311cdb7f3'
+GIT_MODE_REGRESSION_PATHS = frozenset({'scripts/audit_phase_a_b4_test_source_successor.py',
+                                       'tests/test_core_01d_sportybet_current_trigger_authority_b4.py',
+                                       'tests/test_phase_a_pass_a_tests_source_successor.py'})
+
+
+def _git_mode_regression_receipt():
+    raw = read_blob(GIT_MODE_REGRESSION_RECEIPT)
+    value = json.loads(raw)
+    if (safe.canonical(value) != raw or safe.canonical_digest(value) != GIT_MODE_REGRESSION_SHA
+            or value.get('canonical_sha256') != GIT_MODE_REGRESSION_SHA
+            or value.get('policy_id') != 'ATHENA_PHASE_A_GIT_MODE_REGRESSION_SOURCE_SUCCESSOR_V1'
+            or set(value.get('source_forward', {})) != GIT_MODE_REGRESSION_PATHS
+            or any(value.get(k) is not False for k in ('authority_granted', 'historical_bytes_changed',
+                                                     'workflow_changed', 'production_reader_changed'))):
+        raise ValueError('Git-mode regression receipt drift')
+    prior = value['predecessor_inventory']
+    prior_raw = read_blob(prior['path'])
+    inventory = json.loads(prior_raw)
+    if (prior['generation'] != 371 or prior['rewritten'] is not False
+            or safe.canonical(inventory) != prior_raw or inventory.get('generation') != 371
+            or safe.canonical_digest(inventory) != prior['canonical_sha256']):
+        raise ValueError('Git-mode regression A2 predecessor drift')
+    sources = {r['path']: r['lf_source_sha256'] for r in inventory['source_identities']}
+    for path, row in value['source_forward'].items():
+        before, current = read_blob(row['fixture']), read_blob(path)
+        if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
+                or sources.get(path) != row['before']['source_sha256']):
+            raise ValueError('Git-mode regression source identity drift: ' + path)
+        expected = before
+        for patch in row['patches']:
+            old, new = patch['before'].encode(), patch['after'].encode()
+            if expected.count(old) != 1:
+                raise ValueError('Git-mode regression patch seam drift: ' + path)
+            expected = expected.replace(old, new)
+        if expected != current:
+            raise ValueError('Git-mode regression exceeds exact recipe: ' + path)
+    return value
+
+
+def _git_mode_regression_predecessor(path, raw):
+    if path not in GIT_MODE_REGRESSION_PATHS:
+        return raw
+    row = _git_mode_regression_receipt()['source_forward'][path]
+    if safe.identity(raw) != row['after']:
+        raise ValueError('Git-mode regression caller source identity drift: ' + path)
     return read_blob(row['fixture'])
