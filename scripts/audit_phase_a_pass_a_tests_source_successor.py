@@ -404,6 +404,18 @@ def install_context(context):
                 'fixture': row['fixture'], **row['before'], 'after': row['after']}
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **fixture_metadata)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **fixture_metadata)
+    restored = _pytest_restoration_receipt()
+    restored_metadata = {PYTEST_RESTORATION_RECEIPT: safe.identity(read_blob(PYTEST_RESTORATION_RECEIPT))}
+    for path, row in restored['source_forward'].items():
+        restored_metadata[row['fixture']] = row['before']
+        context['BOOTSTRAP_AFTER'][path] = row['after']
+        if path in context['HISTORICAL_PREDECESSORS']:
+            context['HISTORICAL_PREDECESSORS'][path]['after'] = row['after']
+        elif path == CENSUS_TEST:
+            context['HISTORICAL_PREDECESSORS'][path] = {
+                'fixture': row['fixture'], **row['before'], 'after': row['after']}
+    context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **restored_metadata)
+    context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **restored_metadata)
 
 
 INTEGRATED_LINEAGE_RECEIPT = 'artifacts/architecture/phase_a_integrated_lineage_source_successor_v1.json'
@@ -434,7 +446,8 @@ def _integrated_lineage_receipt():
         raise ValueError('integrated lineage A2 predecessor drift')
     sources = {r['path']: r['lf_source_sha256'] for r in inventory['source_identities']}
     for path, row in value['source_forward'].items():
-        before, current = read_blob(row['fixture']), read_blob(path)
+        before = read_blob(row['fixture'])
+        current = _pytest_restoration_predecessor(path, read_blob(path))
         if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
                 or sources.get(path) != row['before']['source_sha256']):
             raise ValueError('integrated lineage source identity drift: ' + path)
@@ -452,6 +465,7 @@ def _integrated_lineage_receipt():
 def _integrated_lineage_predecessor(path, raw):
     if path not in INTEGRATED_LINEAGE_PATHS:
         return raw
+    raw = _pytest_restoration_predecessor(path, raw)
     row = _integrated_lineage_receipt()['source_forward'][path]
     if safe.identity(raw) != row['after']:
         raise ValueError('integrated lineage caller source drift: ' + path)
@@ -503,7 +517,8 @@ def _positive_fixture_receipt():
                 'mode': '100644', 'git_blob_sha1': value['source_forward']['pytest.ini']['before']['git_blob_sha1']}):
         raise ValueError('positive fixture historical configuration anchor drift')
     for path, row in value['source_forward'].items():
-        before, current = read_blob(row['fixture']), read_blob(path)
+        before = read_blob(row['fixture'])
+        current = _pytest_restoration_predecessor(path, read_blob(path))
         if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
                 or (path != 'pytest.ini' and sources.get(path) != row['before']['source_sha256'])):
             raise ValueError('positive fixture reuse source identity drift: ' + path)
@@ -516,3 +531,70 @@ def _positive_fixture_receipt():
         if expected != current:
             raise ValueError('positive fixture reuse exceeds exact recipe: ' + path)
     return value
+
+
+PYTEST_RESTORATION_RECEIPT = 'artifacts/architecture/pytest_configuration_restoration_v1.json'
+PYTEST_RESTORATION_SHA = '8ff6d2fd25e7df474466e49fcea21d3b63844436ca80f1248833cbf67ef87b5a'
+PYTEST_RESTORATION_PATHS = frozenset({'pytest.ini', 'tests/test_core_01d_checkpoint_e_completion_v2.py',
+                                      'tests/test_p4_3a_workflow_capability_census.py',
+                                      'scripts/audit_checkpoint_e_workflows.py'})
+
+
+def _pytest_restoration_receipt():
+    """Authenticate the forward restoration, retaining the published V1 bytes."""
+    raw = read_blob(PYTEST_RESTORATION_RECEIPT)
+    value = json.loads(raw)
+    if (safe.canonical(value) != raw or safe.canonical_digest(value) != PYTEST_RESTORATION_SHA
+            or value.get('canonical_sha256') != PYTEST_RESTORATION_SHA
+            or value.get('policy_id') != 'ATHENA_PYTEST_CONFIGURATION_RESTORATION_V1'
+            or set(value.get('source_forward', {})) != PYTEST_RESTORATION_PATHS
+            or any(value.get(k) is not False for k in ('authority_granted', 'historical_bytes_changed', 'workflow_changed'))):
+        raise ValueError('pytest restoration receipt drift')
+    predecessor = value['predecessor_inventory']
+    inventory_raw = read_blob(predecessor['path'])
+    inventory = json.loads(inventory_raw)
+    if (predecessor['generation'] != 369 or predecessor['rewritten'] is not False
+            or safe.canonical(inventory) != inventory_raw
+            or safe.canonical_digest(inventory) != predecessor['canonical_sha256']
+            or inventory.get('generation') != 369):
+        raise ValueError('pytest restoration A2 predecessor drift')
+    sources = {r['path']: r['lf_source_sha256'] for r in inventory['source_identities']}
+    for path, row in value['source_forward'].items():
+        before, current = read_blob(row['fixture']), read_blob(path)
+        if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
+                or (path != 'pytest.ini' and sources.get(path) != row['before']['source_sha256'])):
+            raise ValueError('pytest restoration source identity drift: ' + path)
+        expected = before
+        for patch in row['patches']:
+            old, new = patch['before'].encode(), patch['after'].encode()
+            if expected.count(old) != 1:
+                raise ValueError('pytest restoration patch seam drift: ' + path)
+            expected = expected.replace(old, new)
+        if expected != current:
+            raise ValueError('pytest restoration exceeds exact recipe: ' + path)
+    return value
+
+
+def _pytest_restoration_predecessor(path, raw):
+    if path not in PYTEST_RESTORATION_PATHS:
+        return raw
+    row = _pytest_restoration_receipt()['source_forward'][path]
+    if safe.identity(raw) != row['after']:
+        raise ValueError('pytest restoration caller source identity drift: ' + path)
+    return read_blob(row['fixture'])
+
+
+CENSUS_TEST = 'tests/test_p4_3a_workflow_capability_census.py'
+
+
+def historical_census_test_source():
+    """Only Checkpoint-E's frozen lexical scan receives this exact predecessor."""
+    value = _pytest_restoration_receipt()
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    latest = a2.authenticate_inventory()
+    row = value['source_forward'][CENSUS_TEST]
+    if (type(latest.get('generation')) is not int or latest['generation'] < 370
+            or [r for r in latest['source_identities'] if r['path'] == CENSUS_TEST]
+               != [{'path': CENSUS_TEST, 'lf_source_sha256': row['after']['source_sha256']}]):
+        raise ValueError('census historical projection requires current A2 source identity')
+    return read_blob(row['fixture'])

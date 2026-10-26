@@ -45,10 +45,11 @@ def test_workflow_tree_unchanged_and_each_row_binds_source_identity(matrix: dict
 
 
 def test_yaml_loader_preserves_github_actions_on_key(matrix: dict) -> None:
-    for row in matrix["workflow_rows"]:
-        from scripts import audit_p4_3_workflow_retirement_ledger as ledger_audit
+    from scripts import audit_p4_3_workflow_retirement_ledger as ledger_audit
 
-        ledger = ledger_audit.validate_ledger()
+    # One unchanged ledger; every workflow source and YAML assertion remains checked.
+    ledger = ledger_audit.validate_ledger()
+    for row in matrix["workflow_rows"]:
         raw = ledger_audit.resolve_reviewed_workflow_source(row["workflow_path"], ledger=ledger)
         parsed = yaml.load(raw.decode("utf-8"), Loader=yaml.BaseLoader)
         assert "on" in parsed

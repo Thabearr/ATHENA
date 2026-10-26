@@ -956,6 +956,18 @@ def base_input(*, include_scan_source_predecessors=False):
                 # only a base row equal to the authorized predecessor can use
                 # this transition.
                 require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
+        elif path == 'tests/test_p4_3a_workflow_capability_census.py':
+            from scripts import audit_phase_a_pass_a_tests_source_successor as census_source
+            predecessor = census_source.historical_census_test_source()
+            row = census_source._pytest_restoration_receipt()['source_forward'][path]
+            require(
+                identity == {"mode": "100644", "git_blob_sha1": row['before']['git_blob_sha1']}
+                and current.get(path) == {"mode": "100644", "git_blob_sha1": row['after']['git_blob_sha1']},
+                "Checkpoint-E census test predecessor/successor identity drift",
+            )
+            pass1_forward_predecessor_blobs[path] = row['before']['git_blob_sha1']
+            if path in value["scan_paths"]:
+                pass1_forward_predecessor_sources[path] = predecessor
         elif path == TESTS_WORKFLOW:
             # Checkpoint-E V1 is a historical source view. Authenticate the
             # present eight-shard workflow and A2 corpus first, then project
@@ -1164,7 +1176,7 @@ def build_matrix(base, history, historical_source_predecessors):
         a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS
         | a2.E3_PASS_A_SOURCE_FORWARD_PATHS
         | pass_a_v2.PASS_A_V2_AUTHENTICATED_SOURCE_PREDECESSORS
-        | {TESTS_WORKFLOW}
+        | {TESTS_WORKFLOW, tests_source.CENSUS_TEST}
     )
     require(
         type(historical_source_predecessors) is dict
@@ -1184,6 +1196,11 @@ def build_matrix(base, history, historical_source_predecessors):
             require(
                 raw == tests_source.historical_workflow_source(),
                 "Checkpoint-E Tests workflow predecessor was not independently authenticated",
+            )
+        if path == tests_source.CENSUS_TEST:
+            require(
+                raw == tests_source.historical_census_test_source(),
+                "Checkpoint-E census predecessor was not independently authenticated",
             )
         blob = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
         require(
