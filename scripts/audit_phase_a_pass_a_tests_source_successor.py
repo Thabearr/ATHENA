@@ -245,7 +245,11 @@ def _tests_shard_v2_predecessor_source(path, raw):
         return raw
     value = _tests_shard_v2_receipt()
     row = value['source_forward'][path]
-    current = read_blob(path)
+    actual = read_blob(path)
+    if raw != actual:
+        raise ValueError('Tests shard V2 caller current source identity drift: ' + path)
+    current = _parent_progress_predecessor_source(path, actual)
+    raw = current
     before = read_blob(row['fixture'])
     if (type(row) is not dict or set(row) != {'fixture', 'before', 'after'}
             or safe.identity(current) != row.get('after')
@@ -439,6 +443,7 @@ def install_context(context):
             context['HISTORICAL_PREDECESSORS'][path]['after'] = row['after']
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **mode_metadata)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **mode_metadata)
+    install_parent_progress_context(context)
 
 
 
@@ -740,3 +745,188 @@ def _git_mode_regression_predecessor(path, raw):
     if safe.identity(raw) != row['after']:
         raise ValueError('Git-mode regression caller source identity drift: ' + path)
     return read_blob(row['fixture'])
+
+
+PARENT_PROGRESS_RECEIPT = 'artifacts/architecture/tests_parent_progress_successor_v1.json'
+PARENT_PROGRESS_SHA256 = '38f4ac6ec65a27ca520149763bc66e2349ba7d5c7f67e94faaaed1ba12db2b27'
+PARENT_PROGRESS_SNAPSHOT = 'artifacts/architecture/p4_workflow_evolution_snapshots/tests_parent_progress_v1.json'
+PARENT_PROGRESS_FIXTURE = 'tests/fixtures/architecture/revised_workflows/tests-pre-parent-progress-v1.yml'
+PARENT_PROGRESS_PATHS = TESTS_SHARD_V2_SOURCE_PATHS
+PARENT_PROGRESS_A2 = {
+    'path': 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v373.json',
+    'generation': 373,
+    'canonical_sha256': 'eb20af26800db496bd13c3887dc3f805da5e67b010b2c4f53fbd6101fa53f20d',
+    'rewritten': False,
+}
+PARENT_PROGRESS_COMMAND_BEFORE = 'python -m pytest -q --durations=20 "${test_files[@]}"'
+PARENT_PROGRESS_COMMAND_AFTER = 'python -m pytest -p scripts.audit_phase_a_pass_a_tests_source_successor -q --durations=20 "${test_files[@]}"'
+
+
+def _parent_progress_receipt():
+    """Pure tracked-byte source edge; no A2 bootstrap recursion or verdict cache."""
+    raw = read_blob(PARENT_PROGRESS_RECEIPT)
+    value = json.loads(raw)
+    if (safe.canonical(value) != raw
+            or safe.canonical_digest(value) != PARENT_PROGRESS_SHA256
+            or value.get('canonical_sha256') != PARENT_PROGRESS_SHA256
+            or value.get('policy_id') != 'ATHENA_TESTS_PARENT_ONLY_PROGRESS_V1'
+            or type(value.get('schema_version')) is not int or value['schema_version'] != 1
+            or value.get('source_commit') != '3f8e353de3be986a5850153162306e9566f672ac'
+            or value.get('active_inventory_predecessor') != PARENT_PROGRESS_A2
+            or set(value.get('source_forward', {})) != PARENT_PROGRESS_PATHS
+            or any(value.get(key) is not False for key in (
+                'authority_granted', 'historical_bytes_changed', 'required_contexts_changed',
+                'test_assignments_changed', 'child_environment_changed'))
+            or value.get('workflow_path') != '.github/workflows/tests.yml'
+            or value.get('workflow_predecessor_fixture') != PARENT_PROGRESS_FIXTURE
+            or value.get('command_before') != PARENT_PROGRESS_COMMAND_BEFORE
+            or value.get('command_after') != PARENT_PROGRESS_COMMAND_AFTER):
+        raise ValueError('parent progress receipt scope or identity drift')
+    anchor_raw = read_blob(PARENT_PROGRESS_A2['path'])
+    anchor = json.loads(anchor_raw)
+    if (safe.canonical(anchor) != anchor_raw
+            or safe.canonical_digest(anchor) != PARENT_PROGRESS_A2['canonical_sha256']
+            or anchor.get('generation') != 373):
+        raise ValueError('parent progress A2 predecessor drift')
+    sources = {row['path']: row['lf_source_sha256'] for row in anchor['source_identities']}
+    for path, row in value['source_forward'].items():
+        fixture = ('tests/fixtures/architecture/tests_parent_progress_v1/'
+                   + path.replace('/', '--') + '.before.txt')
+        if (set(row) != {'before', 'after', 'fixture', 'patches'} or row['fixture'] != fixture
+                or sources.get(path) != row['before']['source_sha256']):
+            raise ValueError('parent progress source path/predecessor drift: ' + path)
+        before, current = read_blob(fixture), read_blob(path)
+        if safe.identity(before) != row['before'] or safe.identity(current) != row['after']:
+            raise ValueError('parent progress source identity drift: ' + path)
+        expected = before
+        for patch in row['patches']:
+            old, new = patch['before'].encode(), patch['after'].encode()
+            if not old or expected.count(old) != 1:
+                raise ValueError('parent progress source patch seam drift: ' + path)
+            expected = expected.replace(old, new)
+        if current != expected:
+            raise ValueError('parent progress source exceeds exact recipe: ' + path)
+    return value
+
+
+def _parent_progress_predecessor_source(path, raw):
+    if path not in PARENT_PROGRESS_PATHS:
+        return raw
+    row = _parent_progress_receipt()['source_forward'][path]
+    if safe.identity(raw) != row['after']:
+        raise ValueError('parent progress caller source identity drift: ' + path)
+    return read_blob(row['fixture'])
+
+
+def authenticate_parent_progress():
+    """Prove the sole CLI change on actual HEAD and the immutable P4 extension."""
+    value = _parent_progress_receipt()
+    from scripts import audit_tests_shard_balance_successor as shards
+    from scripts import audit_p4_workflow_evolution_ledger as p4
+    before = read_blob(PARENT_PROGRESS_FIXTURE)
+    current = read_blob(shards.WORKFLOW)
+    # Both readers retain their ordinary source/mode/filter checks. The second
+    # also preserves the existing auditor's injected-reader negative seam.
+    if current != shards.read_blob(shards.WORKFLOW):
+        raise ValueError('parent progress workflow reader drift')
+    old, new = PARENT_PROGRESS_COMMAND_BEFORE.encode(), PARENT_PROGRESS_COMMAND_AFTER.encode()
+    if (safe.identity(before) != shards.V2_AFTER or before.count(old) != 1
+            or before.replace(old, new) != current or safe.identity(current) != shards.AFTER
+            or value.get('workflow_before') != shards.V2_AFTER
+            or value.get('workflow_after') != shards.AFTER
+            or value.get('workflow_tree_before_sha1') != shards.V2_AFTER_TREE
+            or value.get('workflow_tree_after_sha1') != shards.AFTER_TREE
+            or value.get('b4_projected_before_sha1') != shards.V2_AFTER_B4_TREE
+            or value.get('b4_projected_after_sha1') != shards.AFTER_B4_TREE):
+        raise ValueError('parent progress workflow exceeds the exact CLI successor')
+    entries = shards.tree_entries()
+    if (shards.tree_identity(entries) != shards.AFTER_TREE
+            or shards.tree_identity(entries, {'tests.yml': shards.V2_AFTER['git_blob_sha1']})
+                != shards.V2_AFTER_TREE):
+        raise ValueError('parent progress HEAD tree is not the one-path successor')
+    prior_raw = read_blob(shards.V2_SNAPSHOT)
+    prior = json.loads(prior_raw)
+    snapshot_raw = read_blob(PARENT_PROGRESS_SNAPSHOT)
+    snapshot = json.loads(snapshot_raw)
+    if (safe.canonical(prior) != prior_raw or safe.canonical_digest(prior) != prior['canonical_sha256']
+            or value.get('prior_snapshot') != {'path': shards.V2_SNAPSHOT,
+                                              'canonical_sha256': prior['canonical_sha256']}
+            or safe.canonical(snapshot) != snapshot_raw
+            or safe.canonical_digest(snapshot) != snapshot.get('canonical_sha256')
+            or snapshot.get('canonical_sha256') != value.get('workflow_evolution_ledger_sha256')
+            or snapshot.get('transitions', [])[:-1] != prior.get('transitions')
+            or snapshot.get('current_workflow_tree_sha1') != shards.AFTER_TREE):
+        raise ValueError('parent progress P4 snapshot prefix drift')
+    exempt = {'transitions', 'current_workflow_tree_sha1', 'canonical_sha256'}
+    if {k: v for k, v in snapshot.items() if k not in exempt} != {
+            k: v for k, v in prior.items() if k not in exempt}:
+        raise ValueError('parent progress changed a historical P4 checkpoint')
+    transition = snapshot['transitions'][-1]
+    if ({k: v for k, v in transition.items() if k != 'evidence_body_sha256'}
+            != value.get('reviewed_workflow_transition')
+            or transition.get('transition_id') != 'P4_TESTS_PARENT_ONLY_PROGRESS_V1'
+            or transition.get('maintenance_contract') != p4.TESTS_SHARD_BALANCE_CONTRACT
+            or transition.get('evidence_body_sha256') != p4.receipt_evidence_body_sha256(value)):
+        raise ValueError('parent progress P4 transition/evidence drift')
+    projected = p4.apply_transitions(
+        {shards.WORKFLOW: {k: shards.V2_AFTER[k] for k in shards.IDENTITY_KEYS}}, [transition],
+        frozen_baseline_paths={shards.WORKFLOW}, baseline_families={shards.WORKFLOW: 'TESTS'},
+        evidence_receipts={PARENT_PROGRESS_RECEIPT: value},
+        historical_before_fixture_bytes={PARENT_PROGRESS_FIXTURE: before})
+    if projected != {shards.WORKFLOW: {k: shards.AFTER[k] for k in shards.IDENTITY_KEYS}}:
+        raise ValueError('parent progress P4 does not derive the exact workflow')
+    return value
+
+
+def install_parent_progress_context(context):
+    value = _parent_progress_receipt()
+    metadata = {path: safe.identity(read_blob(path)) for path in (
+        PARENT_PROGRESS_RECEIPT, PARENT_PROGRESS_SNAPSHOT, PARENT_PROGRESS_FIXTURE)}
+    for path, row in value['source_forward'].items():
+        metadata[row['fixture']] = row['before']
+        context['BOOTSTRAP_AFTER'][path] = row['after']
+        if path in context['HISTORICAL_PREDECESSORS']:
+            context['HISTORICAL_PREDECESSORS'][path]['after'] = row['after']
+    context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **metadata)
+    context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **metadata)
+    context['ADDED_PYTHON_IDENTITIES'] = dict(context['ADDED_PYTHON_IDENTITIES'], **{
+        path: row['after'] for path, row in value['source_forward'].items()})
+
+
+class _ParentNodeProgress:
+    """Explicit CLI-only plugin; importing the auditor has no reporting effects."""
+
+    def __init__(self):
+        import os
+        import sys
+        self.pid = os.getpid()
+        self.stream = sys.__stdout__
+
+    def _emit(self, event, nodeid, **fields):
+        import os
+        from datetime import datetime, timezone
+        if os.getpid() != self.pid or self.stream is None:
+            return
+        value = {'event': event, 'nodeid': nodeid, 'pid': self.pid,
+                 'utc': datetime.now(timezone.utc).isoformat(), **fields}
+        self.stream.write('\nATHENA_PYTEST_PROGRESS ' + json.dumps(value, sort_keys=True) + '\n')
+        self.stream.flush()
+
+    def pytest_sessionstart(self, session):
+        self._emit('session_start', '')
+
+    def pytest_runtest_logstart(self, nodeid, location):
+        self._emit('start', nodeid)
+
+    def pytest_runtest_logreport(self, report):
+        self._emit(report.when, report.nodeid, outcome=report.outcome,
+                   seconds=round(report.duration, 6))
+
+    def pytest_runtest_logfinish(self, nodeid, location):
+        self._emit('finish', nodeid)
+
+
+def pytest_configure(config):
+    # pytest calls this only when this module is explicitly loaded with -p.
+    # No PYTEST_ADDOPTS, environment marker, root conftest or child argv change.
+    config.pluginmanager.register(_ParentNodeProgress(), 'athena-parent-node-progress')

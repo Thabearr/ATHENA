@@ -93,7 +93,8 @@ def test_exact_successor_and_original_p4_prefix():
 
 
 def test_v2_rebalance_is_an_append_only_exact_v1_successor():
-    value = audit.authenticate()
+    audit.authenticate()
+    value = audit._authenticate_v2()
     from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
     from scripts import audit_p4_workflow_evolution_ledger as p4
     from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
@@ -101,11 +102,11 @@ def test_v2_rebalance_is_an_append_only_exact_v1_successor():
 
     assert value['canonical_sha256'] == pass_a.TESTS_SHARD_V2_RECEIPT_SHA256
     assert value['workflow_before'] == audit.V1_AFTER
-    assert value['workflow_after'] == audit.AFTER
+    assert value['workflow_after'] == audit.V2_AFTER
     assert value['workflow_tree_before_sha1'] == audit.V1_AFTER_TREE
-    assert value['workflow_tree_after_sha1'] == audit.AFTER_TREE
+    assert value['workflow_tree_after_sha1'] == audit.V2_AFTER_TREE
     assert value['b4_projected_before_sha1'] == audit.V1_AFTER_B4_TREE
-    assert value['b4_projected_after_sha1'] == audit.AFTER_B4_TREE
+    assert value['b4_projected_after_sha1'] == audit.V2_AFTER_B4_TREE
     assert value['source_forward'].keys() == pass_a.TESTS_SHARD_V2_SOURCE_PATHS
     assert value['timing_evidence']['projected_completed_shard_max_seconds'] < 5 * 60 * 60
     assert value['timing_evidence']['projection_uncertainty'].startswith(
@@ -115,13 +116,13 @@ def test_v2_rebalance_is_an_append_only_exact_v1_successor():
     prior = json.loads(audit.read_blob(audit.V1_SNAPSHOT))
     assert snapshot_value['transitions'][:-1] == prior['transitions']
     assert p4.canonical_sha256(snapshot_value) == snapshot_value['canonical_sha256']
-    assert audit.project_tree(audit.AFTER_TREE) == audit.BEFORE_TREE
-    assert audit.project_b4_tree(audit.AFTER_B4_TREE) == audit.BEFORE_B4_TREE
+    assert audit.project_tree(audit.V2_AFTER_TREE) == audit.BEFORE_TREE
+    assert audit.project_b4_tree(audit.V2_AFTER_B4_TREE) == audit.BEFORE_B4_TREE
     assert retention.authenticate()['canonical_sha256'] == retention.RECEIPT_SHA256
     assert retention.authenticate_bootstrap_sources() is True
     for path, row in value['source_forward'].items():
-        assert retention.BOOTSTRAP_AFTER[path] == row['after']
-    assert d5.historical_workflow_tree(audit.AFTER_TREE) == d5.PREDECESSOR_TREE
+        assert retention.BOOTSTRAP_AFTER[path] == pass_a._parent_progress_receipt()['source_forward'][path]['after']
+    assert d5.historical_workflow_tree(audit.V2_AFTER_TREE) == d5.PREDECESSOR_TREE
 
 
 @pytest.mark.parametrize('which', [
@@ -200,3 +201,78 @@ def test_historical_source_projection_is_exact_idempotent_and_keeps_unknown_rows
     result = retention.project_retention_inventory(raw + unknown, latest=latest)
     assert result == raw.replace(audit.AFTER['git_blob_sha1'].encode(), audit.BEFORE['git_blob_sha1'].encode()) + unknown
     assert retention.project_retention_inventory(result, latest=latest) == result
+
+
+def test_parent_progress_preserves_partition_and_immutable_v2():
+    from scripts import audit_phase_a_pass_a_tests_source_successor as progress
+    value = progress.authenticate_parent_progress()
+    before = audit.read_blob(progress.PARENT_PROGRESS_FIXTURE)
+    after = audit.read_blob(audit.WORKFLOW)
+    assert before.replace(progress.PARENT_PROGRESS_COMMAND_BEFORE.encode(),
+                          progress.PARENT_PROGRESS_COMMAND_AFTER.encode()) == after
+    assert value['test_assignments_changed'] is False
+    assert value['required_contexts_changed'] is False
+    assert value['child_environment_changed'] is False
+    assert audit._authenticate_v2()['canonical_sha256'] == progress.TESTS_SHARD_V2_RECEIPT_SHA256
+    assert audit.project_tree(audit.V2_AFTER_TREE) == audit.BEFORE_TREE
+    for path, row in value['source_forward'].items():
+        assert progress._parent_progress_predecessor_source(path, progress.read_blob(path)) == progress.read_blob(row['fixture'])
+    assert progress._parent_progress_predecessor_source('unknown/path', b'unchanged') == b'unchanged'
+
+
+@pytest.mark.parametrize('target', ['receipt', 'snapshot', 'workflow_fixture', 'source_fixture', 'source', 'a2_predecessor'])
+def test_parent_progress_rejects_tampered_evidence(monkeypatch, target):
+    from scripts import audit_phase_a_pass_a_tests_source_successor as progress
+    row = progress._parent_progress_receipt()['source_forward']['scripts/audit_tests_shard_balance_successor.py']
+    path = {'receipt': progress.PARENT_PROGRESS_RECEIPT,
+            'snapshot': progress.PARENT_PROGRESS_SNAPSHOT,
+            'workflow_fixture': progress.PARENT_PROGRESS_FIXTURE,
+            'source_fixture': row['fixture'],
+            'source': 'scripts/audit_tests_shard_balance_successor.py',
+            'a2_predecessor': progress.PARENT_PROGRESS_A2['path']}[target]
+    original = progress.read_blob
+    monkeypatch.setattr(progress, 'read_blob', lambda p: original(p) + (b'\n' if p == path else b''))
+    with pytest.raises((ValueError, AssertionError)):
+        audit.authenticate()
+
+
+def test_parent_progress_does_not_instrument_children_or_change_clean_replay(tmp_path):
+    """CLI parent emits flushed nodes; child pytest and digest stdout stay exact."""
+    import os
+    import subprocess
+    import sys
+
+    child = tmp_path / 'child'
+    child.mkdir()
+    (child / 'test_clean.py').write_text('def test_clean():\n    assert True\n')
+    # Mimic P4.4R's clean-process contract: stdout is a parseable single digest,
+    # and a child invoking pytest without -p receives ordinary pytest behavior.
+    (tmp_path / 'test_parent.py').write_text('''
+import hashlib, json, os, subprocess, sys
+from pathlib import Path
+
+def test_child_replay():
+    before = dict(os.environ)
+    code = "from scripts import audit_phase_a_pass_a_tests_source_successor; import hashlib; print(hashlib.sha256(b'retained-clean-replay').hexdigest())"
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, check=True)
+    digest = result.stdout.strip()
+    assert len(digest) == 64 and digest == hashlib.sha256(b'retained-clean-replay').hexdigest()
+    nested = subprocess.run([sys.executable, '-m', 'pytest', '-q', 'child/test_clean.py'], capture_output=True, text=True, check=True)
+    assert '1 passed' in nested.stdout and 'ATHENA_PYTEST_PROGRESS' not in nested.stdout + nested.stderr
+    assert dict(os.environ) == before
+    Path('result.json').write_text(json.dumps({'digest': digest, 'environment': before}, sort_keys=True))
+''')
+    env = dict(os.environ)
+    env['PYTHONPATH'] = str(audit.ROOT) + os.pathsep + env.get('PYTHONPATH', '')
+    command = [sys.executable, '-m', 'pytest', '-q', 'test_parent.py']
+    plain = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True, check=True)
+    baseline = (tmp_path / 'result.json').read_bytes()
+    instrumented = subprocess.run(command[:3] + ['-p', 'scripts.audit_phase_a_pass_a_tests_source_successor'] + command[3:],
+                                  cwd=tmp_path, env=env, capture_output=True, text=True, check=True)
+    assert (tmp_path / 'result.json').read_bytes() == baseline
+    assert 'ATHENA_PYTEST_PROGRESS' not in plain.stdout + plain.stderr
+    records = [json.loads(line.split('ATHENA_PYTEST_PROGRESS ', 1)[1])
+               for line in instrumented.stdout.splitlines() if line.startswith('ATHENA_PYTEST_PROGRESS ')]
+    assert [r['event'] for r in records] == ['session_start', 'start', 'setup', 'call', 'teardown', 'finish']
+    assert len({r['pid'] for r in records}) == 1
+    assert [r['nodeid'] for r in records[1:]] == ['test_parent.py::test_child_replay'] * 5

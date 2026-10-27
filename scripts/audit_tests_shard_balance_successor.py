@@ -34,6 +34,14 @@ AFTER_B4_TREE = '3e01d5f40b5d0cf133b72ad5c75a1c36a9314334'
 BEFORE = {'git_blob_sha1': 'a5eafa0afebc01abe02389739abf71c9ece2d1b4', 'source_sha256': '62dc0cd30df67534f424fddc9706a0b50f9b22ea86bc5b3c6a005e8c57006606', 'byte_count': 3322}
 V1_AFTER = {'git_blob_sha1': 'e8141712880fbae707ab96e02d5d7e0edb0f085f', 'source_sha256': 'bf90a865faa6302e5d70bd36bcaea0d602bb500acd96274bf8932b5cd6ee4374', 'byte_count': 5343}
 AFTER = {'git_blob_sha1': '7bdf0e33758f29e463a1a2a754314c6f9ac7d965', 'source_sha256': '840a284abd7802f14cc438f3e93b21f29cba26971a5fe0f3214f981db2aec899', 'byte_count': 5642}
+V2_AFTER = dict(AFTER)
+V2_AFTER_TREE = AFTER_TREE
+V2_AFTER_B4_TREE = AFTER_B4_TREE
+# Exact parent-reporting successor; never reinterpret V2's original receipt.
+AFTER = {'git_blob_sha1': '21ecf30e21286c4fd9890515eb3facf0992fadba', 'source_sha256': '2dcbd8a14bd7214069f71cabaab275faa839a10167e0549602da7ff543f9d6ea', 'byte_count': 5697}
+AFTER_TREE = '9500c44bb778720a04a229d79f967ae35f66a46d'
+AFTER_B4_TREE = '0095f9a8017e592fa3626e821a37817405ed6774'
+PROGRESS_FIXTURE = 'tests/fixtures/architecture/revised_workflows/tests-pre-parent-progress-v1.yml'
 POLICY_ID = 'ATHENA_P4_TESTS_EIGHT_SHARD_BALANCE_MAINTENANCE_V1'
 IDENTITY_KEYS = ('git_blob_sha1', 'source_sha256')
 
@@ -208,7 +216,7 @@ def _authenticate_v1_prefix():
     return value
 
 
-def authenticate():
+def _authenticate_v2():
     """Authenticate the current V2 assignment and its immutable V1/P4 prefix."""
     from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
     value = pass_a._tests_shard_v2_receipt()
@@ -245,25 +253,25 @@ def authenticate():
             or value.get('workflow_before') != V1_AFTER
             or value.get('workflow_tree_before_sha1') != V1_AFTER_TREE
             or value.get('b4_projected_before_sha1') != V1_AFTER_B4_TREE
-            or value.get('workflow_after') != AFTER
-            or value.get('workflow_tree_after_sha1') != AFTER_TREE
-            or value.get('b4_projected_after_sha1') != AFTER_B4_TREE
+            or value.get('workflow_after') != V2_AFTER
+            or value.get('workflow_tree_after_sha1') != V2_AFTER_TREE
+            or value.get('b4_projected_after_sha1') != V2_AFTER_B4_TREE
             or type(value.get('shard_count')) is not int or value['shard_count'] != 8):
         raise ValueError('Tests V2 successor scope or authority drift')
     v1 = _authenticate_v1_prefix()
     before = read_blob(V2_FIXTURE)
-    current_workflow = read_blob(WORKFLOW)
+    current_workflow = read_blob(PROGRESS_FIXTURE)
     old_selection = value.get('selection_before')
     new_selection = value.get('selection_after')
     if (type(old_selection) is not str or type(new_selection) is not str
             or not old_selection or not new_selection or before.count(old_selection.encode()) != 1):
         raise ValueError('Tests V2 exact assignment replacement is not unique')
     expected = before.replace(old_selection.encode(), new_selection.encode())
-    if (identity(before) != V1_AFTER or identity(expected) != AFTER
+    if (identity(before) != V1_AFTER or identity(expected) != V2_AFTER
             or current_workflow != expected):
         raise ValueError('Tests V2 workflow exceeds the exact V1 assignment successor')
     entries = tree_entries()
-    if (tree_identity(entries) != AFTER_TREE
+    if (tree_identity(entries, {'tests.yml': V2_AFTER['git_blob_sha1']}) != V2_AFTER_TREE
             or tree_identity(entries, {'tests.yml': V1_AFTER['git_blob_sha1']}) != V1_AFTER_TREE
             or subprocess.check_output(['git', 'diff', '--name-only', 'HEAD', '--', '.github/workflows'], cwd=ROOT).strip()):
         raise ValueError('Tests V2 is not the exact one-path workflow tree successor')
@@ -294,7 +302,7 @@ def authenticate():
             or digest(snapshot) != snapshot.get('canonical_sha256')
             or snapshot.get('canonical_sha256') != value.get('workflow_evolution_ledger_sha256')
             or snapshot.get('transitions', [])[:-1] != prior.get('transitions')
-            or snapshot.get('current_workflow_tree_sha1') != AFTER_TREE):
+            or snapshot.get('current_workflow_tree_sha1') != V2_AFTER_TREE):
         raise ValueError('Tests V2 P4 snapshot is not an append-only V1 extension')
     exempt = {'transitions', 'current_workflow_tree_sha1', 'canonical_sha256'}
     if {k: v for k, v in snapshot.items() if k not in exempt} != {
@@ -314,9 +322,21 @@ def authenticate():
         frozen_baseline_paths={WORKFLOW}, baseline_families={WORKFLOW: 'TESTS'},
         evidence_receipts={V2_RECEIPT: value},
         historical_before_fixture_bytes={V2_FIXTURE: before})
-    if evaluated != {WORKFLOW: {k: AFTER[k] for k in IDENTITY_KEYS}}:
+    if evaluated != {WORKFLOW: {k: V2_AFTER[k] for k in IDENTITY_KEYS}}:
         raise ValueError('Tests V2 P4 transition does not derive the exact workflow')
     return value
+
+
+def authenticate():
+    """Verify actual parent-reporting HEAD, then replay the immutable V2 proof.
+
+    No historical source is substituted before the exact current tree, bytes,
+    receipt and inverse have been authenticated. Return the original V2 value
+    for existing historical consumers; the new transition is separately named.
+    """
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    pass_a.authenticate_parent_progress()
+    return _authenticate_v2()
 
 
 def previous_workflow_context(observed_tree):
@@ -334,26 +354,27 @@ def previous_workflow_context(observed_tree):
 
 
 def project_tree(observed):
-    if observed not in {AFTER_TREE, V1_AFTER_TREE}:
+    if observed not in {AFTER_TREE, V2_AFTER_TREE, V1_AFTER_TREE}:
         return observed
     authenticate()
     return BEFORE_TREE
 
 
 def project_b4_tree(observed):
-    if observed not in {AFTER_B4_TREE, V1_AFTER_B4_TREE}:
+    if observed not in {AFTER_B4_TREE, V2_AFTER_B4_TREE, V1_AFTER_B4_TREE}:
         return observed
     authenticate()
     return BEFORE_B4_TREE
 
 
 def previous_p4_context(observed, head_tree):
-    if head_tree not in {AFTER_TREE, V1_AFTER_TREE}:
+    if head_tree not in {AFTER_TREE, V2_AFTER_TREE, V1_AFTER_TREE}:
         return observed, head_tree
     authenticate()
     result = dict(observed)
     if WORKFLOW in result:
-        expected = AFTER if head_tree == AFTER_TREE else V1_AFTER
+        expected = (AFTER if head_tree == AFTER_TREE else
+                    V2_AFTER if head_tree == V2_AFTER_TREE else V1_AFTER)
         if result[WORKFLOW] != {k: expected[k] for k in IDENTITY_KEYS}:
             raise ValueError('Tests successor observed P4 workflow identity drift')
         result[WORKFLOW] = {k: BEFORE[k] for k in IDENTITY_KEYS}
@@ -399,3 +420,6 @@ def install_context(context):
     added_python_identities.update({path: row['after']
                                     for path, row in current['source_forward'].items()})
     context['ADDED_PYTHON_IDENTITIES'] = added_python_identities
+
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    pass_a.install_parent_progress_context(context)
