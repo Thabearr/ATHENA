@@ -441,6 +441,7 @@ def install_context(context):
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **mode_metadata)
 
 
+
 INTEGRATED_LINEAGE_RECEIPT = 'artifacts/architecture/phase_a_integrated_lineage_source_successor_v1.json'
 INTEGRATED_LINEAGE_SHA = '8d2f16ca61afd45d1ad43a03c5cfcad28563e3edbd04a65cfb478360d304d6d4'
 INTEGRATED_LINEAGE_PATHS = frozenset({
@@ -647,10 +648,24 @@ def _blob_reuse_receipt():
             or safe.canonical_digest(inventory) != prior['canonical_sha256']):
         raise ValueError('blob reuse A2 predecessor drift')
     sources = {r['path']: r['lf_source_sha256'] for r in inventory['source_identities']}
+    # This receipt is checked once per enclosing call, never cached between
+    # calls. Each source and predecessor below still receives a fresh Git /
+    # worktree check; only duplicate validation of the same receipt is avoided.
+    try:
+        mode_receipt = _git_mode_regression_receipt()
+    except ValueError as exc:
+        # Keep the original error contract from the first loop iteration.
+        path = next(iter(value['source_forward']))
+        raise ValueError('blob reuse source identity drift: ' + path) from exc
     for path, row in value['source_forward'].items():
         before = read_blob(row['fixture'])
         try:
-            current = _git_mode_regression_predecessor(path, read_blob(path))
+            current = read_blob(path)
+            if path in GIT_MODE_REGRESSION_PATHS:
+                mode_row = mode_receipt['source_forward'][path]
+                if safe.identity(current) != mode_row['after']:
+                    raise ValueError('Git-mode regression caller source identity drift: ' + path)
+                current = read_blob(mode_row['fixture'])
         except ValueError as exc:
             raise ValueError('blob reuse source identity drift: ' + path) from exc
         if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
