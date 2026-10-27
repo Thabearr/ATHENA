@@ -21,6 +21,7 @@ import ast
 import base64
 import hashlib
 import json
+import marshal
 from functools import lru_cache
 import io
 from pathlib import Path, PurePosixPath
@@ -1020,9 +1021,22 @@ def _authenticated_json_bytes(raw, path, canonical_generation=False):
     return raw
 
 
+@lru_cache(maxsize=512)
+def _immutable_json_snapshot(raw, path, canonical_generation, validator):
+    """Pure content-addressed transformation, never a current authority verdict.
+
+    Only internally constructed marshal bytes are retained. Every caller first
+    reads its actual file; a new raw payload or validator gets a new cache key.
+    Loading the snapshot returns a fresh mutable tree, so caller mutation cannot
+    poison the next read. No serialized input is accepted from disk or callers.
+    """
+    checked = validator(raw, path, True) if canonical_generation else validator(raw, path)
+    return marshal.dumps(json.loads(checked), 4)
+
+
 def read(path):
     raw = (ROOT / path).read_bytes()
-    return json.loads(_authenticated_json_bytes(raw, path))
+    return marshal.loads(_immutable_json_snapshot(raw, path, False, _authenticated_json_bytes))
 
 
 def git(*args, data=None):
@@ -1389,7 +1403,7 @@ def read_generation(path):
     when it would still parse to a document with a matching self-hash.
     """
     raw = (ROOT / path).read_bytes()
-    return json.loads(_authenticated_json_bytes(raw, path, True))
+    return marshal.loads(_immutable_json_snapshot(raw, path, True, _authenticated_json_bytes))
 
 
 def discover_inventory_generations(directory=None):

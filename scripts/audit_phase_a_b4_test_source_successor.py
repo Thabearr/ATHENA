@@ -42,13 +42,19 @@ def identity(raw):
 
 # Bounded immutable blob bytes, never source/receipt authorization verdicts.
 _BLOB_PAYLOADS = {}
+_BLOB_MAX_ITEMS = 256
+_BLOB_MAX_BYTES = 32 * 1024 * 1024
 
 
 def read_blob(path):
+    return _read_blob(path, ROOT)
+
+
+def _read_blob(path, root_input):
     logical = Path(path)
     if logical.is_absolute() or logical.as_posix() != path or '..' in logical.parts:
         raise ValueError('B4 test source evidence path drift')
-    target = ROOT / logical
+    target = root_input / logical
     for node in (*reversed(target.parents), target):
         status = node.lstat()
         regular = stat.S_ISREG(status.st_mode) if node == target else stat.S_ISDIR(status.st_mode)
@@ -57,12 +63,29 @@ def read_blob(path):
                 or (node == target and getattr(status, 'st_nlink', 1) != 1)):
             raise ValueError('B4 test source evidence is linked or nonregular: ' + path)
     from runtime.source_identity import (
-        _ensure_repository_root, _ascii_git_output, read_tracked_head_blob,
+        SourceIdentityError, _run_git, _ascii_git_output, read_tracked_head_blob,
         validate_repository_relative_path,
     )
     validate_repository_relative_path(path)
-    root = _ensure_repository_root(ROOT)  # Fresh root and HEAD commit fence.
-    mode = subprocess.check_output(['git', 'ls-tree', '-z', 'HEAD', '--', path], cwd=ROOT)
+    try:
+        root = Path(root_input).resolve(strict=True)
+    except (OSError, TypeError, ValueError) as exc:
+        raise SourceIdentityError('repository_root must resolve to an existing directory') from exc
+    if not root.is_dir():
+        raise SourceIdentityError('repository_root must be a directory')
+    # Fresh top-level and HEAD-commit proofs in one command; mode is still an
+    # independent ls-tree below. No root/HEAD/metadata verdict is cached.
+    root_state = _run_git(root, 'rev-parse', '--show-cdup', '--verify', 'HEAD^{commit}')
+    if type(root_state) is not bytes:
+        raise SourceIdentityError('local Git returned malformed identity text')
+    rows = root_state.splitlines()
+    if len(rows) != 2:
+        raise SourceIdentityError('local Git returned malformed identity text')
+    if rows[0]:
+        raise SourceIdentityError('repository_root must be the exact Git top-level directory')
+    if len(rows[1]) != 40 or any(c not in b'0123456789abcdef' for c in rows[1]):
+        raise SourceIdentityError('repository has no exact HEAD commit')
+    mode = subprocess.check_output(['git', 'ls-tree', '-z', 'HEAD', '--', path], cwd=root_input)
     if type(mode) is not bytes or mode.count(b'\0') != 1 or not mode.endswith(b'\0'):
         raise ValueError('B4 test source evidence Git tree mode drift: ' + path)
     metadata, logical_path = mode[:-1].split(b'\t', 1)
@@ -76,7 +99,7 @@ def read_blob(path):
     raw = _BLOB_PAYLOADS.get(key)
     if raw is None:
         # Cold reads retain the complete reviewed Git-object/materialization proof.
-        raw, observed = read_tracked_head_blob(ROOT, path)
+        raw, observed = read_tracked_head_blob(root_input, path)
         if observed.git_blob_sha1 != blob:
             raise ValueError('B4 test source HEAD changed during blob read: ' + path)
     else:
@@ -89,8 +112,9 @@ def read_blob(path):
     if (type(raw) is not bytes
             or hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() != blob):
         raise ValueError('B4 test source cached blob payload identity drift: ' + path)
-    if key not in _BLOB_PAYLOADS:
-        if len(_BLOB_PAYLOADS) >= 64:
+    if key not in _BLOB_PAYLOADS and len(raw) <= _BLOB_MAX_BYTES:
+        while _BLOB_PAYLOADS and (len(_BLOB_PAYLOADS) >= _BLOB_MAX_ITEMS
+                or sum(len(payload) for payload in _BLOB_PAYLOADS.values()) + len(raw) > _BLOB_MAX_BYTES):
             _BLOB_PAYLOADS.pop(next(iter(_BLOB_PAYLOADS)))
         _BLOB_PAYLOADS[key] = raw
     return raw
@@ -190,3 +214,81 @@ def install_context(context):
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **METADATA)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **METADATA)
     context['ADDED_PYTHON_PATHS'] |= frozenset({'scripts/audit_phase_a_b4_test_source_successor.py'})
+
+
+def _source_scope_head(root: Path) -> bytes:
+    """Fresh exact-root/commit fence; no materialized root link is followed."""
+    from runtime.source_identity import SourceIdentityError, _run_git
+    root = Path(root)
+    for node in (*reversed(root.parents), root):
+        status = node.lstat()
+        if (not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode)
+                or getattr(status, 'st_file_attributes', 0) & 0x400):
+            raise SourceIdentityError('scoped source root is linked or nonregular')
+    raw = _run_git(root, 'rev-parse', '--show-cdup', '--verify', 'HEAD^{commit}')
+    if type(raw) is not bytes:
+        raise SourceIdentityError('scoped source root/HEAD identity drift')
+    rows = raw.splitlines()
+    if (len(rows) != 2 or rows[0] or len(rows[1]) != 40
+            or any(c not in b'0123456789abcdef' for c in rows[1])):
+        raise SourceIdentityError('scoped source root/HEAD identity drift')
+    return rows[1]
+
+
+def _verify_scoped_source_inputs(root: Path, expected_head: bytes, sources: dict[str, bytes]) -> None:
+    """Recheck every current input before one enclosing audit can return.
+
+    Only command startup is batched. Every path's kind, mode, blob and actual
+    filtered worktree bytes are checked. No input or verdict survives the call.
+    """
+    from runtime.source_identity import SourceIdentityError, _run_git, validate_repository_relative_path
+    if _source_scope_head(root) != expected_head:
+        raise SourceIdentityError('scoped source HEAD changed during authentication')
+    paths = sorted(sources)
+    expected = {}
+    for path in paths:
+        validate_repository_relative_path(path)
+        target = Path(root) / path
+        for node in (*reversed(target.parents), target):
+            status = node.lstat()
+            regular = stat.S_ISREG(status.st_mode) if node == target else stat.S_ISDIR(status.st_mode)
+            if (not regular or stat.S_ISLNK(status.st_mode)
+                    or getattr(status, 'st_file_attributes', 0) & 0x400
+                    or (node == target and getattr(status, 'st_nlink', 1) != 1)):
+                raise SourceIdentityError('scoped source input is linked or nonregular: ' + path)
+        raw = sources[path]
+        if type(raw) is not bytes:
+            raise SourceIdentityError('scoped source payload is not immutable bytes')
+        expected[path] = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+    if paths:
+        modes = subprocess.check_output(['git', 'ls-tree', '-z', 'HEAD', '--', *paths], cwd=root)
+        if type(modes) is not bytes or not modes.endswith(b'\0'):
+            raise SourceIdentityError('scoped source Git mode identity drift')
+        seen = set()
+        for record in modes[:-1].split(b'\0'):
+            metadata, name = record.split(b'\t', 1)
+            path = name.decode('utf-8')
+            fields = metadata.split()
+            if (path not in expected or path in seen or len(fields) != 3
+                    or fields[:2] != [b'100644', b'blob']
+                    or fields[2].decode('ascii') != expected[path]):
+                raise SourceIdentityError('scoped source Git mode/blob identity drift')
+            seen.add(path)
+        if seen != set(paths):
+            raise SourceIdentityError('scoped source Git mode set drift')
+        # Quoted relative filenames use Git's C-style stdin-path syntax. JSON
+        # escaping covers controls/quotes/backslashes; UTF-8 is kept literal.
+        stdin = ''.join(json.dumps(path, ensure_ascii=False) + '\n' for path in paths).encode('utf-8')
+        try:
+            filtered = subprocess.run(
+                ['git', '-C', str(root), 'hash-object', '--filters', '--stdin-paths'],
+                input=stdin, capture_output=True, check=True, timeout=10).stdout
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise SourceIdentityError('scoped source filtered identity command failed') from exc
+        if type(filtered) is not bytes:
+            raise SourceIdentityError('scoped source filtered identity drift')
+        values = filtered.splitlines()
+        if values != [expected[path].encode('ascii') for path in paths]:
+            raise SourceIdentityError('scoped source filtered worktree identity drift')
+    if _source_scope_head(root) != expected_head:
+        raise SourceIdentityError('scoped source HEAD changed during authentication')

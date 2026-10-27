@@ -447,8 +447,8 @@ def _raw_blob(path):
     mode = subprocess.check_output(["git", "ls-tree", "HEAD", "--", path], cwd=ROOT)
     if type(mode) is not bytes or len(mode.splitlines()) != 1 or mode.split(b"\t", 1)[0].split()[:2] != [b"100644", b"blob"]:
         raise ValueError("retention source/evidence Git tree mode drift: " + path)
-    raw, _ = read_tracked_head_blob(ROOT, path)
-    return raw
+    from scripts import audit_phase_a_b4_test_source_successor as source_reader
+    return source_reader._read_blob(path, ROOT)
 
 
 class RetentionSourceEvidenceError(ValueError, AssertionError):
@@ -625,3 +625,12 @@ _authenticate_before_pass_a_tests = authenticate
 def authenticate():
     _pass_a_tests.authenticate_core()
     return _authenticate_before_pass_a_tests()
+
+
+# Exact source-only performance successor. Existing pins remain immutable.
+_expected_bootstrap_before_root_performance = expected_bootstrap_source
+
+
+def expected_bootstrap_source():
+    return _pass_a_tests.root_performance_bootstrap_source(
+        _expected_bootstrap_before_root_performance())

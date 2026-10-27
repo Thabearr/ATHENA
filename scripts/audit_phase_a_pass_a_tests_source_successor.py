@@ -6,6 +6,7 @@ No frozen receipt, workflow, source authority or live discovery is changed.
 """
 from __future__ import annotations
 import hashlib
+from collections.abc import Callable
 import json
 from scripts import audit_phase_a_b4_test_source_successor as safe
 
@@ -57,8 +58,9 @@ A2_TEXT_METADATA = {
 }
 
 
-def _a2_text_receipt():
-    raw = read_blob(A2_TEXT_RECEIPT)
+def _a2_text_receipt(*, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    raw = reader(A2_TEXT_RECEIPT)
     value = json.loads(raw)
     if (safe.canonical(value) != raw or safe.canonical_digest(value) != A2_TEXT_RECEIPT_SHA256
             or value.get('canonical_sha256') != A2_TEXT_RECEIPT_SHA256
@@ -73,16 +75,20 @@ def _a2_text_receipt():
     return value
 
 
-def _a2_text_predecessor_source(path, raw):
+def _a2_text_predecessor_source(path, raw, *, _reader=None):
+    reader = read_blob if _reader is None else _reader
     if path not in {A2_TEXT_SOURCE, 'sitecustomize.py'}:
         return raw
-    value = _a2_text_receipt()
+    raw = _root_performance_predecessor_source(path, raw, _reader=reader)
+    value = _a2_text_receipt(_reader=reader)
     row = value['source_forward'].get(path)
     if row is None:
         return raw
-    before = read_blob(row['fixture'])
-    current = read_blob(path)
-    if safe.identity(before) != row['before'] or safe.identity(current) != row['after'] or raw != current:
+    before = reader(row['fixture'])
+    # The public predecessor helper above already bound raw to the fresh current
+    # source. Reuse that one local projected value, never a cross-call verdict.
+    current = raw
+    if safe.identity(before) != row['before'] or safe.identity(current) != row['after']:
         raise ValueError('A2 historical Tests source identity drift: ' + path)
     expected = before
     for patch in row['patches']:
@@ -95,9 +101,10 @@ def _a2_text_predecessor_source(path, raw):
     return before
 
 
-def _authenticate_a2_text_successor():
-    value = _a2_text_receipt()
-    inventory_raw = read_blob(A2_TEXT_V360['path'])
+def _authenticate_a2_text_successor(*, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    value = _a2_text_receipt(_reader=reader)
+    inventory_raw = reader(A2_TEXT_V360['path'])
     inventory = json.loads(inventory_raw)
     if (safe.canonical(inventory) != inventory_raw
             or safe.canonical_digest(inventory) != A2_TEXT_V360['canonical_sha256']
@@ -111,16 +118,17 @@ def _authenticate_a2_text_successor():
         row = value['source_forward'][path]
         if historical_rows.get(path) != row['before']['source_sha256']:
             raise ValueError('A2 V360 source does not match the exact successor predecessor: ' + path)
-        if _a2_text_predecessor_source(path, read_blob(path)) != read_blob(row['fixture']):
+        if _a2_text_predecessor_source(path, reader(path), _reader=reader) != reader(row['fixture']):
             raise ValueError('A2 historical source projection mismatch: ' + path)
     for path, expected in A2_TEXT_METADATA.items():
-        if safe.identity(read_blob(path)) != expected:
+        if safe.identity(reader(path)) != expected:
             raise ValueError('A2 historical source-forward metadata drift: ' + path)
     return value
 
 
-def _b1_receipt():
-    raw = read_blob(B1_RECEIPT)
+def _b1_receipt(*, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    raw = reader(B1_RECEIPT)
     value = json.loads(raw)
     if (safe.canonical(value) != raw or safe.canonical_digest(value) != B1_RECEIPT_SHA256
             or value.get('canonical_sha256') != B1_RECEIPT_SHA256
@@ -143,12 +151,13 @@ def _b1_receipt():
     return value
 
 
-def _b1_v1_predecessor(raw):
-    value = _b1_receipt()
-    before = read_blob(B1_FIXTURE)
+def _b1_v1_predecessor(raw, *, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    value = _b1_receipt(_reader=reader)
+    before = reader(B1_FIXTURE)
     if safe.identity(before) != B1_BEFORE or safe.identity(raw) != B1_AFTER:
         raise ValueError('B1 V1 source identity drift')
-    prior_raw = read_blob(B1_V3_RECEIPT)
+    prior_raw = reader(B1_V3_RECEIPT)
     prior = json.loads(prior_raw)
     if (safe.canonical(prior) != prior_raw
             or safe.canonical_digest(prior) != B1_V3_RECEIPT_SHA256
@@ -162,8 +171,9 @@ def _b1_v1_predecessor(raw):
     return before
 
 
-def _b1_v2_receipt():
-    raw = read_blob(B1_V2_RECEIPT)
+def _b1_v2_receipt(*, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    raw = reader(B1_V2_RECEIPT)
     value = json.loads(raw)
     if (safe.canonical(value) != raw or safe.canonical_digest(value) != B1_V2_RECEIPT_SHA256
             or value.get('canonical_sha256') != B1_V2_RECEIPT_SHA256
@@ -183,7 +193,7 @@ def _b1_v2_receipt():
                 'authority_granted', 'historical_bytes_changed',
                 'current_source_authority_changed', 'workflow_changed'))):
         raise ValueError('B1 V2 source successor receipt drift')
-    inventory_raw = read_blob(B1_V2_A2_PREDECESSOR['path'])
+    inventory_raw = reader(B1_V2_A2_PREDECESSOR['path'])
     inventory = json.loads(inventory_raw)
     rows = [row for row in inventory.get('source_identities', []) if row.get('path') == B1_SOURCE]
     if (safe.canonical(inventory) != inventory_raw
@@ -196,13 +206,14 @@ def _b1_v2_receipt():
     return value
 
 
-def _b1_predecessor_source(path, raw):
-    raw = _integrated_lineage_predecessor(path, raw)
+def _b1_predecessor_source(path, raw, *, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    raw = _integrated_lineage_predecessor(path, raw, _reader=reader)
     if path != B1_SOURCE:
         return raw
-    value = _b1_v2_receipt()
-    before_v1 = read_blob(B1_V2_FIXTURE)
-    current = _integrated_lineage_predecessor(B1_SOURCE, read_blob(B1_SOURCE))
+    value = _b1_v2_receipt(_reader=reader)
+    before_v1 = reader(B1_V2_FIXTURE)
+    current = _integrated_lineage_predecessor(B1_SOURCE, reader(B1_SOURCE), _reader=reader)
     if safe.identity(before_v1) != B1_AFTER or safe.identity(current) != B1_V2_AFTER or raw != current:
         raise ValueError('B1 V2 current or historical source identity drift')
     recipe = value['exact_patches']
@@ -214,15 +225,16 @@ def _b1_predecessor_source(path, raw):
         expected = expected.replace(old, new)
     if expected != current:
         raise ValueError('B1 V2 source exceeds its exact reviewed patch')
-    return _b1_v1_predecessor(before_v1)
+    return _b1_v1_predecessor(before_v1, _reader=reader)
 
 
 def read_blob(path):
     return safe.read_blob(path)
 
 
-def _tests_shard_v2_receipt():
-    raw = read_blob(TESTS_SHARD_V2_RECEIPT)
+def _tests_shard_v2_receipt(*, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    raw = reader(TESTS_SHARD_V2_RECEIPT)
     value = json.loads(raw)
     source_forward = value.get('source_forward')
     if (safe.canonical(value) != raw
@@ -240,17 +252,19 @@ def _tests_shard_v2_receipt():
     return value
 
 
-def _tests_shard_v2_predecessor_source(path, raw):
+def _tests_shard_v2_predecessor_source(path, raw, *, _reader=None):
+    reader = read_blob if _reader is None else _reader
     if path not in TESTS_SHARD_V2_SOURCE_PATHS:
         return raw
-    value = _tests_shard_v2_receipt()
+    value = _tests_shard_v2_receipt(_reader=reader)
     row = value['source_forward'][path]
-    actual = read_blob(path)
+    actual = reader(path)
     if raw != actual:
         raise ValueError('Tests shard V2 caller current source identity drift: ' + path)
-    current = _parent_progress_predecessor_source(path, actual)
+    actual = _root_performance_project_checked_source(path, actual, _reader=reader)
+    current = _parent_progress_predecessor_source(path, actual, _reader=reader)
     raw = current
-    before = read_blob(row['fixture'])
+    before = reader(row['fixture'])
     if (type(row) is not dict or set(row) != {'fixture', 'before', 'after'}
             or safe.identity(current) != row.get('after')
             or safe.identity(raw) != row.get('after') or raw != current
@@ -259,8 +273,9 @@ def _tests_shard_v2_predecessor_source(path, raw):
     return before
 
 
-def receipt():
-    raw = read_blob(RECEIPT)
+def _receipt_for_reader(*, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    raw = reader(RECEIPT)
     value = json.loads(raw)
     if (safe.canonical(value) != raw or safe.canonical_digest(value) != RECEIPT_SHA256
             or value.get('canonical_sha256') != RECEIPT_SHA256
@@ -271,22 +286,29 @@ def receipt():
         raise ValueError('Pass-A Tests source successor receipt drift')
     return value
 
+def receipt():
+    return _receipt_for_reader()
 
-def predecessor_source(path, raw):
+
+
+def _predecessor_source_for_reader(path, raw, *, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    if path == 'scripts/audit_phase_a_pc_upcoming_retention_successor.py':
+        raw = _root_performance_predecessor_source(path, raw, _reader=reader)
     if path == safe.SOURCE:
-        raw = _git_mode_regression_predecessor(path, raw)
-    raw = _blob_reuse_predecessor(path, raw)
-    raw = _integrated_lineage_predecessor(path, raw)
-    raw = _tests_shard_v2_predecessor_source(path, raw)
+        raw = _git_mode_regression_predecessor(path, raw, _reader=reader)
+    raw = _blob_reuse_predecessor(path, raw, _reader=reader)
+    raw = _integrated_lineage_predecessor(path, raw, _reader=reader)
+    raw = _tests_shard_v2_predecessor_source(path, raw, _reader=reader)
     if path == B1_SOURCE:
-        return _b1_predecessor_source(path, read_blob(path))
+        return _b1_predecessor_source(path, reader(path), _reader=reader)
     row = EDGES.get(path)
     if row is None:
-        return _a2_text_predecessor_source(path, raw)
-    receipt()
+        return _a2_text_predecessor_source(path, raw, _reader=reader)
+    _receipt_for_reader(_reader=reader)
     if safe.identity(raw) != row['after']:
         raise ValueError('Pass-A Tests current source identity drift: ' + path)
-    before = read_blob(row['fixture'])
+    before = reader(row['fixture'])
     if safe.identity(before) != row['before']:
         raise ValueError('Pass-A Tests predecessor source identity drift: ' + path)
     expected = before
@@ -300,33 +322,46 @@ def predecessor_source(path, raw):
         raise ValueError('Pass-A Tests source exceeds exact recipe: ' + path)
     return before
 
+def predecessor_source(path, raw):
+    return _predecessor_source_for_reader(path, raw)
 
-def authenticate_core():
-    _git_mode_regression_receipt()
-    _blob_reuse_receipt()
-    _positive_fixture_receipt()
-    _integrated_lineage_receipt()
-    value = receipt()
+
+
+def _authenticate_core_for_reader(*, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    _git_mode_regression_receipt(_reader=reader)
+    _blob_reuse_receipt(_reader=reader)
+    _positive_fixture_receipt(_reader=reader)
+    _integrated_lineage_receipt(_reader=reader)
+    value = _receipt_for_reader(_reader=reader)
     for path in EDGES:
-        predecessor_source(path, read_blob(path))
-    _b1_predecessor_source(B1_SOURCE, read_blob(B1_SOURCE))
-    _authenticate_a2_text_successor()
+        _predecessor_source_for_reader(path, reader(path), _reader=reader)
+    _b1_predecessor_source(B1_SOURCE, reader(B1_SOURCE), _reader=reader)
+    _authenticate_a2_text_successor(_reader=reader)
     for path, expected in METADATA.items():
-        if safe.identity(read_blob(path)) != expected:
+        if safe.identity(reader(path)) != expected:
             raise ValueError('Pass-A Tests successor metadata drift: ' + path)
     for path, expected in B1_METADATA.items():
-        if safe.identity(read_blob(path)) != expected:
+        if safe.identity(reader(path)) != expected:
             raise ValueError('B1 source successor metadata drift: ' + path)
-    _b1_v2_receipt()
+    _b1_v2_receipt(_reader=reader)
     for path, expected in B1_V2_METADATA.items():
-        if safe.identity(read_blob(path)) != expected:
+        if safe.identity(reader(path)) != expected:
             raise ValueError('B1 V2 source successor metadata drift: ' + path)
     for path, expected in A2_TEXT_METADATA.items():
-        if safe.identity(read_blob(path)) != expected:
+        if safe.identity(reader(path)) != expected:
             raise ValueError('A2 historical source-forward metadata drift: ' + path)
-    if safe.identity(_blob_reuse_predecessor(TEST, read_blob(TEST))) != TEST_IDENTITY:
+    if safe.identity(_blob_reuse_predecessor(TEST, reader(TEST), _reader=reader)) != TEST_IDENTITY:
         raise ValueError('Pass-A Tests successor regression source drift')
+    _authenticate_root_performance(_reader=reader)
     return value
+
+def authenticate_core():
+    scope = _SourceReadScope(read_blob)
+    value = _authenticate_core_for_reader(_reader=scope.read)
+    scope.verify()
+    return value
+
 
 
 def historical_workflow_source():
@@ -444,6 +479,7 @@ def install_context(context):
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **mode_metadata)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **mode_metadata)
     install_parent_progress_context(context)
+    install_root_performance_context(context)
 
 
 
@@ -456,8 +492,9 @@ INTEGRATED_LINEAGE_PATHS = frozenset({
 })
 
 
-def _integrated_lineage_receipt():
-    raw = read_blob(INTEGRATED_LINEAGE_RECEIPT)
+def _integrated_lineage_receipt(*, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    raw = reader(INTEGRATED_LINEAGE_RECEIPT)
     value = json.loads(raw)
     if (safe.canonical(value) != raw or safe.canonical_digest(value) != INTEGRATED_LINEAGE_SHA
             or value.get('canonical_sha256') != INTEGRATED_LINEAGE_SHA
@@ -466,7 +503,7 @@ def _integrated_lineage_receipt():
             or any(value.get(k) is not False for k in ('authority_granted', 'historical_bytes_changed', 'workflow_changed'))):
         raise ValueError('integrated lineage receipt drift')
     predecessor = value['predecessor_inventory']
-    inventory_raw = read_blob(predecessor['path'])
+    inventory_raw = reader(predecessor['path'])
     inventory = json.loads(inventory_raw)
     if (predecessor['generation'] != 367 or predecessor['rewritten'] is not False
             or safe.canonical(inventory) != inventory_raw
@@ -475,8 +512,8 @@ def _integrated_lineage_receipt():
         raise ValueError('integrated lineage A2 predecessor drift')
     sources = {r['path']: r['lf_source_sha256'] for r in inventory['source_identities']}
     for path, row in value['source_forward'].items():
-        before = read_blob(row['fixture'])
-        current = _pytest_restoration_predecessor(path, read_blob(path))
+        before = reader(row['fixture'])
+        current = _pytest_restoration_predecessor(path, reader(path), _reader=reader)
         if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
                 or sources.get(path) != row['before']['source_sha256']):
             raise ValueError('integrated lineage source identity drift: ' + path)
@@ -491,14 +528,15 @@ def _integrated_lineage_receipt():
     return value
 
 
-def _integrated_lineage_predecessor(path, raw):
+def _integrated_lineage_predecessor(path, raw, *, _reader=None):
+    reader = read_blob if _reader is None else _reader
     if path not in INTEGRATED_LINEAGE_PATHS:
         return raw
-    raw = _pytest_restoration_predecessor(path, raw)
-    row = _integrated_lineage_receipt()['source_forward'][path]
+    raw = _pytest_restoration_predecessor(path, raw, _reader=reader)
+    row = _integrated_lineage_receipt(_reader=reader)['source_forward'][path]
     if safe.identity(raw) != row['after']:
         raise ValueError('integrated lineage caller source drift: ' + path)
-    return read_blob(row['fixture'])
+    return reader(row['fixture'])
 
 
 def authenticated_retention_artifact_paths():
@@ -520,8 +558,9 @@ POSITIVE_FIXTURE_PATHS = frozenset({'pytest.ini', 'tests/test_core_01d_port02c_t
                                     'tests/test_core_01d_checkpoint_e_completion_v9.py'})
 
 
-def _positive_fixture_receipt():
-    raw = read_blob(POSITIVE_FIXTURE_RECEIPT)
+def _positive_fixture_receipt(*, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    raw = reader(POSITIVE_FIXTURE_RECEIPT)
     value = json.loads(raw)
     if (safe.canonical(value) != raw or safe.canonical_digest(value) != POSITIVE_FIXTURE_SHA
             or value.get('canonical_sha256') != POSITIVE_FIXTURE_SHA
@@ -530,7 +569,7 @@ def _positive_fixture_receipt():
             or any(value.get(k) is not False for k in ('authority_granted', 'historical_bytes_changed', 'workflow_changed'))):
         raise ValueError('positive fixture reuse receipt drift')
     predecessor = value['predecessor_inventory']
-    inventory_raw = read_blob(predecessor['path'])
+    inventory_raw = reader(predecessor['path'])
     inventory = json.loads(inventory_raw)
     if (predecessor['generation'] != 368 or predecessor['rewritten'] is not False
             or safe.canonical(inventory) != inventory_raw
@@ -539,15 +578,15 @@ def _positive_fixture_receipt():
         raise ValueError('positive fixture reuse A2 predecessor drift')
     sources = {r['path']: r['lf_source_sha256'] for r in inventory['source_identities']}
     anchor = value['historical_configuration_anchor']
-    frozen_raw = read_blob(anchor['path'])
+    frozen_raw = reader(anchor['path'])
     if (anchor['path'] != 'tests/fixtures/core_01d/exact-main-source-inventory.json'
             or safe.identity(frozen_raw) != anchor['identity']
             or json.loads(frozen_raw)['files']['pytest.ini'] != {
                 'mode': '100644', 'git_blob_sha1': value['source_forward']['pytest.ini']['before']['git_blob_sha1']}):
         raise ValueError('positive fixture historical configuration anchor drift')
     for path, row in value['source_forward'].items():
-        before = read_blob(row['fixture'])
-        current = _pytest_restoration_predecessor(path, read_blob(path))
+        before = reader(row['fixture'])
+        current = _pytest_restoration_predecessor(path, reader(path), _reader=reader)
         if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
                 or (path != 'pytest.ini' and sources.get(path) != row['before']['source_sha256'])):
             raise ValueError('positive fixture reuse source identity drift: ' + path)
@@ -569,9 +608,10 @@ PYTEST_RESTORATION_PATHS = frozenset({'pytest.ini', 'tests/test_core_01d_checkpo
                                       'scripts/audit_checkpoint_e_workflows.py'})
 
 
-def _pytest_restoration_receipt():
+def _pytest_restoration_receipt(*, _reader=None):
     """Authenticate the forward restoration, retaining the published V1 bytes."""
-    raw = read_blob(PYTEST_RESTORATION_RECEIPT)
+    reader = read_blob if _reader is None else _reader
+    raw = reader(PYTEST_RESTORATION_RECEIPT)
     value = json.loads(raw)
     if (safe.canonical(value) != raw or safe.canonical_digest(value) != PYTEST_RESTORATION_SHA
             or value.get('canonical_sha256') != PYTEST_RESTORATION_SHA
@@ -580,7 +620,7 @@ def _pytest_restoration_receipt():
             or any(value.get(k) is not False for k in ('authority_granted', 'historical_bytes_changed', 'workflow_changed'))):
         raise ValueError('pytest restoration receipt drift')
     predecessor = value['predecessor_inventory']
-    inventory_raw = read_blob(predecessor['path'])
+    inventory_raw = reader(predecessor['path'])
     inventory = json.loads(inventory_raw)
     if (predecessor['generation'] != 369 or predecessor['rewritten'] is not False
             or safe.canonical(inventory) != inventory_raw
@@ -589,7 +629,7 @@ def _pytest_restoration_receipt():
         raise ValueError('pytest restoration A2 predecessor drift')
     sources = {r['path']: r['lf_source_sha256'] for r in inventory['source_identities']}
     for path, row in value['source_forward'].items():
-        before, current = read_blob(row['fixture']), read_blob(path)
+        before, current = reader(row['fixture']), reader(path)
         if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
                 or (path != 'pytest.ini' and sources.get(path) != row['before']['source_sha256'])):
             raise ValueError('pytest restoration source identity drift: ' + path)
@@ -604,13 +644,14 @@ def _pytest_restoration_receipt():
     return value
 
 
-def _pytest_restoration_predecessor(path, raw):
+def _pytest_restoration_predecessor(path, raw, *, _reader=None):
+    reader = read_blob if _reader is None else _reader
     if path not in PYTEST_RESTORATION_PATHS:
         return raw
-    row = _pytest_restoration_receipt()['source_forward'][path]
+    row = _pytest_restoration_receipt(_reader=reader)['source_forward'][path]
     if safe.identity(raw) != row['after']:
         raise ValueError('pytest restoration caller source identity drift: ' + path)
-    return read_blob(row['fixture'])
+    return reader(row['fixture'])
 
 
 CENSUS_TEST = 'tests/test_p4_3a_workflow_capability_census.py'
@@ -635,8 +676,9 @@ BLOB_REUSE_PATHS = frozenset({'scripts/audit_phase_a_b4_test_source_successor.py
                                'tests/test_phase_a_pass_a_tests_source_successor.py'})
 
 
-def _blob_reuse_receipt():
-    raw = read_blob(BLOB_REUSE_RECEIPT)
+def _blob_reuse_receipt(*, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    raw = reader(BLOB_REUSE_RECEIPT)
     value = json.loads(raw)
     if (safe.canonical(value) != raw or safe.canonical_digest(value) != BLOB_REUSE_SHA
             or value.get('canonical_sha256') != BLOB_REUSE_SHA
@@ -646,7 +688,7 @@ def _blob_reuse_receipt():
                                                      'workflow_changed', 'authority_verdict_cached'))):
         raise ValueError('blob reuse receipt drift')
     prior = value['predecessor_inventory']
-    raw_prior = read_blob(prior['path'])
+    raw_prior = reader(prior['path'])
     inventory = json.loads(raw_prior)
     if (prior['generation'] != 370 or prior['rewritten'] is not False
             or safe.canonical(inventory) != raw_prior or inventory.get('generation') != 370
@@ -657,20 +699,20 @@ def _blob_reuse_receipt():
     # calls. Each source and predecessor below still receives a fresh Git /
     # worktree check; only duplicate validation of the same receipt is avoided.
     try:
-        mode_receipt = _git_mode_regression_receipt()
+        mode_receipt = _git_mode_regression_receipt(_reader=reader)
     except ValueError as exc:
         # Keep the original error contract from the first loop iteration.
         path = next(iter(value['source_forward']))
         raise ValueError('blob reuse source identity drift: ' + path) from exc
     for path, row in value['source_forward'].items():
-        before = read_blob(row['fixture'])
+        before = reader(row['fixture'])
         try:
-            current = read_blob(path)
+            current = _root_performance_current_predecessor(path, _reader=reader)
             if path in GIT_MODE_REGRESSION_PATHS:
                 mode_row = mode_receipt['source_forward'][path]
                 if safe.identity(current) != mode_row['after']:
                     raise ValueError('Git-mode regression caller source identity drift: ' + path)
-                current = read_blob(mode_row['fixture'])
+                current = reader(mode_row['fixture'])
         except ValueError as exc:
             raise ValueError('blob reuse source identity drift: ' + path) from exc
         if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
@@ -687,14 +729,15 @@ def _blob_reuse_receipt():
     return value
 
 
-def _blob_reuse_predecessor(path, raw):
+def _blob_reuse_predecessor(path, raw, *, _reader=None):
+    reader = read_blob if _reader is None else _reader
     if path not in BLOB_REUSE_PATHS:
         return raw
-    raw = _git_mode_regression_predecessor(path, raw)
-    row = _blob_reuse_receipt()['source_forward'][path]
+    raw = _git_mode_regression_predecessor(path, raw, _reader=reader)
+    row = _blob_reuse_receipt(_reader=reader)['source_forward'][path]
     if safe.identity(raw) != row['after']:
         raise ValueError('blob reuse caller source identity drift: ' + path)
-    return read_blob(row['fixture'])
+    return reader(row['fixture'])
 
 
 GIT_MODE_REGRESSION_RECEIPT = 'artifacts/architecture/phase_a_git_mode_regression_source_successor_v1.json'
@@ -704,8 +747,9 @@ GIT_MODE_REGRESSION_PATHS = frozenset({'scripts/audit_phase_a_b4_test_source_suc
                                        'tests/test_phase_a_pass_a_tests_source_successor.py'})
 
 
-def _git_mode_regression_receipt():
-    raw = read_blob(GIT_MODE_REGRESSION_RECEIPT)
+def _git_mode_regression_receipt(*, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    raw = reader(GIT_MODE_REGRESSION_RECEIPT)
     value = json.loads(raw)
     if (safe.canonical(value) != raw or safe.canonical_digest(value) != GIT_MODE_REGRESSION_SHA
             or value.get('canonical_sha256') != GIT_MODE_REGRESSION_SHA
@@ -715,7 +759,7 @@ def _git_mode_regression_receipt():
                                                      'workflow_changed', 'production_reader_changed'))):
         raise ValueError('Git-mode regression receipt drift')
     prior = value['predecessor_inventory']
-    prior_raw = read_blob(prior['path'])
+    prior_raw = reader(prior['path'])
     inventory = json.loads(prior_raw)
     if (prior['generation'] != 371 or prior['rewritten'] is not False
             or safe.canonical(inventory) != prior_raw or inventory.get('generation') != 371
@@ -723,7 +767,11 @@ def _git_mode_regression_receipt():
         raise ValueError('Git-mode regression A2 predecessor drift')
     sources = {r['path']: r['lf_source_sha256'] for r in inventory['source_identities']}
     for path, row in value['source_forward'].items():
-        before, current = read_blob(row['fixture']), read_blob(path)
+        before = reader(row['fixture'])
+        try:
+            current = _root_performance_current_predecessor(path, _reader=reader)
+        except ValueError as exc:
+            raise ValueError('Git-mode regression source identity drift: ' + path) from exc
         if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
                 or sources.get(path) != row['before']['source_sha256']):
             raise ValueError('Git-mode regression source identity drift: ' + path)
@@ -738,13 +786,15 @@ def _git_mode_regression_receipt():
     return value
 
 
-def _git_mode_regression_predecessor(path, raw):
+def _git_mode_regression_predecessor(path, raw, *, _reader=None):
+    reader = read_blob if _reader is None else _reader
     if path not in GIT_MODE_REGRESSION_PATHS:
         return raw
-    row = _git_mode_regression_receipt()['source_forward'][path]
+    raw = _root_performance_predecessor_source(path, raw, _reader=reader)
+    row = _git_mode_regression_receipt(_reader=reader)['source_forward'][path]
     if safe.identity(raw) != row['after']:
         raise ValueError('Git-mode regression caller source identity drift: ' + path)
-    return read_blob(row['fixture'])
+    return reader(row['fixture'])
 
 
 PARENT_PROGRESS_RECEIPT = 'artifacts/architecture/tests_parent_progress_successor_v1.json'
@@ -762,9 +812,10 @@ PARENT_PROGRESS_COMMAND_BEFORE = 'python -m pytest -q --durations=20 "${test_fil
 PARENT_PROGRESS_COMMAND_AFTER = 'python -m pytest -p scripts.audit_phase_a_pass_a_tests_source_successor -q --durations=20 "${test_files[@]}"'
 
 
-def _parent_progress_receipt():
+def _parent_progress_receipt(*, _reader=None):
     """Pure tracked-byte source edge; no A2 bootstrap recursion or verdict cache."""
-    raw = read_blob(PARENT_PROGRESS_RECEIPT)
+    reader = read_blob if _reader is None else _reader
+    raw = reader(PARENT_PROGRESS_RECEIPT)
     value = json.loads(raw)
     if (safe.canonical(value) != raw
             or safe.canonical_digest(value) != PARENT_PROGRESS_SHA256
@@ -782,7 +833,7 @@ def _parent_progress_receipt():
             or value.get('command_before') != PARENT_PROGRESS_COMMAND_BEFORE
             or value.get('command_after') != PARENT_PROGRESS_COMMAND_AFTER):
         raise ValueError('parent progress receipt scope or identity drift')
-    anchor_raw = read_blob(PARENT_PROGRESS_A2['path'])
+    anchor_raw = reader(PARENT_PROGRESS_A2['path'])
     anchor = json.loads(anchor_raw)
     if (safe.canonical(anchor) != anchor_raw
             or safe.canonical_digest(anchor) != PARENT_PROGRESS_A2['canonical_sha256']
@@ -795,7 +846,8 @@ def _parent_progress_receipt():
         if (set(row) != {'before', 'after', 'fixture', 'patches'} or row['fixture'] != fixture
                 or sources.get(path) != row['before']['source_sha256']):
             raise ValueError('parent progress source path/predecessor drift: ' + path)
-        before, current = read_blob(fixture), read_blob(path)
+        before = reader(fixture)
+        current = _root_performance_current_predecessor(path, _reader=reader)
         if safe.identity(before) != row['before'] or safe.identity(current) != row['after']:
             raise ValueError('parent progress source identity drift: ' + path)
         expected = before
@@ -809,13 +861,14 @@ def _parent_progress_receipt():
     return value
 
 
-def _parent_progress_predecessor_source(path, raw):
+def _parent_progress_predecessor_source(path, raw, *, _reader=None):
+    reader = read_blob if _reader is None else _reader
     if path not in PARENT_PROGRESS_PATHS:
         return raw
-    row = _parent_progress_receipt()['source_forward'][path]
+    row = _parent_progress_receipt(_reader=reader)['source_forward'][path]
     if safe.identity(raw) != row['after']:
         raise ValueError('parent progress caller source identity drift: ' + path)
-    return read_blob(row['fixture'])
+    return reader(row['fixture'])
 
 
 def authenticate_parent_progress():
@@ -930,3 +983,174 @@ def pytest_configure(config):
     # pytest calls this only when this module is explicitly loaded with -p.
     # No PYTEST_ADDOPTS, environment marker, root conftest or child argv change.
     config.pluginmanager.register(_ParentNodeProgress(), 'athena-parent-node-progress')
+
+
+ROOT_PERFORMANCE_RECEIPT = 'artifacts/architecture/root_auth_performance_source_successor_v1.json'
+ROOT_PERFORMANCE_SHA256 = '3ffc8309ecc6e1a3a00b5a23c6641452aee6304aab93482e8b7755dd18fbbf16'
+ROOT_PERFORMANCE_PATHS = frozenset({
+    'scripts/audit_phase_a_b4_test_source_successor.py',
+    'scripts/audit_core_01d_ci_offline_transport_boundary.py',
+    'scripts/audit_tests_shard_balance_successor.py',
+    'scripts/audit_phase_a_pc_upcoming_retention_successor.py',
+    'sitecustomize.py', TEST,
+})
+ROOT_PERFORMANCE_PREDECESSOR = {
+    'path': 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v374.json',
+    'generation': 374,
+    'canonical_sha256': '6dda8bea25376a87136a8e20d866ddc1a3c6589f21473243d45f7057108ea1e2',
+    'rewritten': False,
+}
+
+
+def _root_performance_receipt(*, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    raw = reader(ROOT_PERFORMANCE_RECEIPT)
+    import marshal
+    value = marshal.loads(_root_performance_document(
+        raw, ROOT_PERFORMANCE_SHA256, safe.canonical, safe.canonical_digest))
+    # Scope/authority declarations are evaluated afresh, even when immutable
+    # parsing/hash work was reused. No authorization verdict is memoized.
+    if (value.get('policy_id') != 'ATHENA_ROOT_AUTH_PERFORMANCE_SOURCE_SUCCESSOR_V1'
+            or value.get('predecessor_inventory') != ROOT_PERFORMANCE_PREDECESSOR
+            or set(value.get('source_forward', {})) != ROOT_PERFORMANCE_PATHS
+            or any(value.get(k) is not False for k in (
+                'authority_granted', 'historical_bytes_changed', 'workflow_changed',
+                'checks_skipped', 'authorization_verdict_cached', 'shared_runtime_changed'))):
+        raise ValueError('root performance source receipt scope drift')
+    return value
+
+
+from functools import lru_cache as _root_performance_lru
+
+
+@_root_performance_lru(maxsize=4)
+def _root_performance_document(raw, expected_sha, canonical, canonical_digest):
+    """Pure immutable-document transformation; all source guards remain fresh."""
+    import marshal
+    value = json.loads(raw)
+    if (canonical(value) != raw or canonical_digest(value) != expected_sha
+            or value.get('canonical_sha256') != expected_sha):
+        raise ValueError('root performance source receipt drift')
+    return marshal.dumps(value, 4)
+
+
+def _root_performance_predecessor_source(path, raw, *, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    if path not in ROOT_PERFORMANCE_PATHS:
+        return raw
+    current = reader(path)
+    if raw != current:
+        raise ValueError('root performance caller source drift: ' + path)
+    return _root_performance_project_checked_source(path, current, _reader=reader)
+
+
+def _root_performance_current_predecessor(path, *, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    current = reader(path)
+    return _root_performance_project_checked_source(path, current, _reader=reader)
+
+
+def _root_performance_project_checked_source(path, current, *, _reader=None):
+    """Private pure recipe projection of bytes just obtained by a fresh reader.
+
+    Every caller reads actual current bytes itself. This value is local to that
+    invocation; independent public calls never inherit a prior source verdict.
+    """
+    reader = read_blob if _reader is None else _reader
+    if path not in ROOT_PERFORMANCE_PATHS:
+        return current
+    row = _root_performance_receipt(_reader=reader)['source_forward'][path]
+    before = reader(row['fixture'])
+    if (safe.identity(current) != row['after'] or safe.identity(before) != row['before']):
+        raise ValueError('root performance current/predecessor source drift: ' + path)
+    expected = before
+    for patch in row['patches']:
+        old, new = patch['before'].encode(), patch['after'].encode()
+        if not old or expected.count(old) != 1:
+            raise ValueError('root performance source patch seam drift: ' + path)
+        expected = expected.replace(old, new)
+    if expected != current:
+        raise ValueError('root performance source exceeds exact recipe: ' + path)
+    return before
+
+
+def _authenticate_root_performance(*, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    value = _root_performance_receipt(_reader=reader)
+    raw = reader(ROOT_PERFORMANCE_PREDECESSOR['path'])
+    inventory = json.loads(raw)
+    if (safe.canonical(inventory) != raw
+            or safe.canonical_digest(inventory) != ROOT_PERFORMANCE_PREDECESSOR['canonical_sha256']
+            or inventory.get('generation') != 374):
+        raise ValueError('root performance A2 predecessor drift')
+    sources = {r['path']: r['lf_source_sha256'] for r in inventory['source_identities']}
+    for path, row in value['source_forward'].items():
+        if sources.get(path) != row['before']['source_sha256']:
+            raise ValueError('root performance source is not the exact A2 predecessor: ' + path)
+        _root_performance_current_predecessor(path, _reader=reader)
+    anchor = value['pass_a_predecessor']
+    before = reader(anchor['fixture'])
+    if (anchor['path'] != __name__.replace('.', '/') + '.py'
+            or safe.identity(before) != anchor['identity']
+            or sources.get(anchor['path']) != anchor['identity']['source_sha256']):
+        raise ValueError('root performance Pass-A predecessor anchor drift')
+    return value
+
+
+def install_root_performance_context(context):
+    value = _authenticate_root_performance()
+    metadata = {ROOT_PERFORMANCE_RECEIPT: safe.identity(read_blob(ROOT_PERFORMANCE_RECEIPT)),
+                value['pass_a_predecessor']['fixture']: value['pass_a_predecessor']['identity']}
+    for path, row in value['source_forward'].items():
+        metadata[row['fixture']] = row['before']
+        context['BOOTSTRAP_AFTER'][path] = row['after']
+        if path in context['HISTORICAL_PREDECESSORS']:
+            context['HISTORICAL_PREDECESSORS'][path]['after'] = row['after']
+    context['BOOTSTRAP_AUDITOR_PATCHES'] = tuple(context['BOOTSTRAP_AUDITOR_PATCHES']) + tuple(
+        (p['before'], p['after']) for p in value['source_forward'][A2_TEXT_SOURCE]['patches'])
+    context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **metadata)
+    context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **metadata)
+    context['ADDED_PYTHON_IDENTITIES'] = dict(context['ADDED_PYTHON_IDENTITIES'], **{
+        path: row['after'] for path, row in value['source_forward'].items()
+        if path in context['ADDED_PYTHON_IDENTITIES']})
+
+
+def root_performance_bootstrap_source(expected):
+    row = _root_performance_receipt()['source_forward'][A2_TEXT_SOURCE]
+    marker = ('        "' + row['after']['source_sha256'] + '",\n    ),').encode()
+    retained = ('        "' + row['before']['source_sha256'] + '",\n').encode()
+    if expected.count(marker) != 1:
+        raise ValueError('root performance exact added auditor pin seam drift')
+    result = expected.replace(marker, retained + marker)
+    if result != read_blob('sitecustomize.py'):
+        raise ValueError('root performance startup exceeds exact preserved-pin recipe')
+    return result
+
+
+class _SourceReadScope:
+    """Local immutable inputs for exactly one independently fenced audit call."""
+
+    def __init__(self, reader: Callable[[str], bytes]) -> None:
+        from runtime import source_identity
+        self.root = safe.ROOT
+        self.head = safe._source_scope_head(self.root)
+        self.reader = reader
+        self.safe_reader = safe.read_blob
+        self.runtime_reader = source_identity.read_tracked_head_blob
+        self.sources: dict[str, bytes] = {}
+
+    def read(self, path: str) -> bytes:
+        if path not in self.sources:
+            raw = self.reader(path)
+            if type(raw) is not bytes:
+                raise ValueError('scoped source input must be immutable bytes')
+            self.sources[path] = raw
+        return self.sources[path]
+
+    def verify(self) -> None:
+        from runtime import source_identity
+        if (safe.ROOT != self.root or read_blob is not self.reader
+                or safe.read_blob is not self.safe_reader
+                or source_identity.read_tracked_head_blob is not self.runtime_reader):
+            raise ValueError('scoped source root or reader changed during authentication')
+        safe._verify_scoped_source_inputs(self.root, self.head, self.sources)

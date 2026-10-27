@@ -77,8 +77,8 @@ def read_blob(path):
     if (type(mode) is not bytes or len(mode.splitlines()) != 1
             or mode.split(b'\t', 1)[0].split()[:2] != [b'100644', b'blob']):
         raise ValueError('Tests successor evidence Git tree mode drift: ' + path)
-    from runtime.source_identity import read_tracked_head_blob
-    raw, _ = read_tracked_head_blob(ROOT, path)
+    from scripts import audit_phase_a_b4_test_source_successor as source_reader
+    raw = source_reader._read_blob(path, ROOT)
     # Fixtures are LF Git objects even in a clean Windows CRLF worktree.
     return raw
 

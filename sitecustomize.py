@@ -19,6 +19,7 @@ ROOT_TEST_SOURCE_SUCCESSORS = {
     "scripts/audit_core_01d_ci_offline_transport_boundary.py": (
         "282e1b9c5258eb4fcbe51581816e7894e5c9b581f085be1162aa6f9bca864299",
         "b5a55f7f82f2313face2191eb87eb221818a4da0d6a8955b3e3dbad74598477e",
+        "e35a4c4fbb7d423ccade04dff9861868f8fd4cdec06539cc742dd3e8c3d2e1af",
     ),
 }
 
