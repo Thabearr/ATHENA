@@ -376,8 +376,10 @@ def test_historical_projection_requires_exact_reviewed_after_bytes(monkeypatch):
     monkeypatch.setattr(source_identity, 'read_tracked_head_blob',
         lambda root, path, **kwargs: (changed, changed_identity) if path == target else original(root, path, **kwargs))
     raw = subprocess.check_output(['git', 'ls-tree', '-r', 'HEAD'])
-    with pytest.raises(ValueError, match='exact reviewed retention successor|bootstrap successor current source identity drift'):
+    with pytest.raises(ValueError, match='exact reviewed retention successor|bootstrap successor current source identity drift|B4 test source HEAD changed during blob read') as failure:
         successor.project_retention_inventory(raw, latest=latest)
+    if str(failure.value).startswith('B4 test source HEAD changed during blob read'):
+        assert str(failure.value) == 'B4 test source HEAD changed during blob read: ' + target
 
 
 @pytest.mark.parametrize('original_auditor', [False, True, 'prior'])

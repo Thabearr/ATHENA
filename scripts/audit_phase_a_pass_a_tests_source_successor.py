@@ -261,6 +261,7 @@ def _tests_shard_v2_predecessor_source(path, raw, *, _reader=None):
     actual = reader(path)
     if raw != actual:
         raise ValueError('Tests shard V2 caller current source identity drift: ' + path)
+    actual = _ci_assertion_predecessor_source(path, actual, _reader=reader)
     actual = _root_performance_project_checked_source(path, actual, _reader=reader)
     current = _parent_progress_predecessor_source(path, actual, _reader=reader)
     raw = current
@@ -354,6 +355,7 @@ def _authenticate_core_for_reader(*, _reader=None):
     if safe.identity(_blob_reuse_predecessor(TEST, reader(TEST), _reader=reader)) != TEST_IDENTITY:
         raise ValueError('Pass-A Tests successor regression source drift')
     _authenticate_root_performance(_reader=reader)
+    _authenticate_ci_assertion_successor(_reader=reader)
     return value
 
 def authenticate_core():
@@ -480,6 +482,7 @@ def install_context(context):
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **mode_metadata)
     install_parent_progress_context(context)
     install_root_performance_context(context)
+    install_ci_assertion_context(context)
 
 
 
@@ -513,7 +516,8 @@ def _integrated_lineage_receipt(*, _reader=None):
     sources = {r['path']: r['lf_source_sha256'] for r in inventory['source_identities']}
     for path, row in value['source_forward'].items():
         before = reader(row['fixture'])
-        current = _pytest_restoration_predecessor(path, reader(path), _reader=reader)
+        current = _ci_assertion_predecessor_source(path, reader(path), _reader=reader)
+        current = _pytest_restoration_predecessor(path, current, _reader=reader)
         if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
                 or sources.get(path) != row['before']['source_sha256']):
             raise ValueError('integrated lineage source identity drift: ' + path)
@@ -532,6 +536,7 @@ def _integrated_lineage_predecessor(path, raw, *, _reader=None):
     reader = read_blob if _reader is None else _reader
     if path not in INTEGRATED_LINEAGE_PATHS:
         return raw
+    raw = _ci_assertion_predecessor_source(path, raw, _reader=reader)
     raw = _pytest_restoration_predecessor(path, raw, _reader=reader)
     row = _integrated_lineage_receipt(_reader=reader)['source_forward'][path]
     if safe.identity(raw) != row['after']:
@@ -847,7 +852,8 @@ def _parent_progress_receipt(*, _reader=None):
                 or sources.get(path) != row['before']['source_sha256']):
             raise ValueError('parent progress source path/predecessor drift: ' + path)
         before = reader(fixture)
-        current = _root_performance_current_predecessor(path, _reader=reader)
+        current = _ci_assertion_predecessor_source(path, reader(path), _reader=reader)
+        current = _root_performance_project_checked_source(path, current, _reader=reader)
         if safe.identity(before) != row['before'] or safe.identity(current) != row['after']:
             raise ValueError('parent progress source identity drift: ' + path)
         expected = before
@@ -1154,3 +1160,118 @@ class _SourceReadScope:
                 or source_identity.read_tracked_head_blob is not self.runtime_reader):
             raise ValueError('scoped source root or reader changed during authentication')
         safe._verify_scoped_source_inputs(self.root, self.head, self.sources)
+
+
+# Source-only correction of exact-HEAD CI assertions. All predecessor receipts,
+# source fixtures, workflow identities and the V375 inventory remain immutable.
+CI_ASSERTION_RECEIPT = 'artifacts/architecture/phase_a_ci_assertion_source_successor_v1.json'
+CI_ASSERTION_SHA256 = '58b85948bb1299ab11ef601b774c6cef0967ad44c072fb7b158ad4652a15b25c'
+CI_ASSERTION_PATHS = frozenset({
+    'tests/test_tests_shard_balance_successor.py',
+    'tests/test_core_01d_ci_offline_transport_inventory_evolution.py',
+    'tests/test_current_shadow_pc_upcoming_archive_retention.py',
+})
+CI_ASSERTION_PREDECESSOR = {
+    'path': 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v375.json',
+    'generation': 375,
+    'canonical_sha256': '248788edbc5e66d7d0a7ab0af9ed5c1fc3ce29a59e8b7d679f0e144bdb8b1b69',
+    'rewritten': False,
+}
+CI_ASSERTION_FIXTURES = 'tests/fixtures/architecture/ci_assertion_source_successor_v1/'
+
+
+def _ci_assertion_successor_receipt(*, _reader=None):
+    """Authenticate the frozen V375 anchor and fixed, authority-neutral scope."""
+    reader = read_blob if _reader is None else _reader
+    try:
+        raw = reader(CI_ASSERTION_RECEIPT)
+        value = json.loads(raw)
+        inventory_raw = reader(CI_ASSERTION_PREDECESSOR['path'])
+        inventory = json.loads(inventory_raw)
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ValueError('CI assertion receipt or predecessor cannot be read') from exc
+    if (safe.canonical(value) != raw or safe.canonical_digest(value) != CI_ASSERTION_SHA256
+            or value.get('canonical_sha256') != CI_ASSERTION_SHA256
+            or value.get('policy_id') != 'ATHENA_PHASE_A_CI_ASSERTION_SOURCE_SUCCESSOR_V1'
+            or type(value.get('schema_version')) is not int or value['schema_version'] != 1
+            or value.get('source_commit') != '4549de616ae3345a842ffb6d2d467fcb7f7f3f7a'
+            or value.get('predecessor_inventory') != CI_ASSERTION_PREDECESSOR
+            or type(value.get('source_forward')) is not dict
+            or set(value['source_forward']) != CI_ASSERTION_PATHS
+            or any(value.get(key) is not False for key in (
+                'authority_granted', 'historical_bytes_changed', 'workflow_changed',
+                'test_file_assignment_changed', 'existing_tests_removed_or_skipped',
+                'authority_verdict_cached'))
+            or safe.canonical(inventory) != inventory_raw
+            or safe.canonical_digest(inventory) != CI_ASSERTION_PREDECESSOR['canonical_sha256']
+            or inventory.get('canonical_sha256') != CI_ASSERTION_PREDECESSOR['canonical_sha256']
+            or type(inventory.get('generation')) is not int or inventory['generation'] != 375):
+        raise ValueError('CI assertion receipt or V375 predecessor drift')
+    sources = {row['path']: row['lf_source_sha256'] for row in inventory['source_identities']}
+    for path, row in value['source_forward'].items():
+        fixture = CI_ASSERTION_FIXTURES + path.replace('/', '--') + '.before.txt'
+        if (type(row) is not dict or set(row) != {'fixture', 'before', 'after', 'patches'}
+                or row['fixture'] != fixture
+                or sources.get(path) != row['before'].get('source_sha256')):
+            raise ValueError('CI assertion source scope or predecessor drift: ' + path)
+    anchor = value.get('pass_a_predecessor')
+    anchor_path = __name__.replace('.', '/') + '.py'
+    fixture = CI_ASSERTION_FIXTURES + anchor_path.replace('/', '--') + '.before.txt'
+    if (type(anchor) is not dict or set(anchor) != {'path', 'fixture', 'identity', 'recipe'}
+            or anchor['path'] != anchor_path or anchor['fixture'] != fixture
+            or safe.identity(reader(fixture)) != anchor['identity']
+            or sources.get(anchor_path) != anchor['identity'].get('source_sha256')):
+        raise ValueError('CI assertion Pass-A predecessor anchor drift')
+    recipe = anchor['recipe']
+    token = '<CI_ASSERTION_' + 'DIGEST>'
+    if (type(recipe) is not dict or set(recipe) != {'before', 'after'}
+            or type(recipe['before']) is not str or type(recipe['after']) is not str
+            or recipe['before'].encode() != reader(fixture)
+            or recipe['after'].count(token) != 1
+            or recipe['after'].replace(token, CI_ASSERTION_SHA256).encode() != reader(anchor_path)):
+        raise ValueError('CI assertion Pass-A exact source recipe drift')
+    return value
+
+
+def _ci_assertion_predecessor_source(path, raw, *, _reader=None):
+    """Invert this exact source edge before consulting earlier source views."""
+    reader = read_blob if _reader is None else _reader
+    if path not in CI_ASSERTION_PATHS:
+        return raw
+    row = _ci_assertion_successor_receipt(_reader=reader)['source_forward'][path]
+    current, before = reader(path), reader(row['fixture'])
+    if (raw != current or safe.identity(current) != row['after']
+            or safe.identity(before) != row['before']):
+        raise ValueError('CI assertion current or predecessor source drift: ' + path)
+    expected = before
+    for patch in row['patches']:
+        old, new = patch['before'].encode(), patch['after'].encode()
+        if not old or expected.count(old) != 1:
+            raise ValueError('CI assertion source patch seam drift: ' + path)
+        expected = expected.replace(old, new)
+    if expected != current:
+        raise ValueError('CI assertion source exceeds its exact recipe: ' + path)
+    return before
+
+
+def _authenticate_ci_assertion_successor(*, _reader=None):
+    reader = read_blob if _reader is None else _reader
+    value = _ci_assertion_successor_receipt(_reader=reader)
+    for path in sorted(CI_ASSERTION_PATHS):
+        _ci_assertion_predecessor_source(path, reader(path), _reader=reader)
+    return value
+
+
+def install_ci_assertion_context(context):
+    value = _authenticate_ci_assertion_successor()
+    metadata = {CI_ASSERTION_RECEIPT: safe.identity(read_blob(CI_ASSERTION_RECEIPT)),
+                value['pass_a_predecessor']['fixture']: value['pass_a_predecessor']['identity']}
+    for path, row in value['source_forward'].items():
+        metadata[row['fixture']] = row['before']
+        context['BOOTSTRAP_AFTER'][path] = row['after']
+        if path in context['HISTORICAL_PREDECESSORS']:
+            context['HISTORICAL_PREDECESSORS'][path]['after'] = row['after']
+        if path in context['ADDED_PYTHON_IDENTITIES']:
+            context['ADDED_PYTHON_IDENTITIES'][path] = row['after']
+    context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **metadata)
+    context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **metadata)

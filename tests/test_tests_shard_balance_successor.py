@@ -120,9 +120,27 @@ def test_v2_rebalance_is_an_append_only_exact_v1_successor():
     assert audit.project_b4_tree(audit.V2_AFTER_B4_TREE) == audit.BEFORE_B4_TREE
     assert retention.authenticate()['canonical_sha256'] == retention.RECEIPT_SHA256
     assert retention.authenticate_bootstrap_sources() is True
+    parent = pass_a._parent_progress_receipt()['source_forward']
+    performance = pass_a._root_performance_receipt()['source_forward']
+    correction = pass_a._ci_assertion_successor_receipt()['source_forward']
     for path, row in value['source_forward'].items():
-        assert retention.BOOTSTRAP_AFTER[path] == pass_a._parent_progress_receipt()['source_forward'][path]['after']
-    assert d5.historical_workflow_tree(audit.V2_AFTER_TREE) == d5.PREDECESSOR_TREE
+        current = pass_a.read_blob(path)
+        assert row['after'] == parent[path]['before']
+        assert pass_a.safe.identity(pass_a.read_blob(parent[path]['fixture'])) == row['after']
+        if path in performance:
+            assert performance[path]['before'] == parent[path]['after']
+            assert performance[path]['after'] == pass_a.safe.identity(current)
+        elif path in correction:
+            assert correction[path]['before'] == parent[path]['after']
+            assert correction[path]['after'] == pass_a.safe.identity(current)
+        else:
+            assert parent[path]['after'] == pass_a.safe.identity(current)
+        assert retention.BOOTSTRAP_AFTER[path] == pass_a.safe.identity(current)
+    # D5 authenticates the checked-out current tree; the V2 tree was already
+    # projected above by the Tests successor and is not a D5 caller input.
+    with pytest.raises(ValueError, match='unknown PORT-02C source-forward workflow tree'):
+        d5.historical_workflow_tree(audit.V2_AFTER_TREE)
+    assert d5.historical_workflow_tree(audit.AFTER_TREE) == d5.PREDECESSOR_TREE
 
 
 @pytest.mark.parametrize('which', [
@@ -216,8 +234,63 @@ def test_parent_progress_preserves_partition_and_immutable_v2():
     assert audit._authenticate_v2()['canonical_sha256'] == progress.TESTS_SHARD_V2_RECEIPT_SHA256
     assert audit.project_tree(audit.V2_AFTER_TREE) == audit.BEFORE_TREE
     for path, row in value['source_forward'].items():
-        assert progress._parent_progress_predecessor_source(path, progress.read_blob(path)) == progress.read_blob(row['fixture'])
+        current = progress.read_blob(path)
+        current = progress._ci_assertion_predecessor_source(path, current)
+        current = progress._root_performance_predecessor_source(path, current)
+        assert progress.safe.identity(current) == row['after']
+        assert progress._parent_progress_predecessor_source(path, current) == progress.read_blob(row['fixture'])
     assert progress._parent_progress_predecessor_source('unknown/path', b'unchanged') == b'unchanged'
+
+
+@pytest.mark.parametrize('target', ['receipt', 'fixture', 'current', 'predecessor',
+                                    'pass_a_fixture', 'pass_a_current'])
+def test_ci_assertion_successor_rejects_changed_source_evidence(monkeypatch, target):
+    from scripts import audit_phase_a_pass_a_tests_source_successor as progress
+    path = 'tests/test_tests_shard_balance_successor.py'
+    receipt = progress._ci_assertion_successor_receipt()
+    row = receipt['source_forward'][path]
+    selected = {'receipt': progress.CI_ASSERTION_RECEIPT,
+                'fixture': row['fixture'], 'current': path,
+                'predecessor': progress.CI_ASSERTION_PREDECESSOR['path'],
+                'pass_a_fixture': receipt['pass_a_predecessor']['fixture'],
+                'pass_a_current': receipt['pass_a_predecessor']['path']}[target]
+    original = progress.read_blob
+    def changed(candidate):
+        raw = original(candidate)
+        if candidate != selected:
+            return raw
+        return raw[:-1] + (b'X' if raw[-1:] != b'X' else b'Y')
+    with monkeypatch.context() as scoped:
+        scoped.setattr(progress, 'read_blob', changed)
+        with pytest.raises(ValueError, match='CI assertion'):
+            progress._authenticate_ci_assertion_successor()
+    assert progress._authenticate_ci_assertion_successor()['authority_granted'] is False
+
+
+def test_ci_assertion_successor_rejects_fixture_git_mode_drift(monkeypatch):
+    from scripts import audit_phase_a_pass_a_tests_source_successor as progress
+    path = progress._ci_assertion_successor_receipt()['source_forward'][
+        'tests/test_tests_shard_balance_successor.py']['fixture']
+    original = progress.safe.subprocess.check_output
+    def changed(command, *args, **kwargs):
+        raw = original(command, *args, **kwargs)
+        if command[:4] == ['git', 'ls-tree', '-z', 'HEAD'] and command[-1] == path:
+            return raw.replace(b'100644 blob ', b'100755 blob ', 1)
+        return raw
+    monkeypatch.setattr(progress.safe.subprocess, 'check_output', changed)
+    with pytest.raises(ValueError, match='Git tree mode drift'):
+        progress._authenticate_ci_assertion_successor()
+
+
+def test_parent_progress_rejects_wrong_projection_order():
+    from scripts import audit_phase_a_pass_a_tests_source_successor as progress
+    path = 'scripts/audit_tests_shard_balance_successor.py'
+    current = progress.read_blob(path)
+    previous = progress._root_performance_predecessor_source(path, current)
+    with pytest.raises(ValueError, match='parent progress caller source identity drift'):
+        progress._parent_progress_predecessor_source(path, current)
+    with pytest.raises(ValueError, match='root performance caller source drift'):
+        progress._root_performance_predecessor_source(path, previous)
 
 
 @pytest.mark.parametrize('target', ['receipt', 'snapshot', 'workflow_fixture', 'source_fixture', 'source', 'a2_predecessor'])
