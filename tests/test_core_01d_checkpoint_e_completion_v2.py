@@ -145,3 +145,152 @@ def test_local_test_products_are_not_authority_evidence(monkeypatch):
   return original(*args)
  monkeypatch.setattr(review.retention.v4.v3,'_git',extra)
  with pytest.raises(AssertionError,match='unapproved untracked source'):current.authenticate_current_scope()
+
+
+def test_checkpoint_e_uses_only_the_authenticated_historical_tests_workflow():
+ from scripts import audit_checkpoint_e_workflows as checkpoint
+ from scripts import audit_phase_a_pass_a_tests_source_successor as tests_source
+ from scripts import audit_tests_shard_balance_successor as shards
+
+ base, predecessors = checkpoint.base_input(include_scan_source_predecessors=True)
+ history = checkpoint.history_input()
+ predecessor = tests_source.historical_workflow_source()
+ assert predecessor == shards.read_blob(shards.FIXTURE)
+ assert shards.identity(predecessor) == shards.BEFORE
+ assert predecessors[shards.WORKFLOW] == predecessor
+ expected = checkpoint.build_matrix(base, history, predecessors)
+ assert expected == checkpoint.strict(checkpoint.read(checkpoint.MATRIX_PATH))
+
+ tampered = dict(predecessors)
+ tampered[shards.WORKFLOW] = predecessor + b"\n"
+ with pytest.raises(ValueError, match="predecessor|immutable source inventory"):
+  checkpoint.build_matrix(base, history, tampered)
+ unapproved = dict(predecessors)
+ unapproved["tests/unrelated.py"] = b"unapproved"
+ with pytest.raises(ValueError, match="unapproved source predecessor"):
+  checkpoint.build_matrix(base, history, unapproved)
+
+
+def test_a2_depth_one_tests_text_is_the_exact_v1_predecessor(monkeypatch):
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ from scripts import audit_tests_shard_balance_successor as shards
+
+ expected = shards.read_blob(shards.FIXTURE)
+ assert shards.identity(expected) == shards.BEFORE
+ assert a2.pinned_historical_text(shards.WORKFLOW).encode("utf-8") == expected
+ original = shards.read_blob
+ monkeypatch.setattr(
+  shards, "read_blob",
+  lambda path: original(path) + b"\n" if path == shards.FIXTURE else original(path),
+ )
+ with pytest.raises(ValueError, match="predecessor|identity|drift"):
+  a2.pinned_historical_text(shards.WORKFLOW)
+
+
+def test_b1_generation_assertion_uses_only_the_authenticated_historical_source(monkeypatch):
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+
+ current = pass_a.read_blob(pass_a.B1_SOURCE)
+ historical = pass_a.read_blob(pass_a.B1_FIXTURE)
+ row = pass_a._integrated_lineage_receipt()['source_forward'][pass_a.B1_SOURCE]
+ assert row['before'] == pass_a.B1_V2_AFTER
+ assert pass_a.safe.identity(pass_a.read_blob(row['fixture'])) == pass_a.B1_V2_AFTER
+ assert pass_a.safe.identity(current) == row['after']
+ assert pass_a.safe.identity(historical) == pass_a.B1_BEFORE
+ assert pass_a.predecessor_source(pass_a.B1_SOURCE, current) == historical
+ assert pass_a.predecessor_source("tests/unrelated.py", b"unrelated") == b"unrelated"
+
+ with pytest.raises(ValueError, match="integrated lineage caller source drift"):
+  pass_a.predecessor_source(pass_a.B1_SOURCE, current + b"\n")
+
+ original = pass_a.read_blob
+ monkeypatch.setattr(
+  pass_a, "read_blob",
+  lambda path: original(path) + b"\n" if path == pass_a.B1_FIXTURE else original(path),
+ )
+ with pytest.raises(ValueError, match="identity drift|exact reviewed patch"):
+  pass_a.predecessor_source(pass_a.B1_SOURCE, current)
+
+
+def test_a2_historical_text_source_forward_is_exact_and_path_limited(monkeypatch):
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+
+ row = pass_a._a2_text_receipt()["source_forward"][pass_a.A2_TEXT_SOURCE]
+ current = pass_a.read_blob(pass_a.A2_TEXT_SOURCE)
+ historical = pass_a.read_blob(row["fixture"])
+ assert pass_a._a2_text_predecessor_source(pass_a.A2_TEXT_SOURCE, current) == historical
+ assert pass_a._a2_text_predecessor_source("scripts/unrelated.py", b"current") == b"current"
+
+ with pytest.raises(ValueError, match="identity drift"):
+  pass_a._a2_text_predecessor_source(pass_a.A2_TEXT_SOURCE, current + b"\n")
+
+ original = pass_a.read_blob
+ monkeypatch.setattr(
+  pass_a, "read_blob",
+  lambda path: original(path) + b"\n" if path == row["fixture"] else original(path),
+ )
+ with pytest.raises(ValueError, match="identity drift"):
+  pass_a._a2_text_predecessor_source(pass_a.A2_TEXT_SOURCE, current)
+
+
+def test_pytest_configuration_restoration_keeps_both_published_identities():
+ from scripts import audit_phase_a_pass_a_tests_source_successor as forward
+ value = forward._pytest_restoration_receipt()
+ row = value['source_forward']['pytest.ini']
+ original = forward._positive_fixture_receipt()['source_forward']['pytest.ini']
+ assert row['before'] == original['after']
+ assert row['after'] == original['before']
+ assert forward.read_blob('pytest.ini') == forward.read_blob(original['fixture'])
+ assert forward._pytest_restoration_predecessor('unrelated', b'current') == b'current'
+
+
+@pytest.mark.parametrize('which', ['receipt', 'current', 'fixture', 'inventory',
+                                   'census_current', 'census_fixture', 'checkpoint_current', 'checkpoint_fixture'])
+def test_pytest_restoration_rejects_changed_evidence(monkeypatch, which):
+ from scripts import audit_phase_a_pass_a_tests_source_successor as forward
+ value = forward._pytest_restoration_receipt()
+ row = value['source_forward']['pytest.ini']
+ target = {'receipt': forward.PYTEST_RESTORATION_RECEIPT,
+           'current': 'pytest.ini', 'fixture': row['fixture'],
+           'inventory': value['predecessor_inventory']['path'],
+           'census_current': forward.CENSUS_TEST,
+           'census_fixture': value['source_forward'][forward.CENSUS_TEST]['fixture'],
+           'checkpoint_current': 'scripts/audit_checkpoint_e_workflows.py',
+           'checkpoint_fixture': value['source_forward']['scripts/audit_checkpoint_e_workflows.py']['fixture']}[which]
+ original = forward.read_blob
+ monkeypatch.setattr(forward, 'read_blob', lambda p: original(p) + (b' ' if p == target else b''))
+ with pytest.raises(ValueError, match='restoration'):
+  forward._pytest_restoration_receipt()
+
+
+def test_census_historical_scan_authenticates_current_then_exact_frozen_source(monkeypatch):
+ import json
+ from scripts import audit_phase_a_pass_a_tests_source_successor as forward
+ row = forward._pytest_restoration_receipt()['source_forward'][forward.CENSUS_TEST]
+ before = forward.historical_census_test_source()
+ frozen = json.loads(forward.read_blob('tests/fixtures/core_01d/exact-main-source-inventory.json'))
+ assert frozen['files'][forward.CENSUS_TEST] == {'mode': '100644', 'git_blob_sha1': row['before']['git_blob_sha1']}
+ assert forward.safe.identity(before) == row['before']
+ assert forward.safe.identity(forward.read_blob(forward.CENSUS_TEST)) == row['after']
+ original = forward.read_blob
+ monkeypatch.setattr(forward, 'read_blob', lambda p: original(p) + (b' ' if p == forward.CENSUS_TEST else b''))
+ with pytest.raises(ValueError, match='restoration source identity drift'):
+  forward.historical_census_test_source()
+
+
+@pytest.mark.parametrize('which', ['missing', 'forged', 'stale'])
+def test_census_historical_scan_rejects_unqualified_current_a2(monkeypatch, which):
+ from scripts import audit_phase_a_pass_a_tests_source_successor as forward
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ latest = deepcopy(a2.authenticate_inventory())
+ if which == 'stale':
+  latest['generation'] = 369
+ elif which == 'missing':
+  latest['source_identities'] = [r for r in latest['source_identities'] if r['path'] != forward.CENSUS_TEST]
+ else:
+  for row in latest['source_identities']:
+   if row['path'] == forward.CENSUS_TEST:
+    row['lf_source_sha256'] = '0' * 64
+ monkeypatch.setattr(a2, 'authenticate_inventory', lambda: latest)
+ with pytest.raises(ValueError, match='requires current A2 source identity'):
+  forward.historical_census_test_source()

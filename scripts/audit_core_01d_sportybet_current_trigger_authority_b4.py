@@ -296,7 +296,12 @@ def project_b4_workflow_tree(observed_tree: str) -> str:
             "B4 workflow tree is missing a reviewed direct-share workflow")
     body = b"".join(mode + b" " + name + b"\0" + bytes.fromhex(blob.decode("ascii"))
                     for mode, name, blob in rows)
-    return hashlib.sha1(b"tree " + str(len(body)).encode() + b"\0" + body).hexdigest()
+    projected = hashlib.sha1(b"tree " + str(len(body)).encode() + b"\0" + body).hexdigest()
+    # Frozen incident consumers also enter here directly. The outer retention
+    # adapter proves the exact one-path successor before restoring this old
+    # B4/D5 view; all unrecognized trees still flow to the original rejection.
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    return retention.project_b4_tree(projected)
 
 
 def _identity(path: str) -> dict[str, str]:

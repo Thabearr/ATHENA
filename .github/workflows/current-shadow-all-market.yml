@@ -231,31 +231,17 @@ jobs:
           python -m scripts.execute_current_shadow_request "${args[@]}"
 
       - name: Preserve exact current source evidence
+        id: preserve_shadow_evidence
         if: always()
-        run: |
-          evidence_root='artifacts/current-shadow-all-market/source-evidence'
-          mkdir -p "${evidence_root}"
-          for source_dir in \
-            '.cache/athena-research/current-shadow-sportybet-catalog-fanout' \
-            '.cache/athena-research/current-shadow-sportybet-upcoming-discovery' \
-            '.cache/athena-research/sportybet-live-event-quote-evidence' \
-            '.cache/athena-research/fotmob-data-matches-captures'
-          do
-            if [ -d "${source_dir}" ]; then
-              cp -a "${source_dir}" "${evidence_root}/"
-            fi
-          done
+        run: python -m scripts.verify_current_shadow_pc_upcoming_archive --preserve
 
-          if [ -n "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH:-}" ] \
-            && [ -f "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH}" ]
-          then
-            identity_root='artifacts/current-shadow-all-market/identity-state'
-            mkdir -p "${identity_root}"
-            cp "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH}" "${identity_root}/"
-          fi
+      - name: Verify pcUpcoming archive
+        id: verify_shadow_archive
+        if: always()
+        run: python -m scripts.verify_current_shadow_pc_upcoming_archive
 
       - name: Email durable Shadow result when configured
-        if: always()
+        if: always() && steps.preserve_shadow_evidence.outcome == 'success' && steps.verify_shadow_archive.outcome == 'success'
         env:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}

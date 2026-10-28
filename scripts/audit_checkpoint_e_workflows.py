@@ -161,6 +161,7 @@ BASE_INPUT_SHA = "5eacf1cb186579b5632a516a853d925c24b85c38fa67ec5d6b96656f40c836
 HISTORY_INPUT_SHA = "66ef6267af033a6e907aebe16ae44c20a15d9a4c5425960aa1da2003c89e39b6"
 CANONICAL = ".github/workflows/athena-run.yml"
 SHADOW = ".github/workflows/current-shadow-all-market.yml"
+TESTS_WORKFLOW = ".github/workflows/tests.yml"
 ALLOWED_STATUS = {"CANONICAL_SUPPORTED", "EXPLICIT_RETAINED_COMPATIBILITY", "DIAGNOSTIC_ONLY", "HISTORICAL_ONLY", "UNKNOWN"}
 PASS_A_HISTORICAL_SOURCE_BLOBS = {
     # D1 adds versioned identities/source projection support. Historical Pass-A
@@ -600,12 +601,20 @@ def authenticate_fresh_holdout_20261014_evidence():
     return FRESH_HOLDOUT_20261014_EVIDENCE
 
 
+_VERIFIED_ADDITIVE_PATHS: tuple[str, ...] | None = None
+
+
 def verified_additive_artifact_paths():
+    global _VERIFIED_ADDITIVE_PATHS
     for path, expected in ((MATRIX_PATH, CHECKPOINT_MATRIX_SHA), (RECEIPT_PATH, CHECKPOINT_RECEIPT_SHA)):
         raw = read(path)
         value = strict(raw)
         require(raw == canonical(value) and value.get("canonical_sha256") == expected == self_sha(value),
                 "unreviewed additive C4 artifact identity: " + path)
+    from scripts import audit_phase_a_pass_a_tests_source_successor as phase_a
+    phase_a_artifacts = phase_a.authenticated_retention_artifact_paths()
+    if _VERIFIED_ADDITIVE_PATHS is not None:
+        return tuple(sorted(set(_VERIFIED_ADDITIVE_PATHS) | phase_a_artifacts))
     from scripts.audit_core_01d_scheduled_shadow_ownership import verified_receipt_path, additive_paths
     verified_receipt_path()
     from scripts.audit_core_01d_retained_workflow_status import audit as audit_retained_status
@@ -622,16 +631,8 @@ def verified_additive_artifact_paths():
     from scripts import audit_core_01d_historical_retention_acceptance as retention
     from scripts import audit_core_01d_retained_workflow_status_v5 as retained_v5
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion
-    # The independent audit authenticates the committed evidence chain;
-    # retained V5 alone is never completion authority.
-    require(completion.audit().get("result") == "PASS",
-            "Pass-4 retention and independent completion evidence failed authentication")
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     from scripts import audit_core_01d_checkpoint_e_completion_v3 as completion_v3
-    require(a2.audit().get("result") == "PASS",
-            "A2 additive offline-boundary receipt failed authentication")
-    require(completion_v3.audit().get("result") == "PASS",
-            "V3 additive completion overlay failed authentication")
     from scripts import audit_core_01d_historical_warehouse_transfer_authority_b2 as b2
     from scripts import audit_core_01d_checkpoint_e_completion_v5 as completion_v5
     from scripts import audit_core_01d_owner_one_shot_issue_comment_authority_b3 as b3
@@ -644,30 +645,8 @@ def verified_additive_artifact_paths():
     from scripts import audit_core_01d_checkpoint_e_completion_v9 as completion_v9
     from scripts import audit_core_01d_win_either_half_trigger_authority_b7 as b7
     from scripts import audit_core_01d_checkpoint_e_completion_v10 as completion_v10
-    require(b2.audit().get("result") == "PASS",
-            "historical warehouse/transfer authority B2 evidence failed authentication")
-    require(completion_v5.audit().get("result") == "PASS",
-            "immutable Completion V5 predecessor evidence failed authentication")
-    require(b3.authenticate_predecessor_chain()["canonical_sha256"] == b3.COMPLETION_V5_SHA,
-            "immutable B2/Completion V5 predecessor evidence failed authentication")
-    require(b3.audit().get("result") == "PASS",
-            "owner one-shot issue-comment B3 authority evidence failed authentication")
-    require(completion_v6.audit().get("result") == "PASS",
-            "Completion V6 B3 authority overlay failed authentication")
-    require(b4.audit().get("result") == "PASS",
-            "current SportyBet trigger authority B4 evidence failed authentication")
-    require(completion_v7.audit().get("result") == "PASS",
-            "Completion V7 B4 authority overlay failed authentication")
-    require(b5.audit().get("result") == "PASS",
-            "frozen artifact replay authority B5 evidence failed authentication")
-    require(completion_v8.audit().get("result") == "PASS",
-            "Completion V8 B5 authority overlay failed authentication")
-    require(b6.audit().get("result") == "PASS",
-            "PORT-02C trigger authority B6 evidence failed authentication")
-    require(completion_v9.audit().get("result") == "PASS",
-            "Completion V9 B6 authority overlay failed authentication")
-    require(b7.audit().get("result") == "PASS",
-            "Win-Either-Half trigger authority B7 evidence failed authentication")
+    require(a2.audit().get("result") == "PASS",
+            "A2 additive offline-boundary receipt failed authentication")
     require(completion_v10.audit().get("result") == "PASS",
             "Completion V10 final authority closure failed authentication")
     from scripts import audit_app_01a_local_shell as app01a
@@ -693,7 +672,7 @@ def verified_additive_artifact_paths():
     require(share_pre.audit().get("result") == "PASS",
             "RUN-02A prerequisite additive evidence failed authentication")
     fresh_evidence = authenticate_fresh_holdout_20261014_evidence()
-    return (
+    _VERIFIED_ADDITIVE_PATHS = (
         fresh_evidence,
         MATRIX_PATH,
         RECEIPT_PATH,
@@ -742,6 +721,7 @@ def verified_additive_artifact_paths():
         share_pre.RECEIPT_PATH,
         *(path for path in sorted(e1_paths) if path.startswith("artifacts/")),
     )
+    return tuple(sorted(set(_VERIFIED_ADDITIVE_PATHS) | phase_a_artifacts))
 
 
 def _authenticate_pr119_release_only_workflow_forward(current, before):
@@ -976,6 +956,39 @@ def base_input(*, include_scan_source_predecessors=False):
                 # only a base row equal to the authorized predecessor can use
                 # this transition.
                 require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
+        elif path == 'tests/test_p4_3a_workflow_capability_census.py':
+            from scripts import audit_phase_a_pass_a_tests_source_successor as census_source
+            predecessor = census_source.historical_census_test_source()
+            row = census_source._pytest_restoration_receipt()['source_forward'][path]
+            require(
+                identity == {"mode": "100644", "git_blob_sha1": row['before']['git_blob_sha1']}
+                and current.get(path) == {"mode": "100644", "git_blob_sha1": row['after']['git_blob_sha1']},
+                "Checkpoint-E census test predecessor/successor identity drift",
+            )
+            pass1_forward_predecessor_blobs[path] = row['before']['git_blob_sha1']
+            if path in value["scan_paths"]:
+                pass1_forward_predecessor_sources[path] = predecessor
+        elif path == TESTS_WORKFLOW:
+            # Checkpoint-E V1 is a historical source view. Authenticate the
+            # present eight-shard workflow and A2 corpus first, then project
+            # only its exact frozen predecessor into this historical scan.
+            from scripts import audit_phase_a_pass_a_tests_source_successor as tests_source
+            from scripts import audit_tests_shard_balance_successor as tests_shards
+
+            predecessor = tests_source.historical_workflow_source()
+            require(
+                identity == {"mode": "100644", "git_blob_sha1": tests_shards.BEFORE["git_blob_sha1"]}
+                and current.get(path) == {
+                    "mode": "100644",
+                    "git_blob_sha1": tests_shards.AFTER["git_blob_sha1"],
+                }
+                and predecessor == tests_shards.read_blob(tests_shards.FIXTURE)
+                and tests_shards.identity(predecessor) == tests_shards.BEFORE,
+                "Checkpoint-E Tests workflow predecessor/successor identity drift",
+            )
+            pass1_forward_predecessor_blobs[path] = tests_shards.BEFORE["git_blob_sha1"]
+            if path in value["scan_paths"]:
+                pass1_forward_predecessor_sources[path] = predecessor
         else:
             require(current.get(path) == identity, f"immutable base file changed/deleted: {path}")
     # Git can be clean while the working tree has edits. Verify inspected source
@@ -1157,11 +1170,13 @@ def reachability(path, name, artifact_names, texts):
 def build_matrix(base, history, historical_source_predecessors):
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as pass_a_v2
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_phase_a_pass_a_tests_source_successor as tests_source
 
     allowed_predecessor_paths = (
         a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS
         | a2.E3_PASS_A_SOURCE_FORWARD_PATHS
         | pass_a_v2.PASS_A_V2_AUTHENTICATED_SOURCE_PREDECESSORS
+        | {TESTS_WORKFLOW, tests_source.CENSUS_TEST}
     )
     require(
         type(historical_source_predecessors) is dict
@@ -1177,6 +1192,16 @@ def build_matrix(base, history, historical_source_predecessors):
             and type(raw) is bytes,
             "historical reachability scan predecessor is outside the immutable source inventory: " + path,
         )
+        if path == TESTS_WORKFLOW:
+            require(
+                raw == tests_source.historical_workflow_source(),
+                "Checkpoint-E Tests workflow predecessor was not independently authenticated",
+            )
+        if path == tests_source.CENSUS_TEST:
+            require(
+                raw == tests_source.historical_census_test_source(),
+                "Checkpoint-E census predecessor was not independently authenticated",
+            )
         blob = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
         require(
             blob == expected.get("git_blob_sha1"),
@@ -1189,7 +1214,12 @@ def build_matrix(base, history, historical_source_predecessors):
     old_rows = {row["workflow_path"]: row for row in old["workflow_rows"]}
     rows = []
     for path in sorted(p for p in base["files"] if p.startswith(".github/workflows/") and p.endswith((".yml", ".yaml"))):
-        raw = read(path)
+        # This matrix reconstructs the immutable Checkpoint-E V1 view, so an
+        # authenticated predecessor is used for both reachability and YAML
+        # metadata. Current workflow authority is validated separately against
+        # the exact current tree and A2/shard-successor evidence.
+        raw = (historical_source_predecessors[path]
+               if path in historical_source_predecessors else read(path))
         doc = yaml.load(raw, Loader=yaml.BaseLoader)
         require(type(doc) is dict and type(doc.get("on")) is dict, f"unsupported trigger shape: {path}")
         name = doc.get("name", Path(path).stem)

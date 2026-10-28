@@ -489,8 +489,30 @@ def test_root_bootstrap_pin_binds_the_current_auditor_and_rejects_drift(monkeypa
     auditor = "scripts/audit_core_01d_ci_offline_transport_boundary.py"
     protected = sorted((set(boundary.GUARD_PATHS) - {"sitecustomize.py"}) | {auditor})
     assert sorted(pins) == protected
-    assert pins[auditor] == boundary.source(auditor)["lf_source_sha256"]
-    assert pins[auditor] == hashlib.sha256(_worktree_bytes(auditor)).hexdigest()
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    before = ast.parse(retention.bootstrap_predecessor("sitecustomize.py").decode())
+    before_pins = next(ast.literal_eval(node.value) for node in before.body
+                       if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
+                       and target.id == "ROOT_TEST_SOURCE_PINS" for target in node.targets))
+    assert pins == before_pins  # Every original pin remains unchanged.
+    successors = next(ast.literal_eval(node.value) for node in startup.body
+                      if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
+                      and target.id == "ROOT_TEST_SOURCE_SUCCESSORS" for target in node.targets))
+    assert set(successors) == {auditor}
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    root_successor = pass_a._authenticate_root_performance()["source_forward"][auditor]
+    latest = boundary.authenticate_inventory()
+    assert successors[auditor] == (
+        retention.PRIOR_ADMITTED_AUDITOR_SHA,
+        root_successor["before"]["source_sha256"],
+        root_successor["after"]["source_sha256"],
+    )
+    assert [row for row in latest["source_identities"] if row["path"] == auditor] == [
+        boundary.source(auditor)
+    ]
+    assert successors[auditor][-1] == hashlib.sha256(_worktree_bytes(auditor)).hexdigest()
+    retention.authenticate_bootstrap_successor(
+        (boundary.ROOT / "sitecustomize.py").read_text(encoding="utf-8"), boundary.source)
 
     original = Path.read_bytes
     def altered(path):
@@ -502,6 +524,25 @@ def test_root_bootstrap_pin_binds_the_current_auditor_and_rejects_drift(monkeypa
     monkeypatch.setattr(offline_transport, "install", lambda: pytest.fail("UNGUARDED_INSTALL"))
     with pytest.raises(SystemExit, match="failed to activate"):
         runpy.run_path(str(boundary.ROOT / "sitecustomize.py"))
+
+
+@pytest.mark.parametrize("mutation", ["extra", "reordered", "replaced"])
+def test_root_bootstrap_rejects_unreviewed_successor_pin_chain(mutation):
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    text = (boundary.ROOT / "sitecustomize.py").read_text(encoding="utf-8")
+    row = pass_a._authenticate_root_performance()["source_forward"][retention.BOOTSTRAP_AUDITOR]
+    before, after = row["before"]["source_sha256"], row["after"]["source_sha256"]
+    pair = '        "' + before + '",\n        "' + after + '",\n'
+    assert text.count(pair) == 1
+    if mutation == "extra":
+        changed = text.replace(pair, pair + '        "' + '0' * 64 + '",\n')
+    elif mutation == "reordered":
+        changed = text.replace(pair, '        "' + after + '",\n        "' + before + '",\n')
+    else:
+        changed = text.replace(pair, '        "' + before + '",\n        "' + '0' * 64 + '",\n')
+    with pytest.raises(ValueError, match="bootstrap successor startup source differs from exact recipe"):
+        retention.authenticate_bootstrap_successor(changed, boundary.source)
 
 
 # --- O. boundary semantics --------------------------------------------------

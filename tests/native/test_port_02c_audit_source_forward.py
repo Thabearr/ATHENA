@@ -87,3 +87,15 @@ def test_d5_p43a_historical_forward_rejects_arbitrary_future_tree():
     _identity, tree = d5.successor_context()
     assert evolution._exact_pr119_historical_source_context(ledger, tree)
     assert not evolution._exact_pr119_historical_source_context(ledger, "0" * 40)
+
+
+def test_phase_a_retention_keeps_exact_d5_and_p4_predecessors():
+    """Current retention is an outer edge, not a replacement historical tree."""
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    from scripts import audit_data_01c_restore_portability as d5
+    receipt = retention.authenticate()
+    assert receipt['workflow_path'] == '.github/workflows/current-shadow-all-market.yml'
+    assert retention.project_b4_tree(retention.AFTER_B4_TREE) == retention.BEFORE_B4_TREE
+    assert d5.historical_workflow_tree(retention.AFTER_TREE) == d5.PREDECESSOR_TREE
+    assert evolution.validate_current_state()['canonical_sha256'] == receipt['historical_p4_ledger_sha256']
+    assert retention.project_b4_tree('0' * 40) == '0' * 40

@@ -100,6 +100,18 @@ MAINTENANCE_CONTRACTS.update({
         CORE01D_PR119_RELEASE_ONLY_CONTRACT,
     )
 })
+# Path-exact owner-authorized current retention maintenance; historical contracts
+# and the V1 ledger remain immutable. The outer adapter authenticates the delta.
+PHASE_A_RETENTION_CONTRACT = {
+    **MAINTENANCE_CONTRACT,
+    "policy_id": "ATHENA_P4_PHASE_A_LEGACY_PC_UPCOMING_RETENTION_MAINTENANCE_V1",
+}
+MAINTENANCE_CONTRACTS[PHASE_A_RETENTION_CONTRACT["policy_id"]] = PHASE_A_RETENTION_CONTRACT
+TESTS_SHARD_BALANCE_CONTRACT = {
+    **MAINTENANCE_CONTRACT,
+    "policy_id": "ATHENA_P4_TESTS_EIGHT_SHARD_BALANCE_MAINTENANCE_V1",
+}
+MAINTENANCE_CONTRACTS[TESTS_SHARD_BALANCE_CONTRACT["policy_id"]] = TESTS_SHARD_BALANCE_CONTRACT
 REVISED_WORKFLOW_FIXTURE_ROOT = "tests/fixtures/architecture/revised_workflows/"
 PROTECTED = retirement.PROTECTED_LIVE | {".github/workflows/current-shadow-sportybet-source-diagnostic.yml"}
 IDENTITY_KEYS = {"git_blob_sha1", "source_sha256"}
@@ -469,6 +481,16 @@ def apply_transitions(
                 raise WorkflowEvolutionError(f"MAINTENANCE_REVISE canonical family differs from P4.3A: {path}")
             _validate_maintenance_contract(transition["maintenance_contract"])
             core01d_policy = transition["maintenance_contract"]["policy_id"]
+            if core01d_policy == TESTS_SHARD_BALANCE_CONTRACT["policy_id"] and (
+                path != ".github/workflows/tests.yml" or phase != "P4_TESTS_BALANCE"
+                or transition["canonical_family"] != "TESTS"
+            ):
+                raise WorkflowEvolutionError("Tests shard maintenance is reserved for its exact path/phase/family")
+            if core01d_policy == PHASE_A_RETENTION_CONTRACT["policy_id"] and (
+                phase != "P4_PHASE_A" or path != ".github/workflows/current-shadow-all-market.yml"
+                or transition["canonical_family"] != "ATHENA_RUN"
+            ):
+                raise WorkflowEvolutionError("Phase A retention maintenance is path-exact")
             core01d_path = CORE01D_CONTRACT_PATHS.get(core01d_policy)
             if core01d_path is not None and (
                 phase != "CORE-01D"
@@ -975,6 +997,21 @@ def _port02c_current_source_forward(derived, observed, *, head_tree, ledger_sha)
     The historical ADD remains pinned. Only this exact later workflow tree and
     file identity are accepted; all other derived workflow identities stay exact.
     """
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    projected = retention.project_p4_observed(observed, head_tree)
+    if projected is not None:
+        from scripts import audit_data_01c_restore_portability as d5
+        # The adapter proves the entire exact current tree first. Reuse the
+        # existing D5/E3 + direct-share evaluation on its one-path projection.
+        _identity, projected_context = d5.successor_context()
+        result = _port02c_current_source_forward(
+            derived, projected, head_tree=projected_context, ledger_sha=ledger_sha)
+        if retention.WORKFLOW in observed:
+            result[retention.WORKFLOW] = dict(observed[retention.WORKFLOW])
+        from scripts import audit_tests_shard_balance_successor as shards
+        if shards.WORKFLOW in observed:
+            result[shards.WORKFLOW] = dict(observed[shards.WORKFLOW])
+        return result
     from scripts import audit_data_01c_restore_portability as d5
     successor_identity, successor_tree = d5.successor_context()
     try:
