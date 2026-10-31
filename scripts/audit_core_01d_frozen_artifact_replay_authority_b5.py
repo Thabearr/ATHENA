@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 from typing import Any
 
 import yaml
@@ -342,6 +343,18 @@ def _validate_source_semantics() -> None:
 
 
 def build_source_inventory() -> dict[str, Any]:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    scope = receipt_scope._active_receipt_scope("checkpoint-b5-source-inventory")
+    cached = None if scope is None else scope.load()
+    if cached is not None:
+        return cached
+    value = _build_source_inventory()
+    if scope is not None:
+        scope.store(value)
+    return value
+
+
+def _build_source_inventory() -> dict[str, Any]:
     _validate_source_semantics()
     contracts = {path: _workflow_contract(path) for path, _ in TARGETS}
     return boundary.seal({
@@ -622,11 +635,29 @@ def validate_source_inventory(value: dict[str, Any] | None = None) -> dict[str, 
 
 
 def validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as completion_v8
+    with completion_v8._bounded_receipt_scope(
+            "checkpoint-b5-source-inventory", (sys.modules[__name__],),
+            completion_v8._TRUSTED_B5_CONTRACT):
+        return _validate_receipt(value)
+
+
+def _validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
     value = boundary.read(RECEIPT_PATH) if value is None else value
     require((ROOT / RECEIPT_PATH).read_bytes() == boundary.canonical(value), "B5 receipt is not canonical")
-    inventory = validate_source_inventory()
-    expected = build_receipt()
-    require(value == expected, "B5 receipt differs from source, metadata, and Completion V7 derivation")
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as completion_v8
+    scope = completion_v8._active_receipt_scope("checkpoint-b5")
+    cached = None if scope is None else scope.load()
+    if cached is None:
+        inventory = validate_source_inventory()
+        expected = build_receipt()
+        require(value == expected, "B5 receipt differs from source, metadata, and Completion V7 derivation")
+        if scope is not None:
+            scope.store(value)
+    else:
+        require(value == cached,
+                "B5 receipt changed after its same-call authenticated derivation")
+        inventory = value["source_inventory"]
     keys = [(row["identity"]["workflow_path"], row["identity"]["trigger_kind"]) for row in value["review_rows"]]
     require(len(keys) == len(set(keys)) == 4 and set(keys) == set(TARGETS), "B5 receipt must contain exact four unique keys")
     require(all(row["review"]["status"] == "RESOLVED" for row in value["review_rows"]), "B5 row unresolved")
@@ -634,7 +665,9 @@ def validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
     require(value["actions"] == ZERO_ACTIONS, "B5 performed or claimed a prohibited live action")
     require(value["criterion_11"] is False and value["criterion_14"] is False and
             value["checkpoint_e_status"] == value["p4_4_status"] == "INCOMPLETE", "B5 cannot complete Checkpoint E")
-    require(value["source_inventory"]["canonical_sha256"] == inventory["canonical_sha256"], "B5 source inventory binding drift")
+    inventory_sha = inventory["canonical_sha256"] if isinstance(inventory, dict) else inventory
+    require(value["source_inventory"]["canonical_sha256"] == inventory_sha,
+            "B5 source inventory binding drift")
     return value
 
 

@@ -1,9 +1,11 @@
 """Current completion overlays only proven Pass-A rows; V1 remains historical."""
 from __future__ import annotations
 import argparse
+from collections import OrderedDict
 from contextlib import contextmanager
 import hashlib
 import json
+import sys
 import types
 from scripts import audit_core_01d_authority_reachability_review_a as review
 from scripts import audit_core_01d_checkpoint_e_completion as v1
@@ -12,6 +14,7 @@ ROOT=review.ROOT
 POLICY_ID='ATHENA_CORE_01D_CHECKPOINT_E_COMPLETION_V2'
 RECEIPT_PATH='artifacts/architecture/core_01d_checkpoint_e_completion_v2.json'
 REVIEW_SHA='9db3362af83eda04b6f005328b5d44f253fcd15ef5f39a62983cc6c3ff402521'
+HISTORICAL_CHECKPOINT_E_SOURCE_SHA256='3936ef4c12f7bd4cf2533c676a887a1c3593878ee7f36cb741a49b670c6d15f7'
 ALLOWED_PASS_A_PATHS={review.RECEIPT_PATH,RECEIPT_PATH,review.INVENTORY_PATH,
  'scripts/audit_core_01d_authority_reachability_review_a.py','scripts/audit_core_01d_checkpoint_e_completion_v2.py',
  'tests/test_core_01d_authority_reachability_review_a.py','tests/test_core_01d_checkpoint_e_completion_v2.py',
@@ -80,6 +83,36 @@ APP01C_PREDECESSOR_BLOBS={
  'tests/test_core_01d_port02c_trigger_authority_b6.py':'594a7b4f8c5a9d798d13af2f4c7e35635371bbb6',
  'tests/test_product_baseline_v1.py':'2d552f49cf84462bd1b32e86eea2a96ee0570b64',
 }
+
+# This bounded cache contains only immutable CPython code objects compiled
+# from bytes freshly authenticated by review.source_bytes on every call.
+_HISTORICAL_CODE_CACHE=OrderedDict()
+_HISTORICAL_CODE_CACHE_LIMIT=4
+_BUILTIN_COMPILE=compile
+
+def _historical_v1_code(pinned_oid, raw, filename):
+ raw_sha256=hashlib.sha256(raw).hexdigest()
+ review.require(raw_sha256==HISTORICAL_CHECKPOINT_E_SOURCE_SHA256,
+                'historical checkpoint E source SHA-256 identity drift')
+ actual_oid=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+ review.require(actual_oid==pinned_oid,
+                'historical checkpoint E source object identity drift')
+ if compile is not _BUILTIN_COMPILE:
+  return compile(raw,filename,'exec')
+ key=(pinned_oid,raw_sha256)
+ cached=_HISTORICAL_CODE_CACHE.get(key)
+ if cached is not None:
+  cached_raw,cached_filename,code=cached
+  review.require(cached_raw==raw and cached_filename==filename,
+                 'historical source digest key collision or filename drift')
+  _HISTORICAL_CODE_CACHE.move_to_end(key)
+  return code
+ code=compile(raw,filename,'exec')
+ _HISTORICAL_CODE_CACHE[key]=(raw,filename,code)
+ _HISTORICAL_CODE_CACHE.move_to_end(key)
+ while len(_HISTORICAL_CODE_CACHE)>_HISTORICAL_CODE_CACHE_LIMIT:
+  _HISTORICAL_CODE_CACHE.popitem(last=False)
+ return code
 INCIDENT_20261010_PREDECESSOR_BLOBS={
  'artifacts/product/data_01c_app_store_complete_v1.json':'6727c011ead7da533a8af00ef4c4b352ea35492b',
  'domain/current_shadow_sportybet_pc_upcoming_reconciliation.py':'1aa242e6db460c66b388b1acfd43859d382c82f9',
@@ -329,8 +362,9 @@ LOCAL_TEST_PRODUCTS={'.pytest-shard-files','p3-0-e1-live-readiness.json','artifa
 def unchanged_inventory(raw):
  return b''.join(line for line in raw.splitlines(keepends=True) if line.split(b'\t',1)[1].strip().decode() not in ALLOWED_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS)
 
-def a2_generation_additions(a2):
- latest=a2.authenticate_inventory()
+def a2_generation_additions(a2,latest=None):
+ if latest is None:
+  latest=a2.authenticate_inventory()
  predecessor=a2.read_generation(a2.inventory_generation_path(2))
  predecessor_paths={row['path'] for row in predecessor['source_identities']}
  latest_paths={row['path'] for row in latest['source_identities']}
@@ -357,10 +391,52 @@ def pass_a_nonhistorical_a2_generation_paths(a2,generation_additions):
  # paths: their predecessor bytes were already part of the immutable tree.
  return set(generation_additions)-pass_a_preserved_a2_successor_paths(a2)
 
+def _v2_direct_contract_digest(roots):
+ from scripts import audit_checkpoint_e_workflows as checkpoint
+ return checkpoint._checkpoint_direct_contract_digest(*roots)
+
 def a2_historical_projection(raw):
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
- # Authenticate all current caller/guard source before using a historical view.
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
  latest=a2.authenticate_inventory()
+ scope=pass_a._active_checkpoint_derivation_scope()
+ if scope is None:
+  return _a2_historical_projection_uncached(raw,latest)
+ review.require(scope.enabled,'Pass-A projection reuse requires an enabled receipt scope')
+ review.require(a2._a2_scoped_contract() is not None,
+                'A2 verifier contract changed before Pass-A projection reuse')
+ roots=(sys.modules[__name__],review,v1,a2,pass_a)
+ contract=_v2_direct_contract_digest(roots)
+ latest_sha=latest.get('canonical_sha256')
+ review.require(type(raw) is bytes and type(latest_sha) is str,
+                'Pass-A projection cache identity is malformed')
+ key='pass-a.a2-historical-projection:'+hashlib.sha256(raw).hexdigest()+':'+latest_sha
+ cached=scope.load_derivation(key,contract)
+ if cached is not None:
+  if (contract!=_v2_direct_contract_digest(roots)
+      or a2._a2_scoped_contract() is None):
+   raise AssertionError('Pass-A projection verifier changed during scoped reuse')
+  from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+  receipt_scope._record_scope_metric('pass-a.a2_historical_projection_hits')
+  return cached
+ result=_a2_historical_projection_uncached(raw,latest)
+ if (contract!=_v2_direct_contract_digest(roots)
+     or a2._a2_scoped_contract() is None):
+  raise AssertionError('Pass-A projection verifier changed during scoped derivation')
+ scope.store_derivation(key,contract,result)
+ from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+ receipt_scope._record_scope_metric('pass-a.a2_historical_projection_misses')
+ return result
+
+
+def _a2_historical_projection_uncached(raw,latest):
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ head_tree_blobs={}
+ for tree_line in raw.splitlines(keepends=False):
+  if b"\t" in tree_line:
+   metadata, logical = tree_line.split(b"\t", 1)
+   head_tree_blobs[logical.decode("utf-8")] = metadata.split()[2].decode("ascii")
+ # Authenticate all current caller/guard source before using a historical view.
  pass_a_compat_predecessor_blobs=authenticate_pass_a_e3_compat_predecessors(a2,latest)
  from scripts import audit_run_02a_pre_durable_share_send as run02a
  # Reuse the retained V154 predecessor seam for the exact E3-evolved E1
@@ -444,9 +520,11 @@ def a2_historical_projection(raw):
  # part of the immutable Pass-A historical tree. Discover their contiguous
  # chain from V3 onward after authenticate_inventory has verified it.
  successor_inventory_paths=current_successor_inventory_paths(a2)
+ cross_contract_paths=tuple(sorted(a2.E3_CROSS_CONTRACT_V284_SOURCE_FORWARD_PATHS))
+ cross_contract_predecessors=a2.read_authenticated_cross_contract_predecessors(
+  cross_contract_paths)
  e3_predecessor_blobs={}
- for path in sorted(a2.E3_CROSS_CONTRACT_V284_SOURCE_FORWARD_PATHS):
-  predecessor=a2.read_authenticated_cross_contract_predecessor(path)
+ for path,predecessor in cross_contract_predecessors.items():
   e3_predecessor_blobs[path]=hashlib.sha1(b'blob '+str(len(predecessor)).encode()+b'\0'+predecessor).hexdigest()
  pass_a_predecessors=a2.read_authenticated_pass_a_source_predecessors()
  for path in sorted(a2.E3_PASS_A_SOURCE_FORWARD_PATHS):
@@ -457,6 +535,46 @@ def a2_historical_projection(raw):
  for path in PASS_A_V2_AUTHENTICATED_SOURCE_PREDECESSORS:
   e3_predecessor_blobs[path]=pass_a_compat_predecessor_blobs[path]
  new_paths=(a2.A2_PATHS-preserved_a2_successors-ALLOWED_PASS_A_PATHS-set(a2.HISTORICAL_TEST_BLOBS))|generation_additions|successor_inventory_paths|B1_ADDITIVE_EVIDENCE_PATHS|APP01B_ADDITIVE_PATHS|APP01C_NEW_PATHS|INCIDENT_20261010_NEW_PATHS|RUN_01B_ADDITIVE_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|E3_RUN_02A_ADDITIVE_PATHS|set(a2.E3_CROSS_CONTRACT_FIXTURE_PATHS)|set(a2.E3_PASS_A_SOURCE_FORWARD_FIXTURE_PATHS)|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|v1.FRESH_HOLDOUT_20261015_ADDITIVE_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS
+ # The current Pass-A V2 edge carries exact V376 before-images for the
+ # bounded RCV-04 auditor successors. Project only still-current raw tree rows
+ # back to those authenticated predecessor blobs; older source projections,
+ # allowed Pass-A overlays, and added evidence keep their existing precedence.
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+ from scripts import audit_phase_a_pc_upcoming_retention_successor as forward
+ _pass_a_v1, pass_a_v2 = pass_a._ci_assertion_v2_chain()
+ projected_tree_blobs = {}
+ for tree_line in raw.splitlines(keepends=False):
+  if b"\t" not in tree_line:
+   continue
+  metadata, logical = tree_line.split(b"\t", 1)
+  projected_tree_blobs[logical.decode("utf-8")] = metadata.split()[2].decode("ascii")
+ legacy_projection_paths=(set(forward.HISTORICAL_PREDECESSORS)
+                          |set(forward.BOOTSTRAP_PREDECESSORS)
+                          |set(forward.ADDED_PYTHON_PATHS)
+                          |set(app.PATHS)
+                          |set(d5_predecessor_paths)
+                          |set(PASS_A_HISTORICAL_BLOBS)
+                          |set(a2.HISTORICAL_TEST_BLOBS)
+                          |set(APP01C_PREDECESSOR_BLOBS)
+                          |set(ALLOWED_PASS_A_PATHS)
+                          |set(APP01B_ADDITIVE_PATHS)
+                          |set(APP01C_ADDITIVE_PATHS))
+ for path, source_edge in pass_a_v2["source_forward"].items():
+  if (path in legacy_projection_paths or path in new_paths
+          or path in e3_predecessor_blobs):
+   continue
+  before = source_edge.get("before")
+  if type(before) is not dict or type(before.get("git_blob_sha1")) is not str:
+   raise AssertionError("Pass-A V2 source predecessor identity is malformed: " + path)
+  after = source_edge.get("after")
+  current_blob = (after.get("git_blob_sha1") if type(after) is dict
+                  else pass_a.safe.identity(pass_a.read_blob(path))["git_blob_sha1"])
+  if head_tree_blobs.get(path) != current_blob:
+   raise AssertionError("Pass-A V2 source-forward raw tree identity drift: " + path)
+  # app.historical_tree_projection() may already have restored an older
+  # identity. Never replace that stronger projection with the V376 edge.
+  if projected_tree_blobs.get(path) == current_blob:
+   e3_predecessor_blobs[path] = before["git_blob_sha1"]
  for path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
   review.source_bytes(path)
  rows=[]
@@ -478,7 +596,6 @@ def a2_historical_projection(raw):
   elif path in e3_predecessor_blobs:
    line=('100644 blob '+e3_predecessor_blobs[path]+'\t'+path+'\n').encode()
   rows.append(line)
- from scripts import audit_phase_a_pc_upcoming_retention_successor as forward
  try:
   return forward.project_retention_inventory(b''.join(rows), latest=latest)
  except ValueError as exc:
@@ -567,17 +684,20 @@ def historical_v1_git_view():
  module=review.retention.v4.v3
  original=module._git
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
  authenticated_latest=a2.authenticate_inventory()
+ cross_contract_predecessors={}
  def projected(*args):
   if args==('ls-tree','-r','HEAD'):
    return authenticated_v1_original_raw_tree(a2)
   raw=original(*args)
   if args==('diff','--name-only','HEAD'):
-   generation_additions=a2_generation_additions(a2)
+   generation_additions=a2_generation_additions(a2,latest=authenticated_latest)
    return b''.join(line for line in raw.splitlines(keepends=True) if line.strip().decode() not in NEW_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|app_successor_paths()|INCIDENT_20261010_CURRENT_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|E3_RUN_02A_ADDITIVE_PATHS|set(a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS)|set(a2.E3_CROSS_CONTRACT_FIXTURE_PATHS)|set(a2.E3_PASS_A_SOURCE_FORWARD_FIXTURE_PATHS)|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|set(RUN_02A_PRE_PREDECESSOR_BLOBS)|v1.FRESH_HOLDOUT_20261015_ADDITIVE_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS|set(v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS))
   return raw
  original_identity=module._source_identity
  pass_a_predecessors={}
+ compat_predecessors={}
  def projected_identity(path,**kwargs):
   from scripts import audit_data_01c_restore_portability as portability
   if path==portability.WORKFLOW:
@@ -591,7 +711,9 @@ def historical_v1_git_view():
    blob,digest=current_v1.authenticate_pass4_e3_source_predecessor(path,a2,authenticated_latest)
    return {'path':path,'git_blob_sha1':blob,'source_sha256':digest}
   if path in PASS_A_E3_COMPAT_SOURCE_PREDECESSORS:
-   blobs=authenticate_pass_a_e3_compat_predecessors(a2,authenticated_latest)
+   if not compat_predecessors:
+    compat_predecessors.update(authenticate_pass_a_e3_compat_predecessors(a2,authenticated_latest))
+   blobs=compat_predecessors
    fixture,expected_blob,expected_sha,_size=PASS_A_E3_COMPAT_SOURCE_PREDECESSORS[path]
    raw=(ROOT/fixture).read_bytes()
    review.require(blobs[path]==expected_blob
@@ -601,7 +723,10 @@ def historical_v1_git_view():
   if path in a2.E3_CROSS_CONTRACT_V284_SOURCE_FORWARD_PATHS:
    transition=a2.resolve_historical_source_transition(
     path,expected_generation=a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION)
-   raw=a2.read_authenticated_cross_contract_predecessor(path)
+   if not cross_contract_predecessors:
+    cross_contract_predecessors.update(a2.read_authenticated_cross_contract_predecessors(
+     tuple(sorted(a2.E3_CROSS_CONTRACT_V284_SOURCE_FORWARD_PATHS))))
+   raw=cross_contract_predecessors[path]
    normalized=raw.replace(b'\r\n',b'\n')
    blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
    review.require(blob==transition['predecessor_git_blob_sha1']
@@ -621,34 +746,150 @@ def historical_v1_git_view():
                   'Pass-A exact V300 source-forward identity drift: '+path)
    return {'path':path,'git_blob_sha1':blob,'source_sha256':hashlib.sha256(normalized).hexdigest()}
   return original_identity(path,**kwargs)
+ # This view substitutes only the historical module's Git/source-identity
+ # seams. Keep the enclosing pure derivation scope available for immutable
+ # source-byte and A2 derivations, while disabling cached receipt reuse under
+ # the projected view. Restore the per-scope flag and both seams in finally.
+ active=receipt_scope._ACTIVE_RECEIPT_SCOPES.get().get('historical-v1-receipt')
+ active_scopes=(() if active is None or review not in active.roots else (active,))
+ prior_receipt_reuse=[(scope,scope.receipt_reuse_disabled) for scope in active_scopes]
+ for scope,_prior in prior_receipt_reuse:
+  scope.receipt_reuse_disabled=True
  module._git=projected
  module._source_identity=projected_identity
  try: yield
  finally:
   module._git=original
   module._source_identity=original_identity
+  for scope,prior in prior_receipt_reuse:
+   scope.receipt_reuse_disabled=prior
 
 
-def historical_v1_receipt():
+def _historical_v1_receipt_scoped():
  value=review.authenticate_json(review.COMPLETION_V1,review.COMPLETION_V1_SHA)
  source=review.source_bytes('scripts/audit_core_01d_checkpoint_e_completion.py')
+ review.require(hashlib.sha256(source).hexdigest()==HISTORICAL_CHECKPOINT_E_SOURCE_SHA256,
+                'historical checkpoint E source SHA-256 identity drift')
  historical=types.ModuleType('_athena_checkpoint_e_completion_v1')
  historical.__file__=str(review.ROOT/review.HISTORICAL_CHECKPOINT_E_SOURCE)
- exec(compile(source,historical.__file__,'exec'),historical.__dict__)
+ from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+ scope=receipt_scope._active_receipt_scope('historical-v1-receipt')
+ cached=None if scope is None else scope.load()
+ if cached is not None:
+  review.require(review.canonical_bytes(json.loads(cached))==review.canonical_bytes(value),
+                 'cached immutable Completion V1 receipt differs from its authenticated bytes')
+  # Re-run current source, HEAD, A2 and historical-tree admission. Only the
+  # immutable historical build/validate transform is reused.
+  with historical_v1_git_view():
+   from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+   authenticated_v1_original_raw_tree(a2)
+  return json.loads(cached)
+ code=_historical_v1_code(review.HISTORICAL_CHECKPOINT_E_SOURCE_SHA1,
+                          source,historical.__file__)
+ exec(code,historical.__dict__)
  with historical_v1_git_view():
   expected=historical.build_receipt()
   historical.validate_receipt(value,expected)
+ if scope is not None:
+  scope.store(value)
  return value
+
+def historical_v1_receipt():
+ from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+ with receipt_scope._bounded_receipt_scope(
+         'historical-v1-receipt', (sys.modules[__name__], review, v1),
+         _TRUSTED_HISTORICAL_V1_CONTRACT):
+  return _historical_v1_receipt_scoped()
 
 
 def build_receipt():
+ from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+ with receipt_scope._bounded_receipt_scope(
+         'historical-v1-receipt', (sys.modules[__name__], review, v1),
+         _TRUSTED_HISTORICAL_V1_CONTRACT):
+  return _build_receipt()
+
+
+def _v2_active_derivation_context():
+ from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+ scope=pass_a._active_checkpoint_derivation_scope()
+ if scope is None:
+  return None,None,None,None,None
+ review.require(scope.enabled,'V2 derivation reuse requires an enabled receipt scope')
+ review.require(a2._a2_scoped_contract() is not None,
+                'A2 verifier contract changed before V2 derivation reuse')
+ roots=(sys.modules[__name__],review,v1,a2,pass_a)
+ contract=_v2_direct_contract_digest(roots)
+ latest=a2.authenticate_inventory()
+ review.require(type(latest) is dict and type(latest.get('canonical_sha256')) is str,
+                'V2 scoped latest A2 identity is malformed')
+ return scope,contract,latest['canonical_sha256'],receipt_scope,roots
+
+
+def _review_authenticate_inventory_scoped():
+ context=_v2_active_derivation_context()
+ scope,contract,latest_sha,receipt_scope,roots=context
+ if scope is None:
+  return review.authenticate_inventory()
+ value=review.read_json(review.INVENTORY_PATH)
+ review.require(value.get('canonical_sha256')==review.INVENTORY_SHA,
+                'Pass-A inventory seal drift')
+ key='v2.pass-a-inventory:'+latest_sha
+ cached=scope.load_derivation(key,contract)
+ if cached is None:
+  expected=review.build_inventory()
+  if contract!=_v2_direct_contract_digest(roots):
+   raise AssertionError('Pass-A inventory verifier changed during derivation')
+  scope.store_derivation(key,contract,review.canonical_bytes(expected))
+  receipt_scope._record_scope_metric('v2.pass_a_inventory_derivation_misses')
+ else:
+  expected=json.loads(cached)
+  if contract!=_v2_direct_contract_digest(roots):
+   raise AssertionError('Pass-A inventory verifier changed during reuse')
+  receipt_scope._record_scope_metric('v2.pass_a_inventory_derivation_hits')
+ review.require(value==expected,
+                'source identities, guards, permissions, callers or discovered edges drifted')
+ return value
+
+
+def _review_receipt_derivation():
+ context=_v2_active_derivation_context()
+ scope,contract,latest_sha,receipt_scope,roots=context
+ if scope is None:
+  return review.build_receipt()
+ key='v2.pass-a-review-receipt:'+latest_sha
+ cached=scope.load_derivation(key,contract)
+ if cached is not None:
+  expected=json.loads(cached)
+  if contract!=_v2_direct_contract_digest(roots):
+   raise AssertionError('Pass-A review verifier changed during receipt reuse')
+  receipt_scope._record_scope_metric('v2.pass_a_review_receipt_derivation_hits')
+  return expected
+ expected=review.build_receipt()
+ if contract!=_v2_direct_contract_digest(roots):
+  raise AssertionError('Pass-A review verifier changed during receipt derivation')
+ scope.store_derivation(key,contract,review.canonical_bytes(expected))
+ receipt_scope._record_scope_metric('v2.pass_a_review_receipt_derivation_misses')
+ return expected
+
+
+def _review_validate_receipt_scoped(value):
+ context=_v2_active_derivation_context()
+ if context[0] is None:
+  return review.validate_receipt(value)
+ return review.validate_receipt(value,expected=_review_receipt_derivation())
+
+
+def _build_receipt():
  # Rerun every original criterion against authenticated unchanged operational
  # sources. Apply only resolved row keys; partially reviewed keys remain exactly
  # inherited, together with all 32 entirely out-of-scope predecessor keys.
- review.authenticate_inventory()
+ _review_authenticate_inventory_scoped()
  old=historical_v1_receipt()
  reviewed=review.read_json(review.RECEIPT_PATH)
- review.validate_receipt(reviewed)
+ _review_validate_receipt_scoped(reviewed)
  review.require(reviewed['canonical_sha256']==REVIEW_SHA,'Pass-A review identity drift')
  rows=reviewed['review_rows']
  resolved=[r for r in rows if r['resolved']]
@@ -697,12 +938,27 @@ def validate_receipt(value,expected=None):
 
 
 def audit():
+ from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+ with receipt_scope._bounded_receipt_scope(
+         'historical-v1-receipt', (sys.modules[__name__], review, v1),
+         _TRUSTED_HISTORICAL_V1_CONTRACT):
+  return _audit()
+
+
+def _audit():
  value=review.read_json(RECEIPT_PATH);validate_receipt(value)
  return {'result':'PASS','receipt_sha256':value['canonical_sha256'],'checkpoint_e':value['checkpoint_e_status'],'p4_4':value['p4_4_status'],'remaining_blockers':value['remaining_blocker_ids'],'remaining_unreviewed_surface_count':value['remaining_unreviewed_surface_count'],'resolved_pass_a_surface_count':value['resolved_pass_a_surface_count'],'terminal':value['terminal']}
+
 
 def main():
  parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--write',action='store_true');args=parser.parse_args()
  if args.write:
   value=build_receipt();(ROOT/RECEIPT_PATH).write_bytes(review.canonical_bytes(value));print(value['canonical_sha256'])
  else:print(json.dumps(audit(),sort_keys=True))
+
+
+from scripts import audit_core_01d_checkpoint_e_completion_v8 as _receipt_scope_module
+_TRUSTED_HISTORICAL_V1_CONTRACT = _receipt_scope_module._auditor_contract_digest(
+ sys.modules[__name__], review, v1)
+
 if __name__=='__main__':main()

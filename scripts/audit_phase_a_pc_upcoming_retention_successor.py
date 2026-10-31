@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import marshal
 from pathlib import Path
 import subprocess
+import types
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_ID = "ATHENA_P4_PHASE_A_LEGACY_PC_UPCOMING_RETENTION_MAINTENANCE_V1"
@@ -49,7 +51,13 @@ def _safe_materialized(path, *, directory=False):
 
 
 def _read(path):
-    return _safe_materialized(path).read_bytes().replace(b"\r\n", b"\n")
+    _safe_materialized(path)
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    if pass_a._active_checkpoint_derivation_scope() is not None:
+        raw = pass_a.read_blob(path)
+    else:
+        raw = (ROOT / path).read_bytes()
+    return raw.replace(b"\r\n", b"\n")
 
 
 def identity(raw):
@@ -63,6 +71,16 @@ def _json(path, expected):
     if value.get("canonical_sha256") != expected or p4.canonical_sha256(value) != expected:
         raise ValueError("retention successor receipt/snapshot identity drift: " + path)
     return value
+
+
+def _read_tracked_head_blob_scoped(repository_root, relative_path, **kwargs):
+    """Use scoped immutable HEAD bytes only under the active verified fence."""
+    from runtime.source_identity import read_tracked_head_blob
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    if pass_a._active_checkpoint_derivation_scope() is None:
+        return read_tracked_head_blob(repository_root, relative_path, **kwargs)
+    return pass_a.read_tracked_head_blob_scoped(
+        repository_root, relative_path, **kwargs)
 
 
 def expected_workflow():
@@ -98,10 +116,18 @@ def authenticate():
     authenticate_main_prefix()
     authenticate_provisional_archive()
     forward = _json(B4_FORWARD_RECEIPT, B4_FORWARD_SHA256)
+    current_b4 = _read(B4_FORWARD_SOURCE)
+    current_b4_identity = identity(current_b4)
     if (forward["retention_receipt_sha256"] != RECEIPT_SHA256
-            or identity(_read(B4_FORWARD_FIXTURE)) != B4_FORWARD_BEFORE
-            or identity(_read(B4_FORWARD_SOURCE)) != B4_FORWARD_AFTER):
+            or identity(_read(B4_FORWARD_FIXTURE)) != B4_FORWARD_BEFORE):
         raise ValueError("retention B4 consumer source-forward drift")
+    if current_b4_identity != B4_FORWARD_AFTER:
+        from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+        _prior, successor = pass_a._ci_assertion_v2_chain()
+        row = successor["source_forward"].get(B4_FORWARD_SOURCE)
+        if (row is None or row.get("before") != B4_FORWARD_AFTER
+                or row.get("after") != current_b4_identity):
+            raise ValueError("retention B4 consumer authenticated successor drift")
     snapshot = _json(SNAPSHOT, SNAPSHOT_SHA256)
     for path, row in PREDECESSORS.items():
         if identity(_read(row["fixture"])) != {key: row[key] for key in BEFORE}:
@@ -191,14 +217,23 @@ V313_CHECKPOINT_SHA256 = "c376e7c55ad95d4e182b2e4c6626e0c1605bf7834e6b81abeae432
 
 def checkpoint_v2_retention_sources():
     """Exact old V313 source and one bounded, independently derived successor."""
-    from runtime.source_identity import read_tracked_head_blob
+    before, expected = _checkpoint_v2_v313_source()
+    current, observed = _read_tracked_head_blob_scoped(ROOT, CHECKPOINT_V2_PATH)
+    if (current.replace(b"\r\n", b"\n") != expected
+            or observed.git_blob_sha1 != identity(expected)["git_blob_sha1"]):
+        _checkpoint_v2_authenticated_current_source(expected, current=current, observed=observed)
+    return before, expected
+
+
+def _checkpoint_v2_v313_source():
+    """Rebuild the immutable V313 predecessor and its exact V348 source."""
     descriptor = HISTORICAL_PREDECESSORS[CHECKPOINT_V2_PATH]
     modes = subprocess.check_output(
         ["git", "ls-tree", "-r", "HEAD", "--", CHECKPOINT_V2_PATH, descriptor["fixture"]], cwd=ROOT)
     if len(modes.splitlines()) != 2 or any(
             line.split(b"\t", 1)[0].split()[:2] != [b"100644", b"blob"] for line in modes.splitlines()):
         raise ValueError("V313 retention source/fixture mode changed")
-    before, old_identity = read_tracked_head_blob(ROOT, descriptor["fixture"])
+    before, old_identity = _read_tracked_head_blob_scoped(ROOT, descriptor["fixture"])
     before = before.replace(b"\r\n", b"\n")
     if (old_identity.git_blob_sha1 != V313_CHECKPOINT_BLOB
             or hashlib.sha256(before).hexdigest() != V313_CHECKPOINT_SHA256):
@@ -213,10 +248,34 @@ def checkpoint_v2_retention_sources():
     if before.count(old) != 1:
         raise ValueError("V313 source-forward seam is not exact")
     expected = before.replace(old, new)
-    current, observed = read_tracked_head_blob(ROOT, CHECKPOINT_V2_PATH)
-    if current.replace(b"\r\n", b"\n") != expected or observed.git_blob_sha1 != identity(expected)["git_blob_sha1"]:
-        raise ValueError("current checkpoint exceeds the exact retention source-forward")
     return before, expected
+
+
+def _checkpoint_v2_authenticated_current_source(expected, *, current=None, observed=None):
+    """Validate the later A2-bound receipt-scope source without changing V313."""
+    if current is None or observed is None:
+        current, observed = _read_tracked_head_blob_scoped(ROOT, CHECKPOINT_V2_PATH)
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    _prior, successor = pass_a._ci_assertion_v2_chain()
+    row = successor['source_forward'].get(CHECKPOINT_V2_PATH)
+    normalized = current.replace(b"\r\n", b"\n")
+    if (row is None or row.get('before') != identity(expected)
+            or identity(current) != row.get('after')
+            or normalized != current
+            or observed.git_blob_sha1 != row['after']['git_blob_sha1']):
+        raise ValueError("current checkpoint exceeds the exact A2-bound source-forward")
+    modes = subprocess.check_output(
+        ["git", "ls-tree", "-r", "HEAD", "--", CHECKPOINT_V2_PATH], cwd=ROOT)
+    if (len(modes.splitlines()) != 1
+            or modes.splitlines()[0].split(b"\t", 1)[0].split()[:2] != [b"100644", b"blob"]):
+        raise ValueError("A2-bound checkpoint source mode changed")
+    return current
+
+
+def checkpoint_v2_current_source():
+    """Return V2 only after its exact V376-to-current source receipt verifies."""
+    _before, expected = _checkpoint_v2_v313_source()
+    return _checkpoint_v2_authenticated_current_source(expected)
 
 
 def checkpoint_retention_extension(chain):
@@ -248,7 +307,7 @@ ADDED_METADATA = {'artifacts/architecture/p4_workflow_evolution_snapshots/phase_
 ADDED_PYTHON_IDENTITIES = {'tests/test_current_shadow_pc_upcoming_archive_retention.py': {'git_blob_sha1': '673f4a01cb4ef814903db152637673b53250bd5f', 'source_sha256': 'fb329b7802d355312b68671a3c1e3fdb9549d58726c9197014879b811d726d8c', 'byte_count': 20491}, 'scripts/verify_current_shadow_pc_upcoming_archive.py': {'git_blob_sha1': '5ddc03c844dcd1d3b908a59c6b52bb83d077a1e3', 'source_sha256': '760c25069c116596d351fe166a822c540287257b6aa4ba59bd5c314216ab6acc', 'byte_count': 17111}}
 
 
-def project_retention_inventory(raw, *, latest=None):
+def _project_retention_inventory_uncached(raw, *, latest=None, _preauthenticated=False):
     """Compose only this exact successor AFTER older historical projections.
 
     New files disappear only after their precise identities are verified. An
@@ -256,10 +315,10 @@ def project_retention_inventory(raw, *, latest=None):
     already-authenticated older views remain untouched. Unknown rows survive
     and are rejected by the caller's unchanged historical inventory digest.
     """
-    from runtime.source_identity import read_tracked_head_blob
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
-    authenticate()
-    _json(HISTORICAL_FORWARD_RECEIPT, HISTORICAL_FORWARD_SHA256)
+    if not _preauthenticated:
+        authenticate()
+        _json(HISTORICAL_FORWARD_RECEIPT, HISTORICAL_FORWARD_SHA256)
     if latest is None:
         latest = a2.authenticate_inventory()
     if latest.get("generation", 0) < 348:
@@ -280,7 +339,7 @@ def project_retention_inventory(raw, *, latest=None):
     current_rows = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
     current_blobs = {}
     for path in set(predecessors) | set(ADDED_PYTHON_PATHS):
-        payload, observed = read_tracked_head_blob(ROOT, path)
+        payload, observed = _read_tracked_head_blob_scoped(ROOT, path)
         payload = payload.replace(b"\r\n", b"\n")
         if path.endswith(".py") and current_rows.get(path) != hashlib.sha256(payload).hexdigest():
             raise ValueError("retention current source is not A2 authenticated: " + path)
@@ -288,16 +347,27 @@ def project_retention_inventory(raw, *, latest=None):
             raise ValueError("retention workflow projection source drift")
         expected_after = BOOTSTRAP_AFTER.get(path) or (predecessors[path]["after"] if path in predecessors
                           else ADDED_PYTHON_IDENTITIES.get(path))
+        if path == "tests/test_core_01d_ci_offline_transport_inventory_evolution.py":
+            # This existing test has a later exact source-forward edge in the
+            # independently pinned Pass-A V2 receipt (the new A2 root-pin
+            # assertion). Preserve its historical predecessor projection, but
+            # accept only that receipt's authenticated current after-image.
+            from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+            _prior, pass_a_v2 = pass_a._ci_assertion_v2_chain()
+            source_edge = pass_a_v2["source_forward"].get(path)
+            if type(source_edge) is not dict or type(source_edge.get("after")) is not dict:
+                raise ValueError("retention test source has no exact Pass-A V2 successor")
+            expected_after = source_edge["after"]
         if expected_after is not None and identity(payload) != expected_after:
             raise ValueError("source differs from the exact reviewed retention successor: " + path)
         current_blobs[path] = observed.git_blob_sha1
     for path, descriptor in predecessors.items():
-        payload, observed = read_tracked_head_blob(ROOT, descriptor["fixture"])
+        payload, observed = _read_tracked_head_blob_scoped(ROOT, descriptor["fixture"])
         if identity(payload.replace(b"\r\n", b"\n")) != {
                 key: descriptor[key] for key in BEFORE} or observed.git_blob_sha1 != descriptor["git_blob_sha1"]:
             raise ValueError("retention historical predecessor drift: " + path)
     for path, expected in added_metadata.items():
-        payload, observed = read_tracked_head_blob(ROOT, path)
+        payload, observed = _read_tracked_head_blob_scoped(ROOT, path)
         if identity(payload.replace(b"\r\n", b"\n")) != expected or observed.git_blob_sha1 != expected["git_blob_sha1"]:
             raise ValueError("retention additive evidence identity drift: " + path)
         current_blobs[path] = observed.git_blob_sha1
@@ -344,12 +414,14 @@ def bootstrap_predecessor(path):
 def expected_bootstrap_source():
     before = bootstrap_predecessor("sitecustomize.py")
     marker = b'\n_args = getattr(sys, "orig_argv", ())\n'
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    root_auditor_sha = pass_a._root_performance_receipt()["source_forward"][BOOTSTRAP_AUDITOR]["after"]["source_sha256"]
     addition = ("\n# Owner-authorized, path-exact retention successors. Preserve the original pins\n"
                 "# and the previously admitted auditor; no other guard gains an alternate identity.\n"
                 "ROOT_TEST_SOURCE_SUCCESSORS = {\n"
                 '    "' + BOOTSTRAP_AUDITOR + '": (\n'
                 '        "' + PRIOR_ADMITTED_AUDITOR_SHA + '",\n'
-                '        "' + BOOTSTRAP_AFTER[BOOTSTRAP_AUDITOR]["source_sha256"] + '",\n    ),\n}\n').encode()
+                '        "' + root_auditor_sha + '",\n    ),\n}\n').encode()
     old = b"            if hashlib.sha256(_raw).hexdigest() != _expected:\n"
     new = (b"            _digest = hashlib.sha256(_raw).hexdigest()\n"
            b"            if _digest != _expected and _digest not in ROOT_TEST_SOURCE_SUCCESSORS.get(_path, ()):\n")
@@ -371,11 +443,29 @@ def authenticate_bootstrap_sources():
         if expected_auditor.count(old.encode()) != 1:
             raise ValueError("bootstrap predecessor auditor seam drift")
         expected_auditor = expected_auditor.replace(old.encode(), new.encode())
-    if _bootstrap_blob(BOOTSTRAP_AUDITOR) != expected_auditor:
-        raise ValueError("bootstrap successor auditor exceeds exact activation edge")
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    _prior, successor = pass_a._ci_assertion_v2_chain()
+    current_auditor = _bootstrap_blob(BOOTSTRAP_AUDITOR)
+    if current_auditor != expected_auditor:
+        # The legacy retention receipt pins the historical activation bytes.
+        # Current A2 may have a later authenticated source-only successor.
+        # The exact V2 receipt binds it to a V376 fixture; compare that fixture
+        # with the legacy activation recipe, without substituting the newer
+        # current source for historical activation bytes.
+        row = successor['source_forward'].get(BOOTSTRAP_AUDITOR)
+        if type(row) is not dict:
+            raise ValueError("bootstrap successor auditor has no exact V2 source edge")
+        projected_auditor = pass_a.read_blob(row['fixture'])
+        if (pass_a.safe.identity(projected_auditor) != row['before']
+                or projected_auditor != expected_auditor):
+            raise ValueError("bootstrap successor auditor exceeds exact activation edge")
     if _bootstrap_blob("sitecustomize.py") != expected_bootstrap_source():
         raise ValueError("bootstrap successor root exceeds exact added pin recipe")
-    for path, expected in BOOTSTRAP_AFTER.items():
+    current_after = dict(BOOTSTRAP_AFTER)
+    for path, row in successor['source_forward'].items():
+        if 'after' in row:
+            current_after[path] = row['after']
+    for path, expected in current_after.items():
         if identity(_bootstrap_blob(path)) != expected:
             raise ValueError("bootstrap successor current source identity drift: " + path)
     for path, descriptor in _CURRENT_INTEGRATION["current_source_predecessors"].items():
@@ -442,8 +532,11 @@ BOOTSTRAP_METADATA = {p: ADDED_METADATA[p] for p in set(LINKED_METADATA) |
 
 def _raw_blob(path):
     """Exact Git object bytes; filtered worktree identity is checked separately."""
-    from runtime.source_identity import read_tracked_head_blob
     _safe_materialized(path)
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    if pass_a._active_checkpoint_derivation_scope() is not None:
+        return pass_a.read_blob(path)
+    from runtime.source_identity import read_tracked_head_blob
     mode = subprocess.check_output(["git", "ls-tree", "HEAD", "--", path], cwd=ROOT)
     if type(mode) is not bytes or len(mode.splitlines()) != 1 or mode.split(b"\t", 1)[0].split()[:2] != [b"100644", b"blob"]:
         raise ValueError("retention source/evidence Git tree mode drift: " + path)
@@ -572,8 +665,35 @@ def authenticate_published_restoration():
                 or identity(_raw_blob(path)) != {key: expected[key] for key in BEFORE}):
             raise ValueError("restoration archived mutation drift: " + path)
     from scripts import audit_tests_shard_balance_successor as shards
+
+    def restoration_source(path, raw):
+        # D5 is a later exact Pass-A V2 successor of the restoration receipt's
+        # frozen after-image. Authenticate that edge from the immutable V376
+        # predecessor before projecting to the retained restoration view.
+        if path != "scripts/audit_data_01c_app_store_complete.py":
+            return shards.predecessor_source(path, raw)
+        from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+        _prior, successor = pass_a._ci_assertion_v2_chain()
+        row = successor["source_forward"].get(path)
+        current = _raw_blob(path)
+        if (row is None or raw != current or identity(current) != row.get("after")
+                or row.get("before") != receipt["source_forward"][path]["after"]):
+            raise ValueError("restoration D5 successor is not the exact V376 source edge")
+        before = _raw_blob(row["fixture"])
+        if identity(before) != row["before"]:
+            raise ValueError("restoration D5 successor predecessor fixture drift")
+        expected = before
+        for patch in row["patches"]:
+            old, new = patch["before"].encode("utf-8"), patch["after"].encode("utf-8")
+            if not old or expected.count(old) != 1:
+                raise ValueError("restoration D5 successor patch seam drift")
+            expected = expected.replace(old, new)
+        if expected != current:
+            raise ValueError("restoration D5 successor exceeds its exact source recipe")
+        return before
+
     for path, descriptor in receipt["source_forward"].items():
-        if identity(shards.predecessor_source(path, _raw_blob(path))) != descriptor["after"]:
+        if identity(restoration_source(path, _raw_blob(path))) != descriptor["after"]:
             raise ValueError("restoration current source drift: " + path)
     for path, fixture_key in ((RESTORED_V3_PATH, "fixture"),
                               ("scripts/audit_data_01c_app_store_complete.py", "current_predecessor_fixture")):
@@ -582,7 +702,7 @@ def authenticate_published_restoration():
         if identity(before) != {key: descriptor[key] for key in BEFORE}:
             raise ValueError("restoration source predecessor drift: " + path)
         old, new = descriptor["patch_before"].encode(), descriptor["patch_after"].encode()
-        current = shards.predecessor_source(path, _raw_blob(path))
+        current = restoration_source(path, _raw_blob(path))
         if before.count(old) != 1 or current != before.replace(old, new):
             raise ValueError("restoration source exceeds the exact historical projection: " + path)
     return receipt
@@ -625,6 +745,163 @@ _authenticate_before_pass_a_tests = authenticate
 def authenticate():
     _pass_a_tests.authenticate_core()
     return _authenticate_before_pass_a_tests()
+
+
+def _retention_scope_contract_components():
+    """Return labeled identities for the verifier contract used by scoped reuse."""
+    def stable_code(code):
+        def constant(value):
+            if isinstance(value, types.CodeType):
+                return {"code": stable_code(value).hex()}
+            if isinstance(value, tuple):
+                return [constant(item) for item in value]
+            if isinstance(value, bytes):
+                return {"bytes": value.hex()}
+            return {"type": type(value).__qualname__, "value": repr(value)}
+
+        fields = {
+            "bytecode": code.co_code.hex(),
+            "constants": [constant(item) for item in code.co_consts],
+            "names": code.co_names,
+            "varnames": code.co_varnames,
+            "freevars": code.co_freevars,
+            "cellvars": code.co_cellvars,
+            "argcount": code.co_argcount,
+            "posonlyargcount": code.co_posonlyargcount,
+            "kwonlyargcount": code.co_kwonlyargcount,
+            "nlocals": code.co_nlocals,
+            "flags": code.co_flags,
+            "filename": code.co_filename,
+            "firstlineno": code.co_firstlineno,
+            "linetable": code.co_linetable.hex(),
+            "exceptiontable": code.co_exceptiontable.hex(),
+        }
+        return hashlib.sha256(json.dumps(
+            fields, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")).digest()
+
+    components = {}
+    for name in (
+        "_read", "_raw_blob", "_bootstrap_blob", "identity", "_json",
+        "expected_workflow", "authenticate", "_authenticate_before_pass_a_tests",
+        "authenticate_main_prefix", "authenticate_provisional_archive",
+        "authenticate_bootstrap_sources", "_project_retention_inventory_uncached",
+        "project_retention_inventory",
+    ):
+        value = globals().get(name)
+        code = getattr(value, "__code__", None)
+        if code is None:
+            return None
+        digest = hashlib.sha256()
+        digest.update(stable_code(code))
+        digest.update(repr((getattr(value, "__defaults__", None),
+                            getattr(value, "__kwdefaults__", None))).encode("utf-8"))
+        components["function:" + name] = (
+            str(id(value)) + ":" + str(id(code)) + ":" + digest.hexdigest())
+    for name in (
+        "RECEIPT", "RECEIPT_SHA256", "SNAPSHOT", "SNAPSHOT_SHA256",
+        "PREDECESSORS", "HISTORICAL_PREDECESSORS", "BOOTSTRAP_PREDECESSORS",
+        "BOOTSTRAP_AFTER", "BOOTSTRAP_METADATA", "ADDED_METADATA",
+        "ADDED_PYTHON_PATHS", "ADDED_PYTHON_IDENTITIES", "LINKED_METADATA",
+        "BOOTSTRAP_AUDITOR_PATCHES", "HISTORICAL_FORWARD_RECEIPT",
+        "HISTORICAL_FORWARD_SHA256", "B4_FORWARD_RECEIPT", "B4_FORWARD_SHA256",
+    ):
+        raw = json.dumps(globals().get(name), sort_keys=True,
+                         separators=(",", ":"), default=repr).encode("utf-8")
+        components["constant:" + name] = hashlib.sha256(raw).hexdigest()
+    return components
+
+
+def _retention_scope_contract():
+    """Bind the exact local verifier functions/constants used by scoped reuse."""
+    components = _retention_scope_contract_components()
+    if components is None:
+        return None
+    raw = json.dumps(components, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "retention-source-derivation-v1:" + hashlib.sha256(raw).hexdigest()
+
+
+_authenticate_with_pass_a = authenticate
+
+
+def authenticate():
+    """Authenticate retained sources once per unchanged bounded audit scope."""
+    scope = _pass_a_tests._active_checkpoint_derivation_scope()
+    if scope is None:
+        return _authenticate_with_pass_a()
+    contract_components = _retention_scope_contract_components()
+    contract = _retention_scope_contract()
+    key = "retention.authenticate"
+    cached = None if contract is None else scope.load_derivation(key, contract)
+    if contract is None:
+        from scripts.audit_core_01d_checkpoint_e_completion_v8 import require
+        require(key not in scope.derivation_bytes,
+                "retention verifier contract changed after scoped authentication")
+    if cached is not None:
+        if cached != b"retention-source-inputs-authenticated-v1":
+            raise ValueError("retention scoped authentication derivation is malformed")
+        from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+        receipt_scope._record_scope_metric("retention.authenticate_scope_hits")
+        return None
+    result = _authenticate_with_pass_a()
+    current_components = _retention_scope_contract_components()
+    current_contract = _retention_scope_contract()
+    if contract is not None and current_contract == contract:
+        scope.store_derivation(key, contract, b"retention-source-inputs-authenticated-v1")
+        from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+        receipt_scope._record_scope_metric("retention.authenticate_scope_misses")
+    else:
+        changed = sorted(set(contract_components or {}) | set(current_components or {}))
+        changed = [name for name in changed
+                   if (contract_components or {}).get(name) != (current_components or {}).get(name)]
+        details = [name + "=" + str((contract_components or {}).get(name))
+                   + "->" + str((current_components or {}).get(name))
+                   for name in changed]
+        raise ValueError("retention verifier contract changed during scoped authentication: "
+                         + ";".join(details))
+    return result
+
+
+def project_retention_inventory(raw, *, latest=None):
+    """Return an exact same-scope projection from authenticated immutable inputs."""
+    if type(raw) is not bytes:
+        raise TypeError("retention inventory projection requires exact bytes")
+    scope = _pass_a_tests._active_checkpoint_derivation_scope()
+    if scope is None:
+        return _project_retention_inventory_uncached(raw, latest=latest)
+    authenticate()
+    _json(HISTORICAL_FORWARD_RECEIPT, HISTORICAL_FORWARD_SHA256)
+    if latest is None:
+        from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+        latest = a2.authenticate_inventory()
+    if type(latest) is not dict or type(latest.get("canonical_sha256")) is not str:
+        raise ValueError("retention projection current inventory is malformed")
+    latest_identity = hashlib.sha256(marshal.dumps(latest, 4)).hexdigest()
+    contract = _retention_scope_contract()
+    key = "retention.project:" + hashlib.sha256(
+        raw + b"\0" + latest_identity.encode("ascii")
+    ).hexdigest()
+    cached = None if contract is None else scope.load_derivation(key, contract)
+    if contract is None:
+        from scripts.audit_core_01d_checkpoint_e_completion_v8 import require
+        require(not any(name.startswith("retention.project:") for name in scope.derivation_bytes),
+                "retention verifier contract changed after scoped projection")
+        return _project_retention_inventory_uncached(raw, latest=latest, _preauthenticated=True)
+    if cached is not None:
+        result = marshal.loads(cached)
+        if type(result) is not bytes:
+            raise ValueError("retention scoped projection clone is malformed")
+        from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+        receipt_scope._record_scope_metric("retention.project_scope_hits")
+        return result
+    result = _project_retention_inventory_uncached(
+        raw, latest=latest, _preauthenticated=True)
+    if type(result) is not bytes or _retention_scope_contract() != contract:
+        raise ValueError("retention projection changed verifier contract or output type")
+    scope.store_derivation(key, contract, marshal.dumps(result, 4))
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    receipt_scope._record_scope_metric("retention.project_scope_misses")
+    return result
 
 
 # Exact source-only performance successor. Existing pins remain immutable.

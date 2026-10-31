@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import argparse
 import ast
+from contextlib import contextmanager
 from copy import deepcopy
 from functools import lru_cache
 import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 from typing import Any
 
 import yaml
@@ -264,6 +266,25 @@ def _pinned_inventory_fallback() -> dict[str, Any]:
 
 
 def build_source_inventory() -> dict[str, Any]:
+    scope = completion_v9.completion_v8._active_receipt_scope(
+        "checkpoint-b7-source-inventory")
+    if scope is not None:
+        cached = scope.load_derivation(
+            "b7.source-inventory", _TRUSTED_B7_SOURCE_INVENTORY_CONTRACT)
+        if cached is not None:
+            value = json.loads(cached)
+            require(boundary.canonical(value) == cached,
+                    "B7 scoped source-inventory bytes are not canonical")
+            return value
+        value = _build_source_inventory()
+        scope.store_derivation("b7.source-inventory",
+                               _TRUSTED_B7_SOURCE_INVENTORY_CONTRACT,
+                               boundary.canonical(value))
+        return value
+    return _build_source_inventory()
+
+
+def _build_source_inventory() -> dict[str, Any]:
     return _inventory_from_base() if _base_objects_available() else _pinned_inventory_fallback()
 
 
@@ -594,6 +615,11 @@ def authenticated_historical_a2_v9() -> dict[str, Any]:
 
 
 def build_receipt() -> dict[str, Any]:
+    with _b7_source_inventory_scope():
+        return _build_receipt()
+
+
+def _build_receipt() -> dict[str, Any]:
     parent = completion_v9.validate_receipt()
     require(parent.get("canonical_sha256") == COMPLETION_V9_SHA,
             "immutable Completion V9 identity drift")
@@ -688,6 +714,11 @@ def build_receipt() -> dict[str, Any]:
 
 
 def validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
+    with _b7_source_inventory_scope():
+        return _validate_receipt(value)
+
+
+def _validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
     value = boundary.read(RECEIPT_PATH) if value is None else value
     require((ROOT / RECEIPT_PATH).read_bytes() == boundary.canonical(value),
             "B7 receipt is not canonical")
@@ -708,6 +739,11 @@ def validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def audit() -> dict[str, Any]:
+    with _b7_source_inventory_scope():
+        return _audit()
+
+
+def _audit() -> dict[str, Any]:
     value = validate_receipt()
     return {
         "result": "PASS",
@@ -742,6 +778,18 @@ def main() -> None:
         print(value["canonical_sha256"])
     else:
         print(json.dumps(audit(), sort_keys=True))
+
+
+@contextmanager
+def _b7_source_inventory_scope():
+    with completion_v9.completion_v8._bounded_receipt_scope(
+            "checkpoint-b7-source-inventory", (sys.modules[__name__],),
+            _TRUSTED_B7_SOURCE_INVENTORY_CONTRACT) as scope:
+        yield scope
+
+
+_TRUSTED_B7_SOURCE_INVENTORY_CONTRACT = completion_v9.completion_v8._auditor_contract_digest(
+    sys.modules[__name__])
 
 
 if __name__ == "__main__":

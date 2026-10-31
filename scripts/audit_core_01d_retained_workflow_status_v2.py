@@ -401,6 +401,18 @@ def _evolution_context() -> tuple[dict, str]:
 
 
 def build_receipt() -> dict:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    scope = receipt_scope._active_receipt_scope("checkpoint-retained-status-v2")
+    cached = None if scope is None else scope.load()
+    if cached is not None:
+        return cached
+    value = _build_receipt()
+    if scope is not None:
+        scope.store(value)
+    return value
+
+
+def _build_receipt() -> dict:
     predecessor = _read_v1()
     require(predecessor["missing_artifact_count"] == 8
             and predecessor["exact_archive_recovered_count"] == 0
@@ -704,6 +716,11 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, RetainedWorkflowStatusV2Error, TypeError, ValueError, yaml.YAMLError) as exc:
         print(json.dumps({"result": "BLOCKED", "error": str(exc)}, sort_keys=True), file=sys.stderr)
         return 1
+
+
+from scripts import audit_core_01d_checkpoint_e_completion_v8 as _receipt_scope_module
+_TRUSTED_RETAINED_STATUS_V2_CONTRACT = _receipt_scope_module._auditor_contract_digest(
+    sys.modules[__name__])
 
 
 if __name__ == "__main__":

@@ -67,6 +67,18 @@ def _read_blob(path, root_input):
         validate_repository_relative_path,
     )
     validate_repository_relative_path(path)
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    if pass_a._active_checkpoint_derivation_scope() is not None:
+        # The outer bounded scope fences HEAD, index, filtered worktree and
+        # untracked state. Keep the exact path/mode checks on each cache hit;
+        # only immutable HEAD bytes are reused, never a receipt verdict.
+        raw, observed = pass_a.read_tracked_head_blob_scoped(
+            root_input, path, expected_mode="100644")
+        if (type(raw) is not bytes
+                or hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+                    != observed.git_blob_sha1):
+            raise ValueError("B4 scoped HEAD payload identity drift: " + path)
+        return raw
     try:
         root = Path(root_input).resolve(strict=True)
     except (OSError, TypeError, ValueError) as exc:

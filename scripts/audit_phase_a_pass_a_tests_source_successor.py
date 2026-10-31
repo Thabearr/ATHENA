@@ -7,10 +7,87 @@ No frozen receipt, workflow, source authority or live discovery is changed.
 from __future__ import annotations
 import hashlib
 from collections.abc import Callable
+from functools import lru_cache
 import json
+import marshal
+import sys
 from scripts import audit_phase_a_b4_test_source_successor as safe
 
 ROOT = safe.ROOT
+
+
+def _inventory_validation_contract():
+    """Exact callable identity for the pure V376 JSON validator inputs."""
+    global_bindings = (
+        safe.canonical.__globals__.get("json"),
+        safe.canonical_digest.__globals__.get("canonical"),
+        safe.canonical_digest.__globals__.get("hashlib"),
+    )
+    functions = (
+        safe.canonical,
+        safe.canonical_digest,
+        json.loads,
+        json.dumps,
+        json.JSONDecoder,
+        json.JSONDecoder.__init__,
+        json.JSONDecoder.decode,
+        json.JSONDecoder.raw_decode,
+        json.JSONEncoder,
+        json.JSONEncoder.__init__,
+        json.JSONEncoder.encode,
+        json.JSONEncoder.iterencode,
+        hashlib.sha256,
+        marshal.dumps,
+        marshal.loads,
+    )
+    identities = []
+    for function in functions:
+        code = getattr(function, "__code__", None)
+        identities.append((
+            id(function),
+            code,
+            repr(getattr(function, "__defaults__", None)),
+            repr(getattr(function, "__kwdefaults__", None)),
+        ))
+    # Retain the actual module/function references in the key: a stable
+    # function object can otherwise keep its identity while a relevant global
+    # binding is replaced in place.
+    return (tuple(identities), global_bindings, id(hashlib.sha256))
+
+
+@lru_cache(maxsize=4)
+def _canonical_inventory_snapshot(raw, expected_sha256, expected_generation,
+                                  validator_contract, failure_message):
+    """Cache only a pure parse/canonicalization transform keyed by exact bytes.
+
+    Callers reread the bytes on every invocation. The cached payload is a
+    marshal serialization, never a parsed mutable object or authentication
+    verdict; every return is decoded into a new object graph.
+    """
+    if type(raw) is not bytes:
+        raise ValueError(failure_message)
+    inventory = json.loads(raw)
+    if (type(inventory) is not dict
+            or safe.canonical(inventory) != raw
+            or safe.canonical_digest(inventory) != expected_sha256
+            or inventory.get("canonical_sha256") != expected_sha256
+            or inventory.get("generation") != expected_generation):
+        raise ValueError(failure_message)
+    return marshal.dumps(inventory, 4)
+
+
+def _read_canonical_inventory_snapshot(reader, predecessor, failure_message):
+    raw = reader(predecessor["path"])
+    if type(raw) is not bytes:
+        raise ValueError(failure_message)
+    payload = _canonical_inventory_snapshot(
+        raw,
+        predecessor["canonical_sha256"],
+        predecessor["generation"],
+        _inventory_validation_contract(),
+        failure_message,
+    )
+    return raw, marshal.loads(payload)
 FROZEN_IDENTITY = {'git_blob_sha1': '051c5061ce9a620c714cac4538bd6da97b00abae', 'source_sha256': 'c8fea2ac437a6dd167d9e0c4e555706d796f6ba74a22e12431a57d4444ac20e2', 'byte_count': 319457}
 SOURCE = 'scripts/audit_core_01d_authority_reachability_review_a.py'
 RECEIPT = 'artifacts/architecture/phase_a_pass_a_tests_source_successor_v1.json'
@@ -229,7 +306,244 @@ def _b1_predecessor_source(path, raw, *, _reader=None):
 
 
 def read_blob(path):
-    return safe.read_blob(path)
+    """Read a tracked source blob, reusing bytes only inside one fenced audit.
+
+    The enclosing checkpoint receipt scope binds HEAD, index, filtered
+    worktree, Git configuration and A2 bytes at entry/exit.  A cache entry is
+    only the immutable HEAD blob already checked by ``safe.read_blob``; it is
+    never an identity or PASS verdict.  Each hit still checks the path's
+    filesystem type/link posture and the relevant reader contract.
+    """
+    from runtime import source_identity
+    relative = source_identity.validate_repository_relative_path(path)
+    scope = _active_checkpoint_derivation_scope()
+    if scope is None:
+        return safe.read_blob(relative)
+    contract = _scoped_source_read_contract()
+    key = "pass-a.source-blob:" + relative
+    cached = scope.load_derivation(key, contract)
+    if cached is not None:
+        if type(cached) is not bytes:
+            raise ValueError('Pass-A scoped source blob is not immutable bytes')
+        _verify_scoped_source_path(relative)
+        if contract != _scoped_source_read_contract():
+            raise ValueError('Pass-A source reader changed during scoped reuse')
+        return cached
+    raw = safe.read_blob(relative)
+    if type(raw) is not bytes:
+        raise ValueError('Pass-A source reader returned non-byte data')
+    if contract != _scoped_source_read_contract():
+        raise ValueError('Pass-A source reader changed during scoped read')
+    scope.store_derivation(key, contract, raw)
+    return raw
+
+
+def _active_checkpoint_derivation_scope():
+    engine = sys.modules.get('scripts.audit_core_01d_checkpoint_e_completion_v8')
+    if engine is None:
+        return None
+    active = engine._ACTIVE_RECEIPT_SCOPES.get()
+    preferred = active.get('checkpoint-master-audit')
+    if (preferred is not None and getattr(preferred, 'enabled', False)
+            and getattr(preferred, 'unit', None) == engine._execution_unit()
+            and callable(getattr(preferred, 'load_derivation', None))
+            and callable(getattr(preferred, 'store_derivation', None))):
+        return preferred
+    # ContextVar mappings preserve insertion order.  The first enabled scope
+    # is the outermost bounded audit owner and survives short-lived child
+    # scopes, whose derivation dictionaries are cleared on exit.
+    unit = engine._execution_unit()
+    for scope in tuple(active.values()):
+        if (getattr(scope, 'enabled', False)
+                and getattr(scope, 'unit', None) == unit
+                and callable(getattr(scope, 'load_derivation', None))
+                and callable(getattr(scope, 'store_derivation', None))):
+            return scope
+    return None
+
+
+def _scoped_source_read_contract():
+    """Bind the reader and path-validation code used by scoped byte reuse."""
+    from runtime import source_identity
+    digest = hashlib.sha256()
+    for name, function in (
+        ('pass_a.read_blob', read_blob),
+        ('safe.read_blob', safe.read_blob),
+        ('safe._read_blob', safe._read_blob),
+        ('safe._source_scope_head', safe._source_scope_head),
+        ('safe._verify_scoped_source_inputs', safe._verify_scoped_source_inputs),
+        ('source_identity.read_tracked_head_blob', source_identity.read_tracked_head_blob),
+        ('source_identity._run_git', source_identity._run_git),
+        ('source_identity._tracked_worktree_path', source_identity._tracked_worktree_path),
+        ('source_identity.validate_repository_relative_path',
+         source_identity.validate_repository_relative_path),
+    ):
+        digest.update(name.encode('utf-8') + b'\0')
+        digest.update(repr((id(function), id(getattr(function, '__code__', None)),
+                            getattr(function, '__defaults__', None),
+                            getattr(function, '__kwdefaults__', None))).encode('utf-8'))
+    digest.update(repr((str(ROOT), str(safe.ROOT), id(safe), id(source_identity))).encode('utf-8'))
+    return digest.hexdigest()
+
+
+def _verify_scoped_source_path(path):
+    """Repeat cheap filesystem-type checks on a scoped immutable-byte hit."""
+    import stat
+    from pathlib import Path
+    from runtime import source_identity
+    root = Path(safe.ROOT).resolve(strict=True)
+    source_identity.validate_repository_relative_path(path)
+    target = root.joinpath(*path.split('/'))
+    current = root
+    for part in path.split('/'):
+        current = current / part
+        metadata = current.lstat()
+        is_last = current == target
+        regular = stat.S_ISREG(metadata.st_mode) if is_last else stat.S_ISDIR(metadata.st_mode)
+        if (not regular or stat.S_ISLNK(metadata.st_mode)
+                or getattr(metadata, 'st_file_attributes', 0) & 0x400
+                or (is_last and getattr(metadata, 'st_nlink', 1) != 1)):
+            raise ValueError('Pass-A scoped source path is linked or nonregular: ' + path)
+
+
+def _scoped_tracked_head_reader_contract():
+    """Bind the exact Git reader and per-hit filesystem checks for HEAD bytes."""
+    from runtime import source_identity
+    functions = (
+        ('source_identity.read_tracked_head_blob', source_identity.read_tracked_head_blob),
+        ('source_identity._ensure_repository_root', source_identity._ensure_repository_root),
+        ('source_identity._run_git', source_identity._run_git),
+        ('source_identity._ascii_git_output', source_identity._ascii_git_output),
+        ('source_identity._tracked_worktree_path', source_identity._tracked_worktree_path),
+        ('source_identity.read_raw_file_bytes', source_identity.read_raw_file_bytes),
+        ('source_identity.validate_repository_relative_path',
+         source_identity.validate_repository_relative_path),
+        ('source_identity.DevelopmentSourceIdentity', source_identity.DevelopmentSourceIdentity),
+        ('hashlib.sha256', hashlib.sha256),
+        ('marshal.dumps', marshal.dumps),
+        ('marshal.loads', marshal.loads),
+        ('PassA._active_checkpoint_derivation_scope', _active_checkpoint_derivation_scope),
+        ('PassA._verify_scoped_source_path', _verify_scoped_source_path),
+        ('PassA._tracked_head_mode', _tracked_head_mode),
+        ('PassA.read_tracked_head_blob_scoped', read_tracked_head_blob_scoped),
+    )
+    entries = []
+    for name, function in functions:
+        code = getattr(function, '__code__', None)
+        entries.append((name, id(function), id(code),
+                        repr(getattr(function, '__defaults__', None)),
+                        repr(getattr(function, '__kwdefaults__', None))))
+    return hashlib.sha256(repr((str(ROOT), id(source_identity), tuple(entries))).encode()).hexdigest()
+
+
+def _tracked_head_mode(root, relative, expected_blob):
+    """Read and validate one HEAD tree entry when a scoped blob is first seen."""
+    from runtime import source_identity
+    entry = source_identity._run_git(root, 'ls-tree', '-z', 'HEAD', '--', relative)
+    if type(entry) is not bytes or entry.count(b'\0') != 1 or not entry.endswith(b'\0'):
+        raise ValueError('scoped tracked-source tree entry is malformed: ' + relative)
+    metadata, logical = entry[:-1].split(b'\t', 1)
+    fields = metadata.split()
+    if (len(fields) != 3 or fields[1] != b'blob'
+            or logical != relative.encode('utf-8')
+            or fields[2].decode('ascii', 'strict') != expected_blob):
+        raise ValueError('scoped tracked-source HEAD entry differs from its blob: ' + relative)
+    return fields[0].decode('ascii', 'strict')
+
+
+def read_tracked_head_blob_scoped(repository_root, relative_path, *,
+                                  verify_worktree_filtered_identity=True,
+                                  expected_mode=None):
+    """Reuse immutable HEAD bytes only within the active fenced checkpoint scope.
+
+    Scope hits still re-check every path component with lstat, reject links,
+    reparse points, non-regular files and multiply-linked files, and compare
+    the source-identity reader contract. HEAD/index/worktree/filter state is
+    bounded by the owning receipt scope's entry/exit state digest. Outside that
+    scope this delegates to the ordinary source-identity reader.
+    """
+    from pathlib import Path
+    from runtime import source_identity
+    relative = source_identity.validate_repository_relative_path(relative_path)
+    if type(verify_worktree_filtered_identity) is not bool:
+        raise source_identity.SourceIdentityError(
+            'verify_worktree_filtered_identity must be exact bool')
+    if expected_mode is not None and (type(expected_mode) is not str
+                                      or expected_mode not in {'100644', '100755'}):
+        raise source_identity.SourceIdentityError('expected_mode is malformed')
+    try:
+        root = Path(repository_root).resolve(strict=True)
+    except (OSError, TypeError, ValueError):
+        # Preserve the ordinary reader's typed failure and diagnostics.
+        return source_identity.read_tracked_head_blob(
+            repository_root, relative, verify_worktree_filtered_identity=verify_worktree_filtered_identity)
+    if not root.is_dir() or root != Path(ROOT).resolve(strict=True):
+        result = source_identity.read_tracked_head_blob(
+            repository_root, relative, verify_worktree_filtered_identity=verify_worktree_filtered_identity)
+        if expected_mode is not None:
+            mode = _tracked_head_mode(root, relative, result[1].git_blob_sha1)
+            if mode != expected_mode:
+                raise ValueError('scoped tracked-source mode differs from its exact HEAD mode: ' + relative)
+        return result
+
+    scope = _active_checkpoint_derivation_scope()
+    if scope is None or not getattr(scope, 'enabled', False):
+        result = source_identity.read_tracked_head_blob(
+            repository_root, relative, verify_worktree_filtered_identity=verify_worktree_filtered_identity)
+        if expected_mode is not None:
+            mode = _tracked_head_mode(root, relative, result[1].git_blob_sha1)
+            if mode != expected_mode:
+                raise ValueError('scoped tracked-source mode differs from its exact HEAD mode: ' + relative)
+        return result
+
+    contract = _scoped_tracked_head_reader_contract()
+    if contract != _TRUSTED_SCOPED_TRACKED_HEAD_READER_CONTRACT:
+        raise ValueError('scoped tracked-source reader contract changed')
+    key = ('pass-a.tracked-head-blob:' + str(root) + ':' + relative + ':'
+           + str(verify_worktree_filtered_identity) + ':' + str(expected_mode))
+    cached = scope.load_derivation(key, contract)
+    if cached is not None:
+        try:
+            raw, fields, mode = marshal.loads(cached)
+        except (EOFError, ValueError, TypeError) as exc:
+            raise ValueError('scoped tracked-source cache payload is malformed') from exc
+        if (type(raw) is not bytes or type(fields) is not tuple or len(fields) != 5
+                or (mode is not None and type(mode) is not str) or fields[0] != relative
+                or any(value is not None and type(value) is not str for value in fields[1:])):
+            raise ValueError('scoped tracked-source cache fields are malformed')
+        if expected_mode is not None and mode != expected_mode:
+            raise ValueError('scoped tracked-source cached mode differs from its contract: ' + relative)
+        # The caller may deliberately decline the filtered-worktree identity
+        # comparison for an immutable predecessor fixture, but path type/link
+        # checks remain mandatory on every scoped hit.
+        _verify_scoped_source_path(relative)
+        if contract != _scoped_tracked_head_reader_contract():
+            raise ValueError('scoped tracked-source reader changed during cache hit')
+        identity = source_identity.DevelopmentSourceIdentity(*fields)
+        return raw, identity
+
+    result = source_identity.read_tracked_head_blob(
+        repository_root, relative,
+        verify_worktree_filtered_identity=verify_worktree_filtered_identity)
+    raw, identity = result
+    if type(raw) is not bytes or type(identity) is not source_identity.DevelopmentSourceIdentity:
+        raise ValueError('scoped tracked-source reader returned an invalid result')
+    mode = (_tracked_head_mode(root, relative, identity.git_blob_sha1)
+            if expected_mode is not None else None)
+    if expected_mode is not None and mode != expected_mode:
+        raise ValueError('scoped tracked-source mode differs from its exact HEAD mode: ' + relative)
+    if verify_worktree_filtered_identity:
+        _verify_scoped_source_path(relative)
+    if contract != _scoped_tracked_head_reader_contract():
+        raise ValueError('scoped tracked-source reader changed during authenticated read')
+    fields = (identity.repository_relative_path, identity.git_blob_sha1,
+              identity.git_blob_payload_sha256,
+              identity.filtered_worktree_git_blob_sha1, identity.raw_worktree_sha256)
+    scope.store_derivation(key, contract, marshal.dumps((raw, fields, mode), 4))
+    return result
+
+
+_TRUSTED_SCOPED_TRACKED_HEAD_READER_CONTRACT = _scoped_tracked_head_reader_contract()
 
 
 def _tests_shard_v2_receipt(*, _reader=None):
@@ -301,6 +615,8 @@ def _predecessor_source_for_reader(path, raw, *, _reader=None):
     raw = _blob_reuse_predecessor(path, raw, _reader=reader)
     raw = _integrated_lineage_predecessor(path, raw, _reader=reader)
     raw = _tests_shard_v2_predecessor_source(path, raw, _reader=reader)
+    if path in CI_ASSERTION_V2_PATHS and path not in ROOT_PERFORMANCE_PATHS:
+        raw = _ci_assertion_predecessor_source(path, raw, _reader=reader)
     if path == B1_SOURCE:
         return _b1_predecessor_source(path, reader(path), _reader=reader)
     row = EDGES.get(path)
@@ -450,7 +766,7 @@ def install_context(context):
                 'fixture': row['fixture'], **row['before'], 'after': row['after']}
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **fixture_metadata)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **fixture_metadata)
-    restored = _pytest_restoration_receipt()
+    restored, restored_successor = _pytest_restoration_chain()
     restored_metadata = {PYTEST_RESTORATION_RECEIPT: safe.identity(read_blob(PYTEST_RESTORATION_RECEIPT))}
     for path, row in restored['source_forward'].items():
         restored_metadata[row['fixture']] = row['before']
@@ -462,6 +778,16 @@ def install_context(context):
                 'fixture': row['fixture'], **row['before'], 'after': row['after']}
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **restored_metadata)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **restored_metadata)
+    successor_metadata = {
+        PYTEST_RESTORATION_V2_RECEIPT: safe.identity(read_blob(PYTEST_RESTORATION_V2_RECEIPT))
+    }
+    for path, row in restored_successor['source_forward'].items():
+        successor_metadata[row['fixture']] = row['before']
+        context['BOOTSTRAP_AFTER'][path] = row['after']
+        if path in context['HISTORICAL_PREDECESSORS']:
+            context['HISTORICAL_PREDECESSORS'][path]['after'] = row['after']
+    context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **successor_metadata)
+    context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **successor_metadata)
     reuse = _blob_reuse_receipt()
     metadata = {BLOB_REUSE_RECEIPT: safe.identity(read_blob(BLOB_REUSE_RECEIPT))}
     for path, row in reuse['source_forward'].items():
@@ -611,9 +937,18 @@ PYTEST_RESTORATION_SHA = '8ff6d2fd25e7df474466e49fcea21d3b63844436ca80f1248833cb
 PYTEST_RESTORATION_PATHS = frozenset({'pytest.ini', 'tests/test_core_01d_checkpoint_e_completion_v2.py',
                                       'tests/test_p4_3a_workflow_capability_census.py',
                                       'scripts/audit_checkpoint_e_workflows.py'})
+PYTEST_RESTORATION_V2_RECEIPT = 'tests/fixtures/architecture/pytest_configuration_restoration_v2/receipt.json'
+PYTEST_RESTORATION_V2_SHA = '2dc3648d00c0bcd4daca56704846ad28116caa1baded8af955b2fdcfb21cce24'
+PYTEST_RESTORATION_V2_PATHS = frozenset({'scripts/audit_checkpoint_e_workflows.py'})
+PYTEST_RESTORATION_V2_PREDECESSOR_INVENTORY = {
+    'path': 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v376.json',
+    'generation': 376,
+    'canonical_sha256': '486e41d2e67bf844371683b5efcdd6cae7510e874889bb3416d2ff5713646102',
+    'rewritten': False,
+}
 
 
-def _pytest_restoration_receipt(*, _reader=None):
+def _pytest_restoration_v1_receipt(*, _reader=None):
     """Authenticate the forward restoration, retaining the published V1 bytes."""
     reader = read_blob if _reader is None else _reader
     raw = reader(PYTEST_RESTORATION_RECEIPT)
@@ -649,12 +984,106 @@ def _pytest_restoration_receipt(*, _reader=None):
     return value
 
 
+def _pytest_restoration_chain(*, _reader=None):
+    """Validate the immutable V1 edge, then its exact append-only V2 successor."""
+    reader = read_blob if _reader is None else _reader
+    owner = _ci_assertion_v2_scope_owner(reader)
+    if owner is None:
+        return _pytest_restoration_chain_uncached(reader)
+    contract = _ci_assertion_v2_contract_digest()
+    cache_key = 'pass-a.pytest-restoration-v2-chain'
+    cached = owner.load_derivation(cache_key, contract)
+    if cached is not None:
+        if contract != _ci_assertion_v2_contract_digest():
+            raise ValueError('pytest restoration verifier changed during scoped reuse')
+        prior, successor = json.loads(cached)
+        return prior, successor
+    result = _pytest_restoration_chain_uncached(reader)
+    if contract != _ci_assertion_v2_contract_digest():
+        raise ValueError('pytest restoration verifier changed during scoped authentication')
+    owner.store_derivation(cache_key, contract, safe.canonical([result[0], result[1]]))
+    return result
+
+
+def _pytest_restoration_chain_uncached(reader):
+    """Perform the complete immutable restoration V1->V2 proof."""
+    raw = reader(PYTEST_RESTORATION_V2_RECEIPT)
+    value = json.loads(raw)
+    if (safe.canonical(value) != raw or safe.canonical_digest(value) != PYTEST_RESTORATION_V2_SHA
+            or value.get('canonical_sha256') != PYTEST_RESTORATION_V2_SHA
+            or value.get('schema_version') != 2
+            or value.get('policy_id') != 'ATHENA_PYTEST_CONFIGURATION_RESTORATION_V2'
+            or set(value.get('source_forward', {})) != PYTEST_RESTORATION_V2_PATHS
+            or value.get('predecessor_inventory') != PYTEST_RESTORATION_V2_PREDECESSOR_INVENTORY
+            or value.get('predecessor_receipt') != {
+                'path': PYTEST_RESTORATION_RECEIPT,
+                'canonical_sha256': PYTEST_RESTORATION_SHA,
+                'rewritten': False,
+            }
+            or any(value.get(k) is not False for k in (
+                'authority_granted', 'current_workflow_authority_changed',
+                'historical_bytes_changed', 'provider_or_delivery_authority_changed',
+                'test_selection_changed', 'workflow_changed'))):
+        raise ValueError('pytest restoration V2 receipt drift')
+
+    _predecessor_raw, predecessor = _read_canonical_inventory_snapshot(
+        reader,
+        PYTEST_RESTORATION_V2_PREDECESSOR_INVENTORY,
+        'pytest restoration V2 A2 predecessor inventory drift',
+    )
+
+    # Project the current V2 bytes back to the exact V1 after-image solely while
+    # revalidating the immutable V1 receipt. No old receipt or fixture changes.
+    rows = value['source_forward']
+    def v1_reader(path):
+        if path in rows:
+            return reader(rows[path]['fixture'])
+        return reader(path)
+
+    prior = _pytest_restoration_v1_receipt(_reader=v1_reader)
+    for path, row in rows.items():
+        prior_row = prior['source_forward'].get(path)
+        before, current = reader(row['fixture']), reader(path)
+        if (prior_row is None or row.get('before') != prior_row['after']
+                or safe.identity(before) != row['before']
+                or safe.identity(current) != row['after']):
+            raise ValueError('pytest restoration V2 source identity drift: ' + path)
+        predecessor_sources = {item['path']: item['lf_source_sha256']
+                               for item in predecessor.get('source_identities', ())}
+        if predecessor_sources.get(path) != row['before']['source_sha256']:
+            raise ValueError('pytest restoration V2 source is not the V376 predecessor: ' + path)
+        expected = before
+        for patch in row.get('patches', ()):
+            old, new = patch['before'].encode('utf-8'), patch['after'].encode('utf-8')
+            if not old or expected.count(old) != 1:
+                raise ValueError('pytest restoration V2 source patch seam drift: ' + path)
+            expected = expected.replace(old, new)
+        if expected != current:
+            raise ValueError('pytest restoration V2 source exceeds exact recipe: ' + path)
+    return prior, value
+
+
+def _pytest_restoration_receipt(*, _reader=None):
+    """Return V1 only after authenticating the append-only current-source edge."""
+    return _pytest_restoration_chain(_reader=_reader)[0]
+
+
 def _pytest_restoration_predecessor(path, raw, *, _reader=None):
     reader = read_blob if _reader is None else _reader
     if path not in PYTEST_RESTORATION_PATHS:
         return raw
-    row = _pytest_restoration_receipt(_reader=reader)['source_forward'][path]
-    if safe.identity(raw) != row['after']:
+    prior, successor = _pytest_restoration_chain(_reader=reader)
+    row = prior['source_forward'][path]
+    observed = safe.identity(raw)
+    successor_row = successor['source_forward'].get(path)
+    current_identity = successor_row['after'] if successor_row is not None else row['after']
+    # A caller can compose the Pass-A V2 projection before this restoration
+    # projection. In that case it supplies exactly the authenticated V2
+    # predecessor (which the chain has already proved equals the immutable V1
+    # after-image), rather than the current V2 after-image. Accept only those
+    # two exact identities; arbitrary or stale source bytes still fail closed.
+    intermediate_identity = successor_row['before'] if successor_row is not None else None
+    if observed != current_identity and observed != intermediate_identity:
         raise ValueError('pytest restoration caller source identity drift: ' + path)
     return reader(row['fixture'])
 
@@ -1065,6 +1494,15 @@ def _root_performance_project_checked_source(path, current, *, _reader=None):
     reader = read_blob if _reader is None else _reader
     if path not in ROOT_PERFORMANCE_PATHS:
         return current
+    if path in CI_ASSERTION_V2_PATHS:
+        _prior, successor = _ci_assertion_v2_chain(_reader=reader)
+        successor_row = successor['source_forward'][path]
+        before_successor = reader(successor_row['fixture'])
+        if (current != reader(path)
+                or safe.identity(current) != successor_row['after']
+                or safe.identity(before_successor) != successor_row['before']):
+            raise ValueError('root performance V2 current/predecessor source drift: ' + path)
+        current = before_successor
     row = _root_performance_receipt(_reader=reader)['source_forward'][path]
     before = reader(row['fixture'])
     if (safe.identity(current) != row['after'] or safe.identity(before) != row['before']):
@@ -1128,9 +1566,14 @@ def root_performance_bootstrap_source(expected):
     if expected.count(marker) != 1:
         raise ValueError('root performance exact added auditor pin seam drift')
     result = expected.replace(marker, retained + marker)
-    if result != read_blob('sitecustomize.py'):
-        raise ValueError('root performance startup exceeds exact preserved-pin recipe')
-    return result
+    _prior, successor = _ci_assertion_v2_chain()
+    row = successor['source_forward']['sitecustomize.py']
+    before = read_blob(row['fixture'])
+    current = read_blob('sitecustomize.py')
+    if (result != before or safe.identity(before) != row['before']
+            or safe.identity(current) != row['after']):
+        raise ValueError('root performance startup exceeds exact preserved-pin successor')
+    return current
 
 
 class _SourceReadScope:
@@ -1144,6 +1587,7 @@ class _SourceReadScope:
         self.safe_reader = safe.read_blob
         self.runtime_reader = source_identity.read_tracked_head_blob
         self.sources: dict[str, bytes] = {}
+        self.derivation_bytes: dict[str, tuple[str, bytes]] = {}
 
     def read(self, path: str) -> bytes:
         if path not in self.sources:
@@ -1160,6 +1604,20 @@ class _SourceReadScope:
                 or source_identity.read_tracked_head_blob is not self.runtime_reader):
             raise ValueError('scoped source root or reader changed during authentication')
         safe._verify_scoped_source_inputs(self.root, self.head, self.sources)
+
+    def load_derivation(self, name: str, contract: str) -> bytes | None:
+        entry = self.derivation_bytes.get(name)
+        if entry is None:
+            return None
+        prior_contract, payload = entry
+        if prior_contract != contract or type(payload) is not bytes:
+            raise ValueError('Pass-A scoped derivation contract changed')
+        return payload
+
+    def store_derivation(self, name: str, contract: str, payload: bytes) -> None:
+        if type(payload) is not bytes:
+            raise ValueError('Pass-A scoped derivation payload is mutable')
+        self.derivation_bytes[name] = (contract, payload)
 
 
 # Source-only correction of exact-HEAD CI assertions. All predecessor receipts,
@@ -1178,9 +1636,47 @@ CI_ASSERTION_PREDECESSOR = {
     'rewritten': False,
 }
 CI_ASSERTION_FIXTURES = 'tests/fixtures/architecture/ci_assertion_source_successor_v1/'
+CI_ASSERTION_V2_RECEIPT = 'tests/fixtures/architecture/ci_assertion_source_successor_v2/receipt.json'
+CI_ASSERTION_V2_SHA256 = 'd83bcd7484071f47964b8ad3511bb4716cf0afea97ea56e2fb33d9ced6bbb34e'
+CI_ASSERTION_V2_SOURCE = __name__.replace('.', '/') + '.py'
+CI_ASSERTION_V2_FIXTURES = 'tests/fixtures/architecture/ci_assertion_source_successor_v2/'
+CI_ASSERTION_V2_PATHS = frozenset({
+    CI_ASSERTION_V2_SOURCE,
+    'scripts/audit_checkpoint_e_workflows.py',
+    'scripts/audit_core_01d_canonical_drive_transfer_completed_history.py',
+    'scripts/audit_core_01d_checkpoint_e_completion_v10.py',
+    'scripts/audit_core_01d_checkpoint_e_completion.py',
+    'scripts/audit_core_01d_checkpoint_e_completion_v6.py',
+    'scripts/audit_core_01d_checkpoint_e_completion_v7.py',
+    'scripts/audit_core_01d_checkpoint_e_completion_v8.py',
+    'scripts/audit_core_01d_checkpoint_e_completion_v9.py',
+    'scripts/audit_core_01d_exact_pr_trigger_disposition_b1.py',
+    'scripts/audit_core_01d_frozen_artifact_replay_authority_b5.py',
+    'scripts/audit_core_01d_historical_warehouse_transfer_authority_b2.py',
+    'scripts/audit_core_01d_owner_one_shot_issue_comment_authority_b3.py',
+    'scripts/audit_core_01d_port02c_trigger_authority_b6.py',
+    'scripts/audit_core_01d_retained_workflow_status_v2.py',
+    'scripts/audit_core_01d_retained_workflow_status_v4.py',
+    'scripts/audit_core_01d_win_either_half_trigger_authority_b7.py',
+    'scripts/audit_phase_a_pc_upcoming_retention_successor.py',
+    'scripts/audit_core_01d_ci_offline_transport_boundary.py',
+    'scripts/audit_core_01d_checkpoint_e_completion_v2.py',
+    'scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py',
+    'scripts/audit_phase_a_b4_test_source_successor.py',
+    'scripts/audit_data_01c_restore_portability.py',
+    'scripts/audit_data_01c_app_store_complete.py',
+    'sitecustomize.py',
+    'tests/test_core_01d_ci_offline_transport_inventory_evolution.py',
+})
+CI_ASSERTION_V2_PREDECESSOR_INVENTORY = {
+    'path': 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v376.json',
+    'generation': 376,
+    'canonical_sha256': '486e41d2e67bf844371683b5efcdd6cae7510e874889bb3416d2ff5713646102',
+    'rewritten': False,
+}
 
 
-def _ci_assertion_successor_receipt(*, _reader=None):
+def _ci_assertion_v1_successor_receipt(*, _reader=None):
     """Authenticate the frozen V375 anchor and fixed, authority-neutral scope."""
     reader = read_blob if _reader is None else _reader
     try:
@@ -1233,23 +1729,251 @@ def _ci_assertion_successor_receipt(*, _reader=None):
     return value
 
 
+def _ci_assertion_v2_contract_digest():
+    """Bind the exact local validator seams without dynamic import-graph state."""
+    digest = hashlib.sha256()
+    for name in (
+        '_ci_assertion_v2_chain', '_ci_assertion_v2_chain_uncached',
+        '_ci_assertion_v1_successor_receipt', '_read_canonical_inventory_snapshot',
+        '_canonical_inventory_snapshot', '_inventory_validation_contract',
+        '_ci_assertion_v2_scope_owner', '_active_checkpoint_derivation_scope',
+        '_scoped_source_read_contract', '_verify_scoped_source_path',
+        '_pytest_restoration_chain', '_pytest_restoration_chain_uncached',
+        '_pytest_restoration_v1_receipt', '_SourceReadScope.read',
+        '_SourceReadScope.verify', '_SourceReadScope.load_derivation',
+        '_SourceReadScope.store_derivation', 'read_blob',
+    ):
+        if name.startswith('_SourceReadScope.'):
+            value = getattr(_SourceReadScope, name.split('.', 1)[1])
+        else:
+            value = globals()[name]
+        code = getattr(value, '__code__', None)
+        digest.update(name.encode('utf-8') + b'\0')
+        digest.update(repr((id(value), id(code), getattr(value, '__defaults__', None),
+                            getattr(value, '__kwdefaults__', None))).encode('utf-8'))
+        # Code objects are immutable and held by the function for this scope.
+        # Their identity detects __code__ replacement without marshal serializing
+        # CPython's adaptive/quickened execution state differently after hot calls.
+    for name in (
+        'CI_ASSERTION_RECEIPT', 'CI_ASSERTION_SHA256', 'CI_ASSERTION_PATHS',
+        'CI_ASSERTION_PREDECESSOR', 'CI_ASSERTION_FIXTURES',
+        'CI_ASSERTION_V2_RECEIPT', 'CI_ASSERTION_V2_SHA256',
+        'CI_ASSERTION_V2_SOURCE', 'CI_ASSERTION_V2_FIXTURES',
+        'CI_ASSERTION_V2_PATHS', 'CI_ASSERTION_V2_PREDECESSOR_INVENTORY',
+        'PYTEST_RESTORATION_RECEIPT', 'PYTEST_RESTORATION_SHA',
+        'PYTEST_RESTORATION_PATHS', 'PYTEST_RESTORATION_V2_RECEIPT',
+        'PYTEST_RESTORATION_V2_SHA', 'PYTEST_RESTORATION_V2_PATHS',
+        'PYTEST_RESTORATION_V2_PREDECESSOR_INVENTORY',
+    ):
+        digest.update(name.encode('utf-8') + b'\0' + repr(globals()[name]).encode('utf-8'))
+    for function in (safe.canonical, safe.canonical_digest, safe.identity,
+                     json.loads, json.dumps, json.JSONDecoder,
+                     json.JSONDecoder.__init__, json.JSONDecoder.decode,
+                     json.JSONDecoder.raw_decode, json.JSONEncoder,
+                     json.JSONEncoder.__init__, json.JSONEncoder.encode,
+                     json.JSONEncoder.iterencode, hashlib.sha1, hashlib.sha256):
+        digest.update(repr((id(function), id(getattr(function, '__code__', None)),
+                            getattr(function, '__defaults__', None),
+                            getattr(function, '__kwdefaults__', None))).encode('utf-8'))
+    for value in (
+        safe,
+        json, hashlib, marshal,
+        safe.canonical.__globals__.get('json'),
+        safe.canonical_digest.__globals__.get('canonical'),
+        safe.canonical_digest.__globals__.get('hashlib'),
+        safe.identity.__globals__.get('hashlib'),
+        marshal.dumps, marshal.loads,
+    ):
+        digest.update(repr((type(value).__module__, type(value).__qualname__, id(value))).encode('utf-8'))
+    self = globals()['_ci_assertion_v2_contract_digest']
+    digest.update(repr((id(self), id(self.__code__), self.__defaults__,
+                        self.__kwdefaults__)).encode('utf-8'))
+    return digest.hexdigest()
+
+
+def _ci_assertion_v2_scope_owner(reader):
+    # A short-lived Pass-A SourceReadScope still verifies its own observed
+    # paths on exit, but the immutable V1/V2 receipt derivation can be shared
+    # by the enclosing checkpoint-master scope. This prevents each nested
+    # reader scope from re-running the same eight-file historical chain.
+    checkpoint_scope = _active_checkpoint_derivation_scope()
+    if checkpoint_scope is not None:
+        return checkpoint_scope
+    owner = getattr(reader, '__self__', None)
+    if isinstance(owner, _SourceReadScope):
+        return owner
+    return None
+
+
+def _ci_assertion_v2_chain(*, _reader=None):
+    """Authenticate V2 once per bounded source/audit scope, never globally.
+
+    The cached value is canonical immutable receipt data, not a PASS verdict.
+    SourceReadScope verifies every byte read before returning to its caller;
+    checkpoint scopes recheck HEAD, index, worktree, Git config, A2 bytes and
+    their validator contracts on each hit and at scope exit.
+    """
+    reader = read_blob if _reader is None else _reader
+    owner = _ci_assertion_v2_scope_owner(reader)
+    if owner is None:
+        return _ci_assertion_v2_chain_uncached(reader)
+    contract = _ci_assertion_v2_contract_digest()
+    cached = owner.load_derivation('pass-a.ci-assertion-v2-chain', contract)
+    if cached is not None:
+        if contract != _ci_assertion_v2_contract_digest():
+            raise ValueError('CI assertion V2 verifier changed during scoped reuse')
+        prior, successor = json.loads(cached)
+        return prior, successor
+    result = _ci_assertion_v2_chain_uncached(reader)
+    if contract != _ci_assertion_v2_contract_digest():
+        raise ValueError('CI assertion V2 verifier changed during scoped authentication')
+    owner.store_derivation('pass-a.ci-assertion-v2-chain', contract,
+                           safe.canonical([result[0], result[1]]))
+    return result
+
+
+def _ci_assertion_v2_chain_uncached(reader):
+    """Authenticate the V1 receipt through its exact source, then the V2 edge."""
+    try:
+        raw = reader(CI_ASSERTION_V2_RECEIPT)
+        value = json.loads(raw)
+        _inventory_raw, inventory = _read_canonical_inventory_snapshot(
+            reader,
+            CI_ASSERTION_V2_PREDECESSOR_INVENTORY,
+            'CI assertion V2 receipt or V376 predecessor drift',
+        )
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ValueError('CI assertion V2 receipt or predecessor cannot be read') from exc
+    if (safe.canonical(value) != raw or safe.canonical_digest(value) != CI_ASSERTION_V2_SHA256
+            or value.get('canonical_sha256') != CI_ASSERTION_V2_SHA256
+            or value.get('policy_id') != 'ATHENA_PHASE_A_CI_ASSERTION_SOURCE_SUCCESSOR_V2'
+            or type(value.get('schema_version')) is not int or value['schema_version'] != 2
+            or set(value) != {
+                'authority_granted', 'canonical_sha256', 'historical_bytes_changed',
+                'source_forward', 'policy_id', 'predecessor_inventory',
+                'predecessor_receipt', 'provider_or_delivery_authority_changed',
+                'reason', 'schema_version', 'test_selection_changed', 'workflow_changed'}
+            or value.get('predecessor_receipt') != {
+                'path': CI_ASSERTION_RECEIPT, 'canonical_sha256': CI_ASSERTION_SHA256,
+                'rewritten': False}
+            or value.get('predecessor_inventory') != CI_ASSERTION_V2_PREDECESSOR_INVENTORY
+            or any(value.get(key) is not False for key in (
+                'authority_granted', 'historical_bytes_changed',
+                'provider_or_delivery_authority_changed', 'test_selection_changed',
+                'workflow_changed'))
+            or inventory.get('canonical_sha256') != CI_ASSERTION_V2_PREDECESSOR_INVENTORY['canonical_sha256']
+            or inventory.get('generation') != 376):
+        raise ValueError('CI assertion V2 receipt or V376 predecessor drift')
+
+    sources = {item['path']: item['lf_source_sha256']
+               for item in inventory.get('source_identities', ())}
+    rows = value.get('source_forward')
+    if type(rows) is not dict or set(rows) != CI_ASSERTION_V2_PATHS:
+        raise ValueError('CI assertion V2 source path set drift')
+    self_fixture = None
+    for path, row in rows.items():
+        expected_fixture = CI_ASSERTION_V2_FIXTURES + path.replace('/', '--') + '.before.txt'
+        if (type(row) is not dict or row.get('fixture') != expected_fixture
+                or path not in sources or sources[path] != row.get('before', {}).get('source_sha256')):
+            raise ValueError('CI assertion V2 source predecessor drift: ' + path)
+        fixture = reader(row['fixture'])
+        if safe.identity(fixture) != row['before']:
+            raise ValueError('CI assertion V2 source fixture identity drift: ' + path)
+        if path == CI_ASSERTION_V2_SOURCE:
+            if set(row) != {'fixture', 'before', 'recipe'}:
+                raise ValueError('CI assertion V2 Pass-A recipe shape drift')
+            recipe = row['recipe']
+            token = '<CI_ASSERTION_' + 'V2_DIGEST>'
+            if (type(recipe) is not dict or set(recipe) != {'before', 'after'}
+                    or type(recipe['before']) is not str or type(recipe['after']) is not str
+                    or recipe['before'].encode('utf-8') != fixture
+                    or recipe['after'].count(token) != 1
+                    or recipe['after'].replace(token, CI_ASSERTION_V2_SHA256).encode('utf-8')
+                        != reader(path)):
+                raise ValueError('CI assertion V2 Pass-A exact source recipe drift')
+            self_fixture = fixture
+            continue
+        if set(row) != {'fixture', 'before', 'after', 'patches'}:
+            raise ValueError('CI assertion V2 source recipe shape drift: ' + path)
+        current = reader(path)
+        if safe.identity(current) != row['after']:
+            raise ValueError('CI assertion V2 current source identity drift: ' + path)
+        expected = fixture
+        for patch in row['patches']:
+            old, new = patch['before'].encode('utf-8'), patch['after'].encode('utf-8')
+            if not old or expected.count(old) != 1:
+                raise ValueError('CI assertion V2 source patch seam drift: ' + path)
+            expected = expected.replace(old, new)
+        if expected != current:
+            raise ValueError('CI assertion V2 source exceeds its exact recipe: ' + path)
+
+    # Project only the current Pass-A file back to its exact V1 after-image
+    # while the immutable V1 receipt is independently revalidated.
+    def v1_reader(path):
+        if path == CI_ASSERTION_V2_SOURCE:
+            return self_fixture
+        return reader(path)
+
+    prior = _ci_assertion_v1_successor_receipt(_reader=v1_reader)
+    return prior, value
+
+
+def _ci_assertion_successor_receipt(*, _reader=None):
+    """Return V1 only after its append-only V2 current-source edge verifies."""
+    return _ci_assertion_v2_chain(_reader=_reader)[0]
+
+
 def _ci_assertion_predecessor_source(path, raw, *, _reader=None):
     """Invert this exact source edge before consulting earlier source views."""
     reader = read_blob if _reader is None else _reader
-    if path not in CI_ASSERTION_PATHS:
+    if path not in CI_ASSERTION_PATHS and path not in CI_ASSERTION_V2_PATHS:
         return raw
-    row = _ci_assertion_successor_receipt(_reader=reader)['source_forward'][path]
-    current, before = reader(path), reader(row['fixture'])
-    if (raw != current or safe.identity(current) != row['after']
+    prior, successor = _ci_assertion_v2_chain(_reader=reader)
+    successor_row = successor['source_forward'].get(path)
+    current = reader(path)
+    if raw != current:
+        raise ValueError('CI assertion current source read changed: ' + path)
+    if successor_row is not None:
+        before_successor = reader(successor_row['fixture'])
+        if (safe.identity(current) != successor_row['after']
+                or safe.identity(before_successor) != successor_row['before']):
+            raise ValueError('CI assertion V2 current or predecessor source drift: ' + path)
+        if path == CI_ASSERTION_V2_SOURCE:
+            recipe = successor_row.get('recipe')
+            token = '<CI_ASSERTION_' + 'V2_DIGEST>'
+            if (set(successor_row) != {'fixture', 'before', 'recipe'}
+                    or type(recipe) is not dict or set(recipe) != {'before', 'after'}
+                    or recipe['before'].encode('utf-8') != before_successor
+                    or recipe['after'].count(token) != 1
+                    or recipe['after'].replace(token, CI_ASSERTION_V2_SHA256).encode('utf-8')
+                        != current):
+                raise ValueError('CI assertion V2 Pass-A predecessor recipe drift: ' + path)
+        else:
+            reconstructed = before_successor
+            for patch in successor_row['patches']:
+                old, new = patch['before'].encode(), patch['after'].encode()
+                if not old or reconstructed.count(old) != 1:
+                    raise ValueError('CI assertion V2 source patch seam drift: ' + path)
+                reconstructed = reconstructed.replace(old, new)
+            if reconstructed != current:
+                raise ValueError('CI assertion V2 source exceeds its exact recipe: ' + path)
+        projected = before_successor
+    else:
+        projected = current
+    if path not in CI_ASSERTION_PATHS:
+        return projected
+    row = prior['source_forward'][path]
+    before = reader(row['fixture'])
+    if (safe.identity(projected) != row['after']
             or safe.identity(before) != row['before']):
-        raise ValueError('CI assertion current or predecessor source drift: ' + path)
+        raise ValueError('CI assertion V1 current or predecessor source drift: ' + path)
     expected = before
     for patch in row['patches']:
         old, new = patch['before'].encode(), patch['after'].encode()
         if not old or expected.count(old) != 1:
-            raise ValueError('CI assertion source patch seam drift: ' + path)
+            raise ValueError('CI assertion V1 source patch seam drift: ' + path)
         expected = expected.replace(old, new)
-    if expected != current:
+    if expected != projected:
         raise ValueError('CI assertion source exceeds its exact recipe: ' + path)
     return before
 
@@ -1264,8 +1988,21 @@ def _authenticate_ci_assertion_successor(*, _reader=None):
 
 def install_ci_assertion_context(context):
     value = _authenticate_ci_assertion_successor()
+    _prior, successor = _ci_assertion_v2_chain()
     metadata = {CI_ASSERTION_RECEIPT: safe.identity(read_blob(CI_ASSERTION_RECEIPT)),
                 value['pass_a_predecessor']['fixture']: value['pass_a_predecessor']['identity']}
+    metadata[CI_ASSERTION_V2_RECEIPT] = safe.identity(read_blob(CI_ASSERTION_V2_RECEIPT))
+    for path, row in successor['source_forward'].items():
+        metadata[row['fixture']] = row['before']
+        after = safe.identity(read_blob(path)) if path == CI_ASSERTION_V2_SOURCE else row['after']
+        context['BOOTSTRAP_AFTER'][path] = after
+        if path in context['HISTORICAL_PREDECESSORS']:
+            context['HISTORICAL_PREDECESSORS'][path]['after'] = after
+        elif path.endswith('.py') or path == 'sitecustomize.py':
+            context['HISTORICAL_PREDECESSORS'][path] = {
+                'fixture': row['fixture'], **row['before'], 'after': after}
+        if path in context['ADDED_PYTHON_IDENTITIES']:
+            context['ADDED_PYTHON_IDENTITIES'][path] = after
     for path, row in value['source_forward'].items():
         metadata[row['fixture']] = row['before']
         context['BOOTSTRAP_AFTER'][path] = row['after']

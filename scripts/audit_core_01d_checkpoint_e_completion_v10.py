@@ -4,10 +4,13 @@ from __future__ import annotations
 import argparse
 from copy import deepcopy
 import json
+import sys
 from typing import Any
 
 from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+from scripts import audit_core_01d_checkpoint_e_completion_v8 as completion_v8
 from scripts import audit_core_01d_checkpoint_e_completion_v9 as completion_v9
+from scripts import audit_core_01d_port02c_trigger_authority_b6 as b6
 from scripts import audit_core_01d_win_either_half_trigger_authority_b7 as b7
 
 ROOT = boundary.ROOT
@@ -25,6 +28,18 @@ def require(condition: bool, reason: str) -> None:
 
 
 def build_receipt() -> dict[str, Any]:
+    with b6._b6_source_inventory_scope():
+        with b7._b7_source_inventory_scope():
+            with completion_v8._bounded_receipt_scope(
+                    "checkpoint-b5", (completion_v8.b5,), completion_v8._TRUSTED_B5_CONTRACT):
+                with completion_v8._bounded_receipt_scope(
+                        "checkpoint-b6", (b6,), _TRUSTED_B6_CONTRACT):
+                    with completion_v8._bounded_receipt_scope(
+                            "checkpoint-v9", (completion_v9, b7), _TRUSTED_V9_B7_CONTRACT):
+                        return _build_receipt()
+
+
+def _build_receipt() -> dict[str, Any]:
     parent = completion_v9.validate_receipt()
     require(parent.get("canonical_sha256") == PARENT_SHA,
             "immutable Completion V9 identity drift")
@@ -138,8 +153,16 @@ def validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
     value = boundary.read(RECEIPT_PATH) if value is None else value
     require((ROOT / RECEIPT_PATH).read_bytes() == boundary.canonical(value),
             "Completion V10 is not canonical")
-    expected = build_receipt()
-    require(value == expected, "Completion V10 differs from immutable V9 plus B7")
+    scope = completion_v8._active_receipt_scope("checkpoint-v10")
+    cached = None if scope is None else scope.load()
+    if cached is None:
+        expected = build_receipt()
+        require(value == expected, "Completion V10 differs from immutable V9 plus B7")
+        if scope is not None:
+            scope.store(value)
+    else:
+        require(value == cached,
+                "Completion V10 changed after its same-call authenticated derivation")
     require(value["scope"] == {
         "inherited_unresolved_count": 1,
         "target_surface_count": 1,
@@ -170,20 +193,23 @@ def validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def audit() -> dict[str, Any]:
-    value = validate_receipt()
-    return {
-        "result": "PASS",
-        "receipt_sha256": value["canonical_sha256"],
-        "resolved_target_count": 1,
-        "remaining_unreviewed_surface_count": 0,
-        "remaining": [],
-        "remaining_blockers": [],
-        "checkpoint_e": "COMPLETE",
-        "p4_4": "COMPLETE",
-        "criterion_11": True,
-        "criterion_14": True,
-        "terminal": value["terminal"],
-    }
+    with completion_v8._bounded_receipt_scope(
+            "checkpoint-v10", (sys.modules[__name__], completion_v9, b7, b6),
+            _TRUSTED_V10_CONTRACT):
+        value = validate_receipt()
+        return {
+            "result": "PASS",
+            "receipt_sha256": value["canonical_sha256"],
+            "resolved_target_count": 1,
+            "remaining_unreviewed_surface_count": 0,
+            "remaining": [],
+            "remaining_blockers": [],
+            "checkpoint_e": "COMPLETE",
+            "p4_4": "COMPLETE",
+            "criterion_11": True,
+            "criterion_14": True,
+            "terminal": value["terminal"],
+        }
 
 
 def main() -> None:
@@ -196,6 +222,13 @@ def main() -> None:
         print(value["canonical_sha256"])
     else:
         print(json.dumps(audit(), sort_keys=True))
+
+
+_TRUSTED_V9_B7_CONTRACT = completion_v8._auditor_contract_digest(
+    completion_v9, b7)
+_TRUSTED_B6_CONTRACT = completion_v8._auditor_contract_digest(b6)
+_TRUSTED_V10_CONTRACT = completion_v8._auditor_contract_digest(
+    sys.modules[__name__], completion_v9, b7, b6)
 
 
 if __name__ == "__main__":

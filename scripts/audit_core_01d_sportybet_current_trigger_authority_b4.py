@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 from typing import Any
 
 import yaml
@@ -454,6 +455,18 @@ def _validate_source_semantics() -> None:
 
 
 def build_source_inventory() -> dict[str, Any]:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    scope = receipt_scope._active_receipt_scope("checkpoint-b4-source-inventory")
+    cached = None if scope is None else scope.load()
+    if cached is not None:
+        return cached
+    value = _build_source_inventory()
+    if scope is not None:
+        scope.store(value)
+    return value
+
+
+def _build_source_inventory() -> dict[str, Any]:
     _validate_source_semantics()
     rows = [_identity(path) for path in sorted(SOURCE_PINS)]
     workflow_contracts = {}
@@ -732,6 +745,14 @@ def validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def audit() -> dict[str, Any]:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    with receipt_scope._bounded_receipt_scope(
+            "checkpoint-b4-source-inventory", (sys.modules[__name__],),
+            receipt_scope._TRUSTED_B4_CONTRACT):
+        return _audit()
+
+
+def _audit() -> dict[str, Any]:
     validate_source_inventory()
     value = validate_receipt()
     return {"result": "PASS", "receipt_sha256": value["canonical_sha256"],

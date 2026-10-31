@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from copy import deepcopy
 import json
+import sys
 from typing import Any
 
 from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
@@ -26,6 +27,15 @@ def require(condition: bool, reason: str) -> None:
 
 
 def build_receipt() -> dict[str, Any]:
+    with b6._b6_source_inventory_scope():
+        with completion_v8._bounded_receipt_scope(
+                "checkpoint-b5", (completion_v8.b5,), completion_v8._TRUSTED_B5_CONTRACT):
+            with completion_v8._bounded_receipt_scope(
+                    "checkpoint-v8", (completion_v8, b6), _TRUSTED_V8_B6_CONTRACT):
+                return _build_receipt()
+
+
+def _build_receipt() -> dict[str, Any]:
     parent = completion_v8.validate_receipt()
     require(parent.get("canonical_sha256") == PARENT_SHA,
             "immutable Completion V8 identity drift")
@@ -128,8 +138,15 @@ def validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
     value = boundary.read(RECEIPT_PATH) if value is None else value
     require((ROOT / RECEIPT_PATH).read_bytes() == boundary.canonical(value),
             "Completion V9 is not canonical")
-    expected = build_receipt()
-    require(value == expected, "Completion V9 differs from immutable V8 plus the B6 overlay")
+    scope = completion_v8._active_receipt_scope("checkpoint-v9")
+    cached = None if scope is None else scope.load()
+    if cached is None:
+        expected = build_receipt()
+        require(value == expected,
+                "Completion V9 differs from immutable V8 plus the B6 overlay")
+    else:
+        require(value == cached,
+                "Completion V9 changed after its same-call authenticated derivation")
     require(value["scope"]["inherited_unresolved_count"] == 3
             and value["scope"]["target_surface_count"] == 2
             and value["scope"]["resolved_target_count"] == 2
@@ -154,24 +171,32 @@ def validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
             and value["workflow_deletion_count"] == 0
             and value["trigger_edit_count"] == 0,
             "Completion V9 changed workflow/evolution/retirement invariants")
+    if scope is not None and cached is None:
+        scope.store(value)
     return value
 
 
 def audit() -> dict[str, Any]:
-    value = validate_receipt()
-    return {
-        "result": "PASS",
-        "receipt_sha256": value["canonical_sha256"],
-        "resolved_target_count": value["scope"]["resolved_target_count"],
-        "remaining_unreviewed_surface_count": value["scope"]["remaining_global_unreviewed_surface_count"],
-        "remaining": value["unreviewed_authority_surfaces"],
-        "remaining_blockers": value["remaining_blocker_ids"],
-        "checkpoint_e": value["checkpoint_e_status"],
-        "p4_4": value["p4_4_status"],
-        "criterion_11": value["checkpoint_criteria"]["all_retained_workflow_authority_and_dynamic_reachability_review_complete"],
-        "criterion_14": value["checkpoint_criteria"]["no_unknown_current_artifact_or_notification_authority"],
-        "terminal": value["terminal"],
-    }
+    # A standalone public V9 audit must own the outer lifetime too.  Reuse the
+    # same exact V9+B7 contract/key used when V10 derives its parent.
+    from scripts import audit_core_01d_checkpoint_e_completion_v10 as completion_v10
+    with completion_v8._bounded_receipt_scope(
+            "checkpoint-v9", (sys.modules[__name__], completion_v10.b7),
+            completion_v10._TRUSTED_V9_B7_CONTRACT):
+        value = validate_receipt()
+        return {
+            "result": "PASS",
+            "receipt_sha256": value["canonical_sha256"],
+            "resolved_target_count": value["scope"]["resolved_target_count"],
+            "remaining_unreviewed_surface_count": value["scope"]["remaining_global_unreviewed_surface_count"],
+            "remaining": value["unreviewed_authority_surfaces"],
+            "remaining_blockers": value["remaining_blocker_ids"],
+            "checkpoint_e": value["checkpoint_e_status"],
+            "p4_4": value["p4_4_status"],
+            "criterion_11": value["checkpoint_criteria"]["all_retained_workflow_authority_and_dynamic_reachability_review_complete"],
+            "criterion_14": value["checkpoint_criteria"]["no_unknown_current_artifact_or_notification_authority"],
+            "terminal": value["terminal"],
+        }
 
 
 def main() -> None:
@@ -184,6 +209,10 @@ def main() -> None:
         print(value["canonical_sha256"])
     else:
         print(json.dumps(audit(), sort_keys=True))
+
+
+_TRUSTED_V8_B6_CONTRACT = completion_v8._auditor_contract_digest(
+    completion_v8, b6)
 
 
 if __name__ == "__main__":

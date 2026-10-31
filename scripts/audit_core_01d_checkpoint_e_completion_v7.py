@@ -98,13 +98,23 @@ def build_receipt() -> dict[str, Any]:
 def validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
     value = boundary.read(RECEIPT_PATH) if value is None else value
     require((ROOT / RECEIPT_PATH).read_bytes() == boundary.canonical(value), "Completion V7 is not canonical")
-    require(value == build_receipt(), "Completion V7 differs from immutable V6 plus the authenticated B4 overlay")
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    scope = receipt_scope._active_receipt_scope("checkpoint-v7")
+    cached = None if scope is None else scope.load()
+    if cached is None:
+        require(value == build_receipt(),
+                "Completion V7 differs from immutable V6 plus the authenticated B4 overlay")
+    else:
+        require(value == cached,
+                "Completion V7 changed after its same-call authenticated derivation")
     require(value["scope"]["remaining_global_unreviewed_surface_count"] == 16 - value["scope"]["resolved_target_count"],
             "Completion V7 unresolved count is not derived")
     require(value["checkpoint_e_status"] == value["p4_4_status"] == "INCOMPLETE", "B4 cannot complete Checkpoint E/P4.4")
     require(value["checkpoint_criteria"]["all_retained_workflow_authority_and_dynamic_reachability_review_complete"] is False
             and value["checkpoint_criteria"]["no_unknown_current_artifact_or_notification_authority"] is False,
             "Completion V7 criteria 11/14 must remain false")
+    if scope is not None and cached is None:
+        scope.store(value)
     return value
 
 

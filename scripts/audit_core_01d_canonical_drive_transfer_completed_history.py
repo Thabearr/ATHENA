@@ -16,6 +16,14 @@ RECEIPT_PATH = "artifacts/architecture/core_01d_canonical_drive_transfer_complet
 
 
 def build_receipt(status: dict | None = None) -> dict:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    with receipt_scope._bounded_receipt_scope(
+            "drive-transfer-v4-sources", (sys.modules[__name__], v4, v3),
+            _TRUSTED_DRIVE_TRANSFER_CONTRACT):
+        return _build_receipt(status)
+
+
+def _build_receipt(status: dict | None = None) -> dict:
     status = v4.build_receipt() if status is None else status
     snapshot = v4.authenticate_sources()
     receipt = {
@@ -98,6 +106,14 @@ def validate_receipt(value: dict, expected: dict | None = None) -> None:
 
 
 def audit() -> dict:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    with receipt_scope._bounded_receipt_scope(
+            "drive-transfer-v4-sources", (sys.modules[__name__], v4, v3),
+            _TRUSTED_DRIVE_TRANSFER_CONTRACT):
+        return _audit()
+
+
+def _audit() -> dict:
     status = v4.build_receipt()
     v4.validate_receipt(roles.strict_json((ROOT / v4.RECEIPT_PATH).read_bytes()), status)
     value = roles.strict_json((ROOT / RECEIPT_PATH).read_bytes())
@@ -125,6 +141,11 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, AssertionError, ValueError, TypeError, KeyError) as exc:
         print(json.dumps({"result": "BLOCKED", "error": str(exc)}), file=sys.stderr)
         return 1
+
+
+from scripts import audit_core_01d_checkpoint_e_completion_v8 as _receipt_scope_module
+_TRUSTED_DRIVE_TRANSFER_CONTRACT = _receipt_scope_module._auditor_contract_digest(
+    sys.modules[__name__], v4, v3)
 
 
 if __name__ == "__main__":

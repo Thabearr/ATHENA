@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 
 from scripts.qualify_data_01c_restore_portability import canonical, NODEIDS, PHASES, validate_receipt
 
@@ -181,7 +182,7 @@ def successor_context():
     return _successor_context(expected_e3_native_workflow())
 
 
-def authenticate_workflow():
+def _authenticate_workflow_uncached():
     for path, digest in FROZEN_EVIDENCE.items():
         if hashlib.sha256((ROOT / path).read_bytes().replace(b"\r\n", b"\n")).hexdigest() != digest:
             raise ValueError("frozen PORT-02C historical evidence drift: " + path)
@@ -219,6 +220,22 @@ def authenticate_workflow():
         if identity(source)["git_blob_sha1"] != expected_blob:
             raise ValueError("unrelated workflow changed in D5 successor: " + row["name"])
     return after, tree
+
+
+def authenticate_workflow():
+    """Authenticate current workflow state, reusing only within checkpoint scope."""
+    if authenticate_workflow.__code__ is not _TRUSTED_AUTHENTICATE_WORKFLOW_CODE:
+        raise ValueError("PORT-02C workflow verifier code changed")
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    scope = pass_a._active_checkpoint_derivation_scope()
+    if scope is not None and getattr(scope, "enabled", False):
+        from scripts import audit_checkpoint_e_workflows as checkpoint
+        return checkpoint._scoped_portability_authenticate_workflow()
+    return _authenticate_workflow_uncached()
+
+
+_TRUSTED_AUTHENTICATE_WORKFLOW_CODE = authenticate_workflow.__code__
+_TRUSTED_AUTHENTICATE_WORKFLOW = authenticate_workflow
 
 
 def authenticated_current_workflow_tree():

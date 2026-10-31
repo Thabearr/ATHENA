@@ -9,12 +9,14 @@ from __future__ import annotations
 import argparse
 from copy import deepcopy
 from datetime import datetime
+from contextlib import contextmanager
 import hashlib
 import json
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+import sys
 from typing import Any
 
 import yaml
@@ -496,6 +498,23 @@ def _source_edges(path: str) -> list[str]:
 
 
 def build_source_inventory() -> dict[str, Any]:
+    scope = completion_v8._active_receipt_scope("checkpoint-b6-source-inventory")
+    if scope is not None:
+        cached = scope.load_derivation(
+            "b6.source-inventory", _b6_source_inventory_contract())
+        if cached is not None:
+            value = json.loads(cached)
+            require(boundary.canonical(value) == cached,
+                    "B6 scoped source-inventory bytes are not canonical")
+            return value
+        value = _build_source_inventory()
+        scope.store_derivation("b6.source-inventory", _b6_source_inventory_contract(),
+                               boundary.canonical(value))
+        return value
+    return _build_source_inventory()
+
+
+def _build_source_inventory() -> dict[str, Any]:
     from scripts import audit_app_01a_local_shell as app01a
     _, historical = app01a.authenticated_historical_paths()
     entries = _base_tree_entries()
@@ -1041,6 +1060,11 @@ def _target_rows(contract: dict[str, Any], caller: dict[str, Any], runtime: dict
 
 
 def build_receipt() -> dict[str, Any]:
+    with _b6_source_inventory_scope():
+        return _build_receipt()
+
+
+def _build_receipt() -> dict[str, Any]:
     parent, b5_value, a2_v7 = _validate_inherited_state()
     require(a2_v7["canonical_sha256"] == A2_V7_SHA, "A2 V7 predecessor identity changed")
     source_inventory = validate_source_inventory()
@@ -1158,10 +1182,23 @@ def build_receipt() -> dict[str, Any]:
 
 
 def validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
+    with _b6_source_inventory_scope():
+        return _validate_receipt(value)
+
+
+def _validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
     value = boundary.read(RECEIPT_PATH) if value is None else value
     require((ROOT / RECEIPT_PATH).read_bytes() == _canonical(value), "B6 receipt is not canonical")
-    expected = build_receipt()
-    require(value == expected, "B6 receipt differs from exact source, metadata, and V8 overlay")
+    scope = completion_v8._active_receipt_scope("checkpoint-b6")
+    cached = None if scope is None else scope.load()
+    if cached is None:
+        expected = build_receipt()
+        require(value == expected, "B6 receipt differs from exact source, metadata, and V8 overlay")
+        if scope is not None:
+            scope.store(value)
+    else:
+        require(value == cached,
+                "B6 receipt changed after its same-call authenticated derivation")
     require(value["target_count"] == 2 and value["resolved_target_count"] == 2
             and value["partial_target_count"] == 0, "B6 exact two-target scope or resolution count drift")
     require(value["global_unknown_after"] == value["global_unknown_before"] - value["resolved_target_count"] == 1,
@@ -1177,6 +1214,11 @@ def validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def audit() -> dict[str, Any]:
+    with _b6_source_inventory_scope():
+        return _audit()
+
+
+def _audit() -> dict[str, Any]:
     value = validate_receipt()
     return {
         "result": "PASS",
@@ -1210,6 +1252,22 @@ def main() -> None:
         print(value["canonical_sha256"])
     else:
         print(json.dumps(audit(), sort_keys=True))
+
+
+def _b6_source_inventory_contract() -> str:
+    return _TRUSTED_B6_SOURCE_INVENTORY_CONTRACT
+
+
+@contextmanager
+def _b6_source_inventory_scope():
+    with completion_v8._bounded_receipt_scope(
+            "checkpoint-b6-source-inventory", (sys.modules[__name__],),
+            _b6_source_inventory_contract()) as scope:
+        yield scope
+
+
+_TRUSTED_B6_SOURCE_INVENTORY_CONTRACT = completion_v8._auditor_contract_digest(
+    sys.modules[__name__])
 
 
 if __name__ == "__main__":

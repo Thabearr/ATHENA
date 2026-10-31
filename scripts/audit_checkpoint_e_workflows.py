@@ -9,11 +9,14 @@ from __future__ import annotations
 import argparse
 import ast
 import base64
+from contextlib import ExitStack, contextmanager
 from datetime import datetime
 import hashlib
 import json
+import marshal
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 import yaml
@@ -261,25 +264,51 @@ INCIDENT_20261010_PREDECESSOR_FIXTURES = {
     "tests/test_p4_4q_pc_upcoming_simple_tournament_identity.py":
         "tests/fixtures/core_01d/inc_20261010/test-p44q-simple-tournament-identity-predecessor.py.txt",
 }
-_INCIDENT_20261010_CURRENT_AUTHENTICATED = False
-
-
 def _authenticate_incident_20261010_current_sources():
-    global _INCIDENT_20261010_CURRENT_AUTHENTICATED
-    if _INCIDENT_20261010_CURRENT_AUTHENTICATED:
-        return
+    """Authenticate incident successors freshly, or reuse only inside this audit scope."""
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+
+    scope = receipt_scope._active_receipt_scope("checkpoint-master-audit")
+    key = "checkpoint-master.incident-20261010-source-identities"
+    contract = None
+    if scope is not None:
+        require(scope.enabled,
+                "incident source derivation requires an enabled checkpoint scope")
+        contract = _checkpoint_direct_contract_digest(sys.modules[__name__], a2)
+        cached = scope.load_derivation(key, contract)
+        if cached is not None:
+            identities = json.loads(cached)
+            require(type(identities) is dict
+                    and set(identities) == set(INCIDENT_20261010_PREDECESSOR_BLOBS)
+                    and all(type(value) is str and len(value) == 64
+                            for value in identities.values()),
+                    "incident source derivation payload is malformed")
+            for path, expected in identities.items():
+                raw = (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
+                require(sha(raw) == expected,
+                        "incident successor source changed during checkpoint scope: " + path)
+            if contract != _checkpoint_direct_contract_digest(sys.modules[__name__], a2):
+                raise AssertionError("incident source verifier changed during scoped reuse")
+            return
+
     latest = a2.authenticate_inventory()
     rows = {row["path"]: row for row in latest["source_identities"]}
+    identities = {}
     for path in INCIDENT_20261010_PREDECESSOR_BLOBS:
         row = rows.get(path)
         require(row is not None, "incident successor source is absent from current A2 inventory: " + path)
         raw = (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
+        current = sha(raw)
         require(
-            sha(raw) == row["lf_source_sha256"],
+            current == row["lf_source_sha256"],
             "incident successor source differs from authenticated A2 bytes: " + path,
         )
-    _INCIDENT_20261010_CURRENT_AUTHENTICATED = True
+        identities[path] = current
+    if scope is not None:
+        if contract != _checkpoint_direct_contract_digest(sys.modules[__name__], a2):
+            raise AssertionError("incident source verifier changed during scoped authentication")
+        scope.store_derivation(key, contract, canonical_json_bytes(identities))
 
 
 def _incident_20261010_predecessor_source(path):
@@ -415,7 +444,7 @@ def read(path):
     from scripts import audit_data_01c_restore_portability as d5
     from scripts.core_01d_historical_source import identities
     if path not in identities() and path in d5.snapshot()["sources"]:
-        d5.authenticate_workflow()
+        _scoped_portability_authenticate_workflow()
         return d5.predecessor_source(path)
     return historical_bytes(path)
 
@@ -437,7 +466,7 @@ def git_inventory():
             require(kind == "blob", "unexpected non-blob tracked entry")
             result[path.decode()] = {"mode": mode, "git_blob_sha1": identity}
     from scripts import audit_data_01c_restore_portability as d5
-    d5.authenticate_workflow()
+    _scoped_portability_authenticate_workflow()
     for path, row in d5.snapshot()["sources"].items():
         require(path in result, "D5 portability predecessor source missing: " + path)
         result[path]["git_blob_sha1"] = row["git_blob_sha1"]
@@ -605,6 +634,11 @@ _VERIFIED_ADDITIVE_PATHS: tuple[str, ...] | None = None
 
 
 def verified_additive_artifact_paths():
+    with _checkpoint_master_scope():
+        return _verified_additive_artifact_paths()
+
+
+def _verified_additive_artifact_paths():
     global _VERIFIED_ADDITIVE_PATHS
     for path, expected in ((MATRIX_PATH, CHECKPOINT_MATRIX_SHA), (RECEIPT_PATH, CHECKPOINT_RECEIPT_SHA)):
         raw = read(path)
@@ -755,14 +789,18 @@ def _authenticate_pr119_release_only_workflow_forward(current, before):
         and observed["git_blob_sha1"] == transition["after"]["git_blob_sha1"],
         "fresh-holdout current source differs from its exact transition-14 identity",
     )
-    status = retained_status_v2.audit()
-    require(
-        status.get("result") == "PASS"
-        and status.get("evolution_ledger_sha256") == evolution.CORE01D_PR119_LEDGER_SHA256
-        and status.get("workflow_tree_sha1") == evolution.CORE01D_PR119_WORKFLOW_TREE_SHA1,
-        "current retained-status V2 did not authenticate the exact transition-14 source",
-    )
-    supporting = retained_status_v2.build_receipt()["pass1_supporting_source_inventory"]
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    with receipt_scope._bounded_receipt_scope(
+            "checkpoint-retained-status-v2", (retained_status_v2,),
+            retained_status_v2._TRUSTED_RETAINED_STATUS_V2_CONTRACT):
+        status = retained_status_v2.audit()
+        require(
+            status.get("result") == "PASS"
+            and status.get("evolution_ledger_sha256") == evolution.CORE01D_PR119_LEDGER_SHA256
+            and status.get("workflow_tree_sha1") == evolution.CORE01D_PR119_WORKFLOW_TREE_SHA1,
+            "current retained-status V2 did not authenticate the exact transition-14 source",
+        )
+        supporting = retained_status_v2.build_receipt()["pass1_supporting_source_inventory"]
     require(
         [row["path"] for row in supporting] == list(retained_status_v2.SUPPORTING_SOURCE_PATHS),
         "Pass-1 supporting source inventory path set drift",
@@ -820,6 +858,7 @@ def base_input(*, include_scan_source_predecessors=False):
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as pass_a_v2
     pass_a_predecessors = None
     pass_a_v2_compat_predecessors = None
+    cross_contract_predecessors = None
     pass1_forward_predecessor_blobs = {}
     pass1_forward_predecessor_sources = {}
     for path, identity in value["files"].items():
@@ -927,7 +966,33 @@ def base_input(*, include_scan_source_predecessors=False):
             }
             if identity == expected_predecessor and current.get(path) != identity:
                 if predecessor_reader is not None:
-                    predecessor = predecessor_reader(path)
+                    if cross_contract_predecessors is None:
+                        requested = []
+                        for candidate_path, candidate_identity in value["files"].items():
+                            if candidate_path not in a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS:
+                                continue
+                            candidate_transition = a2.resolve_historical_source_transition(
+                                candidate_path,
+                                expected_generation=(
+                                    a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_AUTHORIZATION_GENERATION
+                                ),
+                            )
+                            candidate_predecessor = {
+                                "mode": "100644",
+                                "git_blob_sha1": candidate_transition["predecessor_git_blob_sha1"],
+                            }
+                            if (candidate_identity == candidate_predecessor
+                                    and current.get(candidate_path) != candidate_identity):
+                                requested.append(candidate_path)
+                        require(path in requested,
+                                "Pass-1 V284 predecessor is absent from its authenticated batch")
+                        cross_contract_predecessors = (
+                            a2.read_authenticated_cross_contract_predecessors(
+                                tuple(sorted(requested)))
+                        )
+                    require(path in cross_contract_predecessors,
+                            "Pass-1 V284 authenticated batch omitted a requested predecessor")
+                    predecessor = cross_contract_predecessors[path]
                 else:
                     if pass_a_predecessors is None:
                         pass_a_predecessors = a2.read_authenticated_pass_a_source_predecessors()
@@ -1352,6 +1417,43 @@ def validate_documents(matrix, receipt):
 
 
 def expected_documents():
+    with _checkpoint_master_scope() as scope:
+        from scripts import audit_core_01d_authority_reachability_review_a as review
+        from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+        from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+        from scripts import audit_data_01c_restore_portability as d5
+        from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+        from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+        from scripts import audit_tests_shard_balance_successor as shards
+        roots = (sys.modules[__name__], review, review.retention,
+                 review.retention.v4, review.retention.v4.v3, a2, b4, d5,
+                 pass_a, retention, shards, evolution, comment, census)
+        contract = _checkpoint_direct_contract_digest(*roots)
+        key = "checkpoint-master.expected-documents"
+        cached = scope.load_derivation(key, contract)
+        if cached is not None:
+            try:
+                result = marshal.loads(cached)
+            except (EOFError, ValueError, TypeError) as exc:
+                raise AssertionError("checkpoint expected-documents payload is malformed") from exc
+            require(type(result) is tuple and len(result) == 2
+                    and all(type(item) is dict for item in result),
+                    "checkpoint expected-documents payload shape drift")
+            if contract != _checkpoint_direct_contract_digest(*roots):
+                raise AssertionError("checkpoint expected-documents verifier changed during reuse")
+            _receipt_scope_module._record_scope_metric(
+                "checkpoint-master.expected_documents_cache_hits")
+            return result[0], result[1]
+        result = _expected_documents()
+        if contract != _checkpoint_direct_contract_digest(*roots):
+            raise AssertionError("checkpoint expected-documents verifier changed during derivation")
+        scope.store_derivation(key, contract, marshal.dumps(result, 4))
+        _receipt_scope_module._record_scope_metric(
+            "checkpoint-master.expected_documents_cache_misses")
+        return result
+
+
+def _expected_documents():
     base, historical_source_predecessors = base_input(include_scan_source_predecessors=True)
     history = history_input()
     require(set(history) == set(path for path in base["files"] if path.startswith(".github/workflows/") and path.endswith(".yml")), "history capture coverage differs")
@@ -1433,6 +1535,26 @@ def expected_documents():
 
 
 def audit():
+    with _checkpoint_master_scope():
+        return _audit_with_receipt_scopes()
+
+
+def _audit_with_receipt_scopes():
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    from scripts import audit_core_01d_retained_workflow_status_v2 as retained_status_v2
+    with receipt_scope._bounded_receipt_scope(
+            "checkpoint-retained-status-v2", (retained_status_v2,),
+            retained_status_v2._TRUSTED_RETAINED_STATUS_V2_CONTRACT):
+        from scripts import audit_core_01d_checkpoint_e_completion_v10 as completion_v10
+        from scripts import audit_core_01d_win_either_half_trigger_authority_b7 as b7
+        with receipt_scope._bounded_receipt_scope(
+                "checkpoint-v10", (completion_v10, completion_v10.completion_v9, b7,
+                                   completion_v10.b6),
+                completion_v10._TRUSTED_V10_CONTRACT):
+            return _audit()
+
+
+def _audit():
     matrix, receipt = expected_documents()
     require(strict(read(MATRIX_PATH)) == matrix, "committed capability matrix differs from source-derived evidence")
     require(strict(read(RECEIPT_PATH)) == receipt, "committed Checkpoint-E receipt differs from independent evidence")
@@ -1485,6 +1607,109 @@ def main():
     else:
         print(json.dumps(audit(), sort_keys=True))
     return 0
+
+
+@contextmanager
+def _checkpoint_master_scope():
+    with ExitStack() as stack:
+        master_scope = stack.enter_context(_receipt_scope_module._bounded_receipt_scope(
+            "checkpoint-master-audit", (sys.modules[__name__],),
+            _TRUSTED_CHECKPOINT_MASTER_CONTRACT))
+        from scripts import audit_core_01d_retained_workflow_status_v2 as retained_status_v2
+        from scripts import audit_core_01d_checkpoint_e_completion_v10 as completion_v10
+        from scripts import audit_core_01d_win_either_half_trigger_authority_b7 as b7
+        stack.enter_context(_receipt_scope_module._bounded_receipt_scope(
+            "checkpoint-retained-status-v2", (retained_status_v2,),
+            retained_status_v2._TRUSTED_RETAINED_STATUS_V2_CONTRACT))
+        stack.enter_context(_receipt_scope_module._bounded_receipt_scope(
+            "checkpoint-v10", (completion_v10, completion_v10.completion_v9, b7,
+                                completion_v10.b6),
+            completion_v10._TRUSTED_V10_CONTRACT))
+        stack.enter_context(completion_v10.b6._b6_source_inventory_scope())
+        stack.enter_context(b7._b7_source_inventory_scope())
+        yield master_scope
+
+
+def _checkpoint_direct_contract_digest(*roots):
+    """Bind a fixed verifier set without importing its transitive graph on demand.
+
+    D5 authentication lazily imports already-pinned auditor modules. Hashing a
+    recursively discovered module graph before and after that call makes normal
+    imports look like verifier mutation. This fixed-root digest binds each
+    selected module's own functions/constants; repository and A2 state remain
+    freshly checked by the enclosing receipt scope.
+    """
+    digest = hashlib.sha256()
+    modules = {module.__name__: module for module in roots}
+    for module_name, module in sorted(modules.items()):
+        digest.update(module_name.encode("utf-8") + b"\0")
+        digest.update(repr((id(module), id(sys.modules.get(module_name)))).encode("ascii") + b"\0")
+        for name, value in sorted(vars(module).items()):
+            if (name == "__builtins__" or name == "_receipt_scope_module"
+                    or name.startswith("_TRUSTED_") and name.endswith("_CONTRACT")):
+                continue
+            digest.update(name.encode("utf-8") + b"\0")
+            runtime = _receipt_scope_module._runtime_global(module_name, name, value)
+            if runtime is None:
+                value = _receipt_scope_module._contract_value(
+                    value, include_mutable_contents=True)
+            else:
+                value = runtime
+            digest.update(repr(value).encode("utf-8") + b"\0")
+    return digest.hexdigest()
+
+
+def _scoped_portability_authenticate_workflow():
+    """Reuse only the D5 workflow identity derivation inside this audit scope."""
+    from scripts import audit_data_01c_restore_portability as d5
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    scope = pass_a._active_checkpoint_derivation_scope()
+    if scope is None or not scope.enabled:
+        return d5.authenticate_workflow()
+
+    trusted = getattr(d5, "_TRUSTED_AUTHENTICATE_WORKFLOW", None)
+    public = getattr(d5, "authenticate_workflow", None)
+    if public is not trusted:
+        # Preserve the public monkeypatch seam; a substituted reader is never
+        # hidden behind a prior scoped derivation.
+        return public()
+    if public.__code__ is not getattr(d5, "_TRUSTED_AUTHENTICATE_WORKFLOW_CODE", None):
+        raise AssertionError("D5 workflow verifier code changed during checkpoint scope")
+
+    from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    from scripts import audit_tests_shard_balance_successor as shards
+    from scripts import audit_p4_workflow_evolution_ledger as evolution
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    roots = (d5, b4, retention, shards, evolution, a2, pass_a)
+    contract = _checkpoint_direct_contract_digest(*roots)
+    key = "checkpoint-master.d5-workflow-tree"
+    payload = scope.load_derivation(key, contract)
+    if payload is not None:
+        if contract != _checkpoint_direct_contract_digest(*roots):
+            raise AssertionError("D5 verifier changed during checkpoint-scope reuse")
+        value = json.loads(payload)
+        require(type(value) is list and len(value) == 2,
+                "D5 checkpoint-scope payload is malformed")
+        return value[0], value[1]
+
+    result = d5._authenticate_workflow_uncached()
+    if contract != _checkpoint_direct_contract_digest(*roots):
+        raise AssertionError("D5 verifier changed during checkpoint-scope authentication")
+    payload = json.dumps([result[0], result[1]], sort_keys=True,
+                         separators=(",", ":"), ensure_ascii=False,
+                         allow_nan=False).encode("utf-8")
+    scope.store_derivation(key, contract, payload)
+    return result
+
+
+# The identity is fixed only after this module is fully defined. The scope
+# engine excludes this alias and the trusted constant from its transitive
+# contract walk, avoiding a self-referential module digest.
+from scripts import audit_core_01d_checkpoint_e_completion_v8 as _receipt_scope_module
+
+_TRUSTED_CHECKPOINT_MASTER_CONTRACT = _receipt_scope_module._auditor_contract_digest(
+    sys.modules[__name__])
 
 
 if __name__ == "__main__":

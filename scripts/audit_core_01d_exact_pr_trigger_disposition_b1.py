@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -612,6 +613,19 @@ def _read_predecessors() -> dict[str, object]:
 
 
 def build_source_inventory(*, historical_rows: list[dict[str, object]] | None = None) -> dict[str, object]:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    scope = (receipt_scope._active_receipt_scope("checkpoint-b1-source-inventory")
+             if historical_rows is None else None)
+    cached = None if scope is None else scope.load()
+    if cached is not None:
+        return cached
+    value = _build_source_inventory(historical_rows=historical_rows)
+    if scope is not None:
+        scope.store(value)
+    return value
+
+
+def _build_source_inventory(*, historical_rows: list[dict[str, object]] | None = None) -> dict[str, object]:
     boundary.authenticate_predecessors()
     existing_chain = boundary.load_inventory_generations()
     boundary.require(len(existing_chain) == 2,
@@ -918,7 +932,15 @@ def validate_source_inventory(value: dict[str, object]) -> None:
     boundary.require(raw == boundary.canonical(value), "source inventory is not canonical")
     boundary.require(value.get("canonical_sha256") == SOURCE_INVENTORY_SHA256,
                      "B1 source inventory pinned identity drift")
-    current = _current_source_identities()
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    scope = receipt_scope._active_receipt_scope("checkpoint-b1-source-inventory")
+    cached = None if scope is None else scope.load()
+    if cached is not None:
+        boundary.require(value == cached,
+                         "B1 source inventory changed after its same-call derivation")
+        current = value.get("current_source_identities")
+    else:
+        current = _current_source_identities()
     boundary.require(current == value.get("current_source_identities"),
                      "current relevant source identity drift")
     boundary.require(_canonical_digest(current) == CURRENT_SOURCE_IDENTITIES_SHA256,
@@ -936,6 +958,8 @@ def validate_source_inventory(value: dict[str, object]) -> None:
                      "B1 source inventory base drift")
     boundary.require(value.get("scope", {}).get("target_keys") == list(TARGET_KEYS),
                      "B1 source inventory target set drift")
+    if scope is not None and cached is None:
+        scope.store(value)
 
 
 def validate_receipt(value: dict[str, object], expected: dict[str, object] | None = None) -> None:
@@ -981,6 +1005,14 @@ def _receipt_observation_time(value: dict[str, object]) -> str:
 
 
 def audit() -> dict[str, object]:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    with receipt_scope._bounded_receipt_scope(
+            "checkpoint-b1-source-inventory", (sys.modules[__name__],),
+            receipt_scope._TRUSTED_B1_CONTRACT):
+        return _audit()
+
+
+def _audit() -> dict[str, object]:
     inventory = _strict_json(SOURCE_INVENTORY_PATH)
     validate_source_inventory(inventory)
     value = _strict_json(RECEIPT_PATH)

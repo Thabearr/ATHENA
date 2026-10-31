@@ -25,8 +25,11 @@ def require(value: bool, message: str) -> None:
 def build_receipt() -> dict[str, object]:
     parent = boundary.read(PARENT_PATH)
     require(parent.get("canonical_sha256") == PARENT_SHA, "immutable Completion V5 identity drift")
-    b3.authenticate_predecessor_chain()
-    b3.audit()
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    with receipt_scope._bounded_receipt_scope(
+            "checkpoint-b3-predecessors", (b3,), receipt_scope._TRUSTED_B3_CONTRACT):
+        b3.authenticate_predecessor_chain()
+        b3.audit()
     review = boundary.read(b3.RECEIPT_PATH)
     inherited = parent["unreviewed_authority_surfaces"]
     inherited_keys = [(row["workflow_path"], row["trigger_kind"]) for row in inherited]

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 
 import yaml
 
@@ -13,6 +14,18 @@ from scripts import audit_p4_workflow_evolution_ledger as evolution
 from scripts import audit_core_01d_scheduled_shadow_ownership as schedule
 
 ROOT = policy.ROOT
+
+
+def _read_tracked_head_blob_scoped(repository_root, relative_path, **kwargs):
+    from runtime import source_identity
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    if pass_a._active_checkpoint_derivation_scope() is None:
+        return source_identity.read_tracked_head_blob(
+            repository_root, relative_path, **kwargs)
+    return pass_a.read_tracked_head_blob_scoped(
+        repository_root, relative_path, **kwargs)
+
+
 POLICY_ID = "ATHENA_CORE_01D_CHECKPOINT_E_COMPLETION_V1"
 RECEIPT_PATH = v5.COMPLETION_PATH
 CRITERIA = (
@@ -338,9 +351,8 @@ UX_01A_PREDECESSOR_SOURCE_BLOBS = {
 
 
 def authenticate_fresh_holdout_20261015_evidence():
-    from runtime.source_identity import read_tracked_head_blob
     for path, (blob, digest) in FRESH_HOLDOUT_20261015_ADDITIVE_IDENTITIES.items():
-        payload, identity = read_tracked_head_blob(ROOT, path)
+        payload, identity = _read_tracked_head_blob_scoped(ROOT, path)
         policy.require(identity.git_blob_sha1 == blob and policy.sha256(payload) == digest,
                        "October 15 additive evidence identity drift: " + path)
     return FRESH_HOLDOUT_20261015_ADDITIVE_PATHS
@@ -360,7 +372,15 @@ def authenticate_pass4_e3_source_predecessor(path: str, a2=None, latest=None) ->
                        and not any(parent.is_symlink() for parent in (candidate, *candidate.parents)),
                        "Pass-4 E3 predecessor requires regular source/fixture: " + relative)
         a2._e3_path_stat(relative, label="Pass-4 E3 predecessor")
-    if latest is None:
+    scope = a2._active_a2_derivation_scope()
+    if scope is not None:
+        state = a2._load_scoped_a2_source_state(scope)
+        if latest is None:
+            latest = a2.authenticate_inventory()
+        policy.require(state is not None and type(latest) is dict
+                       and state.get("latest_sha256") == latest.get("canonical_sha256"),
+                       "Pass-4 predecessor lacks the active A2 source-forward derivation")
+    elif latest is None:
         latest = a2.authenticate_inventory()
     current_rows = {row["path"]: row for row in latest["source_identities"]}
     current = a2.lf((ROOT / path).read_bytes())
@@ -432,7 +452,6 @@ def validate_bounded_inventory(raw: bytes) -> None:
     )
     ux_predecessor_blobs = dict(UX_01A_PREDECESSOR_SOURCE_BLOBS)
     ux_additive_paths = {app.UX_SUCCESSOR, app.UX_STYLESHEET_FIXTURE}
-    from runtime.source_identity import read_tracked_head_blob
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion_v2
     from scripts import audit_core_01d_pr459_live_trigger_incident as incident
     incident.historical_incident_source()
@@ -443,7 +462,7 @@ def validate_bounded_inventory(raw: bytes) -> None:
                        for row in latest["source_identities"]}
     pr459_current_blobs = {}
     for path in PR459_PREDECESSOR_SOURCE_BLOBS:
-        payload, identity = read_tracked_head_blob(ROOT, path)
+        payload, identity = _read_tracked_head_blob_scoped(ROOT, path)
         policy.require(current_sources.get(path) == policy.sha256(payload.replace(b"\r\n", b"\n")),
                        "PR459 current source is not authenticated by A2: " + path)
         pr459_current_blobs[path] = identity.git_blob_sha1
@@ -600,7 +619,7 @@ def status_from_criteria(criteria: dict) -> tuple[str, list[str]]:
     return ("INCOMPLETE" if blockers else "COMPLETE"), blockers
 
 
-def build_receipt() -> dict:
+def _build_receipt_uncached() -> dict:
     # Use historical source derivation, not the master audit's CURRENT answer;
     # otherwise the new completion receipt would authenticate itself in a cycle.
     from scripts import audit_checkpoint_e_workflows as checkpoint
@@ -722,6 +741,13 @@ def build_receipt() -> dict:
     })
 
 
+def build_receipt() -> dict:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    with receipt_scope._bounded_receipt_scope(
+            "checkpoint-v1", (sys.modules[__name__],), _TRUSTED_V1_CONTRACT):
+        return _build_receipt_uncached()
+
+
 def validate_receipt(value: dict, expected: dict | None = None) -> None:
     policy.require(value.get("canonical_sha256") == policy.sha256(policy.canonical_bytes(
         {k: v for k, v in value.items() if k != "canonical_sha256"})), "completion self-hash mismatch")
@@ -734,12 +760,19 @@ def validate_receipt(value: dict, expected: dict | None = None) -> None:
                    "completion differs from independently authenticated current criteria")
 
 
-def audit() -> dict:
+def _audit_uncached() -> dict:
     value = policy.roles.strict_json((ROOT / RECEIPT_PATH).read_bytes())
     validate_receipt(value)
     return {"result": "PASS", "policy_id": POLICY_ID, "receipt_sha256": value["canonical_sha256"],
             "checkpoint_e": value["checkpoint_e_status"], "p4_4": value["p4_4_status"],
             "remaining_blockers": value["remaining_blocker_ids"], "terminal": value["terminal"]}
+
+
+def audit() -> dict:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    with receipt_scope._bounded_receipt_scope(
+            "checkpoint-v1", (sys.modules[__name__],), _TRUSTED_V1_CONTRACT):
+        return _audit_uncached()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -754,6 +787,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(json.dumps(audit(), sort_keys=True))
     return 0
+
+
+from scripts import audit_core_01d_checkpoint_e_completion_v8 as _receipt_scope_module
+_TRUSTED_V1_CONTRACT = _receipt_scope_module._auditor_contract_digest(sys.modules[__name__])
 
 
 if __name__ == "__main__":
