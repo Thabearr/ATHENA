@@ -524,11 +524,52 @@ def test_integrated_extension_rejects_wrong_canonical_main_anchor():
 
 def test_integrated_auditor_rejects_forged_delegated_checkpoint_bytes(monkeypatch):
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
-    before, current = successor.checkpoint_v2_retention_sources()
+    before, retained = successor.checkpoint_v2_retention_sources()
+    kwargs = dict(fixture=False, expected_blob=successor.V313_CHECKPOINT_BLOB,
+                  expected_lf=successor.V313_CHECKPOINT_SHA256, expected_size=len(before))
+    # Positive control exercises the later-current-source branch while keeping
+    # the independently delegated V348 bytes intact.
+    assert a2._e3_source_forward_file_identity(successor.CHECKPOINT_V2_PATH, **kwargs) == before
+    monkeypatch.setattr(successor, 'checkpoint_v2_retention_sources',
+                        lambda: (before, retained + b'\n# forged delegated successor\n'))
+    with pytest.raises(AssertionError, match='retention V348 delegated source identity drift'):
+        a2._e3_source_forward_file_identity(successor.CHECKPOINT_V2_PATH, **kwargs)
+
+
+def test_integrated_auditor_rejects_forged_later_current_checkpoint_bytes(monkeypatch):
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    before, _retained = successor.checkpoint_v2_retention_sources()
     kwargs = dict(fixture=False, expected_blob=successor.V313_CHECKPOINT_BLOB,
                   expected_lf=successor.V313_CHECKPOINT_SHA256, expected_size=len(before))
     assert a2._e3_source_forward_file_identity(successor.CHECKPOINT_V2_PATH, **kwargs) == before
-    monkeypatch.setattr(successor, 'checkpoint_v2_retention_sources',
-                        lambda: (before, current + b'\n# forged delegated successor\n'))
+    current = successor.checkpoint_v2_current_source()
+    monkeypatch.setattr(successor, 'checkpoint_v2_current_source',
+                        lambda: current + b'\n# forged current source\n')
     with pytest.raises(AssertionError, match='retention current successor identity drift'):
         a2._e3_source_forward_file_identity(successor.CHECKPOINT_V2_PATH, **kwargs)
+
+
+def test_integrated_auditor_preserves_the_retained_v348_checkpoint_branch(monkeypatch):
+    """Exercise the historical V348 identity branch with controlled tracked bytes."""
+    from types import SimpleNamespace
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+
+    predecessor, retained = successor.checkpoint_v2_retention_sources()
+    fixed = a2.RETENTION_MAIN347_CHECKPOINT_EXTENSION["successor"]
+    assert successor.identity(retained)["git_blob_sha1"] == fixed["git_blob_sha1"]
+    assert successor.identity(retained)["source_sha256"] == fixed["lf_source_sha256"]
+
+    monkeypatch.setattr(a2, "_e3_path_stat", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        a2, "_read_tracked_head_blob_scoped",
+        lambda root, path: (retained, SimpleNamespace(git_blob_sha1=fixed["git_blob_sha1"])),
+    )
+    monkeypatch.setattr(
+        successor, "checkpoint_v2_retention_sources",
+        lambda: (predecessor, retained),
+    )
+    kwargs = dict(
+        fixture=False, expected_blob=successor.V313_CHECKPOINT_BLOB,
+        expected_lf=successor.V313_CHECKPOINT_SHA256, expected_size=len(predecessor),
+    )
+    assert a2._e3_source_forward_file_identity(successor.CHECKPOINT_V2_PATH, **kwargs) == predecessor

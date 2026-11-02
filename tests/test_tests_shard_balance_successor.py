@@ -143,6 +143,153 @@ def test_v2_rebalance_is_an_append_only_exact_v1_successor():
     assert d5.historical_workflow_tree(audit.AFTER_TREE) == d5.PREDECESSOR_TREE
 
 
+def test_v3_diagnostic_upload_is_an_append_only_exact_v2_successor():
+    value = audit._authenticate_v3()
+    from scripts import audit_p4_workflow_evolution_ledger as p4
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+
+    assert value['authority_granted'] is False
+    assert value['historical_bytes_changed'] is False
+    assert value['required_contexts_changed'] is False
+    assert value['source_authority_changed'] is False
+    assert value['test_assignments_changed'] is False
+    assert value['test_selection_changed'] is False
+    assert value['artifact_action'] == {
+        'name': audit.V3_ACTION_NAME,
+        'uses': audit.V3_ACTION_REF,
+        'if': 'always()',
+        'path': '${{ runner.temp }}/athena-pytest-progress/*.jsonl',
+        'if_no_files_found': 'ignore',
+        'retention_days': 3,
+        'name_template': 'pytest-progress-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}',
+    }
+    current_workflow = audit.read_blob(audit.WORKFLOW)
+    for expression in (b'${{ runner.temp }}', b'${{ github.run_id }}',
+                       b'${{ github.run_attempt }}', b'${{ matrix.shard }}'):
+        assert expression in current_workflow
+    assert value['workflow_before'] == audit.V3_BEFORE
+    assert value['workflow_after'] == audit.V3_AFTER
+    assert value['prior_snapshot'] == {
+        'path': audit.V3_PREDECESSOR_SNAPSHOT,
+        'canonical_sha256': audit.V3_PREDECESSOR_SNAPSHOT_SHA256,
+    }
+    snapshot = json.loads(audit.read_blob(audit.V3_SNAPSHOT))
+    predecessor = json.loads(audit.read_blob(audit.V3_PREDECESSOR_SNAPSHOT))
+    assert snapshot['transitions'][:-1] == predecessor['transitions']
+    assert p4.canonical_sha256(snapshot) == value['workflow_evolution_ledger_sha256']
+    assert audit.project_tree(audit.V3_AFTER_TREE) == audit.BEFORE_TREE
+    assert audit.project_b4_tree(audit.V3_AFTER_B4_TREE) == audit.BEFORE_B4_TREE
+    assert audit.current_workflow_source() == audit.read_blob(audit.V3_FIXTURE)
+    _prior, _v2, current = pass_a._ci_assertion_v3_chain()
+    assert set(current['source_forward']) == pass_a.CI_ASSERTION_V3_PATHS
+    assert current['source_forward'][audit.WORKFLOW]['after'] == audit.V3_AFTER
+
+
+def test_install_context_finishes_with_pass_a_v3_and_preserves_historical_fixtures():
+    import copy
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+
+    context = {
+        'BOOTSTRAP_AFTER': dict(retention.BOOTSTRAP_AFTER),
+        'HISTORICAL_PREDECESSORS': copy.deepcopy(retention.HISTORICAL_PREDECESSORS),
+        'ADDED_METADATA': dict(retention.ADDED_METADATA),
+        'BOOTSTRAP_METADATA': dict(retention.BOOTSTRAP_METADATA),
+        'ADDED_PYTHON_PATHS': set(retention.ADDED_PYTHON_PATHS),
+        'ADDED_PYTHON_IDENTITIES': dict(retention.ADDED_PYTHON_IDENTITIES),
+    }
+    historical_before = copy.deepcopy(context['HISTORICAL_PREDECESSORS'])
+    checkpoint_path = 'scripts/audit_core_01d_checkpoint_e_completion_v2.py'
+    checkpoint_descriptor = historical_before[checkpoint_path]
+
+    audit.install_context(context)
+
+    _prior, _v2, pass_a_v3 = pass_a._ci_assertion_v3_chain()
+    for path, row in pass_a_v3['source_forward'].items():
+        current = row.get('after') or pass_a.safe.identity(pass_a.read_blob(path))
+        assert context['BOOTSTRAP_AFTER'][path] == current
+        if path in historical_before:
+            expected = dict(historical_before[path], after=current)
+            assert context['HISTORICAL_PREDECESSORS'][path] == expected
+        if path in context['ADDED_PYTHON_IDENTITIES']:
+            assert context['ADDED_PYTHON_IDENTITIES'][path] == current
+
+    final_checkpoint = context['HISTORICAL_PREDECESSORS'][checkpoint_path]
+    assert final_checkpoint['fixture'] == checkpoint_descriptor['fixture']
+    assert {key: value for key, value in final_checkpoint.items() if key != 'after'} == {
+        key: value for key, value in checkpoint_descriptor.items() if key != 'after'}
+    assert final_checkpoint['source_sha256'] == (
+        'c376e7c55ad95d4e182b2e4c6626e0c1605bf7834e6b81abeae432e1d06212f1')
+    assert final_checkpoint['after']['source_sha256'] == pass_a_v3['source_forward'][
+        checkpoint_path]['after']['source_sha256']
+    assert context['BOOTSTRAP_AFTER'][audit.WORKFLOW] == audit.V3_AFTER
+
+
+@pytest.mark.parametrize(('field', 'wrong_value'), [
+    ('path', '${ runner.temp }/athena-pytest-progress/*.jsonl'),
+    ('name_template', 'pytest-progress-${ github.run_id }-${{ github.run_attempt }}-${{ matrix.shard }}'),
+])
+def test_v3_diagnostic_upload_rejects_wrong_github_expression(monkeypatch, field, wrong_value):
+    original = audit.read_blob
+    value = json.loads(original(audit.V3_RECEIPT))
+    value['artifact_action'][field] = wrong_value
+    value['canonical_sha256'] = ''
+    value['canonical_sha256'] = audit.digest(value)
+    monkeypatch.setattr(audit, 'V3_RECEIPT_SHA256', value['canonical_sha256'])
+    altered = audit.canonical(value)
+    monkeypatch.setattr(audit, 'read_blob',
+                        lambda path: altered if path == audit.V3_RECEIPT else original(path))
+    with pytest.raises(ValueError, match='Tests shard V3 receipt scope or authority drift'):
+        audit._authenticate_v3()
+
+
+@pytest.mark.parametrize('target', ['receipt_predecessor', 'snapshot_prefix', 'workflow_fixture'])
+def test_v3_diagnostic_upload_rejects_wrong_predecessor_or_fixture(monkeypatch, target):
+    selected = {
+        'receipt_predecessor': audit.V3_RECEIPT,
+        'snapshot_prefix': audit.V3_SNAPSHOT,
+        'workflow_fixture': audit.V3_FIXTURE,
+    }[target]
+    original = audit.read_blob
+
+    def changed(path):
+        raw = original(path)
+        if path != selected:
+            return raw
+        if target == 'receipt_predecessor':
+            value = json.loads(raw)
+            value['predecessor_inventory']['canonical_sha256'] = '0' * 64
+            return audit.canonical(value)
+        if target == 'snapshot_prefix':
+            value = json.loads(raw)
+            value['transitions'][0]['transition_id'] += '_FORGED'
+            return audit.canonical(value)
+        return raw + b'\n# altered predecessor fixture\n'
+
+    monkeypatch.setattr(audit, 'read_blob', changed)
+    with pytest.raises((ValueError, AssertionError)):
+        audit._authenticate_v3()
+
+
+@pytest.mark.parametrize('change', ['unknown_step', 'protected_permissions'])
+def test_v3_diagnostic_upload_rejects_unreviewed_workflow_delta(monkeypatch, change):
+    original = audit.read_blob
+
+    def changed(path):
+        raw = original(path)
+        if path != audit.WORKFLOW:
+            return raw
+        if change == 'unknown_step':
+            return raw + b'\n# unreviewed workflow delta\n'
+        marker = b'  contents: read\n'
+        assert raw.count(marker) == 1
+        return raw.replace(marker, b'  contents: write\n', 1)
+
+    monkeypatch.setattr(audit, 'read_blob', changed)
+    with pytest.raises((ValueError, AssertionError)):
+        audit.authenticate()
+
+
 @pytest.mark.parametrize('which', [
     'v2_receipt', 'v2_snapshot', 'current_workflow', 'workflow_fixture',
     'current_adapter', 'adapter_fixture', 'current_test', 'test_fixture',
@@ -225,9 +372,11 @@ def test_parent_progress_preserves_partition_and_immutable_v2():
     from scripts import audit_phase_a_pass_a_tests_source_successor as progress
     value = progress.authenticate_parent_progress()
     before = audit.read_blob(progress.PARENT_PROGRESS_FIXTURE)
-    after = audit.read_blob(audit.WORKFLOW)
+    after = audit.read_blob(audit.V3_FIXTURE)
+    current = audit.read_blob(audit.WORKFLOW)
     assert before.replace(progress.PARENT_PROGRESS_COMMAND_BEFORE.encode(),
                           progress.PARENT_PROGRESS_COMMAND_AFTER.encode()) == after
+    assert audit.identity(current) == audit.V3_AFTER
     assert value['test_assignments_changed'] is False
     assert value['required_contexts_changed'] is False
     assert value['child_environment_changed'] is False
@@ -311,6 +460,7 @@ def test_parent_progress_rejects_tampered_evidence(monkeypatch, target):
 
 def test_parent_progress_does_not_instrument_children_or_change_clean_replay(tmp_path):
     """CLI parent emits flushed nodes; child pytest and digest stdout stay exact."""
+    import hashlib
     import os
     import subprocess
     import sys
@@ -337,6 +487,9 @@ def test_child_replay():
 ''')
     env = dict(os.environ)
     env['PYTHONPATH'] = str(audit.ROOT) + os.pathsep + env.get('PYTHONPATH', '')
+    runner_temp = tmp_path / 'runner-temp'
+    runner_temp.mkdir()
+    env['RUNNER_TEMP'] = str(runner_temp)
     command = [sys.executable, '-m', 'pytest', '-q', 'test_parent.py']
     plain = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True, check=True)
     baseline = (tmp_path / 'result.json').read_bytes()
@@ -346,6 +499,218 @@ def test_child_replay():
     assert 'ATHENA_PYTEST_PROGRESS' not in plain.stdout + plain.stderr
     records = [json.loads(line.split('ATHENA_PYTEST_PROGRESS ', 1)[1])
                for line in instrumented.stdout.splitlines() if line.startswith('ATHENA_PYTEST_PROGRESS ')]
-    assert [r['event'] for r in records] == ['session_start', 'start', 'setup', 'call', 'teardown', 'finish']
+    assert [r['event'] for r in records] == [
+        'session_start', 'collection_inventory', 'start', 'setup', 'call',
+        'teardown', 'finish', 'session_finish']
     assert len({r['pid'] for r in records}) == 1
-    assert [r['nodeid'] for r in records[1:]] == ['test_parent.py::test_child_replay'] * 5
+    assert [r['nodeid_display'] for r in records[2:7]] == ['test_parent.py::test_child_replay'] * 5
+    expected_key = hashlib.sha256(
+        'test_parent.py::test_child_replay'.encode('utf-8', errors='surrogatepass')
+    ).hexdigest()
+    assert records[1]['node_keys'] == [expected_key]
+    assert {record['nodeid_key_sha256'] for record in records[2:7]} == {expected_key}
+    assert all(record['nodeid_key_algorithm'] == 'sha256-utf8-surrogatepass-v1'
+               for record in records[2:7])
+    jsonl_files = list((runner_temp / 'athena-pytest-progress').glob('*.jsonl'))
+    assert len(jsonl_files) == 1
+    assert audit.ROOT.resolve() not in jsonl_files[0].resolve().parents
+    durable = [json.loads(line) for line in jsonl_files[0].read_text().splitlines()]
+    assert [record['event'] for record in durable] == [record['event'] for record in records]
+    assert all('tested_checkout_sha' in record['source']
+               and 'pr_head_sha' in record['source'] for record in durable)
+
+
+def test_parent_progress_redacts_failure_and_keeps_test_and_crash_locations_separate():
+    from types import SimpleNamespace
+    from scripts import audit_phase_a_pass_a_tests_source_successor as progress
+
+    root = audit.ROOT
+    crash = SimpleNamespace(
+        message='AssertionError: token=secret-value at https://example.invalid/private',
+        path=root / 'tests' / 'test_sample.py', lineno=27)
+    frame = SimpleNamespace(reprfileloc=SimpleNamespace(
+        path=root / 'scripts' / 'audit_sample.py', lineno=19))
+    report = SimpleNamespace(
+        longrepr=SimpleNamespace(reprcrash=crash,
+                                 reprtraceback=SimpleNamespace(reprentries=[frame])),
+        location=('tests/test_sample.py', 4, 'test_sample'))
+    fields = progress._ParentNodeProgress._failure_details(report)
+    assert fields['failure_category'] == 'AssertionError'
+    assert 'secret-value' not in fields['failure_explanation']
+    assert 'example.invalid/private' not in fields['failure_explanation']
+    assert fields['crash_file'] == 'tests/test_sample.py'
+    assert fields['crash_line'] == 27
+    assert fields['test_file'] == 'tests/test_sample.py'
+    assert fields['test_line_zero_based'] == 4
+    assert fields['trace_frames'] == [{'file': 'scripts/audit_sample.py', 'line': 19}]
+
+
+def test_parent_progress_redacts_quoted_credentials_in_serialized_outputs():
+    import hashlib
+    import io
+    import json
+    import os
+    from types import SimpleNamespace
+    from scripts import audit_phase_a_pass_a_tests_source_successor as progress
+
+    message = (
+        'AssertionError: expected configuration to remain offline; '
+        '{"token": "canary-token-123", \'password\': \'canary-password-456\', '
+        '"nested": {"api_key": "canary-api-789"}, '
+        '"escaped": "{\\"secret\\": \\"canary-secret-000\\"}"}'
+    )
+    crash = SimpleNamespace(message=message, path='tests/test_sample.py', lineno=27)
+    report = SimpleNamespace(
+        longrepr=SimpleNamespace(reprcrash=crash, reprtraceback=None),
+        location=('tests/test_sample.py', 4, 'test_sample'),
+    )
+
+    class CaptureJSONL:
+        def __init__(self):
+            self.records = []
+            self.closed = False
+        def write(self, value):
+            self.records.append(value)
+        def flush(self):
+            return None
+        def close(self):
+            self.closed = True
+
+    reporter = object.__new__(progress._ParentNodeProgress)
+    reporter.pid = os.getpid()
+    reporter.stream = io.StringIO()
+    reporter.jsonl = CaptureJSONL()
+    reporter.jsonl_bytes = 0
+    reporter.jsonl_limit = 8192
+    reporter.run_identity = {'worker': 'parent'}
+    reporter.source_identity = {'tested_checkout_sha': 'a' * 40}
+    fields = reporter._failure_details(report)
+    case_a = "tests/test_sample.py::test_sample[{'token': 'canary-node-321'}]"
+    case_b = "tests/test_sample.py::test_sample[{'token': 'canary-node-654'}]"
+    long_prefix = 'tests/test_sample.py::test_long_case[' + ('x' * 700)
+    long_a, long_b = long_prefix + 'alpha]', long_prefix + 'beta]'
+    nodeids = [case_a, case_b, long_a, long_b]
+    expected_keys = [
+        hashlib.sha256(nodeid.encode('utf-8', errors='surrogatepass')).hexdigest()
+        for nodeid in nodeids
+    ]
+    reporter.pytest_collection_finish(SimpleNamespace(
+        items=[SimpleNamespace(nodeid=nodeid) for nodeid in nodeids]))
+    for event in ('start', 'setup', 'call', 'teardown', 'finish'):
+        reporter._emit(event, case_a, **(fields if event == 'call' else {}))
+    reporter._emit('call', case_b)
+    reporter._emit('call', long_a)
+    reporter._emit('call', long_b)
+    field_canaries = progress._ParentNodeProgress._redact_text(
+        'token: "canary-token-plain" password = \'canary-password-plain\' '
+        'api_key: \\"canary-api-plain\\"',
+        512,
+    )
+    escaped_canary = progress._ParentNodeProgress._redact_text(
+        r'token: \\"canary-escaped-222\\"', 512)
+
+    stdout_jsonl = [
+        line.split('ATHENA_PYTEST_PROGRESS ', 1)[1]
+        for line in reporter.stream.getvalue().splitlines()
+        if line.startswith('ATHENA_PYTEST_PROGRESS ')
+    ]
+    stdout_text = '\n'.join(stdout_jsonl)
+    stdout_events = [json.loads(line) for line in stdout_jsonl]
+    jsonl_text = ''.join(reporter.jsonl.records)
+    jsonl_events = [json.loads(line) for line in reporter.jsonl.records]
+    assert len(reporter.jsonl.records) == len(stdout_events)
+    assert jsonl_events == stdout_events
+    assert 'remain offline' in fields['failure_explanation']
+    collection = [event for event in stdout_events if event['event'] == 'collection_inventory']
+    assert len(collection) == 1
+    assert collection[0]['collected_node_count'] == len(nodeids)
+    assert collection[0]['node_keys'] == expected_keys
+    assert collection[0]['node_key_algorithm'] == 'sha256-utf8-surrogatepass-v1'
+    assert collection[0]['collected_node_keys_sha256'] == hashlib.sha256(
+        '\n'.join(expected_keys).encode('ascii')).hexdigest()
+    case_a_events = [event for event in stdout_events
+                     if event.get('nodeid_key_sha256') == expected_keys[0]]
+    assert [event['event'] for event in case_a_events] == [
+        'start', 'setup', 'call', 'teardown', 'finish']
+    assert {event['nodeid_key_sha256'] for event in case_a_events} == {expected_keys[0]}
+    assert expected_keys[0] != expected_keys[1]
+    assert expected_keys[2] != expected_keys[3]
+    assert next(event['nodeid_display'] for event in stdout_events
+                if event.get('nodeid_key_sha256') == expected_keys[0]) == next(
+                    event['nodeid_display'] for event in stdout_events
+                    if event.get('nodeid_key_sha256') == expected_keys[1])
+    assert next(event['nodeid_display'] for event in stdout_events
+                if event.get('nodeid_key_sha256') == expected_keys[2]) == next(
+                    event['nodeid_display'] for event in stdout_events
+                    if event.get('nodeid_key_sha256') == expected_keys[3])
+    for canary in (
+        'canary-token-123', 'canary-password-456', 'canary-api-789',
+        'canary-secret-000', 'canary-node-321', 'canary-token-plain',
+        'canary-password-plain', 'canary-api-plain', 'canary-escaped-222',
+    ):
+        assert canary not in stdout_text
+        assert canary not in jsonl_text
+        assert canary not in field_canaries
+        assert canary not in escaped_canary
+    assert 'canary-token-plain' not in field_canaries
+    assert 'canary-password-plain' not in field_canaries
+    assert 'canary-api-plain' not in field_canaries
+    assert 'canary-escaped-222' not in escaped_canary
+
+
+def test_parent_progress_jsonl_failure_keeps_stdout_fallback():
+    import io
+    import os
+    from scripts import audit_phase_a_pass_a_tests_source_successor as progress
+
+    class BrokenJSONL:
+        def __init__(self):
+            self.write_calls = 0
+            self.closed = False
+        def write(self, value):
+            self.write_calls += 1
+            raise OSError('diagnostic disk unavailable')
+        def close(self):
+            self.closed = True
+
+    reporter = object.__new__(progress._ParentNodeProgress)
+    reporter.pid = os.getpid()
+    reporter.stream = io.StringIO()
+    writer = BrokenJSONL()
+    reporter.jsonl = writer
+    reporter.jsonl_bytes = 0
+    reporter.jsonl_limit = 8192
+    reporter.run_identity = {'worker': 'parent'}
+    reporter.source_identity = {'tested_checkout_sha': 'a' * 40}
+    reporter._emit('finish', 'test_sample.py::test_case')
+    assert 'ATHENA_PYTEST_PROGRESS ' in reporter.stream.getvalue()
+    assert writer.write_calls == 1
+    assert writer.closed
+    assert reporter.jsonl is None
+
+
+@pytest.mark.parametrize('runner_temp_kind', ['checkout', 'symlink-to-checkout'])
+def test_parent_progress_rejects_checkout_destination_before_creation(
+        monkeypatch, tmp_path, runner_temp_kind):
+    import os
+    from scripts import audit_phase_a_pass_a_tests_source_successor as progress
+
+    checkout = tmp_path / 'checkout'
+    checkout.mkdir()
+    if runner_temp_kind == 'checkout':
+        runner_temp = checkout
+    else:
+        runner_temp = tmp_path / 'runner-temp-link'
+        runner_temp.symlink_to(checkout, target_is_directory=True)
+    report_dir = checkout / 'athena-pytest-progress'
+    assert not report_dir.exists()
+
+    monkeypatch.setattr(progress, 'ROOT', checkout)
+    monkeypatch.setenv('RUNNER_TEMP', str(runner_temp))
+    reporter = object.__new__(progress._ParentNodeProgress)
+    reporter.run_identity = {'worker': 'parent'}
+    reporter.jsonl = None
+    reporter._open_jsonl(os)
+
+    assert reporter.jsonl is None
+    assert not report_dir.exists()

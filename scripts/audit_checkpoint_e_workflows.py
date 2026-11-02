@@ -1045,7 +1045,7 @@ def base_input(*, include_scan_source_predecessors=False):
                 identity == {"mode": "100644", "git_blob_sha1": tests_shards.BEFORE["git_blob_sha1"]}
                 and current.get(path) == {
                     "mode": "100644",
-                    "git_blob_sha1": tests_shards.AFTER["git_blob_sha1"],
+                    "git_blob_sha1": tests_shards.V3_AFTER["git_blob_sha1"],
                 }
                 and predecessor == tests_shards.read_blob(tests_shards.FIXTURE)
                 and tests_shards.identity(predecessor) == tests_shards.BEFORE,

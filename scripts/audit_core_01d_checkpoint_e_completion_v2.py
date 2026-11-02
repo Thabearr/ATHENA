@@ -397,8 +397,12 @@ def _v2_direct_contract_digest(roots):
 
 def a2_historical_projection(raw):
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
- from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
  latest=a2.authenticate_inventory()
+ return _a2_historical_projection_from_authenticated_latest(raw,latest)
+
+def _a2_historical_projection_from_authenticated_latest(raw,latest):
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
  scope=pass_a._active_checkpoint_derivation_scope()
  if scope is None:
   return _a2_historical_projection_uncached(raw,latest)
@@ -427,6 +431,14 @@ def a2_historical_projection(raw):
  from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
  receipt_scope._record_scope_metric('pass-a.a2_historical_projection_misses')
  return result
+
+
+def _a2_projection_with_fresh_scope(a2,scope,raw,latest):
+ # load_derivation() checks its owner's state only once. Recreate the
+ # independent second authentication observation immediately at the point
+ # where the authenticated latest inventory is reused.
+ a2._verify_scoped_a2_live_state(scope,directory=None,check_git=True)
+ return _a2_historical_projection_from_authenticated_latest(raw,latest)
 
 
 def _a2_historical_projection_uncached(raw,latest):
@@ -660,12 +672,30 @@ def authenticated_v1_original_raw_tree(a2):
  return raw
 
 def authenticate_current_scope():
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+ with pass_a.source_derivation_scope():
+  return _authenticate_current_scope_with_source_scope()
+
+def _authenticate_current_scope_with_source_scope():
  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
- generation_additions=a2_generation_additions(a2)
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+ scope=pass_a._active_checkpoint_derivation_scope()
+ # Inside an enabled outer scope, authenticate_inventory() supplies a scoped
+ # observation. The live A2/Git fence is repeated immediately before projected
+ # reuse below; derivation-cache ownership alone is not a fresh observation.
+ # Keep the legacy independent path when this helper has no enabled owner.
+ latest=a2.authenticate_inventory() if scope is not None else None
+ generation_additions=(a2_generation_additions(a2,latest=latest)
+                       if latest is not None else a2_generation_additions(a2))
  successor_inventory_paths=current_successor_inventory_paths(a2)
  allowed=ALLOWED_PASS_A_PATHS|APP01B_ADDITIVE_PATHS|APP01C_ADDITIVE_PATHS|a2.A2_PATHS|B1_ADDITIVE_EVIDENCE_PATHS|generation_additions|successor_inventory_paths|app_successor_paths()|INCIDENT_20261010_CURRENT_PATHS|RUN_01B_ADDITIVE_PATHS|RUN_02A_PRE_ADDITIVE_PATHS|E3_RUN_02A_ADDITIVE_PATHS|set(a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS)|set(a2.E3_CROSS_CONTRACT_FIXTURE_PATHS)|set(a2.E3_PASS_A_SOURCE_FORWARD_FIXTURE_PATHS)|PR459_HISTORICAL_SOURCE_FORWARD_PATHS|set(RUN_02A_PRE_PREDECESSOR_BLOBS)|v1.FRESH_HOLDOUT_20261015_ADDITIVE_PATHS|v1.FRESH_HOLDOUT_20261014_ADDITIVE_PATHS|set(v1.FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS)
  git=review.retention.v4.v3._git
- review.require(review.sha256(unchanged_inventory(a2_historical_projection(git('ls-tree','-r','HEAD'))))==UNCHANGED_SCOPE_SHA,'Pass-A runtime/workflow/ledger/historical source change outside bounded evidence scope')
+ raw=git('ls-tree','-r','HEAD')
+ if latest is not None:
+  projection=_a2_projection_with_fresh_scope(a2,scope,raw,latest)
+ else:
+  projection=a2_historical_projection(raw)
+ review.require(review.sha256(unchanged_inventory(projection))==UNCHANGED_SCOPE_SHA,'Pass-A runtime/workflow/ledger/historical source change outside bounded evidence scope')
  review.require(set(git('diff','--name-only','HEAD').decode().splitlines())<=allowed,'unapproved dirty source in Pass A or its exact A2-generation/evidence seam')
  review.require(set(git('ls-files','--others','--exclude-standard').decode().splitlines())<=allowed|LOCAL_TEST_PRODUCTS,'unapproved untracked source in Pass A or its exact A2-generation/evidence seam')
  return True

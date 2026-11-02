@@ -544,22 +544,24 @@ def test_root_bootstrap_pin_binds_the_current_auditor_and_rejects_drift(monkeypa
     assert set(successors) == {auditor}
     from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
     root_successor = pass_a._authenticate_root_performance()["source_forward"][auditor]
-    _prior, admission = pass_a._ci_assertion_v2_chain()
-    admitted_a2 = admission["source_forward"][auditor]["after"]["source_sha256"]
+    _prior, admission_v2, admission_v3 = pass_a._ci_assertion_v3_chain()
+    admitted_a2_v2 = admission_v2["source_forward"][auditor]["after"]["source_sha256"]
+    admitted_a2_v3 = admission_v3["source_forward"][auditor]["after"]["source_sha256"]
     previous_startup = ast.parse(pass_a.read_blob(
-        admission["source_forward"]["sitecustomize.py"]["fixture"]).decode())
+        admission_v3["source_forward"]["sitecustomize.py"]["fixture"]).decode())
     previous_successors = next(ast.literal_eval(node.value) for node in previous_startup.body
                                if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
                                and target.id == "ROOT_TEST_SOURCE_SUCCESSORS" for target in node.targets))
     latest = boundary.authenticate_inventory()
     prior_chain = previous_successors[auditor]
-    assert prior_chain == (
+    assert prior_chain[:3] == (
         retention.PRIOR_ADMITTED_AUDITOR_SHA,
         root_successor["before"]["source_sha256"],
         root_successor["after"]["source_sha256"],
     )
-    assert successors[auditor] == prior_chain + (admitted_a2,)
-    assert len(successors[auditor]) == 4
+    assert prior_chain[3:] == (admitted_a2_v2,)
+    assert successors[auditor] == prior_chain + (admitted_a2_v3,)
+    assert len(successors[auditor]) == 5
     assert [row for row in latest["source_identities"] if row["path"] == auditor] == [
         boundary.source(auditor)
     ]

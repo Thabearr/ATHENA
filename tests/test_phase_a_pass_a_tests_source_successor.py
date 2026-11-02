@@ -1,5 +1,6 @@
 """Exact historical reachability, with current source qualification retained."""
 from copy import deepcopy
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import stat
@@ -15,7 +16,7 @@ def test_pass_a_inventory_matches_frozen_source_and_edges():
     frozen = review.authenticate_inventory()
     assert frozen['canonical_sha256'] == review.INVENTORY_SHA
     assert review.source_bytes(shards.WORKFLOW) == forward.read_blob(shards.FIXTURE)
-    assert shards.identity(forward.read_blob(shards.WORKFLOW)) == shards.AFTER
+    assert shards.identity(forward.read_blob(shards.WORKFLOW)) == shards.V3_AFTER
     # Metadata/caller discovery still reads actual YAML: no projection needed.
     assert review.workflow_metadata(shards.WORKFLOW) == frozen['workflow_metadata'][shards.WORKFLOW]
     assert review.discover(shards.WORKFLOW) == frozen['static_discovery_edges'][shards.WORKFLOW]
@@ -73,6 +74,218 @@ def test_pass_a_has_no_caller_selected_tree_and_keeps_live_fence():
     for stale in (shards.BEFORE_TREE, 'f' * 40):
         with pytest.raises(AssertionError, match='not for the checked-out tree'):
             b4.project_b4_workflow_tree(stale)
+
+
+def _mutable_mapping_node_ids(value):
+    found = set()
+    pending = [value]
+    visited = set()
+    while pending:
+        item = pending.pop()
+        if type(item) in (dict, list):
+            if id(item) in visited:
+                continue
+            visited.add(id(item))
+            found.add(id(item))
+            pending.extend(item.values() if type(item) is dict else item)
+        elif type(item) is tuple:
+            pending.extend(item)
+    return found
+
+
+def test_pass_a_v3_return_shape_is_stable_for_unscoped_cold_and_scope_hit():
+    unscoped = forward._ci_assertion_v3_chain()
+    assert type(unscoped) is tuple and len(unscoped) == 3
+    assert type(unscoped[0]) is dict and type(unscoped[1]) is dict and type(unscoped[2]) is dict
+
+    with forward.source_derivation_scope() as owner:
+        cold = forward._ci_assertion_v3_chain()
+        assert type(cold) is tuple and len(cold) == 3
+        assert 'pass-a.ci-assertion-v3-chain' in owner.derivation_bytes
+        hits_before = owner.metrics.get('derivation_hits', 0)
+        hit = forward._ci_assertion_v3_chain()
+        assert owner.metrics.get('derivation_hits', 0) > hits_before
+        assert owner.metrics.get('pass_a_ci_assertion_v3_uncached') == 1
+        assert owner.metrics.get('pass_a_ci_assertion_v3_hits') == 1
+
+    assert type(hit) is tuple and len(hit) == 3
+    assert unscoped == cold == hit
+    graphs = [_mutable_mapping_node_ids(item) for item in (unscoped, cold, hit)]
+    assert all(graphs[i].isdisjoint(graphs[j]) for i in range(len(graphs))
+               for j in range(i + 1, len(graphs)))
+
+    historical_pair = forward._ci_assertion_v2_chain()
+    assert type(historical_pair) is tuple and len(historical_pair) == 2
+    assert historical_pair == unscoped[:2]
+
+
+def test_pass_a_v3_scope_metrics_route_through_checkpoint_owner(monkeypatch):
+    from scripts import audit_checkpoint_e_workflows as checkpoint
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+
+    metrics = {}
+    metrics_token = receipt_scope._SCOPE_METRICS.set(metrics)
+    try:
+        with checkpoint._checkpoint_master_scope() as owner:
+            assert owner.enabled is True
+            assert forward._ci_assertion_v2_scope_owner(forward.read_blob) is owner
+            cold = forward._ci_assertion_v3_chain()
+            hit = forward._ci_assertion_v3_chain()
+            assert cold == hit
+            assert metrics.get('pass_a_ci_assertion_v3_uncached') == 1
+            assert metrics.get('pass_a_ci_assertion_v3_hits') == 1
+            assert 'pass-a.ci-assertion-v3-chain' in owner.derivation_bytes
+    finally:
+        receipt_scope._SCOPE_METRICS.reset(metrics_token)
+
+
+def test_pass_a_v3_without_owner_uses_uncached_path_without_scope_metrics(monkeypatch):
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+
+    receipt_token = receipt_scope._ACTIVE_RECEIPT_SCOPES.set({})
+    source_token = forward._ACTIVE_SOURCE_DERIVATION_SCOPE.set(None)
+    metrics = {}
+    metrics_token = receipt_scope._SCOPE_METRICS.set(metrics)
+    calls = []
+    expected = ({'prior': 1}, {'v2': 2}, {'v3': 3})
+    original = forward._ci_assertion_v3_chain_uncached
+
+    def uncached(reader):
+        calls.append(reader)
+        return expected
+
+    try:
+        monkeypatch.setattr(forward, '_ci_assertion_v3_chain_uncached', uncached)
+        assert forward._ci_assertion_v2_scope_owner(forward.read_blob) is None
+        assert forward._ci_assertion_v3_chain() == expected
+        assert calls == [forward.read_blob]
+        assert metrics == {}
+    finally:
+        monkeypatch.setattr(forward, '_ci_assertion_v3_chain_uncached', original)
+        receipt_scope._SCOPE_METRICS.reset(metrics_token)
+        forward._ACTIVE_SOURCE_DERIVATION_SCOPE.reset(source_token)
+        receipt_scope._ACTIVE_RECEIPT_SCOPES.reset(receipt_token)
+
+
+@pytest.mark.parametrize('mutation', ['missing_policy', 'wrong_policy', 'extra_key'])
+def test_pass_a_v3_receipt_requires_policy_and_exact_schema(monkeypatch, mutation):
+    raw = forward.read_blob(forward.CI_ASSERTION_V3_RECEIPT)
+    value = json.loads(raw)
+    if mutation == 'missing_policy':
+        del value['policy_id']
+    elif mutation == 'wrong_policy':
+        value['policy_id'] = 'ATHENA_UNAPPROVED_POLICY'
+    else:
+        value['unreviewed_extra'] = False
+    value['canonical_sha256'] = ''
+    value['canonical_sha256'] = forward.safe.canonical_digest(value)
+    monkeypatch.setattr(forward, 'CI_ASSERTION_V3_SHA256', value['canonical_sha256'])
+    altered = forward.safe.canonical(value)
+
+    def reader(path):
+        return altered if path == forward.CI_ASSERTION_V3_RECEIPT else forward.read_blob(path)
+
+    with pytest.raises(ValueError, match='CI assertion V3 receipt scope'):
+        forward._ci_assertion_v3_chain_uncached(reader)
+
+
+def _apply_source_patches(raw, patches):
+    value = raw
+    for patch in patches:
+        old, new = patch['before'].encode('utf-8'), patch['after'].encode('utf-8')
+        assert old and value.count(old) == 1
+        value = value.replace(old, new)
+    return value
+
+
+def test_root_performance_projection_authenticates_current_then_projects_v3_v2():
+    path = 'sitecustomize.py'
+    current = forward.read_blob(path)
+    projected_reader, projected = forward._ci_assertion_v3_projected_read(
+        path, current, forward.read_blob)
+    through_existing_projection = forward._root_performance_project_checked_source(
+        path, projected, _reader=projected_reader)
+    from_unprojected_source = forward._root_performance_project_checked_source(
+        path, current, _reader=forward.read_blob)
+    assert through_existing_projection == from_unprojected_source
+
+    _prior, v2, v3 = forward._ci_assertion_v3_chain()
+    v2_row = v2['source_forward'][path]
+    v3_row = v3['source_forward'][path]
+    v2_before = forward.read_blob(v2_row['fixture'])
+    v3_before = forward.read_blob(v3_row['fixture'])
+    assert forward.safe.identity(v2_before) == v2_row['before']
+    assert forward._apply_exact_source_forward_row(
+        path, v2_row, forward.read_blob, label='test V2')[1] == v3_before
+    assert forward.safe.identity(v3_before) == v3_row['before']
+    assert v2_row['after'] == v3_row['before']
+    assert forward._require_v2_v3_source_edge(
+        path, v2_row, v3_row, forward.read_blob) == v3_before
+    root_row = forward._root_performance_receipt()['source_forward'][path]
+    assert through_existing_projection == forward.read_blob(root_row['fixture'])
+
+
+def test_root_performance_projection_rejects_mismatched_v2_path_and_direction():
+    path = 'sitecustomize.py'
+    _prior, v2, v3 = forward._ci_assertion_v3_chain()
+    v2_row = v2['source_forward'][path]
+    v3_row = v3['source_forward'][path]
+    wrong_path_row = v2['source_forward'][forward.A2_TEXT_SOURCE]
+    with pytest.raises(ValueError, match='V2->V3 source edge direction/path mismatch'):
+        forward._require_v2_v3_source_edge(
+            path, wrong_path_row, v3_row, forward.read_blob)
+    with pytest.raises(ValueError, match='V2->V3 source edge direction/path mismatch'):
+        forward._require_v2_v3_source_edge(
+            path, v3_row, v2_row, forward.read_blob)
+
+
+def test_bootstrap_pin_projection_composes_root_v2_then_v3_exact_recipes():
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+
+    root_before = retention._expected_bootstrap_before_root_performance()
+    root_row = forward._root_performance_receipt()['source_forward']['sitecustomize.py']
+    assert forward.safe.identity(root_before) == root_row['before']
+    root_after = _apply_source_patches(root_before, root_row['patches'])
+    assert forward.safe.identity(root_after) == root_row['after']
+
+    _prior, v2, v3 = forward._ci_assertion_v3_chain()
+    v2_row = v2['source_forward']['sitecustomize.py']
+    v3_row = v3['source_forward']['sitecustomize.py']
+    assert root_after == forward.read_blob(v2_row['fixture'])
+    v2_after = _apply_source_patches(root_after, v2_row['patches'])
+    assert forward.safe.identity(v2_after) == v2_row['after']
+    v3_before = forward.read_blob(v3_row['fixture'])
+    assert v2_after == v3_before
+    v3_after = _apply_source_patches(v3_before, v3_row['patches'])
+    assert v3_after == retention._bootstrap_blob('sitecustomize.py')
+    assert retention.expected_bootstrap_source() == v3_after
+
+
+def test_retention_checkpoint_composes_v313_v348_then_a2_v2_and_v3():
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+
+    _v313, v348 = retention._checkpoint_v2_v313_source()
+    _prior, v2, v3 = forward._ci_assertion_v3_chain()
+    path = retention.CHECKPOINT_V2_PATH
+    v2_row = v2['source_forward'][path]
+    v3_row = v3['source_forward'][path]
+    v2_before, v2_after = forward._apply_exact_source_forward_row(
+        path, v2_row, forward.read_blob, label='retention test V2')
+    v3_before, v3_after = forward._apply_exact_source_forward_row(
+        path, v3_row, forward.read_blob, label='retention test V3')
+    assert v2_before == v348
+    assert v2_after == v3_before
+    assert v2_row['after'] == v3_row['before']
+    current, observed = retention._read_tracked_head_blob_scoped(
+        retention.ROOT, path)
+    assert retention._checkpoint_v2_authenticated_current_source(
+        v348, current=current, observed=observed) == current == v3_after
+
+
+def test_retention_bootstrap_composes_legacy_activation_root_v2_v3():
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+
+    assert retention.authenticate_bootstrap_sources() is True
 
 
 @pytest.mark.parametrize('kind', ['symlink', 'reparse', 'hardlink', 'ancestor'])

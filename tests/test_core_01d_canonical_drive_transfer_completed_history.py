@@ -186,7 +186,15 @@ def test_network_and_operational_actions_are_denied_during_offline_audit(monkeyp
         if command[1] == "-C":
             assert command[2] == str(transfer.ROOT)
             index = 3
-        assert command[index] in {"show", "rev-parse", "hash-object", "cat-file", "ls-tree", "diff", "log"}
+        verb = command[index]
+        if verb == "ls-files":
+            # Bounded receipt scopes fence the exact staged index bytes.
+            assert command[index:] == ["ls-files", "--stage", "-z"]
+        elif verb == "config":
+            # Only the read-only scoped configuration snapshot is permitted.
+            assert command[index:] == ["config", "--show-scope", "--null", "--list"]
+        else:
+            assert verb in {"show", "rev-parse", "hash-object", "cat-file", "ls-tree", "diff", "log"}
         return original(command, *args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", git_reads_only)

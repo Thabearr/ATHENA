@@ -132,19 +132,333 @@ def test_v1_pass4_raw_tree_fixture_rejects_byte_mode_path_and_symlink_tampering(
 def test_local_test_products_are_not_authority_evidence(monkeypatch):
  assert current.LOCAL_TEST_PRODUCTS=={'.pytest-shard-files','p3-0-e1-live-readiness.json','artifacts/p3-0-comparison-evidence/p3-0-e1-live-readiness.json'}
  assert 'Path(".pytest-shard-files").write_text(' in (review.ROOT/'.github/workflows/tests.yml').read_text()
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
  original=review.retention.v4.v3._git
+ observations=[]
+ owners=[]
  def products(*args):
+  observations.append(args)
+  scope=pass_a._active_source_derivation_scope()
+  if scope is not None and scope not in owners:owners.append(scope)
   if args==('ls-files','--others','--exclude-standard'):
    return ('\n'.join(sorted(current.LOCAL_TEST_PRODUCTS))+'\n').encode()
   return original(*args)
  monkeypatch.setattr(review.retention.v4.v3,'_git',products)
  assert current.authenticate_current_scope()
+ assert len(owners)==1
+ request_scope=owners[0]
+ assert request_scope.metrics.get('pass_a_ci_assertion_v2_uncached') == 1
+ assert request_scope.metrics.get('pass_a_ci_assertion_v3_uncached') == 1
+ assert request_scope.metrics.get('pass_a_ci_assertion_v3_hits', 0) > 0
+ assert request_scope.metrics.get('derivation_hits', 0) > 0
+ assert ('ls-files','--others','--exclude-standard') in observations
  assert not current.LOCAL_TEST_PRODUCTS & current.ALLOWED_PASS_A_PATHS
+ assert pass_a._ACTIVE_SOURCE_DERIVATION_SCOPE.get() is None
+ assert request_scope.sources=={} and request_scope.derivation_bytes=={}
+ rejected_owners=[]
  def extra(*args):
+  scope=pass_a._active_source_derivation_scope()
+  if scope is not None and scope not in rejected_owners:rejected_owners.append(scope)
   if args==('ls-files','--others','--exclude-standard'):return b'domain/unapproved-source.py\n'
   return original(*args)
  monkeypatch.setattr(review.retention.v4.v3,'_git',extra)
- with pytest.raises(AssertionError,match='unapproved untracked source'):current.authenticate_current_scope()
+ with pytest.raises(AssertionError,match='unapproved untracked source'):
+  current.authenticate_current_scope()
+ assert len(rejected_owners)==1
+ rejected_scope=rejected_owners[0]
+ assert rejected_scope.metrics.get('pass_a_ci_assertion_v2_uncached') == 1
+ assert rejected_scope.metrics.get('pass_a_ci_assertion_v3_uncached') == 1
+ assert rejected_scope.metrics.get('pass_a_ci_assertion_v3_hits', 0) > 0
+ assert pass_a._ACTIVE_SOURCE_DERIVATION_SCOPE.get() is None
+ assert rejected_scope.sources=={} and rejected_scope.derivation_bytes=={}
+
+
+def test_preinstalled_public_reader_is_never_bypassed_by_source_reuse(monkeypatch):
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+ original=pass_a.read_blob
+ observed=[]
+ def altered(path):
+  raw=original(path)
+  if path==pass_a.CI_ASSERTION_V2_RECEIPT:
+   observed.append(path)
+   return raw+b'\n'
+  return raw
+ monkeypatch.setattr(pass_a,'read_blob',altered)
+ with pytest.raises(ValueError,match='CI assertion V2 receipt or V376 predecessor drift'):
+  pass_a._ci_assertion_v2_chain()
+ assert observed==[pass_a.CI_ASSERTION_V2_RECEIPT]
+ # The automatic owner must reject a substituted reader before it can redirect
+ # the chain to safe.read_blob and silently authenticate different bytes.
+ with pytest.raises(ValueError,match='reviewed public reader'):
+  with pass_a.source_derivation_scope():
+   pass_a._ci_assertion_v2_chain()
+ assert observed==[pass_a.CI_ASSERTION_V2_RECEIPT]
+
+ # A caller-supplied bound source reader also remains on the uncached path.
+ manual=pass_a._SourceReadScope(altered,underlying_reader=altered)
+ with pytest.raises(ValueError,match='CI assertion V2 receipt or V376 predecessor drift'):
+  pass_a._ci_assertion_v2_chain(_reader=manual.read)
+ assert observed[-1]==pass_a.CI_ASSERTION_V2_RECEIPT
+
+
+def test_pass_a_chain_scope_returns_fresh_documents_and_reauthenticates_next_request():
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+ with pass_a.source_derivation_scope() as first_scope:
+  first_prior, first_successor = pass_a._ci_assertion_v2_chain()
+  expected_paths = set(first_successor['source_forward'])
+  first_successor['source_forward'].clear()
+  second_prior, second_successor = pass_a._ci_assertion_v2_chain()
+  assert set(second_successor['source_forward']) == expected_paths
+  assert second_prior == first_prior
+  assert first_scope.metrics.get('pass_a_ci_assertion_v2_uncached') == 1
+  assert first_scope.metrics.get('pass_a_ci_assertion_v3_uncached') == 1
+  assert first_scope.metrics.get('pass_a_ci_assertion_v3_hits', 0) >= 1
+ assert first_scope.sources == {} and first_scope.derivation_bytes == {}
+ with pass_a.source_derivation_scope() as independent_scope:
+  prior, successor = pass_a._ci_assertion_v2_chain()
+  assert prior == second_prior
+  assert set(successor['source_forward']) == expected_paths
+ assert independent_scope.metrics.get('pass_a_ci_assertion_v2_uncached') == 1
+
+
+def test_pass_a_chain_scope_rejects_verifier_replacement_before_reuse(monkeypatch):
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+ with pass_a.source_derivation_scope() as scope:
+  pass_a._ci_assertion_v2_chain()
+  with monkeypatch.context() as patch:
+   patch.setattr(pass_a,'_ci_assertion_v2_chain_uncached',
+                 lambda reader: (_ for _ in ()).throw(AssertionError('substituted verifier')))
+   with pytest.raises(ValueError,match='reader changed during its request'):
+    pass_a._ci_assertion_v2_chain()
+ assert scope.sources == {} and scope.derivation_bytes == {}
+
+
+def test_pass_a_nested_trusted_readers_share_only_the_outer_chain_derivation():
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+ nested_owners=[]
+
+ def nested_chain():
+  # authenticate_core() creates this kind of short-lived scope for every call.
+  nested=pass_a._SourceReadScope(pass_a._TRUSTED_PUBLIC_READ_BLOB)
+  nested_owners.append(nested)
+  try:
+   value=pass_a._ci_assertion_v2_chain(_reader=nested.read)
+   nested.verify()
+   return value
+  finally:
+   nested.sources.clear()
+   nested.derivation_bytes.clear()
+
+ with pass_a.source_derivation_scope() as outer:
+  first_prior,first=nested_chain()
+  assert nested_owners[-1] is not outer
+  first_paths=set(first['source_forward'])
+  first['source_forward'].clear()
+  second_prior,second=nested_chain()
+  assert nested_owners[-1] is not nested_owners[0]
+  assert first_prior==second_prior
+  assert set(second['source_forward'])==first_paths
+  assert outer.metrics.get('pass_a_ci_assertion_v2_uncached')==1
+  assert outer.metrics.get('pass_a_ci_assertion_v3_uncached')==1
+  assert outer.metrics.get('pass_a_ci_assertion_v3_hits',0)==1
+  assert pass_a.CI_ASSERTION_V2_RECEIPT in outer.sources
+  assert pass_a.CI_ASSERTION_V2_PREDECESSOR_INVENTORY['path'] in outer.sources
+
+  # A caller-provided reader is deliberately not promoted into the request
+  # owner. Its complete real validation runs uncached and cannot populate a
+  # reusable chain verdict.
+  def custom_reader(path):return pass_a._TRUSTED_PUBLIC_READ_BLOB(path)
+  custom=pass_a._SourceReadScope(custom_reader,underlying_reader=custom_reader)
+  try:
+   third_prior,third=pass_a._ci_assertion_v2_chain(_reader=custom.read)
+   assert third_prior==second_prior
+   assert set(third['source_forward'])==first_paths
+   assert outer.metrics.get('pass_a_ci_assertion_v2_uncached')==2
+  finally:
+   custom.sources.clear()
+   custom.derivation_bytes.clear()
+ assert outer.sources=={} and outer.derivation_bytes=={}
+ with pass_a.source_derivation_scope() as fresh:
+  pass_a._ci_assertion_v2_chain()
+  assert fresh.metrics.get('pass_a_ci_assertion_v2_uncached')==1
+
+
+def test_pass_a_retained_owner_rejects_foreign_thread_bound_reader_and_verify():
+ import threading
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+ outcomes=[]
+ with pass_a.source_derivation_scope() as owner:
+  pass_a._ci_assertion_v2_chain()
+  def worker():
+   for label, operation in (
+    ('bound-reader',lambda:pass_a._ci_assertion_v2_chain(_reader=owner.read)),
+    ('direct-read',lambda:owner.read(pass_a.CI_ASSERTION_V2_RECEIPT)),
+    ('load',lambda:owner.load_derivation('pass-a.ci-assertion-v2-chain','x')),
+    ('store',lambda:owner.store_derivation('foreign','x',b'payload')),
+    ('verify',owner.verify),
+   ):
+    try:operation()
+    except ValueError as error:outcomes.append((label,str(error)))
+    else:outcomes.append((label,'ACCEPTED'))
+  thread=threading.Thread(target=worker)
+  thread.start();thread.join(timeout=10)
+  assert not thread.is_alive()
+  assert [label for label,_ in outcomes]==[
+   'bound-reader','direct-read','load','store','verify']
+  assert all(message=='Pass-A source derivation scope crossed a process/thread/task boundary'
+             for _,message in outcomes)
+  owner.verify()
+ assert owner.sources=={} and owner.derivation_bytes=={}
+
+
+def test_pass_a_source_request_rejects_same_size_drift_with_restored_mtime(
+ monkeypatch,tmp_path,
+):
+ import importlib.util
+ import os
+ import subprocess
+ import sys
+ from pathlib import Path
+ from scripts import audit_phase_a_pass_a_tests_source_successor as admitted_pass_a
+ root=tmp_path/'repo';root.mkdir()
+ def git(*args):
+  subprocess.run(['git','-C',str(root),*args],check=True,
+                 stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+ git('init','-q')
+ git('config','user.name','ATHENA scoped-source regression')
+ git('config','user.email','athena-scoped-source@example.invalid')
+ source=root/'proof.txt';source.write_bytes(b'reviewed\n')
+ git('add','proof.txt');git('commit','-q','-m','scoped source fixture')
+
+ # Import the exact admitted helper bytes only after binding the isolated root.
+ # This gives the fixture its own import-time reviewed reader/root contract;
+ # production eligibility and trust sentinels remain untouched.
+ monkeypatch.setattr(admitted_pass_a.safe,'ROOT',root)
+ module_name='scripts._rcv04_same_size_source_fixture'
+ spec=importlib.util.spec_from_file_location(module_name,admitted_pass_a.__file__)
+ assert spec is not None and spec.loader is not None
+ pass_a=importlib.util.module_from_spec(spec)
+ sys.modules[module_name]=pass_a
+ try:
+  spec.loader.exec_module(pass_a)
+ except BaseException:
+  sys.modules.pop(module_name,None)
+  raise
+ original_stat=source.stat()
+ try:
+  with pytest.raises(ValueError,match='filtered worktree identity drift'):
+   with pass_a.source_derivation_scope() as scope:
+    assert pass_a.read_blob('proof.txt')==b'reviewed\n'
+    # The hit returns only the original immutable bytes internally; the enclosing
+    # request must reject the changed filtered worktree before public return.
+    assert pass_a.read_blob('proof.txt')==b'reviewed\n'
+    source.write_bytes(b'tampered\n')
+    os.utime(source,ns=(original_stat.st_atime_ns,original_stat.st_mtime_ns))
+    assert pass_a.read_blob('proof.txt')==b'reviewed\n'
+  assert scope.sources == {} and scope.derivation_bytes == {}
+ finally:
+  sys.modules.pop(module_name,None)
+
+def test_source_derivation_request_does_not_leak_after_exception():
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+ with pytest.raises(RuntimeError,match='request abort'):
+  with pass_a.source_derivation_scope() as scope:
+   scope.store_derivation('synthetic.payload','contract',b'payload')
+   raise RuntimeError('request abort')
+ assert pass_a._ACTIVE_SOURCE_DERIVATION_SCOPE.get() is None
+ assert scope.sources=={} and scope.derivation_bytes=={}
+
+def test_source_derivation_request_rejects_copied_thread_context():
+ import contextvars, threading
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+ result=[]
+ with pass_a.source_derivation_scope():
+  copied=contextvars.copy_context()
+  def worker():
+   try:copied.run(pass_a._active_source_derivation_scope)
+   except ValueError as error:result.append(str(error))
+  thread=threading.Thread(target=worker);thread.start();thread.join(timeout=5)
+ assert not thread.is_alive()
+ assert result==['Pass-A source derivation scope crossed a process/thread/task boundary']
+
+def test_source_derivation_request_rejects_inherited_async_task():
+ import asyncio
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+ async def run():
+  with pass_a.source_derivation_scope():
+   async def child():
+    with pytest.raises(ValueError,match='crossed a process/thread/task boundary'):
+     pass_a._active_source_derivation_scope()
+   await asyncio.create_task(child())
+ asyncio.run(run())
+
+
+@pytest.mark.skipif(not hasattr(__import__('os'), 'fork'), reason='POSIX fork is unavailable')
+def test_source_derivation_request_rejects_inherited_fork_owner():
+ import os
+ import select
+ import signal
+ from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+ with pass_a.source_derivation_scope() as parent_scope:
+  pass_a._ci_assertion_v2_chain()
+  read_fd,write_fd=os.pipe()
+  child=os.fork()
+  if child==0:
+   os.close(read_fd)
+   try:
+    try:
+     pass_a._ci_assertion_v2_chain()
+    except ValueError as error:
+     message=('REJECTED:'+str(error)).encode()
+    except BaseException as error:
+     message=('UNEXPECTED:'+type(error).__name__).encode()
+    else:
+     message=b'ACCEPTED'
+    os.write(write_fd,message[:2048])
+   finally:
+    os.close(write_fd)
+   os._exit(0)
+  os.close(write_fd)
+  ready,_,_=select.select([read_fd],[],[],10)
+  if not ready:
+   os.kill(child,signal.SIGKILL)
+   os.waitpid(child,0)
+   os.close(read_fd)
+   pytest.fail('forked source derivation child did not finish within 10 seconds')
+  message=os.read(read_fd,2048).decode()
+  os.close(read_fd)
+  _,status=os.waitpid(child,0)
+  assert os.waitstatus_to_exitcode(status)==0
+  assert message=='REJECTED:Pass-A source derivation scope crossed a process/thread/task boundary'
+  assert pass_a._active_source_derivation_scope() is parent_scope
+ assert parent_scope.sources=={} and parent_scope.derivation_bytes=={}
+ assert pass_a._ACTIVE_SOURCE_DERIVATION_SCOPE.get() is None
+ with pass_a.source_derivation_scope() as next_scope:
+  pass_a._ci_assertion_v2_chain()
+  assert next_scope.metrics.get('pass_a_ci_assertion_v2_uncached')==1
+
+
+def test_scoped_projection_rechecks_live_a2_git_state_before_reuse(monkeypatch):
+ from types import SimpleNamespace
+ events=[]
+ scope=SimpleNamespace(enabled=True)
+ def reject_state_drift(received,*,directory=None,check_git=True):
+  events.append(('state',received, directory, check_git))
+  raise AssertionError('synthetic scoped state drift')
+ fake_a2=SimpleNamespace(_verify_scoped_a2_live_state=reject_state_drift)
+ monkeypatch.setattr(current,'_a2_historical_projection_from_authenticated_latest',
+                     lambda raw,latest: events.append(('projection',raw,latest)))
+ with pytest.raises(AssertionError,match='synthetic scoped state drift'):
+  current._a2_projection_with_fresh_scope(fake_a2,scope,b'head-tree',{'generation':378})
+ assert events==[('state',scope,None,True)]
+ events.clear()
+ fake_a2._verify_scoped_a2_live_state=lambda received,*,directory=None,check_git=True: events.append(
+  ('state',received,directory,check_git))
+ monkeypatch.setattr(current,'_a2_historical_projection_from_authenticated_latest',
+                     lambda raw,latest: events.append(('projection',raw,latest)) or b'projection')
+ assert current._a2_projection_with_fresh_scope(
+  fake_a2,scope,b'head-tree',{'generation':378})==b'projection'
+ assert events==[('state',scope,None,True),('projection',b'head-tree',{'generation':378})]
 
 
 def test_checkpoint_e_uses_only_the_authenticated_historical_tests_workflow():

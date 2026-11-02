@@ -310,9 +310,9 @@ def test_v312_rejects_tampered_successor_extension(monkeypatch):
 def test_v313_extension_binds_exact_v312_v2_auditor_source_row():
     path = a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_PATH
     chain = a2.load_inventory_generations()
-    assert len(chain) >= a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_GENERATION
-    latest = chain[-1][1]
-    extension, = [row for row in latest["e3_cross_contract_source_forward_successor_extensions"]
+    assert len(chain) >= a2.RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION
+    v313_inventory = chain[a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_GENERATION - 1][1]
+    extension, = [row for row in v313_inventory["e3_cross_contract_source_forward_successor_extensions"]
                   if row["generation"] == a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_GENERATION]
     predecessor = a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_PREDECESSOR
     successor = a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_IDENTITY
@@ -339,12 +339,98 @@ def test_v313_extension_binds_exact_v312_v2_auditor_source_row():
     assert extension["rewritten"] is False
     historical_chain = chain[:313]
     assert a2._authenticated_e3_successor_identity(
-        path, historical_chain, historical_chain[-1][1]) == extension["successor"]
+        path, historical_chain, v313_inventory) == extension["successor"]
     from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
-    current = retention.checkpoint_retention_extension(chain)
-    assert current["previous_successor"]["git_blob_sha1"] == successor[0]
-    assert current["previous_successor"]["lf_source_sha256"] == successor[1]
-    assert a2._authenticated_e3_successor_identity(path, chain, latest) == current["successor"]
+    # V348 and V377 are immutable historical identities. Today's source has a
+    # separate V378 edge and is never substituted into either historical row.
+    retained_v348 = retention.checkpoint_retention_extension(chain[:348])
+    v348_inventory = chain[347][1]
+    v348_extension, = [row for row in v348_inventory["e3_cross_contract_source_forward_successor_extensions"]
+                       if row["path"] == path and row["generation"] == 348]
+    assert retained_v348 == v348_extension
+    assert retained_v348["previous_successor"]["git_blob_sha1"] == successor[0]
+    assert retained_v348["previous_successor"]["lf_source_sha256"] == successor[1]
+
+    v377_inventory = chain[376][1]
+    v377_extension, = [row for row in v377_inventory["e3_cross_contract_source_forward_successor_extensions"]
+                       if row["path"] == path and row["generation"] == 377]
+    assert v377_inventory["canonical_sha256"] == a2.RCV_RECOVERY_V377_INVENTORY_SHA256
+    assert v377_extension["successor"] == a2.RCV_RECOVERY_V377_CHECKPOINT_V2_IDENTITY
+    assert a2._authenticated_e3_successor_identity(
+        path, chain[:377], v377_inventory) == v377_extension["successor"]
+    v376_path, v376 = chain[375]
+    assert v376_path == a2.inventory_generation_path(376)
+    assert v376["generation"] == 376
+    assert v376["canonical_sha256"] == a2.RCV_RECOVERY_V376_SOURCE_PREDECESSOR_SHA256
+    assert v377_extension["predecessor_inventory"] == {
+        "path": v376_path,
+        "canonical_sha256": v376["canonical_sha256"],
+        "generation": 376,
+        "rewritten": False,
+    }
+    assert v377_extension["previous_successor"] == {
+        "generation": 376,
+        "canonical_sha256": v376["canonical_sha256"],
+        "lf_source_sha256": retained_v348["successor"]["lf_source_sha256"],
+        "rewritten": False,
+    }
+    latest_path, latest = chain[-1]
+    assert len(chain) == a2.RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION
+    assert latest_path == a2.inventory_generation_path(a2.RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION)
+    current = a2._authenticated_e3_successor_identity(path, chain, latest)
+    v378_extension, = [row for row in latest["e3_cross_contract_source_forward_successor_extensions"]
+                       if row["path"] == path and row["generation"] == 378]
+    assert v378_extension["previous_successor"] == {
+        "generation": 377,
+        "canonical_sha256": a2.RCV_RECOVERY_V377_INVENTORY_SHA256,
+        "git_blob_sha1": a2.RCV_RECOVERY_V377_CHECKPOINT_V2_IDENTITY["git_blob_sha1"],
+        "lf_source_sha256": a2.RCV_RECOVERY_V377_CHECKPOINT_V2_IDENTITY["lf_source_sha256"],
+        "rewritten": False,
+    }
+    assert v378_extension["successor"] == {
+        "git_blob_sha1": current["git_blob_sha1"],
+        "lf_source_sha256": current["lf_source_sha256"],
+        "git_mode": "100644",
+    }
+    latest_rows = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
+    assert latest_rows[path] == current["lf_source_sha256"]
+
+
+@pytest.mark.parametrize("mutation", ["frozen-v377", "current-v378"])
+def test_v2_v378_rejects_forged_historical_or_current_successor(mutation):
+    from copy import deepcopy
+    path = a2.E3_PASS_A_V313_SUCCESSOR_EXTENSION_PATH
+    chain = deepcopy(a2.load_inventory_generations())
+    assert len(chain) == a2.RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION
+    if mutation == "frozen-v377":
+        inventory = chain[376][1]
+    else:
+        inventory = chain[-1][1]
+    extension, = [row for row in inventory["e3_cross_contract_source_forward_successor_extensions"]
+                  if row["path"] == path
+                  and row["generation"] == (377 if mutation == "frozen-v377" else 378)]
+    extension["successor"]["lf_source_sha256"] = "0" * 64
+    with pytest.raises(AssertionError,
+                       match="source-forward successor extension is missing or altered|"
+                             "V377 checkpoint source does not preserve|"
+                             "V377 historical source edge is missing or altered"):
+        a2._authenticated_e3_successor_identity(path, chain, chain[-1][1])
+
+
+def test_current_inventory_rejects_a_stale_v377_prefix(monkeypatch):
+    """A historical prefix remains readable, but cannot stand in for current V378."""
+    original = a2.load_inventory_generations
+    complete_chain = original()
+    assert len(complete_chain) == a2.RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION
+    assert complete_chain[376][0] == a2.inventory_generation_path(377)
+    assert complete_chain[377][0] == a2.inventory_generation_path(378)
+
+    def stale_prefix(directory=None):
+        return complete_chain[:377]
+
+    monkeypatch.setattr(a2, "load_inventory_generations", stale_prefix)
+    with pytest.raises(AssertionError, match="source or process discovery drift"):
+        a2.authenticate_inventory()
 
 
 def test_v313_rejects_tampered_successor_extension(monkeypatch):

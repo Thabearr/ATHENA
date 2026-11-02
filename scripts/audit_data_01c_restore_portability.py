@@ -209,7 +209,7 @@ def _authenticate_workflow_uncached():
         if path in b4.B4_WORKFLOW_PREDECESSORS:
             continue
         from scripts import audit_tests_shard_balance_successor as shards
-        if path == shards.WORKFLOW and actual_tree == shards.AFTER_TREE:
+        if path == shards.WORKFLOW and actual_tree in {shards.AFTER_TREE, shards.V3_AFTER_TREE}:
             shards.authenticate()
             continue
         if path == retention.WORKFLOW and shards.project_tree(actual_tree) == retention.AFTER_TREE:

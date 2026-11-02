@@ -334,12 +334,36 @@ def test_e3_cross_contract_matrix_authenticates_every_predecessor_and_current_su
 
     chain = a2.load_inventory_generations()
     latest = chain[-1][1]
-    current_successor = {
-        "git_blob_sha1": transition["successor_git_blob_sha1"],
-        "lf_source_sha256": transition["successor_lf_source_sha256"],
-    }
-    if path == a2.E3_PASS_A_COMPAT_SUCCESSOR_EXTENSION_PATH:
-        current_successor = a2._authenticated_e3_successor_identity(path, chain, latest)
+    # Resolve every current source through its authenticated latest edge. Some
+    # paths retain their V284 successor; B6 has a distinct V377 successor.
+    current_successor = a2._authenticated_e3_successor_identity(path, chain, latest)
+    if path == "scripts/audit_core_01d_port02c_trigger_authority_b6.py":
+        v376_path, v376 = chain[375]
+        v377, = [row for row in latest["e3_cross_contract_source_forward_successor_extensions"]
+                 if row["path"] == path and row["generation"] == 377]
+        assert v376_path == a2.inventory_generation_path(376)
+        assert v376["generation"] == 376
+        assert v376["canonical_sha256"] == a2.RCV_RECOVERY_V376_SOURCE_PREDECESSOR_SHA256
+        assert v377["predecessor_inventory"] == {
+            "path": v376_path,
+            "canonical_sha256": v376["canonical_sha256"],
+            "generation": 376,
+            "rewritten": False,
+        }
+        assert v377["previous_successor"] == {
+            "generation": 376,
+            "canonical_sha256": v376["canonical_sha256"],
+            "git_blob_sha1": transition["successor_git_blob_sha1"],
+            "lf_source_sha256": transition["successor_lf_source_sha256"],
+            "rewritten": False,
+        }
+        assert v377["successor"] == {
+            **current_successor,
+            "git_mode": "100644",
+        }
+        assert v377["authority_granted"] is False
+        assert v377["historical_bytes_changed"] is False
+        assert v377["rewritten"] is False
     current, current_identity = a2.read_tracked_head_blob(b4.ROOT, path)
     normalized_current = current.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     assert current_identity.git_blob_sha1 == current_successor["git_blob_sha1"]
@@ -743,7 +767,8 @@ def test_e3_three_source_forward_rejects_forged_a2_authorization_chain(monkeypat
     if mutation == "stale_latest_generation":
         with pytest.raises(
             AssertionError,
-            match="E3 cross-contract|E3 Pass-A latest inventory|current A2 source differs from authenticated latest A2",
+            match=(r"E3 source-forward current successor identity mismatch: "
+                   r"scripts/audit_core_01d_checkpoint_e_completion_v2\.py"),
         ):
             a2.read_authenticated_cross_contract_predecessor(path)
     else:
@@ -777,7 +802,7 @@ def test_phase_a_one_path_retention_preserves_b4_projection():
     from scripts import audit_tests_shard_balance_successor as shards
     from scripts import audit_phase_a_b4_test_source_successor as test_source
     actual_tree = b4._git("rev-parse", "HEAD:.github/workflows").decode().strip()
-    assert actual_tree == shards.AFTER_TREE
+    assert actual_tree in {shards.AFTER_TREE, shards.V3_AFTER_TREE}
     shards.authenticate()
     test_source.authenticate()
     retention.authenticate()

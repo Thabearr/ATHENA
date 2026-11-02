@@ -545,6 +545,15 @@ E3_PASS_A_V313_SUCCESSOR_EXTENSION_IDENTITY = (
 RCV_RECOVERY_V376_SOURCE_PREDECESSOR_SHA256 = (
     "486e41d2e67bf844371683b5efcdd6cae7510e874889bb3416d2ff5713646102"
 )
+RCV_RECOVERY_V377_INVENTORY_SHA256 = (
+    "467846f44798c99dd8582e6bcc54b23c8a390c9e833a3ae175722b0bf288c191"
+)
+RCV_RECOVERY_V377_CHECKPOINT_V2_IDENTITY = {
+    "git_blob_sha1": "5422fe486af775744cc249a3fa6ec8f8eeaac127",
+    "lf_source_sha256": "9bff92fb1d98486ddb6cc0f5fb3f585338a078724643278b2045fe6afd2c32e3",
+    "git_mode": "100644",
+}
+RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION = 378
 
 
 def resolve_historical_source_transition(path, *, expected_generation):
@@ -834,11 +843,13 @@ def _e3_cross_contract_source_forward_successor_extensions(chain=None, generatio
     if generation >= 377:
         extensions.append(_e3_checkpoint_v2_v377_source_extension(chain, generation))
         extensions.append(_e3_port02c_b6_v377_source_extension(chain, generation))
+    if generation >= RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION:
+        extensions.append(_e3_checkpoint_v2_v378_source_extension(chain, generation))
     return extensions
 
 
 def _e3_checkpoint_v2_v377_source_extension(chain, generation):
-    """Append the exact current checkpoint source after unchanged V1-V376."""
+    """Reconstruct the frozen V377 V2 edge without consulting today's source."""
     predecessor_generation = 376
     require(type(chain) is list and len(chain) >= predecessor_generation
             and type(generation) is int and generation >= 377,
@@ -859,11 +870,6 @@ def _e3_checkpoint_v2_v377_source_extension(chain, generation):
             "E3 checkpoint V377 previous source identity is absent")
     require(previous_lf == RETENTION_MAIN347_CHECKPOINT_EXTENSION["successor"]["lf_source_sha256"],
             "E3 checkpoint V377 predecessor differs from the authenticated V348 source")
-    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
-    current = retention.checkpoint_v2_current_source()
-    current_identity = retention.identity(current)
-    require(current_identity["source_sha256"] != previous_lf,
-            "E3 checkpoint V377 successor did not change the authenticated source")
     return {
         "path": path,
         "generation": 377,
@@ -879,13 +885,68 @@ def _e3_checkpoint_v2_v377_source_extension(chain, generation):
             "lf_source_sha256": previous_lf,
             "rewritten": False,
         },
-        "successor": {
-            "git_blob_sha1": current_identity["git_blob_sha1"],
-            "lf_source_sha256": current_identity["source_sha256"],
-            "git_mode": "100644",
-        },
+        "successor": dict(RCV_RECOVERY_V377_CHECKPOINT_V2_IDENTITY),
         "reason_type": "RCV_RECOVERY_CHECKPOINT_V2_SOURCE_FORWARD_V377",
         "reason": "Append-only current source identity after the unchanged V1-V376 chain and exact V313/V348 historical projections",
+        "authority_granted": False,
+        "historical_bytes_changed": False,
+        "rewritten": False,
+    }
+
+
+def _e3_checkpoint_v2_v378_source_extension(chain, generation):
+    """Append the current V2 bytes after the immutable V377 source identity."""
+    require(type(chain) is list and len(chain) >= 377
+            and type(generation) is int and generation >= RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION,
+            "E3 checkpoint V378 source successor requires the exact V377 chain")
+    v377_path, v377 = chain[376]
+    frozen = _e3_checkpoint_v2_v377_source_extension(chain, 377)
+    require(v377_path == inventory_generation_path(377)
+            and v377.get("generation") == 377
+            and v377.get("schema_version") == 377
+            and v377.get("canonical_sha256") == RCV_RECOVERY_V377_INVENTORY_SHA256
+            and v377.get("predecessor_inventory") == frozen["predecessor_inventory"],
+            "E3 checkpoint V378 predecessor is not the immutable V377 inventory")
+    frozen_rows = {row["path"]: row["lf_source_sha256"]
+                   for row in v377.get("source_identities", [])
+                   if type(row) is dict and type(row.get("path")) is str}
+    require(frozen_rows.get(frozen["path"]) == frozen["successor"]["lf_source_sha256"],
+            "E3 checkpoint V377 inventory does not preserve its frozen V2 identity")
+    frozen_extensions = [row for row in v377.get("e3_cross_contract_source_forward_successor_extensions", [])
+                         if type(row) is dict and row.get("path") == frozen["path"]
+                         and row.get("generation") == 377]
+    require(frozen_extensions == [frozen],
+            "E3 checkpoint V377 historical source edge is missing or altered")
+
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    current_source = retention.checkpoint_v2_current_source()
+    current = retention.identity(current_source)
+    require(current["git_blob_sha1"] != frozen["successor"]["git_blob_sha1"]
+            and current["source_sha256"] != frozen["successor"]["lf_source_sha256"],
+            "E3 checkpoint V378 source successor did not change the frozen V377 bytes")
+    return {
+        "path": frozen["path"],
+        "generation": RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION,
+        "predecessor_inventory": {
+            "path": v377_path,
+            "canonical_sha256": v377["canonical_sha256"],
+            "generation": 377,
+            "rewritten": False,
+        },
+        "previous_successor": {
+            "generation": 377,
+            "canonical_sha256": v377["canonical_sha256"],
+            "git_blob_sha1": frozen["successor"]["git_blob_sha1"],
+            "lf_source_sha256": frozen["successor"]["lf_source_sha256"],
+            "rewritten": False,
+        },
+        "successor": {
+            "git_blob_sha1": current["git_blob_sha1"],
+            "lf_source_sha256": current["source_sha256"],
+            "git_mode": "100644",
+        },
+        "reason_type": "RCV_RECOVERY_CHECKPOINT_V2_SOURCE_FORWARD_V378",
+        "reason": "Append-only current V2 source after the frozen V377 identity; V1-V377 history is unchanged",
         "authority_granted": False,
         "historical_bytes_changed": False,
         "rewritten": False,
@@ -2103,6 +2164,10 @@ def _e3_source_forward_file_identity(
         from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
         predecessor, retained = retention.checkpoint_v2_retention_sources()
         fixed = RETENTION_MAIN347_CHECKPOINT_EXTENSION["successor"]
+        retained_identity = retention.identity(retained)
+        require(retained_identity["git_blob_sha1"] == fixed["git_blob_sha1"]
+                and retained_identity["source_sha256"] == fixed["lf_source_sha256"],
+                "retention V348 delegated source identity drift")
         if (identity.git_blob_sha1 == fixed["git_blob_sha1"]
                 and hashlib.sha256(normalized).hexdigest() == fixed["lf_source_sha256"]
                 and retained == normalized):
@@ -2222,7 +2287,7 @@ def _authenticated_e3_successor_identity(path, chain, latest):
         return v298["successor"]
 
     require(path == E3_PASS_A_COMPAT_SUCCESSOR_EXTENSION_PATH
-            and len(matches) in {3, 4, 5, 6, 7}
+            and len(matches) in {3, 4, 5, 6, 7, 8}
             and latest_generation >= E3_PASS_A_COMPAT_SUCCESSOR_EXTENSION_GENERATION,
             "E3 source-forward path has an unsupported extension chain")
     v301 = next((row for row in matches
@@ -2436,7 +2501,7 @@ def _authenticated_e3_successor_identity(path, chain, latest):
     if len(matches) == 5:
         return v313["successor"]
     from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
-    require(len(matches) in {6, 7} and latest_generation >= 348,
+    require(len(matches) in {6, 7, 8} and latest_generation >= 348,
             "retention checkpoint has an unreviewed source-forward suffix")
     extension = retention.checkpoint_retention_extension(chain)
     v348 = next((row for row in matches if row.get("generation") == 348), None)
@@ -2458,31 +2523,60 @@ def _authenticated_e3_successor_identity(path, chain, latest):
     if len(matches) == 6:
         return extension["successor"]
 
+    v377 = _e3_checkpoint_v2_v377_source_extension(chain, 377)
+    v377_path, v377_inventory = chain[376]
+    v377_extensions = _e3_cross_contract_source_forward_successor_extensions(
+        chain=chain, generation=377,
+    )
+    v377_rows = {row["path"]: row["lf_source_sha256"]
+                 for row in v377_inventory.get("source_identities", [])
+                 if type(row) is dict and type(row.get("path")) is str}
+    expected_path_generations = [
+        E3_CROSS_CONTRACT_SUCCESSOR_EXTENSION_GENERATION,
+        E3_PASS_A_COMPAT_SUCCESSOR_EXTENSION_GENERATION,
+        E3_PASS_A_V309_SUCCESSOR_EXTENSION_GENERATION,
+        E3_PASS_A_V312_SUCCESSOR_EXTENSION_GENERATION,
+        E3_PASS_A_V313_SUCCESSOR_EXTENSION_GENERATION,
+        348,
+        377,
+    ]
+    require(v377_path == inventory_generation_path(377)
+            and v377_inventory.get("generation") == 377
+            and v377_inventory.get("schema_version") == 377
+            and v377_inventory.get("canonical_sha256") == RCV_RECOVERY_V377_INVENTORY_SHA256
+            and v377_inventory.get("predecessor_inventory") == v377["predecessor_inventory"]
+            and v377_inventory.get("e3_cross_contract_source_forward_successor_extensions")
+                == v377_extensions
+            and v377 in matches
+            and v377_rows.get(path) == v377["successor"]["lf_source_sha256"],
+            "retention V377 checkpoint source does not preserve its frozen V376 edge")
+
+    if latest_generation == 377:
+        require([row.get("generation") for row in matches] == expected_path_generations,
+                "retention V377 checkpoint source has an unknown extension suffix")
+        return v377["successor"]
+
+    require(latest_generation == RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION
+            and [row.get("generation") for row in matches]
+                == expected_path_generations + [RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION],
+            "retention checkpoint source has an unsupported generation suffix")
     latest_path, latest_inventory = chain[-1]
-    prior_path, prior_inventory = chain[375]
-    v377 = _e3_checkpoint_v2_v377_source_extension(chain, latest_generation)
+    v378 = _e3_checkpoint_v2_v378_source_extension(chain, latest_generation)
     latest_rows = {row["path"]: row["lf_source_sha256"]
                    for row in latest_inventory.get("source_identities", [])
-                   if type(row) is dict}
-    require(latest_generation >= 377
-            and prior_path == inventory_generation_path(376)
-            and prior_inventory.get("generation") == 376
-            and latest_path == inventory_generation_path(latest_generation)
+                   if type(row) is dict and type(row.get("path")) is str}
+    require(latest_path == inventory_generation_path(latest_generation)
             and latest_inventory.get("generation") == latest_generation
-            and latest_inventory.get("predecessor_inventory") == {
-                "path": inventory_generation_path(latest_generation - 1),
-                "canonical_sha256": chain[-2][1].get("canonical_sha256"),
-                "generation": latest_generation - 1,
-                "rewritten": False,
-            }
-            and matches[-1] == v377
+            and latest_inventory.get("schema_version") == latest_generation
+            and latest_inventory.get("predecessor_inventory") == v378["predecessor_inventory"]
             and latest_inventory.get("e3_cross_contract_source_forward_successor_extensions")
                 == _e3_cross_contract_source_forward_successor_extensions(
                     chain=chain, generation=latest_generation,
                 )
-            and latest_rows.get(path) == v377["successor"]["lf_source_sha256"],
-            "retention V377 checkpoint source does not append to exact V376")
-    return v377["successor"]
+            and v378 in matches
+            and latest_rows.get(path) == v378["successor"]["lf_source_sha256"],
+            "retention V378 checkpoint source does not append to exact V377")
+    return v378["successor"]
 
 
 def _authenticated_pass_a_source_inventory_state(chain=None):

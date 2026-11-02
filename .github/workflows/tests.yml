@@ -116,6 +116,15 @@ jobs:
           mapfile -t test_files < .pytest-shard-files
           python -m pytest -p scripts.audit_phase_a_pass_a_tests_source_successor -q --durations=20 "${test_files[@]}"
 
+      - name: Upload bounded pytest progress diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pytest-progress-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/athena-pytest-progress/*.jsonl
+          if-no-files-found: ignore
+          retention-days: 3
+
   syntax:
     name: syntax
     runs-on: ubuntu-latest

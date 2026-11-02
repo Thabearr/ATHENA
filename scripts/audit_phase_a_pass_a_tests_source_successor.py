@@ -7,10 +7,14 @@ No frozen receipt, workflow, source authority or live discovery is changed.
 from __future__ import annotations
 import hashlib
 from collections.abc import Callable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
 import json
 import marshal
+import os
 import sys
+import threading
 from scripts import audit_phase_a_b4_test_source_successor as safe
 
 ROOT = safe.ROOT
@@ -318,6 +322,8 @@ def read_blob(path):
     relative = source_identity.validate_repository_relative_path(path)
     scope = _active_checkpoint_derivation_scope()
     if scope is None:
+        scope = _active_source_derivation_scope()
+    if scope is None:
         return safe.read_blob(relative)
     contract = _scoped_source_read_contract()
     key = "pass-a.source-blob:" + relative
@@ -329,7 +335,7 @@ def read_blob(path):
         if contract != _scoped_source_read_contract():
             raise ValueError('Pass-A source reader changed during scoped reuse')
         return cached
-    raw = safe.read_blob(relative)
+    raw = scope.read(relative) if isinstance(scope, _SourceReadScope) else safe.read_blob(relative)
     if type(raw) is not bytes:
         raise ValueError('Pass-A source reader returned non-byte data')
     if contract != _scoped_source_read_contract():
@@ -362,17 +368,114 @@ def _active_checkpoint_derivation_scope():
     return None
 
 
+_ACTIVE_SOURCE_DERIVATION_SCOPE = ContextVar(
+    'athena_pass_a_source_derivation_scope', default=None)
+
+
+def _source_execution_unit():
+    import asyncio
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    return (os.getpid(), threading.get_ident(), None if task is None else id(task))
+
+
+def _assert_source_scope_execution_unit(scope):
+    """Reject direct use of a retained owner outside its creating unit."""
+    if getattr(scope, 'execution_unit', None) != _source_execution_unit():
+        raise ValueError(
+            'Pass-A source derivation scope crossed a process/thread/task boundary')
+
+
+def _active_source_derivation_scope():
+    scope = _ACTIVE_SOURCE_DERIVATION_SCOPE.get()
+    if scope is None:
+        return None
+    if scope.execution_unit != _source_execution_unit():
+        raise ValueError('Pass-A source derivation scope crossed a process/thread/task boundary')
+    if (not _trusted_source_reader_contract()
+            or read_blob is not scope.reader
+            or safe.read_blob is not scope.safe_reader
+            or not _trusted_source_scope_instance(scope)):
+        raise ValueError('Pass-A source derivation reader changed during its request')
+    return scope
+
+
+@contextmanager
+def source_derivation_scope():
+    """Share immutable source derivations over one direct Pass-A request.
+
+    An enclosing checkpoint receipt scope remains the owner when present. The
+    source-only owner is for call paths such as the V2 local-products test,
+    whose deliberately wrapped Git reader prevents an unrelated receipt scope
+    from being eligible. It caches bytes/pure canonical derivations only and
+    revalidates every observed path, filtered worktree identity and HEAD before
+    the enclosing public call returns. The context is never inherited across
+    processes, threads or asyncio tasks, and all payloads are cleared in ``finally``.
+    """
+    checkpoint_scope = _active_checkpoint_derivation_scope()
+    if checkpoint_scope is not None:
+        yield checkpoint_scope
+        return
+    active = _active_source_derivation_scope()
+    if active is not None:
+        yield active
+        return
+    if not _trusted_source_reader_contract():
+        raise ValueError('Pass-A source reader is not the reviewed public reader')
+    scope = _SourceReadScope(_TRUSTED_PUBLIC_READ_BLOB,
+                             underlying_reader=_TRUSTED_SAFE_READ_BLOB)
+    token = _ACTIVE_SOURCE_DERIVATION_SCOPE.set(scope)
+    try:
+        yield scope
+        scope.verify()
+    finally:
+        scope.sources.clear()
+        scope.derivation_bytes.clear()
+        _ACTIVE_SOURCE_DERIVATION_SCOPE.reset(token)
+
+
 def _scoped_source_read_contract():
     """Bind the reader and path-validation code used by scoped byte reuse."""
     from runtime import source_identity
     digest = hashlib.sha256()
     for name, function in (
         ('pass_a.read_blob', read_blob),
+        ('pass_a._active_checkpoint_derivation_scope', _active_checkpoint_derivation_scope),
+        ('pass_a._active_source_derivation_scope', _active_source_derivation_scope),
+        ('pass_a._source_execution_unit', _source_execution_unit),
+        ('pass_a._assert_source_scope_execution_unit', _assert_source_scope_execution_unit),
+        ('pass_a.source_derivation_scope', source_derivation_scope),
+        ('pass_a._SourceReadScope.__init__', _SourceReadScope.__init__),
+        ('pass_a._SourceReadScope.read', _SourceReadScope.read),
+        ('pass_a._SourceReadScope.verify', _SourceReadScope.verify),
+        ('pass_a._SourceReadScope.load_derivation', _SourceReadScope.load_derivation),
+        ('pass_a._SourceReadScope.store_derivation', _SourceReadScope.store_derivation),
+        ('pass_a._trusted_source_reader_contract', _trusted_source_reader_contract),
+        ('pass_a._trusted_source_scope_instance', _trusted_source_scope_instance),
+        ('pass_a._ci_assertion_v2_scope_owner', _ci_assertion_v2_scope_owner),
+        ('pass_a._ci_assertion_v2_contract_digest', _ci_assertion_v2_contract_digest),
+        ('pass_a._ci_assertion_v2_chain', _ci_assertion_v2_chain),
+        ('pass_a._ci_assertion_v2_chain_uncached', _ci_assertion_v2_chain_uncached),
         ('safe.read_blob', safe.read_blob),
         ('safe._read_blob', safe._read_blob),
         ('safe._source_scope_head', safe._source_scope_head),
         ('safe._verify_scoped_source_inputs', safe._verify_scoped_source_inputs),
+        ('safe.subprocess.run', safe.subprocess.run),
+        ('safe.subprocess.check_output', safe.subprocess.check_output),
+        ('safe.Path.lstat', safe.Path.lstat),
+        ('safe.Path.resolve', safe.Path.resolve),
+        ('safe.Path.is_dir', safe.Path.is_dir),
+        ('safe.Path.is_file', safe.Path.is_file),
+        ('safe.Path.is_symlink', safe.Path.is_symlink),
+        ('safe.stat.S_ISREG', safe.stat.S_ISREG),
+        ('safe.hashlib.sha1', safe.hashlib.sha1),
+        ('safe.json.dumps', safe.json.dumps),
         ('source_identity.read_tracked_head_blob', source_identity.read_tracked_head_blob),
+        ('source_identity.read_raw_file_bytes', source_identity.read_raw_file_bytes),
+        ('source_identity._ensure_repository_root', source_identity._ensure_repository_root),
+        ('source_identity._ascii_git_output', source_identity._ascii_git_output),
         ('source_identity._run_git', source_identity._run_git),
         ('source_identity._tracked_worktree_path', source_identity._tracked_worktree_path),
         ('source_identity.validate_repository_relative_path',
@@ -608,6 +711,7 @@ def receipt():
 
 def _predecessor_source_for_reader(path, raw, *, _reader=None):
     reader = read_blob if _reader is None else _reader
+    reader, raw = _ci_assertion_v3_projected_read(path, raw, reader)
     if path == 'scripts/audit_phase_a_pc_upcoming_retention_successor.py':
         raw = _root_performance_predecessor_source(path, raw, _reader=reader)
     if path == safe.SOURCE:
@@ -700,7 +804,10 @@ def historical_workflow_source():
     shards.authenticate()  # Proves actual HEAD tree plus one-path inverse.
     current = read_blob(shards.WORKFLOW)
     before = read_blob(shards.FIXTURE)
-    if safe.identity(current) != shards.AFTER or safe.identity(before) != shards.BEFORE:
+    v3_before = read_blob(shards.V3_FIXTURE)
+    if (safe.identity(current) != shards.V3_AFTER
+            or safe.identity(before) != shards.BEFORE
+            or safe.identity(v3_before) != shards.V3_BEFORE):
         raise ValueError('Pass-A Tests workflow or historical predecessor drift')
     # The frozen Pass-A row is an independent, immutable source anchor.
     frozen_raw = read_blob(receipt()['frozen_inventory']['path'])
@@ -809,6 +916,7 @@ def install_context(context):
     install_parent_progress_context(context)
     install_root_performance_context(context)
     install_ci_assertion_context(context)
+    _install_ci_assertion_v3_context(context)
 
 
 
@@ -1311,15 +1419,22 @@ def authenticate_parent_progress():
     value = _parent_progress_receipt()
     from scripts import audit_tests_shard_balance_successor as shards
     from scripts import audit_p4_workflow_evolution_ledger as p4
+    # The parent-progress receipt remains a V2 historical assertion. Authenticate
+    # the later exact V3 upload-step edge first, then evaluate the old transition
+    # against its V2 workflow projection.
+    shards._authenticate_v3()
     before = read_blob(PARENT_PROGRESS_FIXTURE)
     current = read_blob(shards.WORKFLOW)
+    v2_current = read_blob(shards.V3_FIXTURE)
     # Both readers retain their ordinary source/mode/filter checks. The second
     # also preserves the existing auditor's injected-reader negative seam.
     if current != shards.read_blob(shards.WORKFLOW):
         raise ValueError('parent progress workflow reader drift')
     old, new = PARENT_PROGRESS_COMMAND_BEFORE.encode(), PARENT_PROGRESS_COMMAND_AFTER.encode()
     if (safe.identity(before) != shards.V2_AFTER or before.count(old) != 1
-            or before.replace(old, new) != current or safe.identity(current) != shards.AFTER
+            or before.replace(old, new) != v2_current
+            or safe.identity(v2_current) != shards.AFTER
+            or safe.identity(current) != shards.V3_AFTER
             or value.get('workflow_before') != shards.V2_AFTER
             or value.get('workflow_after') != shards.AFTER
             or value.get('workflow_tree_before_sha1') != shards.V2_AFTER_TREE
@@ -1328,7 +1443,7 @@ def authenticate_parent_progress():
             or value.get('b4_projected_after_sha1') != shards.AFTER_B4_TREE):
         raise ValueError('parent progress workflow exceeds the exact CLI successor')
     entries = shards.tree_entries()
-    if (shards.tree_identity(entries) != shards.AFTER_TREE
+    if (shards.tree_identity(entries) not in {shards.AFTER_TREE, shards.V3_AFTER_TREE}
             or shards.tree_identity(entries, {'tests.yml': shards.V2_AFTER['git_blob_sha1']})
                 != shards.V2_AFTER_TREE):
         raise ValueError('parent progress HEAD tree is not the one-path successor')
@@ -1384,34 +1499,356 @@ def install_parent_progress_context(context):
 class _ParentNodeProgress:
     """Explicit CLI-only plugin; importing the auditor has no reporting effects."""
 
+    NODEID_KEY_ALGORITHM = "sha256-utf8-surrogatepass-v1"
+    COLLECTION_KEY_CHUNK_SIZE = 256
+
     def __init__(self):
         import os
         import sys
+        import json
         self.pid = os.getpid()
         self.stream = sys.__stdout__
+        self.jsonl = None
+        self.jsonl_bytes = 0
+        self.jsonl_limit = 8 * 1024 * 1024
+        # These are GitHub's non-secret event identifiers. Never serialize
+        # the full environment: it may contain credentials or provider data.
+        self.run_identity = {
+            key.lower(): value[:256] for key in (
+                "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB",
+                "GITHUB_SHA", "GITHUB_REF",
+            ) if (value := os.environ.get(key))
+        }
+        self.run_identity["worker"] = os.environ.get("PYTEST_XDIST_WORKER", "parent")
+        self.source_identity = self._source_identities(os, json)
+        self._open_jsonl(os)
+
+    @staticmethod
+    def _source_identities(os, json):
+        import re
+        import subprocess
+
+        def git_text(*args):
+            try:
+                completed = subprocess.run(
+                    ["git", "-C", str(ROOT), *args], check=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                    timeout=3, text=True,
+                )
+            except (OSError, subprocess.SubprocessError):
+                return None
+            return completed.stdout.strip()
+
+        def sha(value):
+            return value.lower() if isinstance(value, str) and re.fullmatch(
+                r"[0-9a-fA-F]{40}", value) else None
+
+        checkout = sha(git_text("rev-parse", "--verify", "HEAD^{commit}") or "")
+        parents_text = git_text("show", "-s", "--format=%P", "HEAD") or ""
+        parents = [value for value in parents_text.split() if sha(value)]
+        github_sha = sha(os.environ.get("GITHUB_SHA", ""))
+        pr_head = None
+        event_path = os.environ.get("GITHUB_EVENT_PATH")
+        if event_path:
+            try:
+                with open(event_path, "rb") as event_file:
+                    event_raw = event_file.read(1_048_577)
+                if len(event_raw) <= 1_048_576:
+                    event = json.loads(event_raw)
+                    pr = event.get("pull_request") if isinstance(event, dict) else None
+                    head = pr.get("head") if isinstance(pr, dict) else None
+                    pr_head = sha(head.get("sha", "")) if isinstance(head, dict) else None
+            except (OSError, ValueError, TypeError):
+                pr_head = None
+        return {
+            "tested_checkout_sha": checkout,
+            "tested_checkout_sha_verified": checkout is not None,
+            "checkout_parent_shas": parents[:2],
+            "github_sha": github_sha,
+            "github_sha_matches_checkout": bool(github_sha and checkout == github_sha),
+            "tested_merge_sha": (checkout if github_sha and checkout == github_sha
+                                 and pr_head and len(parents) >= 2 else None),
+            "pr_head_sha": pr_head,
+            "pr_head_matches_merge_parent": bool(pr_head and len(parents) >= 2
+                                                 and pr_head == parents[1]),
+        }
+
+    def _open_jsonl(self, os):
+        import re
+        import stat
+        from pathlib import Path
+
+        descriptor = None
+        try:
+            raw_temp = os.environ.get("RUNNER_TEMP")
+            if not raw_temp:
+                return
+            runner_temp = Path(raw_temp).resolve(strict=True)
+            if not runner_temp.is_dir():
+                return
+            repository = ROOT.resolve(strict=True)
+            report_dir = runner_temp / "athena-pytest-progress"
+            prospective = report_dir.resolve(strict=False)
+            if prospective == repository or repository in prospective.parents:
+                # Reject the destination before mkdir can create anything in
+                # the authenticated checkout, including through RUNNER_TEMP or
+                # a pre-existing report-directory symlink.
+                return
+            report_dir.mkdir(mode=0o700, exist_ok=True)
+            directory_info = report_dir.lstat()
+            if stat.S_ISLNK(directory_info.st_mode) or not stat.S_ISDIR(directory_info.st_mode):
+                return
+            report_dir = report_dir.resolve(strict=True)
+            if report_dir == repository or repository in report_dir.parents:
+                return
+
+            def safe_component(value):
+                return re.sub(r"[^A-Za-z0-9_.-]", "_", str(value))[:64] or "unknown"
+
+            filename = "-".join((
+                "progress", safe_component(self.run_identity.get("github_run_id", "local")),
+                safe_component(self.run_identity.get("github_run_attempt", "1")),
+                safe_component(self.run_identity.get("github_job", "pytest")),
+                safe_component(self.run_identity.get("worker", "parent")),
+                str(self.pid),
+            )) + ".jsonl"
+            target = report_dir / filename
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+            descriptor = os.open(target, flags, 0o600)
+            file_info = os.fstat(descriptor)
+            if not stat.S_ISREG(file_info.st_mode) or file_info.st_nlink != 1:
+                os.close(descriptor)
+                descriptor = None
+                target.unlink(missing_ok=True)
+                return
+            self.jsonl = os.fdopen(descriptor, "w", encoding="utf-8", buffering=1)
+            descriptor = None
+        except Exception:
+            # A diagnostic destination is optional. Never turn reporter setup
+            # trouble into a pytest failure or redirect it into the checkout.
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+            self.jsonl = None
+
+    @staticmethod
+    def _safe_repo_path(value):
+        from pathlib import Path
+        try:
+            path = Path(str(value))
+            if not path.is_absolute():
+                path = ROOT / path
+            resolved = path.resolve(strict=False)
+            return resolved.relative_to(ROOT.resolve()).as_posix()
+        except (OSError, ValueError, RuntimeError):
+            return Path(str(value)).name[:160]
+
+    @staticmethod
+    def _redact_text(value, limit):
+        import re
+        text = str(value)[:4096]
+        text = re.sub(r"(?i)\bBearer\s+\S+", "Bearer <redacted>", text)
+        sensitive_field = re.compile(
+            r"(?i)(?P<prefix>(?:\\?[\"'])?"
+            r"(?:authorization|token|password|secret|api[_-]?key|cookie)"
+            r"(?:\\?[\"'])?\s*[:=]\s*)"
+            r"(?P<value>\\?\"(?:\\.|[^\"\\])*\\?\"|"
+            r"\\?'(?:\\.|[^'\\])*\\?'|[^\s,}\]]+)"
+        )
+        text = sensitive_field.sub(r"\g<prefix><redacted>", text)
+        text = re.sub(
+            r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|"
+            r"AKIA[0-9A-Z]{16})\b", "<redacted-token>", text)
+        text = re.sub(r"https?://[^\s]+", "<url>", text)
+        structured_positions = [position for delimiter in "{[("
+                                if (position := text.find(delimiter)) >= 0]
+        if structured_positions:
+            # Assertion payloads and pytest parameter reprs can contain
+            # arbitrary fixture values unrelated to recognized credential
+            # field names. Keep the diagnostic prefix and exception category,
+            # but omit the opaque structured tail entirely.
+            text = text[:min(structured_positions)].rstrip() + " <structured payload redacted>"
+        return text[:limit]
+
+    @staticmethod
+    def _nodeid_key(nodeid):
+        """Hash the complete original pytest ID before display redaction.
+
+        The byte encoding is UTF-8 with ``surrogatepass`` so the key remains
+        deterministic even if an unusual node ID contains lone surrogates.
+        This key is diagnostic correlation only, never test/source authority.
+        """
+        if not isinstance(nodeid, str):
+            nodeid = str(nodeid)
+        return hashlib.sha256(nodeid.encode("utf-8", errors="surrogatepass")).hexdigest()
+
+    @staticmethod
+    def _failure_details(report):
+        fields = {}
+        try:
+            longrepr = getattr(report, "longrepr", None)
+            crash = getattr(longrepr, "reprcrash", None)
+            message = getattr(crash, "message", "")
+            message = message if isinstance(message, str) else ""
+            category_candidate = message.partition(":")[0].strip()
+            if (category_candidate.endswith(("Error", "Exception"))
+                    and all(char.isalnum() or char in "._" for char in category_candidate)):
+                fields["failure_category"] = category_candidate[:96]
+            elif message.startswith(("assert ", "assertion failed")):
+                fields["failure_category"] = "AssertionError"
+            else:
+                fields["failure_category"] = "pytest-failure"
+
+            # Keep only a bounded explanation. Known credential forms and URLs
+            # are redacted; traceback locals, fixture reprs and the environment
+            # are never serialized.
+            fields["failure_explanation"] = _ParentNodeProgress._redact_text(message, 512)
+            if crash is not None:
+                crash_path = getattr(crash, "path", None)
+                crash_line = getattr(crash, "lineno", None)
+                if crash_path is not None:
+                    fields["crash_file"] = _ParentNodeProgress._safe_repo_path(crash_path)
+                if type(crash_line) is int:
+                    fields["crash_line"] = crash_line
+                    fields["crash_line_basis"] = "pytest_reprcrash_lineno"
+
+            traceback_repr = getattr(longrepr, "reprtraceback", None)
+            entries = getattr(traceback_repr, "reprentries", ())
+            frames = []
+            for index, entry in enumerate(entries):
+                if index >= 8:
+                    break
+                location = getattr(entry, "reprfileloc", None)
+                if location is None:
+                    continue
+                frame = {}
+                frame_path = getattr(location, "path", None)
+                frame_line = getattr(location, "lineno", None)
+                if frame_path is not None:
+                    frame["file"] = _ParentNodeProgress._safe_repo_path(frame_path)
+                if type(frame_line) is int:
+                    frame["line"] = frame_line
+                if frame:
+                    frames.append(frame)
+            if frames:
+                fields["trace_frames"] = frames
+
+            test_location = getattr(report, "location", None)
+            if isinstance(test_location, tuple) and len(test_location) >= 2:
+                fields["test_file"] = _ParentNodeProgress._safe_repo_path(test_location[0])
+                fields["test_line_zero_based"] = (
+                    test_location[1] if type(test_location[1]) is int else None)
+                if len(test_location) >= 3 and isinstance(test_location[2], str):
+                    fields["test_domain"] = test_location[2][:160]
+        except Exception:
+            # Preserve the report outcome even when pytest changes repr shapes.
+            fields = {"failure_category": "pytest-failure"}
+        return fields
 
     def _emit(self, event, nodeid, **fields):
         import os
         from datetime import datetime, timezone
-        if os.getpid() != self.pid or self.stream is None:
+        if os.getpid() != self.pid:
             return
-        value = {'event': event, 'nodeid': nodeid, 'pid': self.pid,
-                 'utc': datetime.now(timezone.utc).isoformat(), **fields}
-        self.stream.write('\nATHENA_PYTEST_PROGRESS ' + json.dumps(value, sort_keys=True) + '\n')
-        self.stream.flush()
+        try:
+            original_nodeid = nodeid if isinstance(nodeid, str) else str(nodeid)
+            value = {**fields,
+                     'schema': 'athena.pytest.progress.v2',
+                     'event': event, 'nodeid_display': original_nodeid, 'pid': self.pid,
+                     'utc': datetime.now(timezone.utc).isoformat(),
+                     'run': self.run_identity, 'source': self.source_identity}
+            if original_nodeid:
+                value['nodeid_key_sha256'] = self._nodeid_key(original_nodeid)
+                value['nodeid_key_algorithm'] = self.NODEID_KEY_ALGORITHM
+            value['nodeid_display'] = self._redact_text(original_nodeid, 512)
+            if isinstance(value.get('test_domain'), str):
+                value['test_domain'] = self._redact_text(value['test_domain'], 160)
+            line = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        except Exception:
+            return
+        if self.jsonl is not None:
+            try:
+                record = line + "\n"
+                record_size = len(record.encode("utf-8"))
+                if self.jsonl_bytes + record_size > self.jsonl_limit:
+                    self.jsonl.close()
+                    self.jsonl = None
+                else:
+                    self.jsonl.write(record)
+                    self.jsonl_bytes += record_size
+                    self.jsonl.flush()
+            except Exception:
+                try:
+                    self.jsonl.close()
+                except Exception:
+                    pass
+                self.jsonl = None
+        if self.stream is not None:
+            try:
+                self.stream.write('\nATHENA_PYTEST_PROGRESS ' + line + '\n')
+                self.stream.flush()
+            except Exception:
+                self.stream = None
 
     def pytest_sessionstart(self, session):
         self._emit('session_start', '')
+
+    def pytest_collection_finish(self, session):
+        """Emit a bounded exact-node inventory using the phase event key rule."""
+        import os
+        if os.getpid() != self.pid:
+            return
+        nodeids = [item.nodeid if isinstance(item.nodeid, str) else str(item.nodeid)
+                   for item in session.items]
+        keys = [self._nodeid_key(nodeid) for nodeid in nodeids]
+        ordered_digest = hashlib.sha256("\n".join(keys).encode("ascii")).hexdigest()
+        chunk_size = self.COLLECTION_KEY_CHUNK_SIZE
+        chunk_count = max(1, (len(keys) + chunk_size - 1) // chunk_size)
+        for chunk_index in range(chunk_count):
+            start = chunk_index * chunk_size
+            self._emit(
+                'collection_inventory', '',
+                node_key_algorithm=self.NODEID_KEY_ALGORITHM,
+                collection_chunk_index=chunk_index,
+                collection_chunk_count=chunk_count,
+                collected_node_count=len(keys),
+                collected_node_keys_sha256=ordered_digest,
+                node_keys=keys[start:start + chunk_size],
+            )
 
     def pytest_runtest_logstart(self, nodeid, location):
         self._emit('start', nodeid)
 
     def pytest_runtest_logreport(self, report):
-        self._emit(report.when, report.nodeid, outcome=report.outcome,
-                   seconds=round(report.duration, 6))
+        fields = {'outcome': report.outcome, 'seconds': round(report.duration, 6)}
+        if report.failed:
+            fields.update(self._failure_details(report))
+        self._emit(report.when, report.nodeid, **fields)
 
     def pytest_runtest_logfinish(self, nodeid, location):
         self._emit('finish', nodeid)
+
+    def pytest_sessionfinish(self, session, exitstatus):
+        self._emit('session_finish', '', exit_status=int(exitstatus))
+        if self.jsonl is not None:
+            try:
+                self.jsonl.flush()
+                self.jsonl.close()
+            except Exception:
+                pass
+            self.jsonl = None
+
+    def pytest_unconfigure(self, config):
+        if self.jsonl is not None:
+            try:
+                self.jsonl.flush()
+                self.jsonl.close()
+            except Exception:
+                pass
+            self.jsonl = None
 
 
 def pytest_configure(config):
@@ -1494,9 +1931,43 @@ def _root_performance_project_checked_source(path, current, *, _reader=None):
     reader = read_blob if _reader is None else _reader
     if path not in ROOT_PERFORMANCE_PATHS:
         return current
+    # An earlier Pass-A layer may already have projected the callable reader
+    # to the V3 before-image. Reacquire its original reader, authenticate the
+    # current edge, and then construct one fresh historical view. A projected
+    # reader is provenance, never authority by itself.
+    projected_input = (reader if type(reader) is _CIAssertionV3ProjectedReader else None)
+    current_reader = (projected_input.source_reader if projected_input is not None
+                      else reader)
+    v2_value = None
+    v3_value = None
+    if path in CI_ASSERTION_V3_PATHS or path in CI_ASSERTION_V2_PATHS:
+        _prior, v2_value, v3_value = _ci_assertion_v3_chain(_reader=current_reader)
+        if path in CI_ASSERTION_V2_PATHS and path in CI_ASSERTION_V3_PATHS:
+            v2_row = v2_value['source_forward'].get(path)
+            v3_row = v3_value['source_forward'].get(path)
+            if (type(v2_row) is dict and type(v3_row) is dict
+                    and set(v2_row) == {'fixture', 'before', 'after', 'patches'}
+                    and set(v3_row) == {'fixture', 'before', 'after', 'patches'}):
+                _require_v2_v3_source_edge(path, v2_row, v3_row, current_reader)
+    if path in CI_ASSERTION_V3_PATHS:
+        live_current = current_reader(path)
+        reader, projected_current = _ci_assertion_v3_projected_read(
+            path, live_current, current_reader, _value=v3_value)
+        if projected_input is not None and current != projected_current:
+            raise ValueError('root performance V3 projected caller source drift: ' + path)
+        current = projected_current
+    else:
+        live_current = current_reader(path)
+        if current != live_current:
+            raise ValueError('root performance caller current source drift: ' + path)
+        reader = current_reader
+        current = live_current
     if path in CI_ASSERTION_V2_PATHS:
-        _prior, successor = _ci_assertion_v2_chain(_reader=reader)
-        successor_row = successor['source_forward'][path]
+        # The V3 chain above authenticated V2 against its exact V3
+        # before-reader. Consume that result directly; the historical V2
+        # compatibility accessor would re-enter current V3 validation using
+        # projected bytes as though they were the current source.
+        successor_row = v2_value['source_forward'][path]
         before_successor = reader(successor_row['fixture'])
         if (current != reader(path)
                 or safe.identity(current) != successor_row['after']
@@ -1560,64 +2031,129 @@ def install_root_performance_context(context):
 
 
 def root_performance_bootstrap_source(expected):
-    row = _root_performance_receipt()['source_forward'][A2_TEXT_SOURCE]
-    marker = ('        "' + row['after']['source_sha256'] + '",\n    ),').encode()
-    retained = ('        "' + row['before']['source_sha256'] + '",\n').encode()
+    root_value = _root_performance_receipt()
+    auditor_row = root_value['source_forward'][A2_TEXT_SOURCE]
+    bootstrap_row = root_value['source_forward']['sitecustomize.py']
+    bootstrap_before = read_blob(bootstrap_row['fixture'])
+    if expected != bootstrap_before or safe.identity(expected) != bootstrap_row['before']:
+        raise ValueError('root performance bootstrap before-image drift')
+    marker = ('        "' + auditor_row['after']['source_sha256'] + '\",\n    ),').encode()
+    retained = ('        "' + auditor_row['before']['source_sha256'] + '\",\n').encode()
     if expected.count(marker) != 1:
         raise ValueError('root performance exact added auditor pin seam drift')
     result = expected.replace(marker, retained + marker)
-    _prior, successor = _ci_assertion_v2_chain()
-    row = successor['source_forward']['sitecustomize.py']
-    before = read_blob(row['fixture'])
+    expected_root_after = bootstrap_before
+    for patch in bootstrap_row['patches']:
+        old, new = patch['before'].encode('utf-8'), patch['after'].encode('utf-8')
+        if not old or expected_root_after.count(old) != 1:
+            raise ValueError('root performance bootstrap recipe seam drift')
+        expected_root_after = expected_root_after.replace(old, new)
+    if result != expected_root_after or safe.identity(result) != bootstrap_row['after']:
+        raise ValueError('root performance bootstrap exceeds its exact source recipe')
+
+    _historical, v2, v3 = _ci_assertion_v3_chain()
+    v2_row = v2['source_forward'].get('sitecustomize.py')
+    v3_row = v3['source_forward'].get('sitecustomize.py')
+    if (type(v2_row) is not dict or type(v3_row) is not dict
+            or set(v2_row) != {'fixture', 'before', 'after', 'patches'}
+            or set(v3_row) != {'fixture', 'before', 'after', 'patches'}):
+        raise ValueError('bootstrap V2/V3 source-forward rows are missing or malformed')
+    v2_before = read_blob(v2_row['fixture'])
+    if result != v2_before or safe.identity(v2_before) != v2_row['before']:
+        raise ValueError('bootstrap V2 three-to-four pin predecessor drift')
+    v2_after = v2_before
+    for patch in v2_row['patches']:
+        old, new = patch['before'].encode('utf-8'), patch['after'].encode('utf-8')
+        if not old or v2_after.count(old) != 1:
+            raise ValueError('bootstrap V2 exact source recipe seam drift')
+        v2_after = v2_after.replace(old, new)
+    if safe.identity(v2_after) != v2_row['after']:
+        raise ValueError('bootstrap V2 exact source recipe output drift')
+    v3_before = read_blob(v3_row['fixture'])
+    if v2_after != v3_before or safe.identity(v3_before) != v3_row['before']:
+        raise ValueError('bootstrap V3 before-image does not equal the authenticated V2 after-image')
+    v3_after = v3_before
+    for patch in v3_row['patches']:
+        old, new = patch['before'].encode('utf-8'), patch['after'].encode('utf-8')
+        if not old or v3_after.count(old) != 1:
+            raise ValueError('bootstrap V3 exact source recipe seam drift')
+        v3_after = v3_after.replace(old, new)
     current = read_blob('sitecustomize.py')
-    if (result != before or safe.identity(before) != row['before']
-            or safe.identity(current) != row['after']):
-        raise ValueError('root performance startup exceeds exact preserved-pin successor')
+    if v3_after != current or safe.identity(current) != v3_row['after']:
+        raise ValueError('bootstrap V3 source exceeds its exact fifth-pin recipe')
     return current
 
 
 class _SourceReadScope:
     """Local immutable inputs for exactly one independently fenced audit call."""
 
-    def __init__(self, reader: Callable[[str], bytes]) -> None:
+    def __init__(self, reader: Callable[[str], bytes], *,
+                 underlying_reader: Callable[[str], bytes] | None = None) -> None:
         from runtime import source_identity
         self.root = safe.ROOT
         self.head = safe._source_scope_head(self.root)
         self.reader = reader
+        self.underlying_reader = reader if underlying_reader is None else underlying_reader
         self.safe_reader = safe.read_blob
         self.runtime_reader = source_identity.read_tracked_head_blob
+        self.reader_contract_fn = _scoped_source_read_contract
+        self.reader_contract_code = self.reader_contract_fn.__code__
+        self.reader_contract_defaults = repr(self.reader_contract_fn.__defaults__)
+        self.reader_contract_kwdefaults = repr(self.reader_contract_fn.__kwdefaults__)
+        self.reader_contract = self.reader_contract_fn()
         self.sources: dict[str, bytes] = {}
         self.derivation_bytes: dict[str, tuple[str, bytes]] = {}
+        self.metrics: dict[str, int] = {}
+        self.execution_unit = _source_execution_unit()
+
+    def _metric(self, name: str) -> None:
+        self.metrics[name] = self.metrics.get(name, 0) + 1
 
     def read(self, path: str) -> bytes:
+        _assert_source_scope_execution_unit(self)
         if path not in self.sources:
-            raw = self.reader(path)
+            raw = self.underlying_reader(path)
             if type(raw) is not bytes:
                 raise ValueError('scoped source input must be immutable bytes')
             self.sources[path] = raw
+            self._metric('source_read_misses')
+        else:
+            self._metric('source_read_hits')
         return self.sources[path]
 
     def verify(self) -> None:
+        _assert_source_scope_execution_unit(self)
         from runtime import source_identity
-        if (safe.ROOT != self.root or read_blob is not self.reader
+        if (safe.ROOT != self.root or not _trusted_source_reader_contract()
+                or read_blob is not self.reader
                 or safe.read_blob is not self.safe_reader
-                or source_identity.read_tracked_head_blob is not self.runtime_reader):
+                or source_identity.read_tracked_head_blob is not self.runtime_reader
+                or _scoped_source_read_contract is not self.reader_contract_fn
+                or self.reader_contract_fn.__code__ is not self.reader_contract_code
+                or repr(self.reader_contract_fn.__defaults__) != self.reader_contract_defaults
+                or repr(self.reader_contract_fn.__kwdefaults__) != self.reader_contract_kwdefaults
+                or self.reader_contract_fn() != self.reader_contract):
             raise ValueError('scoped source root or reader changed during authentication')
         safe._verify_scoped_source_inputs(self.root, self.head, self.sources)
 
     def load_derivation(self, name: str, contract: str) -> bytes | None:
+        _assert_source_scope_execution_unit(self)
         entry = self.derivation_bytes.get(name)
         if entry is None:
+            self._metric('derivation_misses')
             return None
         prior_contract, payload = entry
         if prior_contract != contract or type(payload) is not bytes:
             raise ValueError('Pass-A scoped derivation contract changed')
+        self._metric('derivation_hits')
         return payload
 
     def store_derivation(self, name: str, contract: str, payload: bytes) -> None:
+        _assert_source_scope_execution_unit(self)
         if type(payload) is not bytes:
             raise ValueError('Pass-A scoped derivation payload is mutable')
         self.derivation_bytes[name] = (contract, payload)
+        self._metric('derivation_stores')
 
 
 # Source-only correction of exact-HEAD CI assertions. All predecessor receipts,
@@ -1674,6 +2210,46 @@ CI_ASSERTION_V2_PREDECESSOR_INVENTORY = {
     'canonical_sha256': '486e41d2e67bf844371683b5efcdd6cae7510e874889bb3416d2ff5713646102',
     'rewritten': False,
 }
+CI_ASSERTION_V3_RECEIPT = 'tests/fixtures/architecture/ci_assertion_source_successor_v3/receipt.json'
+CI_ASSERTION_V3_SHA256 = '920eb2751ef1bbb878a7ebe25a2ec942bee773ef706f09ed7149a6d04cf3104e'
+CI_ASSERTION_V3_SOURCE = __name__.replace('.', '/') + '.py'
+CI_ASSERTION_V3_FIXTURES = 'tests/fixtures/architecture/ci_assertion_source_successor_v3/'
+CI_ASSERTION_V3_PREDECESSOR_RECEIPT = {
+    'path': CI_ASSERTION_V2_RECEIPT,
+    'canonical_sha256': CI_ASSERTION_V2_SHA256,
+    'rewritten': False,
+}
+CI_ASSERTION_V3_PRIOR_INVENTORY = {
+    'path': 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v376.json',
+    'generation': 376,
+    'canonical_sha256': '486e41d2e67bf844371683b5efcdd6cae7510e874889bb3416d2ff5713646102',
+    'rewritten': False,
+}
+CI_ASSERTION_V3_PREDECESSOR_INVENTORY = {
+    'path': 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v377.json',
+    'generation': 377,
+    'canonical_sha256': '467846f44798c99dd8582e6bcc54b23c8a390c9e833a3ae175722b0bf288c191',
+    'rewritten': False,
+}
+CI_ASSERTION_V3_PATHS = frozenset({
+    '.github/workflows/tests.yml',
+    'scripts/audit_checkpoint_e_workflows.py',
+    'scripts/audit_core_01d_checkpoint_e_completion_v2.py',
+    'scripts/audit_core_01d_ci_offline_transport_boundary.py',
+    'scripts/audit_data_01c_restore_portability.py',
+    CI_ASSERTION_V3_SOURCE,
+    'scripts/audit_phase_a_pc_upcoming_retention_successor.py',
+    'scripts/audit_tests_shard_balance_successor.py',
+    'sitecustomize.py',
+    'tests/test_core_01d_canonical_drive_transfer_completed_history.py',
+    'tests/test_core_01d_checkpoint_e_completion_v2.py',
+    'tests/test_core_01d_ci_offline_transport_inventory_evolution.py',
+    'tests/test_core_01d_pass_a_v300_source_predecessors.py',
+    'tests/test_core_01d_sportybet_current_trigger_authority_b4.py',
+    'tests/test_current_shadow_pc_upcoming_archive_retention.py',
+    'tests/test_phase_a_pass_a_tests_source_successor.py',
+    'tests/test_tests_shard_balance_successor.py',
+})
 
 
 def _ci_assertion_v1_successor_receipt(*, _reader=None):
@@ -1734,9 +2310,14 @@ def _ci_assertion_v2_contract_digest():
     digest = hashlib.sha256()
     for name in (
         '_ci_assertion_v2_chain', '_ci_assertion_v2_chain_uncached',
+        '_ci_assertion_v3_chain', '_ci_assertion_v3_chain_uncached',
+        '_ci_assertion_v3_projected_read', '_ci_assertion_v3_projected_reader',
+        '_install_ci_assertion_v3_context',
         '_ci_assertion_v1_successor_receipt', '_read_canonical_inventory_snapshot',
         '_canonical_inventory_snapshot', '_inventory_validation_contract',
         '_ci_assertion_v2_scope_owner', '_active_checkpoint_derivation_scope',
+        '_active_source_derivation_scope', '_source_execution_unit',
+        'source_derivation_scope', '_SourceReadScope.__init__',
         '_scoped_source_read_contract', '_verify_scoped_source_path',
         '_pytest_restoration_chain', '_pytest_restoration_chain_uncached',
         '_pytest_restoration_v1_receipt', '_SourceReadScope.read',
@@ -1760,10 +2341,15 @@ def _ci_assertion_v2_contract_digest():
         'CI_ASSERTION_V2_RECEIPT', 'CI_ASSERTION_V2_SHA256',
         'CI_ASSERTION_V2_SOURCE', 'CI_ASSERTION_V2_FIXTURES',
         'CI_ASSERTION_V2_PATHS', 'CI_ASSERTION_V2_PREDECESSOR_INVENTORY',
+        'CI_ASSERTION_V3_RECEIPT', 'CI_ASSERTION_V3_SHA256',
+        'CI_ASSERTION_V3_SOURCE', 'CI_ASSERTION_V3_FIXTURES',
+        'CI_ASSERTION_V3_PATHS', 'CI_ASSERTION_V3_PREDECESSOR_INVENTORY',
+        'CI_ASSERTION_V3_PREDECESSOR_RECEIPT',
         'PYTEST_RESTORATION_RECEIPT', 'PYTEST_RESTORATION_SHA',
         'PYTEST_RESTORATION_PATHS', 'PYTEST_RESTORATION_V2_RECEIPT',
         'PYTEST_RESTORATION_V2_SHA', 'PYTEST_RESTORATION_V2_PATHS',
         'PYTEST_RESTORATION_V2_PREDECESSOR_INVENTORY',
+        '_ACTIVE_SOURCE_DERIVATION_SCOPE',
     ):
         digest.update(name.encode('utf-8') + b'\0' + repr(globals()[name]).encode('utf-8'))
     for function in (safe.canonical, safe.canonical_digest, safe.identity,
@@ -1785,6 +2371,13 @@ def _ci_assertion_v2_contract_digest():
         marshal.dumps, marshal.loads,
     ):
         digest.update(repr((type(value).__module__, type(value).__qualname__, id(value))).encode('utf-8'))
+    for name, function in (
+        ('_CIAssertionV3ProjectedReader.__init__', _CIAssertionV3ProjectedReader.__init__),
+        ('_CIAssertionV3ProjectedReader.__call__', _CIAssertionV3ProjectedReader.__call__),
+    ):
+        digest.update(name.encode('utf-8') + b'\0')
+        digest.update(repr((id(function), id(function.__code__), function.__defaults__,
+                            function.__kwdefaults__)).encode('utf-8'))
     self = globals()['_ci_assertion_v2_contract_digest']
     digest.update(repr((id(self), id(self.__code__), self.__defaults__,
                         self.__kwdefaults__)).encode('utf-8'))
@@ -1799,41 +2392,62 @@ def _ci_assertion_v2_scope_owner(reader):
     checkpoint_scope = _active_checkpoint_derivation_scope()
     if checkpoint_scope is not None:
         return checkpoint_scope
+    source_scope = _active_source_derivation_scope()
     owner = getattr(reader, '__self__', None)
-    if isinstance(owner, _SourceReadScope):
+    if isinstance(owner, _TRUSTED_SOURCE_SCOPE_CLASS):
+        # Even an untrusted/substituted scope instance may not be invoked as an
+        # uncached escape hatch from a different process/thread/task.
+        _assert_source_scope_execution_unit(owner)
+    if (source_scope is not None
+            and _trusted_source_reader_contract()
+            and (reader is _TRUSTED_PUBLIC_READ_BLOB
+                 or (owner is source_scope
+                     and getattr(reader, '__func__', None) is _TRUSTED_SOURCE_SCOPE_READ))):
+        return source_scope
+    # authenticate_core() creates a short-lived, reviewed SourceReadScope for
+    # each nested public request. Its bound reader is a distinct owner, but it
+    # has the same pinned implementation, root, HEAD and underlying reader as
+    # this request's outer owner. Share only the immutable V1/V2 derivation;
+    # direct bytes are read through the outer owner so its final ledger covers
+    # every input. Custom/bound readers remain uncached.
+    if (source_scope is not None
+            and owner is not source_scope
+            and getattr(reader, '__func__', None) is _TRUSTED_SOURCE_SCOPE_READ
+            and _trusted_source_scope_instance(owner)
+            and owner.execution_unit == source_scope.execution_unit
+            and owner.root == source_scope.root
+            and owner.head == source_scope.head
+            and owner.reader_contract == source_scope.reader_contract
+            and owner.reader is _TRUSTED_PUBLIC_READ_BLOB
+            and owner.underlying_reader in (
+                _TRUSTED_PUBLIC_READ_BLOB, _TRUSTED_SAFE_READ_BLOB)
+            and owner.safe_reader is source_scope.safe_reader
+            and source_scope.safe_reader is _TRUSTED_SAFE_READ_BLOB):
+        return source_scope
+    if (_trusted_source_reader_contract()
+            and _trusted_source_scope_instance(owner)
+            and getattr(reader, '__self__', None) is owner
+            and getattr(reader, '__func__', None) is _TRUSTED_SOURCE_SCOPE_READ):
         return owner
     return None
 
 
 def _ci_assertion_v2_chain(*, _reader=None):
-    """Authenticate V2 once per bounded source/audit scope, never globally.
+    """Return the historical V1/V2 proof only after current V3 also verifies.
 
-    The cached value is canonical immutable receipt data, not a PASS verdict.
-    SourceReadScope verifies every byte read before returning to its caller;
-    checkpoint scopes recheck HEAD, index, worktree, Git config, A2 bytes and
-    their validator contracts on each hit and at scope exit.
+    V2 remains an immutable historical accessor. The V3 source-forward edge is
+    checked on every independent request, or reused only as immutable bytes in
+    the existing request-bound derivation scope.
     """
-    reader = read_blob if _reader is None else _reader
-    owner = _ci_assertion_v2_scope_owner(reader)
-    if owner is None:
-        return _ci_assertion_v2_chain_uncached(reader)
-    contract = _ci_assertion_v2_contract_digest()
-    cached = owner.load_derivation('pass-a.ci-assertion-v2-chain', contract)
-    if cached is not None:
-        if contract != _ci_assertion_v2_contract_digest():
-            raise ValueError('CI assertion V2 verifier changed during scoped reuse')
-        prior, successor = json.loads(cached)
-        return prior, successor
-    result = _ci_assertion_v2_chain_uncached(reader)
-    if contract != _ci_assertion_v2_contract_digest():
-        raise ValueError('CI assertion V2 verifier changed during scoped authentication')
-    owner.store_derivation('pass-a.ci-assertion-v2-chain', contract,
-                           safe.canonical([result[0], result[1]]))
-    return result
+    historical, successor, _current = _ci_assertion_v3_chain(_reader=_reader)
+    return historical, successor
 
 
 def _ci_assertion_v2_chain_uncached(reader):
     """Authenticate the V1 receipt through its exact source, then the V2 edge."""
+    source_scope = _active_source_derivation_scope()
+    if source_scope is not None:
+        source_scope._metric('pass_a_ci_assertion_v2_uncached')
     try:
         raw = reader(CI_ASSERTION_V2_RECEIPT)
         value = json.loads(raw)
@@ -1916,6 +2530,272 @@ def _ci_assertion_v2_chain_uncached(reader):
 
     prior = _ci_assertion_v1_successor_receipt(_reader=v1_reader)
     return prior, value
+
+
+def _ci_assertion_v3_chain(*, _reader=None):
+    """Authenticate V2 -> V377-bound V3 as a request-local source transition.
+
+    The cached payload contains canonical receipt objects only. The active
+    source/receipt scope owns all observed bytes and revalidates its live input
+    boundary; no prior acceptance verdict is stored or returned.
+    """
+    reader = read_blob if _reader is None else _reader
+    owner = _ci_assertion_v2_scope_owner(reader)
+    if owner is None:
+        return _ci_assertion_v3_chain_uncached(reader)
+    active_source_scope = _active_source_derivation_scope()
+    if owner is active_source_scope:
+        reader = owner.read
+    contract = _ci_assertion_v2_contract_digest()
+    key = 'pass-a.ci-assertion-v3-chain'
+    cached = owner.load_derivation(key, contract)
+    if cached is not None:
+        if contract != _ci_assertion_v2_contract_digest():
+            raise ValueError('CI assertion V3 verifier changed during scoped reuse')
+        prior, v2, v3 = json.loads(cached)
+        _record_ci_assertion_v3_scope_metric(owner, 'pass_a_ci_assertion_v3_hits')
+        return prior, v2, v3
+    _record_ci_assertion_v3_scope_metric(owner, 'pass_a_ci_assertion_v3_uncached')
+    result = _ci_assertion_v3_chain_uncached(reader)
+    if contract != _ci_assertion_v2_contract_digest():
+        raise ValueError('CI assertion V3 verifier changed during scoped authentication')
+    owner.store_derivation(key, contract, safe.canonical(list(result)))
+    return result
+
+
+def _record_ci_assertion_v3_scope_metric(owner, name):
+    """Record real cold/hit work through the selected scope's supported API.
+
+    Pass-A source scopes own a local ``metrics`` map and expose ``_metric``.
+    Checkpoint scopes intentionally expose the shared receipt-engine recorder
+    instead.  The owner is revalidated here so metric dispatch cannot weaken
+    checkpoint precedence, execution-unit isolation, or the scope contract.
+    """
+    if type(name) is not str or not name.startswith('pass_a_ci_assertion_v3_'):
+        raise ValueError('CI assertion V3 scope metric name is malformed')
+    if type(owner) is _TRUSTED_SOURCE_SCOPE_CLASS:
+        if not _trusted_source_scope_instance(owner):
+            raise ValueError('CI assertion V3 source owner contract changed')
+        _TRUSTED_SOURCE_SCOPE_CLASS._metric(owner, name)
+        return
+
+    engine = sys.modules.get('scripts.audit_core_01d_checkpoint_e_completion_v8')
+    scope_type = None if engine is None else getattr(engine, '_BoundedReceiptScope', None)
+    if engine is None or scope_type is None or type(owner) is not scope_type:
+        raise TypeError('CI assertion V3 scope owner has no supported metric interface')
+    if (not getattr(owner, 'enabled', False)
+            or getattr(owner, 'unit', None) != engine._execution_unit()
+            or not any(candidate is owner for candidate in
+                       engine._ACTIVE_RECEIPT_SCOPES.get().values())):
+        raise AssertionError('CI assertion V3 checkpoint owner is inactive or untrusted')
+    recorder = getattr(engine, '_record_scope_metric', None)
+    if not callable(recorder):
+        raise TypeError('checkpoint receipt engine has no metric recorder')
+    recorder(name)
+
+
+def _apply_exact_source_forward_row(path, row, reader, *, label):
+    """Replay one immutable byte edge and verify both endpoint identities."""
+    if (type(row) is not dict
+            or set(row) != {'fixture', 'before', 'after', 'patches'}
+            or type(row.get('patches')) is not list):
+        raise ValueError(label + ' source row schema drift: ' + path)
+    before = reader(row['fixture'])
+    if type(before) is not bytes or safe.identity(before) != row['before']:
+        raise ValueError(label + ' predecessor fixture identity drift: ' + path)
+    expected = before
+    for patch in row['patches']:
+        if type(patch) is not dict or set(patch) != {'before', 'after'}:
+            raise ValueError(label + ' source patch schema drift: ' + path)
+        old, new = patch['before'].encode('utf-8'), patch['after'].encode('utf-8')
+        if not old or expected.count(old) != 1:
+            raise ValueError(label + ' source patch seam drift: ' + path)
+        expected = expected.replace(old, new)
+    if safe.identity(expected) != row['after']:
+        raise ValueError(label + ' source edge after-image drift: ' + path)
+    return before, expected
+
+
+def _require_v2_v3_source_edge(path, v2_row, v3_row, reader):
+    """Require same-path, forward V2->V3 byte continuity before projection."""
+    if path not in CI_ASSERTION_V2_PATHS or path not in CI_ASSERTION_V3_PATHS:
+        raise ValueError('CI assertion V2/V3 edge path is not admitted: ' + path)
+    _v2_before, v2_after = _apply_exact_source_forward_row(
+        path, v2_row, reader, label='CI assertion V2')
+    v3_before, _v3_after = _apply_exact_source_forward_row(
+        path, v3_row, reader, label='CI assertion V3')
+    if (v2_row['after'] != v3_row['before']
+            or v2_after != v3_before
+            or safe.identity(v2_after) != v3_row['before']):
+        raise ValueError('CI assertion V2->V3 source edge direction/path mismatch: ' + path)
+    return v2_after
+
+
+class _CIAssertionV3ProjectedReader:
+    """Request-local historical reader retaining its original byte source."""
+
+    __slots__ = ('source_reader', 'fixtures')
+
+    def __init__(self, source_reader, fixtures):
+        self.source_reader = source_reader
+        self.fixtures = fixtures
+
+    def __call__(self, path):
+        if path in self.fixtures:
+            return self.fixtures[path]
+        return self.source_reader(path)
+
+
+def _ci_assertion_v3_projected_reader(reader, value):
+    rows = value.get('source_forward')
+    if type(rows) is not dict or set(rows) != CI_ASSERTION_V3_PATHS:
+        raise ValueError('CI assertion V3 source path set drift')
+    fixtures = {}
+    for path, row in rows.items():
+        fixture = reader(row.get('fixture'))
+        if safe.identity(fixture) != row.get('before'):
+            raise ValueError('CI assertion V3 predecessor fixture drift: ' + path)
+        fixtures[path] = fixture
+
+    return _CIAssertionV3ProjectedReader(reader, fixtures)
+
+
+def _ci_assertion_v3_projected_read(path, raw, reader, *, _value=None):
+    """Project current V3 bytes to V2 only after authenticating the full V3 edge."""
+    if path not in CI_ASSERTION_V3_PATHS:
+        return reader, raw
+    if _value is None:
+        _historical, _v2, value = _ci_assertion_v3_chain(_reader=reader)
+    else:
+        value = _value
+    return _ci_assertion_v3_projected_read_with_value(path, raw, reader, value)
+
+
+def _ci_assertion_v3_projected_read_with_value(path, raw, reader, value):
+    """Create a historical reader after current V3 authentication."""
+    if type(raw) is not bytes or raw != reader(path):
+        raise ValueError('CI assertion V3 current source read changed: ' + path)
+    row = value['source_forward'][path]
+    fixture = reader(row['fixture'])
+    if path == CI_ASSERTION_V3_SOURCE:
+        template = row['recipe']['after']
+        token = '<CI_ASSERTION_' + 'V3_DIGEST>'
+        if (safe.identity(fixture) != row['before']
+                or template.count(token) != 1
+                or template.replace(token, CI_ASSERTION_V3_SHA256).encode('utf-8') != raw):
+            raise ValueError('CI assertion V3 Pass-A exact source recipe drift')
+    elif safe.identity(raw) != row['after']:
+        raise ValueError('CI assertion V3 current source identity drift: ' + path)
+    projected = _ci_assertion_v3_projected_reader(reader, value)
+    return projected, projected(path)
+
+
+def _ci_assertion_v3_chain_uncached(reader):
+    """Verify the immutable V2 prefix, exact V377 link, and every V3 after-image."""
+    try:
+        raw = reader(CI_ASSERTION_V3_RECEIPT)
+        value = json.loads(raw)
+        inventory_raw = reader(CI_ASSERTION_V3_PREDECESSOR_INVENTORY['path'])
+        inventory = json.loads(inventory_raw)
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ValueError('CI assertion V3 receipt or V377 predecessor cannot be read') from exc
+    if (safe.canonical(value) != raw
+            or safe.canonical_digest(value) != CI_ASSERTION_V3_SHA256
+            or value.get('canonical_sha256') != CI_ASSERTION_V3_SHA256
+            or value.get('policy_id') != 'ATHENA_PHASE_A_CI_ASSERTION_SOURCE_SUCCESSOR_V3'
+            or value.get('schema_version') != 3
+            or set(value) != {
+                'authority_granted', 'canonical_sha256', 'historical_bytes_changed', 'policy_id',
+                'predecessor_inventory', 'predecessor_receipt', 'provider_or_delivery_authority_changed',
+                'reason', 'schema_version', 'source_forward', 'test_assignments_changed',
+                'test_selection_changed', 'workflow_changed'}
+            or value.get('predecessor_receipt') != CI_ASSERTION_V3_PREDECESSOR_RECEIPT
+            or value.get('predecessor_inventory') != CI_ASSERTION_V3_PREDECESSOR_INVENTORY
+            or any(value.get(key) is not False for key in (
+                'authority_granted', 'historical_bytes_changed',
+                'provider_or_delivery_authority_changed', 'test_assignments_changed',
+                'test_selection_changed'))
+            or value.get('workflow_changed') is not True
+            or safe.canonical(inventory) != inventory_raw
+            or safe.canonical_digest(inventory) != CI_ASSERTION_V3_PREDECESSOR_INVENTORY['canonical_sha256']
+            or inventory.get('canonical_sha256') != CI_ASSERTION_V3_PREDECESSOR_INVENTORY['canonical_sha256']
+            or inventory.get('generation') != 377
+            or inventory.get('predecessor_inventory') != {
+                'path': CI_ASSERTION_V3_PRIOR_INVENTORY['path'],
+                'canonical_sha256': CI_ASSERTION_V3_PRIOR_INVENTORY['canonical_sha256'],
+                'generation': 376, 'rewritten': False}):
+        raise ValueError('CI assertion V3 receipt scope or V377 predecessor drift')
+
+    rows = value.get('source_forward')
+    if type(rows) is not dict or set(rows) != CI_ASSERTION_V3_PATHS:
+        raise ValueError('CI assertion V3 source path set drift')
+    source_rows = {row['path']: row['lf_source_sha256']
+                   for row in inventory.get('source_identities', ()) if type(row) is dict}
+    for path, row in rows.items():
+        expected_fixture = CI_ASSERTION_V3_FIXTURES + path.replace('/', '--') + '.before.txt'
+        fixture = reader(row.get('fixture'))
+        if (type(row) is not dict or row.get('fixture') != expected_fixture
+                or type(row.get('before')) is not dict
+                or safe.identity(fixture) != row['before']
+                or source_rows.get(path) != row['before'].get('source_sha256')):
+            raise ValueError('CI assertion V3 source predecessor drift: ' + path)
+        current = reader(path)
+        if path == CI_ASSERTION_V3_SOURCE:
+            if set(row) != {'fixture', 'before', 'recipe'}:
+                raise ValueError('CI assertion V3 Pass-A recipe shape drift')
+            recipe = row['recipe']
+            token = '<CI_ASSERTION_' + 'V3_DIGEST>'
+            if (type(recipe) is not dict or set(recipe) != {'before', 'after'}
+                    or type(recipe['before']) is not str or type(recipe['after']) is not str
+                    or recipe['before'].encode('utf-8') != fixture
+                    or recipe['after'].count(token) != 1
+                    or recipe['after'].replace(token, CI_ASSERTION_V3_SHA256)
+                        .encode('utf-8') != current):
+                raise ValueError('CI assertion V3 Pass-A exact source recipe drift')
+        else:
+            if set(row) != {'fixture', 'before', 'after', 'patches'} or safe.identity(current) != row.get('after'):
+                raise ValueError('CI assertion V3 current source identity drift: ' + path)
+            expected = fixture
+            for patch in row['patches']:
+                if (type(patch) is not dict or set(patch) != {'before', 'after'}
+                        or type(patch['before']) is not str or type(patch['after']) is not str):
+                    raise ValueError('CI assertion V3 source patch schema drift: ' + path)
+                old, new = patch['before'].encode('utf-8'), patch['after'].encode('utf-8')
+                if not old or expected.count(old) != 1:
+                    raise ValueError('CI assertion V3 source patch seam drift: ' + path)
+                expected = expected.replace(old, new)
+            if expected != current:
+                raise ValueError('CI assertion V3 source exceeds its exact recipe: ' + path)
+
+    def v2_reader(path):
+        if path in rows:
+            return reader(rows[path]['fixture'])
+        return reader(path)
+
+    prior, predecessor = _ci_assertion_v2_chain_uncached(v2_reader)
+    if (predecessor.get('canonical_sha256') != CI_ASSERTION_V3_PREDECESSOR_RECEIPT['canonical_sha256']
+            or predecessor.get('predecessor_inventory') != CI_ASSERTION_V3_PRIOR_INVENTORY):
+        raise ValueError('CI assertion V3 does not extend the exact V2/V376 prefix')
+    return prior, predecessor, value
+
+
+def _install_ci_assertion_v3_context(context):
+    prior, successor, value = _ci_assertion_v3_chain_uncached(read_blob)
+    metadata = {CI_ASSERTION_V3_RECEIPT: safe.identity(read_blob(CI_ASSERTION_V3_RECEIPT))}
+    for path, row in value['source_forward'].items():
+        metadata[row['fixture']] = row['before']
+        after = safe.identity(read_blob(path))
+        context['BOOTSTRAP_AFTER'][path] = after
+        if path in context['HISTORICAL_PREDECESSORS']:
+            context['HISTORICAL_PREDECESSORS'][path] = dict(
+                context['HISTORICAL_PREDECESSORS'][path], after=after)
+        elif path.endswith('.py') or path == 'sitecustomize.py':
+            context['HISTORICAL_PREDECESSORS'][path] = {
+                'fixture': row['fixture'], **row['before'], 'after': after}
+        if path.endswith('.py') and path in context['ADDED_PYTHON_IDENTITIES']:
+            context['ADDED_PYTHON_IDENTITIES'][path] = after
+    context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **metadata)
+    context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **metadata)
 
 
 def _ci_assertion_successor_receipt(*, _reader=None):
@@ -2012,3 +2892,85 @@ def install_ci_assertion_context(context):
             context['ADDED_PYTHON_IDENTITIES'][path] = row['after']
     context['ADDED_METADATA'] = dict(context['ADDED_METADATA'], **metadata)
     context['BOOTSTRAP_METADATA'] = dict(context['BOOTSTRAP_METADATA'], **metadata)
+
+
+def _callable_source_binding(function):
+    code = getattr(function, '__code__', None)
+    defaults = getattr(function, '__defaults__', None)
+    kwdefaults = getattr(function, '__kwdefaults__', None)
+    closure = getattr(function, '__closure__', None) or ()
+    captured = []
+    for cell in closure:
+        try:
+            value = cell.cell_contents
+        except ValueError:
+            captured.append(('empty',))
+        else:
+            captured.append((id(value), repr(value)))
+    return (id(function), id(code), id(defaults), repr(defaults),
+            id(kwdefaults), repr(kwdefaults), tuple(captured))
+
+
+def _trusted_source_reader_contract():
+    """Allow source-only reuse only under the imported, reviewed reader seam."""
+    if (_trusted_source_reader_contract is not _TRUSTED_SOURCE_READER_CONTRACT_FN
+            or _callable_source_binding(_trusted_source_reader_contract)
+                != _TRUSTED_SOURCE_READER_CONTRACT_BINDING
+            or _trusted_source_scope_instance is not _TRUSTED_SOURCE_SCOPE_INSTANCE_FN
+            or _callable_source_binding(_trusted_source_scope_instance)
+                != _TRUSTED_SOURCE_SCOPE_INSTANCE_BINDING):
+        return False
+    if (read_blob is not _TRUSTED_PUBLIC_READ_BLOB
+            or _callable_source_binding(read_blob) != _TRUSTED_PUBLIC_READ_BLOB_BINDING
+            or safe.read_blob is not _TRUSTED_SAFE_READ_BLOB
+            or _callable_source_binding(safe.read_blob) != _TRUSTED_SAFE_READ_BLOB_BINDING
+            or _scoped_source_read_contract is not _TRUSTED_SCOPED_SOURCE_READ_CONTRACT_FN
+            or _callable_source_binding(_scoped_source_read_contract)
+                != _TRUSTED_SCOPED_SOURCE_READ_CONTRACT_BINDING):
+        return False
+    return (_TRUSTED_SCOPED_SOURCE_READ_CONTRACT_FN()
+            == _TRUSTED_SCOPED_SOURCE_READ_CONTRACT_DIGEST)
+
+
+def _trusted_source_scope_instance(scope):
+    if type(scope) is not _TRUSTED_SOURCE_SCOPE_CLASS:
+        return False
+    _assert_source_scope_execution_unit(scope)
+    if (not _trusted_source_reader_contract()
+            or scope.reader is not _TRUSTED_PUBLIC_READ_BLOB
+            or scope.underlying_reader not in (
+                _TRUSTED_PUBLIC_READ_BLOB, _TRUSTED_SAFE_READ_BLOB)
+            or scope.safe_reader is not _TRUSTED_SAFE_READ_BLOB
+            or scope.reader_contract_fn is not _TRUSTED_SCOPED_SOURCE_READ_CONTRACT_FN
+            or scope.reader_contract != _TRUSTED_SCOPED_SOURCE_READ_CONTRACT_DIGEST):
+        return False
+    for name, expected in _TRUSTED_SOURCE_SCOPE_METHOD_BINDINGS:
+        if _callable_source_binding(getattr(_TRUSTED_SOURCE_SCOPE_CLASS, name)) != expected:
+            return False
+    return True
+
+
+# Capture only after the complete module has defined the public reader, source
+# scope, and V2 verifier. A reader substituted before a request starts must use
+# the uncached path or be rejected; it can never be silently replaced by the
+# lower-level safe reader during scoped reuse.
+_TRUSTED_PUBLIC_READ_BLOB = read_blob
+_TRUSTED_PUBLIC_READ_BLOB_BINDING = _callable_source_binding(read_blob)
+_TRUSTED_SAFE_READ_BLOB = safe.read_blob
+_TRUSTED_SAFE_READ_BLOB_BINDING = _callable_source_binding(safe.read_blob)
+_TRUSTED_SOURCE_SCOPE_CLASS = _SourceReadScope
+_TRUSTED_SOURCE_SCOPE_READ = _SourceReadScope.read
+_TRUSTED_SOURCE_SCOPE_METHOD_BINDINGS = tuple(
+    (name, _callable_source_binding(getattr(_SourceReadScope, name)))
+    for name in ('__init__', 'read', 'verify', 'load_derivation', 'store_derivation'))
+_TRUSTED_SCOPED_SOURCE_READ_CONTRACT_FN = _scoped_source_read_contract
+_TRUSTED_SCOPED_SOURCE_READ_CONTRACT_BINDING = _callable_source_binding(
+    _scoped_source_read_contract)
+_TRUSTED_SOURCE_READER_CONTRACT_FN = _trusted_source_reader_contract
+_TRUSTED_SOURCE_READER_CONTRACT_BINDING = _callable_source_binding(
+    _trusted_source_reader_contract)
+_TRUSTED_SOURCE_SCOPE_INSTANCE_FN = _trusted_source_scope_instance
+_TRUSTED_SOURCE_SCOPE_INSTANCE_BINDING = _callable_source_binding(
+    _trusted_source_scope_instance)
+_TRUSTED_SCOPED_SOURCE_READ_CONTRACT_DIGEST = (
+    _TRUSTED_SCOPED_SOURCE_READ_CONTRACT_FN())
