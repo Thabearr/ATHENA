@@ -225,6 +225,115 @@ def test_root_performance_projection_authenticates_current_then_projects_v3_v2()
     assert through_existing_projection == forward.read_blob(root_row['fixture'])
 
 
+def test_ci_assertion_current_v3_then_historical_v2_v1_projection_unscoped():
+    path = 'tests/test_tests_shard_balance_successor.py'
+    current = forward.read_blob(path)
+
+    # CI V1 is an intermediate projection here; parent-progress and shard V2
+    # are later, independently authenticated historical edges.
+    prior, _v2, _v3 = forward._ci_assertion_v3_chain(_reader=forward.read_blob)
+    ci_fixture = prior['source_forward'][path]['fixture']
+    ci_v1 = forward._ci_assertion_predecessor_source(
+        path, current, _reader=forward.read_blob)
+    assert ci_v1 == forward.read_blob(ci_fixture)
+    assert forward.safe.identity(ci_v1)['byte_count'] == 14741
+
+    parent_row = forward._parent_progress_receipt()['source_forward'][path]
+    parent = forward._parent_progress_predecessor_source(
+        path, ci_v1, _reader=forward.read_blob)
+    assert parent == forward.read_blob(parent_row['fixture'])
+    assert forward.safe.identity(parent)['byte_count'] == 9974
+
+    shard_row = forward._tests_shard_v2_receipt()['source_forward'][path]
+    through_shard = forward._tests_shard_v2_predecessor_source(
+        path, current, _reader=forward.read_blob)
+    through_actual_route = forward._predecessor_source_for_reader(path, current)
+    assert through_shard == through_actual_route == forward.read_blob(shard_row['fixture'])
+    assert forward.safe.identity(through_actual_route)['byte_count'] == 6365
+
+    # Also compare the already-authenticated V3 projection entry with the
+    # direct-current helper endpoint; neither may skip the CI V1 edge.
+    projected_reader, projected = forward._ci_assertion_v3_projected_read(
+        path, current, forward.read_blob)
+    through_projection = forward._ci_assertion_predecessor_source(
+        path, projected, _reader=projected_reader,
+        _current_reader=forward.read_blob)
+    assert through_projection == ci_v1
+    assert forward.predecessor_source('domain/unrelated.py', b'unrelated') == b'unrelated'
+
+
+def test_checkpoint_current_v3_to_ci_v2_then_integrated_projection_once():
+    path = 'scripts/audit_checkpoint_e_workflows.py'
+    current = forward.read_blob(path)
+    _prior, v2, _v3 = forward._ci_assertion_v3_chain(_reader=forward.read_blob)
+    ci_fixture = v2['source_forward'][path]['fixture']
+    ci_v2 = forward._ci_assertion_predecessor_source(
+        path, current, _reader=forward.read_blob)
+    assert ci_v2 == forward.read_blob(ci_fixture)
+    assert forward.safe.identity(ci_v2)['byte_count'] == 95388
+
+    integrated_row = forward._integrated_lineage_receipt()['source_forward'][path]
+    expected_integrated = forward.read_blob(integrated_row['fixture'])
+    direct_composite = forward._integrated_lineage_predecessor(
+        path, current, _reader=forward.read_blob)
+    production_composition = forward._predecessor_source_for_reader(path, current)
+    assert direct_composite == production_composition == expected_integrated
+    assert forward.safe.identity(production_composition)['byte_count'] == 94054
+
+
+@pytest.mark.parametrize('target', ['current', 'fixture'])
+def test_ci_assertion_v3_projection_rejects_tampered_current_or_fixture(
+        monkeypatch, target):
+    path = 'tests/test_tests_shard_balance_successor.py'
+    receipt = json.loads(forward.read_blob(forward.CI_ASSERTION_V3_RECEIPT))
+    workflow_row = receipt['source_forward']['.github/workflows/tests.yml']
+    target_path = ('.github/workflows/tests.yml' if target == 'current'
+                   else workflow_row['fixture'])
+    original = forward.read_blob
+
+    def altered(candidate):
+        raw = original(candidate)
+        return raw + b' ' if candidate == target_path else raw
+
+    monkeypatch.setattr(forward, 'read_blob', altered)
+    expected_failure = ('CI assertion V3 current source identity drift'
+                        if target == 'current'
+                        else 'CI assertion V3 source predecessor drift')
+    with pytest.raises(ValueError, match=expected_failure):
+        forward._predecessor_source_for_reader(path, original(path))
+
+
+def test_ci_assertion_v3_projection_rejects_forged_reader_and_value():
+    path = 'tests/test_tests_shard_balance_successor.py'
+    current = forward.read_blob(path)
+    projected_reader, projected = forward._ci_assertion_v3_projected_read(
+        path, current, forward.read_blob)
+    forged = type(projected_reader)(
+        projected_reader.source_reader, dict(projected_reader.fixtures))
+    forged.fixtures['.github/workflows/tests.yml'] += b' '
+    with pytest.raises(ValueError, match='projected reader differs'):
+        forward._ci_assertion_predecessor_source(
+            path, projected, _reader=forged,
+            _current_reader=forward.read_blob)
+
+    with pytest.raises(ValueError, match='supplied projection value'):
+        forward._ci_assertion_v3_projected_read(
+            path, current, forward.read_blob,
+            _value={'source_forward': {path: {'fixture': 'untrusted'}}})
+
+
+def test_ci_assertion_v3_reader_helper_contract_drift_rejects_scoped_hit(monkeypatch):
+    path = 'tests/test_tests_shard_balance_successor.py'
+    current = forward.read_blob(path)
+    with pytest.raises(ValueError, match='derivation contract changed'):
+        with forward.source_derivation_scope():
+            forward._predecessor_source_for_reader(path, current)
+            monkeypatch.setattr(
+                forward, '_ci_assertion_v2_chain_uncached',
+                lambda reader: ({'forged': True}, {'forged': True}))
+            forward._predecessor_source_for_reader(path, current)
+
+
 def test_root_performance_projection_rejects_mismatched_v2_path_and_direction():
     path = 'sitecustomize.py'
     _prior, v2, v3 = forward._ci_assertion_v3_chain()

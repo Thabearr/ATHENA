@@ -185,6 +185,23 @@ def test_v3_diagnostic_upload_is_an_append_only_exact_v2_successor():
     assert current['source_forward'][audit.WORKFLOW]['after'] == audit.V3_AFTER
 
 
+def test_v3_p4_current_to_historical_reader_route_has_scoped_cold_and_hit():
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+
+    with pass_a.source_derivation_scope() as owner:
+        first = audit._authenticate_v3()
+        cold_after_first = owner.metrics.get('pass_a_ci_assertion_v3_uncached', 0)
+        hits_after_cold = owner.metrics.get('pass_a_ci_assertion_v3_hits', 0)
+        second = audit._authenticate_v3()
+        cold_after_repeat = owner.metrics.get('pass_a_ci_assertion_v3_uncached', 0)
+        hits_after_repeat = owner.metrics.get('pass_a_ci_assertion_v3_hits', 0)
+
+    assert first == second
+    assert cold_after_first == 1
+    assert cold_after_repeat == cold_after_first
+    assert hits_after_repeat > hits_after_cold
+
+
 def test_install_context_finishes_with_pass_a_v3_and_preserves_historical_fixtures():
     import copy
     from scripts import audit_phase_a_pc_upcoming_retention_successor as retention

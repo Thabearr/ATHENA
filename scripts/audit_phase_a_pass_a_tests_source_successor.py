@@ -458,6 +458,14 @@ def _scoped_source_read_contract():
         ('pass_a._ci_assertion_v2_contract_digest', _ci_assertion_v2_contract_digest),
         ('pass_a._ci_assertion_v2_chain', _ci_assertion_v2_chain),
         ('pass_a._ci_assertion_v2_chain_uncached', _ci_assertion_v2_chain_uncached),
+        ('pass_a._ci_assertion_predecessor_source', _ci_assertion_predecessor_source),
+        ('pass_a._ci_assertion_predecessor_source_with_reader',
+         _ci_assertion_predecessor_source_with_reader),
+        ('pass_a._ci_assertion_v3_projected_read', _ci_assertion_v3_projected_read),
+        ('pass_a._predecessor_source_for_reader', _predecessor_source_for_reader),
+        ('pass_a._tests_shard_v2_predecessor_source', _tests_shard_v2_predecessor_source),
+        ('pass_a._integrated_lineage_predecessor', _integrated_lineage_predecessor),
+        ('pass_a._parent_progress_predecessor_source', _parent_progress_predecessor_source),
         ('safe.read_blob', safe.read_blob),
         ('safe._read_blob', safe._read_blob),
         ('safe._source_scope_head', safe._source_scope_head),
@@ -711,18 +719,34 @@ def receipt():
 
 def _predecessor_source_for_reader(path, raw, *, _reader=None):
     reader = read_blob if _reader is None else _reader
+    current_reader = reader
     reader, raw = _ci_assertion_v3_projected_read(path, raw, reader)
+    # These composite adapters consume the CI assertion edge themselves.
+    # Route them once and do not feed their older endpoint back through the
+    # same edge below.  The B1 adapter also owns its integrated-lineage step.
+    if path == B1_SOURCE:
+        return _b1_predecessor_source(path, reader(path), _reader=reader)
     if path == 'scripts/audit_phase_a_pc_upcoming_retention_successor.py':
         raw = _root_performance_predecessor_source(path, raw, _reader=reader)
     if path == safe.SOURCE:
         raw = _git_mode_regression_predecessor(path, raw, _reader=reader)
     raw = _blob_reuse_predecessor(path, raw, _reader=reader)
     raw = _integrated_lineage_predecessor(path, raw, _reader=reader)
+    ci_assertion_consumed = path in INTEGRATED_LINEAGE_PATHS
     raw = _tests_shard_v2_predecessor_source(path, raw, _reader=reader)
-    if path in CI_ASSERTION_V2_PATHS and path not in ROOT_PERFORMANCE_PATHS:
-        raw = _ci_assertion_predecessor_source(path, raw, _reader=reader)
-    if path == B1_SOURCE:
-        return _b1_predecessor_source(path, reader(path), _reader=reader)
+    ci_assertion_consumed = ci_assertion_consumed or path in TESTS_SHARD_V2_SOURCE_PATHS
+    if (path in CI_ASSERTION_V2_PATHS and path not in ROOT_PERFORMANCE_PATHS
+            and not ci_assertion_consumed):
+        # The reader may now expose V3 predecessor fixtures for the V2/V1
+        # projection.  Pass its original current reader separately; the
+        # predecessor verifier authenticates V3 against that reader before it
+        # accepts this historical view.  A projected fixture map is never a
+        # current-source authority by itself.
+        projected_current = (type(reader) is _CIAssertionV3ProjectedReader
+                             and reader.source_reader is current_reader)
+        raw = _ci_assertion_predecessor_source(
+            path, raw, _reader=reader,
+            _current_reader=current_reader if projected_current else None)
     row = EDGES.get(path)
     if row is None:
         return _a2_text_predecessor_source(path, raw, _reader=reader)
@@ -950,8 +974,16 @@ def _integrated_lineage_receipt(*, _reader=None):
     sources = {r['path']: r['lf_source_sha256'] for r in inventory['source_identities']}
     for path, row in value['source_forward'].items():
         before = reader(row['fixture'])
-        current = _ci_assertion_predecessor_source(path, reader(path), _reader=reader)
-        current = _pytest_restoration_predecessor(path, current, _reader=reader)
+        current_reader = reader
+        current = reader(path)
+        current, historical_reader = _ci_assertion_predecessor_source_with_reader(
+            path, current, _reader=current_reader)
+        # The CI helper returns the authenticated V3 historical reader along
+        # with its V2/V1 byte endpoint.  Restoration must consume that same
+        # phase view: its cold validator still reads ``path`` independently,
+        # and an ordinary current reader would expose V3 bytes there.
+        current = _pytest_restoration_predecessor(
+            path, current, _reader=historical_reader)
         if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
                 or sources.get(path) != row['before']['source_sha256']):
             raise ValueError('integrated lineage source identity drift: ' + path)
@@ -970,8 +1002,13 @@ def _integrated_lineage_predecessor(path, raw, *, _reader=None):
     reader = read_blob if _reader is None else _reader
     if path not in INTEGRATED_LINEAGE_PATHS:
         return raw
-    raw = _ci_assertion_predecessor_source(path, raw, _reader=reader)
-    raw = _pytest_restoration_predecessor(path, raw, _reader=reader)
+    # Preserve both the original current-source reader and the authenticated
+    # historical reader produced by the CI projection.  This accepts either a
+    # direct current-source caller or the already V3-projected reader used by
+    # composite callers, while restoration validates through the same view.
+    raw, historical_reader = _ci_assertion_predecessor_source_with_reader(
+        path, raw, _reader=reader)
+    raw = _pytest_restoration_predecessor(path, raw, _reader=historical_reader)
     row = _integrated_lineage_receipt(_reader=reader)['source_forward'][path]
     if safe.identity(raw) != row['after']:
         raise ValueError('integrated lineage caller source drift: ' + path)
@@ -2211,7 +2248,7 @@ CI_ASSERTION_V2_PREDECESSOR_INVENTORY = {
     'rewritten': False,
 }
 CI_ASSERTION_V3_RECEIPT = 'tests/fixtures/architecture/ci_assertion_source_successor_v3/receipt.json'
-CI_ASSERTION_V3_SHA256 = '920eb2751ef1bbb878a7ebe25a2ec942bee773ef706f09ed7149a6d04cf3104e'
+CI_ASSERTION_V3_SHA256 = 'faa0bf6c5825bd2f21715cc7e467c75cc420f691ca01eb477bc9c49b963be9b9'
 CI_ASSERTION_V3_SOURCE = __name__.replace('.', '/') + '.py'
 CI_ASSERTION_V3_FIXTURES = 'tests/fixtures/architecture/ci_assertion_source_successor_v3/'
 CI_ASSERTION_V3_PREDECESSOR_RECEIPT = {
@@ -2312,6 +2349,13 @@ def _ci_assertion_v2_contract_digest():
         '_ci_assertion_v2_chain', '_ci_assertion_v2_chain_uncached',
         '_ci_assertion_v3_chain', '_ci_assertion_v3_chain_uncached',
         '_ci_assertion_v3_projected_read', '_ci_assertion_v3_projected_reader',
+        '_ci_assertion_v3_projected_read_with_value',
+        '_ci_assertion_predecessor_source', '_ci_assertion_predecessor_source_with_reader',
+        '_predecessor_source_for_reader',
+        '_tests_shard_v2_predecessor_source', '_integrated_lineage_receipt',
+        '_integrated_lineage_predecessor', '_parent_progress_receipt',
+        '_parent_progress_predecessor_source',
+        '_apply_exact_source_forward_row', '_require_v2_v3_source_edge',
         '_install_ci_assertion_v3_context',
         '_ci_assertion_v1_successor_receipt', '_read_canonical_inventory_snapshot',
         '_canonical_inventory_snapshot', '_inventory_validation_contract',
@@ -2664,10 +2708,14 @@ def _ci_assertion_v3_projected_read(path, raw, reader, *, _value=None):
     """Project current V3 bytes to V2 only after authenticating the full V3 edge."""
     if path not in CI_ASSERTION_V3_PATHS:
         return reader, raw
-    if _value is None:
-        _historical, _v2, value = _ci_assertion_v3_chain(_reader=reader)
-    else:
-        value = _value
+    # A caller-provided value is a hint only.  Reacquire the request-bound
+    # current proof through the supplied reader and compare before using it.
+    # In an enabled scope this is an immutable derivation hit with fresh input
+    # fencing; outside a scope it is a complete independent authentication.
+    _historical, _v2, authenticated = _ci_assertion_v3_chain(_reader=reader)
+    if _value is not None and _value != authenticated:
+        raise ValueError('CI assertion V3 supplied projection value is not current-authenticated')
+    value = authenticated
     return _ci_assertion_v3_projected_read_with_value(path, raw, reader, value)
 
 
@@ -2803,12 +2851,64 @@ def _ci_assertion_successor_receipt(*, _reader=None):
     return _ci_assertion_v2_chain(_reader=_reader)[0]
 
 
-def _ci_assertion_predecessor_source(path, raw, *, _reader=None):
-    """Invert this exact source edge before consulting earlier source views."""
+def _ci_assertion_predecessor_source(path, raw, *, _reader=None, _current_reader=None):
+    """Return the predecessor bytes while preserving the established API."""
+    projected, _historical_reader = _ci_assertion_predecessor_source_with_reader(
+        path, raw, _reader=_reader, _current_reader=_current_reader)
+    return projected
+
+
+def _ci_assertion_predecessor_source_with_reader(
+        path, raw, *, _reader=None, _current_reader=None):
+    """Invert the CI edge and return its authenticated phase-specific reader.
+
+    A direct caller supplies the current reader.  A composite caller may
+    already have applied the V3 projection, in which case the exact wrapper
+    retains that same current reader.  The returned reader is used by the next
+    historical edge so its independent cold reads observe the correct source
+    phase; wrapper type or fixture contents alone never authenticate it.
+    """
     reader = read_blob if _reader is None else _reader
     if path not in CI_ASSERTION_PATHS and path not in CI_ASSERTION_V2_PATHS:
-        return raw
-    prior, successor = _ci_assertion_v2_chain(_reader=reader)
+        return raw, reader
+    projection_contract = None
+    if (_current_reader is None
+            and type(reader) is _CIAssertionV3ProjectedReader):
+        # Nested source-forward readers pass the phase wrapper through more
+        # than one predecessor helper. Recover its original reader only as a
+        # candidate input; the full V3 chain and exact projection are checked
+        # below before any historical edge is consumed.
+        _current_reader = reader.source_reader
+    elif _current_reader is None and path in CI_ASSERTION_V3_PATHS:
+        # Direct callers start with current bytes and an ordinary reader.
+        # Authenticate and apply V3 first, so the later V2/V1 comparison sees
+        # the exact predecessor phase it is meant to consume.
+        _current_reader = reader
+        reader, raw = _ci_assertion_v3_projected_read(path, raw, reader)
+    if _current_reader is None:
+        prior, successor = _ci_assertion_v2_chain(_reader=reader)
+    else:
+        # A V3 historical reader cannot authenticate itself as current: its
+        # source paths intentionally return immutable before-images.  Re-read
+        # the current V3 chain through the original reader, reconstruct the
+        # exact expected projection, and only then use the V2/V1 chain returned
+        # by that authenticated current proof.  This is a phase-aware adapter,
+        # not trust in a wrapper type, caller-supplied value, or mutable map.
+        if (type(reader) is not _CIAssertionV3ProjectedReader
+                or reader.source_reader is not _current_reader
+                or type(reader.fixtures) is not dict):
+            raise ValueError('CI assertion V3 projected reader/current source mismatch')
+        projection_contract = _ci_assertion_v2_contract_digest()
+        prior, successor, current_v3 = _ci_assertion_v3_chain(_reader=_current_reader)
+        expected_reader = _ci_assertion_v3_projected_reader(_current_reader, current_v3)
+        if reader.fixtures != expected_reader.fixtures:
+            raise ValueError('CI assertion V3 projected reader differs from authenticated fixtures: ' + path)
+        v3_row = current_v3.get('source_forward', {}).get(path)
+        expected_path_bytes = (_current_reader(v3_row['fixture'])
+                               if type(v3_row) is dict
+                               else _current_reader(path))
+        if reader(path) != expected_path_bytes:
+            raise ValueError('CI assertion V3 projected path bytes differ from current proof: ' + path)
     successor_row = successor['source_forward'].get(path)
     current = reader(path)
     if raw != current:
@@ -2841,7 +2941,10 @@ def _ci_assertion_predecessor_source(path, raw, *, _reader=None):
     else:
         projected = current
     if path not in CI_ASSERTION_PATHS:
-        return projected
+        if (projection_contract is not None
+                and projection_contract != _ci_assertion_v2_contract_digest()):
+            raise ValueError('CI assertion V3 reader/helper contract changed during projection')
+        return projected, reader
     row = prior['source_forward'][path]
     before = reader(row['fixture'])
     if (safe.identity(projected) != row['after']
@@ -2855,7 +2958,10 @@ def _ci_assertion_predecessor_source(path, raw, *, _reader=None):
         expected = expected.replace(old, new)
     if expected != projected:
         raise ValueError('CI assertion source exceeds its exact recipe: ' + path)
-    return before
+    if (projection_contract is not None
+            and projection_contract != _ci_assertion_v2_contract_digest()):
+        raise ValueError('CI assertion V3 reader/helper contract changed during projection')
+    return before, reader
 
 
 def _authenticate_ci_assertion_successor(*, _reader=None):
