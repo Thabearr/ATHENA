@@ -2344,7 +2344,7 @@ CI_ASSERTION_V4_PATHS = frozenset({CI_ASSERTION_V4_SOURCE, CI_ASSERTION_V4_TEST_
 # inventory. It projects only those exact current bytes back to V379 before
 # the immutable V4/V3 history is evaluated.
 CI_ASSERTION_V5_RECEIPT = 'tests/fixtures/architecture/ci_assertion_source_successor_v5/receipt.json'
-CI_ASSERTION_V5_SHA256 = '0668707ab3ec04afb1a0e37b00b028b8235534c72f985da6345fd9bb6d1b4ccd'
+CI_ASSERTION_V5_SHA256 = '2627b5b24f23c3637c8df50939c7da6da53d51039d4ec8818ca6be8a38bd455a'
 CI_ASSERTION_V5_SOURCE = CI_ASSERTION_V4_SOURCE
 CI_ASSERTION_V5_FIXTURES = 'tests/fixtures/architecture/ci_assertion_source_successor_v5/'
 CI_ASSERTION_V5_PREDECESSOR_RECEIPT = {

@@ -516,10 +516,8 @@ def authenticate_bootstrap_sources():
     # e35a...; Pass-A V2 continues to the published V377 image; V3 binds the
     # candidate current bytes. No later receipt replaces the earlier proof.
     activation = pass_a._a2_text_receipt()['source_forward'][BOOTSTRAP_AUDITOR]
-    activation_before, activation_after = pass_a._apply_exact_source_forward_row(
+    _activation_before, activation_after = pass_a._apply_exact_source_forward_row(
         BOOTSTRAP_AUDITOR, activation, pass_a.read_blob, label='A2 historical text')
-    if activation_before != expected_auditor:
-        raise ValueError("bootstrap activation expectation differs from its authenticated source fixture")
     root_value = pass_a._root_performance_receipt()
     root_row = root_value['source_forward'].get(BOOTSTRAP_AUDITOR)
     root_before, root_after = pass_a._apply_exact_source_forward_row(
@@ -533,6 +531,9 @@ def authenticate_bootstrap_sources():
     v5_row = v5['source_forward'].get(BOOTSTRAP_AUDITOR)
     v5_before, v5_after = pass_a._apply_exact_source_forward_row(
         BOOTSTRAP_AUDITOR, v5_row, pass_a.read_blob, label='Pass-A V5')
+    # The installed recipe includes the A2 text and root-performance patches.
+    if root_after != expected_auditor:
+        raise ValueError("bootstrap root-performance after-image differs from the installed recipe")
     if (activation_after != root_before
             or root_after != v2_before
             or v2_after != v3_before
