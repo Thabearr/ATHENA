@@ -544,9 +544,11 @@ def test_root_bootstrap_pin_binds_the_current_auditor_and_rejects_drift(monkeypa
     assert set(successors) == {auditor}
     from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
     root_successor = pass_a._authenticate_root_performance()["source_forward"][auditor]
-    _prior, admission_v2, admission_v3 = pass_a._ci_assertion_v3_chain()
+    _prior, admission_v2, admission_v3, _admission_v4, admission_v5 = (
+        pass_a._ci_assertion_v3_chain_details())
     admitted_a2_v2 = admission_v2["source_forward"][auditor]["after"]["source_sha256"]
     admitted_a2_v3 = admission_v3["source_forward"][auditor]["after"]["source_sha256"]
+    admitted_a2_v5 = admission_v5["source_forward"][auditor]["after"]["source_sha256"]
     previous_startup = ast.parse(pass_a.read_blob(
         admission_v3["source_forward"]["sitecustomize.py"]["fixture"]).decode())
     previous_successors = next(ast.literal_eval(node.value) for node in previous_startup.body
@@ -560,12 +562,13 @@ def test_root_bootstrap_pin_binds_the_current_auditor_and_rejects_drift(monkeypa
         root_successor["after"]["source_sha256"],
     )
     assert prior_chain[3:] == (admitted_a2_v2,)
-    assert successors[auditor] == prior_chain + (admitted_a2_v3,)
-    assert len(successors[auditor]) == 5
+    assert successors[auditor] == prior_chain + (admitted_a2_v3, admitted_a2_v5)
+    assert len(successors[auditor]) == 6
     assert [row for row in latest["source_identities"] if row["path"] == auditor] == [
         boundary.source(auditor)
     ]
     assert successors[auditor][-1] == hashlib.sha256(_worktree_bytes(auditor)).hexdigest()
+    assert retention.authenticate_bootstrap_sources() is True
     retention.authenticate_bootstrap_successor(
         (boundary.ROOT / "sitecustomize.py").read_text(encoding="utf-8"), boundary.source)
 
@@ -579,6 +582,41 @@ def test_root_bootstrap_pin_binds_the_current_auditor_and_rejects_drift(monkeypa
     monkeypatch.setattr(offline_transport, "install", lambda: pytest.fail("UNGUARDED_INSTALL"))
     with pytest.raises(SystemExit, match="failed to activate"):
         runpy.run_path(str(boundary.ROOT / "sitecustomize.py"))
+
+
+def test_retention_authenticate_checks_b4_test_v5_successor(monkeypatch):
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    path = "tests/test_core_01d_sportybet_current_trigger_authority_b4.py"
+    original = retention._read
+    observed = []
+
+    def track_b4_test(candidate):
+        value = original(candidate)
+        if candidate == path:
+            observed.append(candidate)
+        return value
+
+    monkeypatch.setattr(retention, "_read", track_b4_test)
+    receipt = retention.authenticate()
+    assert receipt["canonical_sha256"] == retention.RECEIPT_SHA256
+    assert path in observed
+
+
+def test_retention_projection_composes_root_pin_test_v3_to_v5():
+    import subprocess
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    latest = boundary.authenticate_inventory()
+    raw = subprocess.check_output(["git", "ls-tree", "-r", "HEAD"], cwd=boundary.ROOT)
+    projected = retention._project_retention_inventory_uncached(raw, latest=latest)
+    _prior, _v2, v3, _v4, v5 = pass_a._ci_assertion_v3_chain_details()
+    path = "tests/test_core_01d_ci_offline_transport_inventory_evolution.py"
+    assert v3["source_forward"][path]["after"] == v5["source_forward"][path]["before"]
+    assert (v5["source_forward"][path]["after"]["source_sha256"]
+            == boundary.source(path)["lf_source_sha256"])
+    rows = {line.split(b"\t", 1)[1].decode(): line.split(b"\t", 1)[0]
+            for line in projected.splitlines()}
+    assert rows[path].split()[-1].decode() == retention.BOOTSTRAP_PREDECESSORS[path]["git_blob_sha1"]
 
 
 @pytest.mark.parametrize("mutation", ["extra", "reordered", "replaced"])

@@ -21,9 +21,10 @@ ROOT_TEST_SOURCE_SUCCESSORS = {
         "b5a55f7f82f2313face2191eb87eb221818a4da0d6a8955b3e3dbad74598477e",
         "e35a4c4fbb7d423ccade04dff9861868f8fd4cdec06539cc742dd3e8c3d2e1af",
         "edc092acaa1fa6efccf6cd2eaebb279c48df6ebaea1eae8e010c63c0b6a37973",
-        # Proposed V378 source admission. This is not active until the matching
-        # V3/retention/P4 receipts and V378 inventory are independently checked.
+        # Proposed V380 source admission. This remains a local review candidate
+        # until the append-only Pass-A edge and V380 inventory are independently checked.
         "9ce04b7ace117413c8f4306f62f580aab76932f2443dc91f7cc210b161742fc0",
+        "3b3a462eebdd10e4c53ea835c5acb90e5f322549fb123b8f4cf16fce316820f1",
     ),
 }
 

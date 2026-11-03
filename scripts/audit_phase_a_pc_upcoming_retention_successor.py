@@ -123,13 +123,30 @@ def authenticate():
         raise ValueError("retention B4 consumer source-forward drift")
     if current_b4_identity != B4_FORWARD_AFTER:
         from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
-        # The B4 auditor's edge is in V2. The V3 chain authenticates that
-        # receipt through its pinned predecessor reader.
+        # Preserve the historical V2 edge for the B4 auditor implementation.
         _prior, v2, _v3 = pass_a._ci_assertion_v3_chain()
         row = v2["source_forward"].get(B4_FORWARD_SOURCE)
         if (row is None or row.get("before") != B4_FORWARD_AFTER
                 or row.get("after") != current_b4_identity):
             raise ValueError("retention B4 consumer authenticated successor drift")
+
+    # The V5 transition also changes the B4 test source. Authenticate its
+    # historical V3 endpoint and exact V5 after-image through the same chain;
+    # the older auditor-row check above remains an independent V2 obligation.
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    b4_test_path = "tests/test_core_01d_sportybet_current_trigger_authority_b4.py"
+    _prior, _v2, v3, _v4, v5 = pass_a._ci_assertion_v3_chain_details()
+    v3_row = v3.get("source_forward", {}).get(b4_test_path)
+    v5_row = v5.get("source_forward", {}).get(b4_test_path)
+    if type(v3_row) is not dict or type(v5_row) is not dict:
+        raise ValueError("retention B4 test V3/V5 source edge is missing")
+    _v3_before, v3_after = pass_a._apply_exact_source_forward_row(
+        b4_test_path, v3_row, pass_a.read_blob, label="retention B4 test V3")
+    v5_before, v5_after = pass_a._apply_exact_source_forward_row(
+        b4_test_path, v5_row, pass_a.read_blob, label="retention B4 test V5")
+    if (v3_after != v5_before or v5_row.get("before") != v3_row.get("after")
+            or _read(b4_test_path) != v5_after):
+        raise ValueError("retention B4 test authenticated successor drift")
     snapshot = _json(SNAPSHOT, SNAPSHOT_SHA256)
     for path, row in PREDECESSORS.items():
         if identity(_read(row["fixture"])) != {key: row[key] for key in BEFORE}:
@@ -361,16 +378,26 @@ def _project_retention_inventory_uncached(raw, *, latest=None, _preauthenticated
         expected_after = BOOTSTRAP_AFTER.get(path) or (predecessors[path]["after"] if path in predecessors
                           else ADDED_PYTHON_IDENTITIES.get(path))
         if path == "tests/test_core_01d_ci_offline_transport_inventory_evolution.py":
-            # This existing test has a later exact source-forward edge in the
-            # independently pinned Pass-A V3 receipt (the new A2 root-pin
-            # assertion). Preserve its historical predecessor projection, but
-            # accept only that receipt's authenticated current after-image.
+            # Preserve the V3 root-pin test image as the historical endpoint,
+            # then authenticate its exact V5 successor before accepting live
+            # bytes. The independent V3 recipe remains part of the chain.
             from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
-            _prior, _v2, pass_a_v3 = pass_a._ci_assertion_v3_chain()
-            source_edge = pass_a_v3["source_forward"].get(path)
-            if type(source_edge) is not dict or type(source_edge.get("after")) is not dict:
-                raise ValueError("retention test source has no exact Pass-A V3 successor")
-            expected_after = source_edge["after"]
+            _prior, _v2, pass_a_v3, _v4, pass_a_v5 = (
+                pass_a._ci_assertion_v3_chain_details())
+            v3_edge = pass_a_v3["source_forward"].get(path)
+            v5_edge = pass_a_v5["source_forward"].get(path)
+            if (type(v3_edge) is not dict or type(v5_edge) is not dict
+                    or type(v3_edge.get("after")) is not dict
+                    or type(v5_edge.get("before")) is not dict
+                    or type(v5_edge.get("after")) is not dict):
+                raise ValueError("retention test source has no exact Pass-A V3/V5 successor")
+            _v3_before, v3_after = pass_a._apply_exact_source_forward_row(
+                path, v3_edge, pass_a.read_blob, label="retention root-pin test V3")
+            v5_before, v5_after = pass_a._apply_exact_source_forward_row(
+                path, v5_edge, pass_a.read_blob, label="retention root-pin test V5")
+            if v3_after != v5_before or v5_edge["before"] != v3_edge["after"]:
+                raise ValueError("retention root-pin test does not compose V3 -> V5")
+            expected_after = v5_edge["after"]
         if expected_after is not None and identity(payload) != expected_after:
             raise ValueError("source differs from the exact reviewed retention successor: " + path)
         current_blobs[path] = observed.git_blob_sha1
@@ -444,25 +471,24 @@ def expected_bootstrap_source():
 
 
 def expected_current_bootstrap_source():
-    """Derive the current root source from the exact Pass-A V3 after-edge."""
+    """Compose the retained V3 root image with the exact proposed V5 after-edge."""
     from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
-    _historical, _v2, value = pass_a._ci_assertion_v3_chain()
-    row = value['source_forward'].get('sitecustomize.py')
-    if type(row) is not dict or set(row) != {'fixture', 'before', 'after', 'patches'}:
-        raise ValueError('V3 bootstrap source-forward row is missing or malformed')
-    before = _bootstrap_blob(row['fixture'])
-    if identity(before) != row['before']:
-        raise ValueError('V3 bootstrap predecessor source identity drift')
-    expected = before
-    for patch in row['patches']:
-        if type(patch) is not dict or set(patch) != {'before', 'after'}:
-            raise ValueError('V3 bootstrap source patch schema drift')
-        old, new = patch['before'].encode('utf-8'), patch['after'].encode('utf-8')
-        if not old or expected.count(old) != 1:
-            raise ValueError('V3 bootstrap source patch seam drift')
-        expected = expected.replace(old, new)
-    if identity(expected) != row['after'] or _bootstrap_blob('sitecustomize.py') != expected:
-        raise ValueError('V3 bootstrap source exceeds its exact admitted recipe')
+    _prior, _v2, v3, _v4, v5 = pass_a._ci_assertion_v3_chain_details()
+    path = 'sitecustomize.py'
+    v3_row = v3.get('source_forward', {}).get(path)
+    v5_row = v5.get('source_forward', {}).get(path)
+    if (type(v3_row) is not dict or type(v5_row) is not dict
+            or set(v3_row) != {'fixture', 'before', 'after', 'patches'}
+            or set(v5_row) != {'fixture', 'before', 'after', 'patches'}
+            or v3_row['after'] != v5_row['before']):
+        raise ValueError('V3-to-V5 bootstrap source-forward edge is missing or discontinuous')
+    _v3_before, v3_after = pass_a._apply_exact_source_forward_row(
+        path, v3_row, pass_a.read_blob, label='retention V3 bootstrap')
+    v5_before, expected = pass_a._apply_exact_source_forward_row(
+        path, v5_row, pass_a.read_blob, label='retention V5 bootstrap')
+    if (v3_after != v5_before or identity(expected) != v5_row['after']
+            or _bootstrap_blob(path) != expected):
+        raise ValueError('V5 bootstrap source exceeds its exact V3-linked recipe')
     return expected
 
 
@@ -480,7 +506,7 @@ def authenticate_bootstrap_sources():
             raise ValueError("bootstrap predecessor auditor seam drift")
         expected_auditor = expected_auditor.replace(old.encode(), new.encode())
     from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
-    _prior, v2, successor = pass_a._ci_assertion_v3_chain()
+    _prior, v2, successor, _v4, v5 = pass_a._ci_assertion_v3_chain_details()
     from scripts import audit_tests_shard_balance_successor as shards
     shards._authenticate_v3()
     current_auditor = _bootstrap_blob(BOOTSTRAP_AUDITOR)
@@ -504,16 +530,23 @@ def authenticate_bootstrap_sources():
     v3_row = successor['source_forward'].get(BOOTSTRAP_AUDITOR)
     v3_before, v3_after = pass_a._apply_exact_source_forward_row(
         BOOTSTRAP_AUDITOR, v3_row, pass_a.read_blob, label='Pass-A V3')
+    v5_row = v5['source_forward'].get(BOOTSTRAP_AUDITOR)
+    v5_before, v5_after = pass_a._apply_exact_source_forward_row(
+        BOOTSTRAP_AUDITOR, v5_row, pass_a.read_blob, label='Pass-A V5')
     if (activation_after != root_before
             or root_after != v2_before
             or v2_after != v3_before
-            or current_auditor != v3_after
-            or identity(current_auditor) != v3_row['after']):
-        raise ValueError("bootstrap A2 source-forward edges do not compose activation -> V2 -> V3")
+            or v3_after != v5_before
+            or current_auditor != v5_after
+            or identity(current_auditor) != v5_row['after']):
+        raise ValueError("bootstrap A2 source-forward edges do not compose activation -> V2 -> V3 -> V5")
     if _bootstrap_blob("sitecustomize.py") != expected_current_bootstrap_source():
         raise ValueError("bootstrap successor root exceeds exact V3 added-pin recipe")
     current_after = dict(BOOTSTRAP_AFTER)
     for path, row in successor['source_forward'].items():
+        if 'after' in row:
+            current_after[path] = row['after']
+    for path, row in v5['source_forward'].items():
         if 'after' in row:
             current_after[path] = row['after']
     for path, expected in current_after.items():
@@ -545,8 +578,14 @@ def authenticate_bootstrap_successor(startup_text, current_identity):
                          and target.id == "ROOT_TEST_SOURCE_PINS" for target in node.targets))
     if pins != original_pins:
         raise ValueError("bootstrap successor changed original pins")
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    _prior, _v2, _v3, _v4, v5 = pass_a._ci_assertion_v3_chain_details()
+    auditor_row = v5.get('source_forward', {}).get(BOOTSTRAP_AUDITOR)
+    if type(auditor_row) is not dict or type(auditor_row.get('after')) is not dict:
+        raise ValueError("bootstrap V5 A2 source identity is missing")
     for path, expected in pins.items():
-        permitted = BOOTSTRAP_AFTER[BOOTSTRAP_AUDITOR]["source_sha256"] if path == BOOTSTRAP_AUDITOR else expected
+        permitted = (auditor_row['after']['source_sha256']
+                     if path == BOOTSTRAP_AUDITOR else expected)
         if current_identity(path)["lf_source_sha256"] != permitted:
             raise ValueError("bootstrap successor patchable guard identity drift: " + path)
     return True
