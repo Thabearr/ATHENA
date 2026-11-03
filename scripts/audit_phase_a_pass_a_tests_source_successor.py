@@ -2256,7 +2256,7 @@ CI_ASSERTION_V2_PREDECESSOR_INVENTORY = {
     'rewritten': False,
 }
 CI_ASSERTION_V3_RECEIPT = 'tests/fixtures/architecture/ci_assertion_source_successor_v3/receipt.json'
-CI_ASSERTION_V3_SHA256 = '570227ca4dd41d0f26647a8be2e273809c4782c1c9b3a4c76811e50ad4cf03fd'
+CI_ASSERTION_V3_SHA256 = 'a36133a02143ca1ca3f5f7cb06ee25c41a51bf473f96b2bffc7acf497c1d9334'
 CI_ASSERTION_V3_SOURCE = __name__.replace('.', '/') + '.py'
 CI_ASSERTION_V3_FIXTURES = 'tests/fixtures/architecture/ci_assertion_source_successor_v3/'
 CI_ASSERTION_V3_PREDECESSOR_RECEIPT = {

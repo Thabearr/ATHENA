@@ -123,8 +123,10 @@ def authenticate():
         raise ValueError("retention B4 consumer source-forward drift")
     if current_b4_identity != B4_FORWARD_AFTER:
         from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
-        _prior, _v2, successor = pass_a._ci_assertion_v3_chain()
-        row = successor["source_forward"].get(B4_FORWARD_SOURCE)
+        # The B4 auditor's edge is in V2. The V3 chain authenticates that
+        # receipt through its pinned predecessor reader.
+        _prior, v2, _v3 = pass_a._ci_assertion_v3_chain()
+        row = v2["source_forward"].get(B4_FORWARD_SOURCE)
         if (row is None or row.get("before") != B4_FORWARD_AFTER
                 or row.get("after") != current_b4_identity):
             raise ValueError("retention B4 consumer authenticated successor drift")
