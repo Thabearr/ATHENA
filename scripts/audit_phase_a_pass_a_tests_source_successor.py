@@ -1348,7 +1348,15 @@ def _git_mode_regression_receipt(*, _reader=None):
     for path, row in value['source_forward'].items():
         before = reader(row['fixture'])
         try:
-            current = _root_performance_current_predecessor(path, _reader=reader)
+            if path in CI_ASSERTION_V3_PATHS and path not in ROOT_PERFORMANCE_PATHS:
+                # V3-only rows must reach the Git-mode receipt at its own phase.
+                incoming = reader if type(reader) is _CIAssertionV3ProjectedReader else None
+                live = incoming.source_reader if incoming is not None else reader
+                projected, current = _ci_assertion_v3_projected_read(path, live(path), live)
+                if incoming is not None and incoming.fixtures != projected.fixtures:
+                    raise ValueError('Git-mode regression V3 projected reader drift: ' + path)
+            else:
+                current = _root_performance_current_predecessor(path, _reader=reader)
         except ValueError as exc:
             raise ValueError('Git-mode regression source identity drift: ' + path) from exc
         if (safe.identity(before) != row['before'] or safe.identity(current) != row['after']
@@ -2248,7 +2256,7 @@ CI_ASSERTION_V2_PREDECESSOR_INVENTORY = {
     'rewritten': False,
 }
 CI_ASSERTION_V3_RECEIPT = 'tests/fixtures/architecture/ci_assertion_source_successor_v3/receipt.json'
-CI_ASSERTION_V3_SHA256 = 'faa0bf6c5825bd2f21715cc7e467c75cc420f691ca01eb477bc9c49b963be9b9'
+CI_ASSERTION_V3_SHA256 = '570227ca4dd41d0f26647a8be2e273809c4782c1c9b3a4c76811e50ad4cf03fd'
 CI_ASSERTION_V3_SOURCE = __name__.replace('.', '/') + '.py'
 CI_ASSERTION_V3_FIXTURES = 'tests/fixtures/architecture/ci_assertion_source_successor_v3/'
 CI_ASSERTION_V3_PREDECESSOR_RECEIPT = {
