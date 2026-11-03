@@ -506,7 +506,7 @@ def authenticate_bootstrap_sources():
             raise ValueError("bootstrap predecessor auditor seam drift")
         expected_auditor = expected_auditor.replace(old.encode(), new.encode())
     from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
-    _prior, v2, successor, _v4, v5 = pass_a._ci_assertion_v3_chain_details()
+    _prior, v2, successor, v4, v5 = pass_a._ci_assertion_v3_chain_details()
     from scripts import audit_tests_shard_balance_successor as shards
     shards._authenticate_v3()
     current_auditor = _bootstrap_blob(BOOTSTRAP_AUDITOR)
@@ -544,12 +544,12 @@ def authenticate_bootstrap_sources():
     if _bootstrap_blob("sitecustomize.py") != expected_current_bootstrap_source():
         raise ValueError("bootstrap successor root exceeds exact V3 added-pin recipe")
     current_after = dict(BOOTSTRAP_AFTER)
-    for path, row in successor['source_forward'].items():
-        if 'after' in row:
-            current_after[path] = row['after']
-    for path, row in v5['source_forward'].items():
-        if 'after' in row:
-            current_after[path] = row['after']
+    # Later authenticated receipts supersede earlier identities path by path.
+    # Pass-A self-recipes are checked by the chain validator.
+    for receipt in (successor, v4, v5):
+        for path, row in receipt['source_forward'].items():
+            if 'after' in row:
+                current_after[path] = row['after']
     for path, expected in current_after.items():
         if identity(_bootstrap_blob(path)) != expected:
             raise ValueError("bootstrap successor current source identity drift: " + path)
