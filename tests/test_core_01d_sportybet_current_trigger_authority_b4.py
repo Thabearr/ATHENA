@@ -871,7 +871,7 @@ def test_later_inventory_rejects_extra_checkpoint_edge_in_intermediate_generatio
 
 @pytest.mark.parametrize("mutation", [
     "missing_latest_row", "stale_latest_generation", "broken_predecessor_sha",
-    "broken_authorization_sha",
+    "broken_authorization_sha", "stale_latest_corpus",
 ])
 def test_e3_three_source_forward_rejects_forged_a2_authorization_chain(monkeypatch, mutation):
     a2 = b4.boundary
@@ -881,7 +881,12 @@ def test_e3_three_source_forward_rejects_forged_a2_authorization_chain(monkeypat
     def altered_chain():
         chain = original_chain()
         if mutation == "stale_latest_generation":
-            return chain[:-1]
+            # V379 predates the V5 A2 transition. Dropping only the latest
+            # generation can leave the current auditor bound on later heads.
+            stale_generation = 379
+            assert len(chain) > stale_generation
+            assert chain[stale_generation - 1][0] == a2.inventory_generation_path(stale_generation)
+            return chain[:stale_generation]
         if mutation == "broken_predecessor_sha":
             index = a2.E3_B6_SOURCE_FORWARD_PREDECESSOR_GENERATION - 1
         elif mutation == "broken_authorization_sha":
@@ -894,6 +899,15 @@ def test_e3_three_source_forward_rejects_forged_a2_authorization_chain(monkeypat
             value["source_identities"] = [
                 row for row in value["source_identities"] if row["path"] != path
             ]
+        elif mutation == "stale_latest_corpus":
+            # Leave the current A2 row and generation chain intact so the
+            # production verifier reaches the full corpus comparison.
+            bootstrap_row, = [
+                row for row in value["source_identities"] if row["path"] == "sitecustomize.py"
+            ]
+            assert bootstrap_row["lf_source_sha256"] != "0" * 64
+            bootstrap_row["lf_source_sha256"] = "0" * 64
+            value = a2.seal(value)
         else:
             value["canonical_sha256"] = "0" * 64
         chain[index] = (row_path, value)
@@ -903,7 +917,13 @@ def test_e3_three_source_forward_rejects_forged_a2_authorization_chain(monkeypat
     if mutation == "stale_latest_generation":
         with pytest.raises(
             AssertionError,
-            match="E3 Pass-A latest inventory is stale against the current source corpus",
+            match=r"^E3 Pass-A current A2 source differs from authenticated latest A2$",
+        ):
+            a2.read_authenticated_cross_contract_predecessor(path)
+    elif mutation == "stale_latest_corpus":
+        with pytest.raises(
+            AssertionError,
+            match=r"^E3 Pass-A latest inventory is stale against the current source corpus$",
         ):
             a2.read_authenticated_cross_contract_predecessor(path)
     else:
