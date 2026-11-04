@@ -135,7 +135,7 @@ def authenticate():
     # the older auditor-row check above remains an independent V2 obligation.
     from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
     b4_test_path = "tests/test_core_01d_sportybet_current_trigger_authority_b4.py"
-    pass_a_details = pass_a._ci_assertion_v6_chain_details()
+    pass_a_details = pass_a._ci_assertion_v7_chain_details()
     v3, v5, v6 = pass_a_details[2], pass_a_details[4], pass_a_details[5]
     v3_row = v3.get("source_forward", {}).get(b4_test_path)
     v5_row = v5.get("source_forward", {}).get(b4_test_path)
@@ -511,8 +511,8 @@ def authenticate_bootstrap_sources():
             raise ValueError("bootstrap predecessor auditor seam drift")
         expected_auditor = expected_auditor.replace(old.encode(), new.encode())
     from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
-    pass_a_details = pass_a._ci_assertion_v6_chain_details()
-    _prior, v2, successor, v4, v5, v6 = pass_a_details
+    pass_a_details = pass_a._ci_assertion_v7_chain_details()
+    _prior, v2, successor, v4, v5, v6, v7, v7_phase_reader = pass_a_details
     from scripts import audit_tests_shard_balance_successor as shards
     shards._authenticate_v3()
     current_auditor = _bootstrap_blob(BOOTSTRAP_AUDITOR)
@@ -520,8 +520,9 @@ def authenticate_bootstrap_sources():
     # then compose every later authenticated edge in order. The A2 historical
     # text projection is 61056... -> b5a55...; root performance continues to
     # e35a...; Pass-A V2 continues to the published V377 image; V3 and V5 bind
-    # their exact current phases. V6 advances only Pass-A, retention and B4
-    # test sources. No later receipt replaces an earlier proof.
+    # their exact current phases. V6 advances Pass-A, retention and B4 test
+    # sources; V7 advances the scoped Pass-A test plus its exact verifiers.
+    # No later receipt replaces an earlier proof.
     activation = pass_a._a2_text_receipt()['source_forward'][BOOTSTRAP_AUDITOR]
     _activation_before, activation_after = pass_a._apply_exact_source_forward_row(
         BOOTSTRAP_AUDITOR, activation, pass_a.read_blob, label='A2 historical text')
@@ -553,12 +554,14 @@ def authenticate_bootstrap_sources():
     current_after = dict(BOOTSTRAP_AFTER)
     # Later authenticated receipts supersede earlier identities path by path.
     # Pass-A self-recipes are checked by the chain validator.
-    for receipt in (successor, v4, v5, v6):
+    for receipt in (successor, v4, v5, v6, v7):
         for path, row in receipt['source_forward'].items():
             if 'after' in row:
                 current_after[path] = row['after']
     current_after[pass_a.CI_ASSERTION_V6_SOURCE] = identity(
-        pass_a._ci_assertion_v6_current_source_bytes(v6, pass_a.read_blob))
+        pass_a._ci_assertion_v6_current_source_bytes(v6, v7_phase_reader))
+    current_after[pass_a.CI_ASSERTION_V7_SOURCE] = identity(
+        pass_a._ci_assertion_v7_current_source_bytes(v7, pass_a.read_blob))
     for path, expected in current_after.items():
         if identity(_bootstrap_blob(path)) != expected:
             raise ValueError("bootstrap successor current source identity drift: " + path)

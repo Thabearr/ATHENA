@@ -99,12 +99,15 @@ def test_pass_a_v3_return_shape_is_stable_for_unscoped_cold_and_scope_hit():
     assert type(unscoped[0]) is dict and type(unscoped[1]) is dict and type(unscoped[2]) is dict
 
     with forward.source_derivation_scope() as owner:
+        derivations_before = set(owner.derivation_bytes)
         cold = forward._ci_assertion_v3_chain()
         assert type(cold) is tuple and len(cold) == 3
-        assert 'pass-a.ci-assertion-v3-chain' in owner.derivation_bytes
+        cold_derivations = set(owner.derivation_bytes)
+        assert cold_derivations > derivations_before
         hits_before = owner.metrics.get('derivation_hits', 0)
         hit = forward._ci_assertion_v3_chain()
         assert owner.metrics.get('derivation_hits', 0) > hits_before
+        assert set(owner.derivation_bytes) == cold_derivations
         assert owner.metrics.get('pass_a_ci_assertion_v3_uncached') == 1
         assert owner.metrics.get('pass_a_ci_assertion_v3_hits') == 1
 
@@ -129,12 +132,15 @@ def test_pass_a_v3_scope_metrics_route_through_checkpoint_owner(monkeypatch):
         with checkpoint._checkpoint_master_scope() as owner:
             assert owner.enabled is True
             assert forward._ci_assertion_v2_scope_owner(forward.read_blob) is owner
+            derivations_before = set(owner.derivation_bytes)
             cold = forward._ci_assertion_v3_chain()
+            cold_derivations = set(owner.derivation_bytes)
+            assert cold_derivations > derivations_before
             hit = forward._ci_assertion_v3_chain()
             assert cold == hit
+            assert set(owner.derivation_bytes) == cold_derivations
             assert metrics.get('pass_a_ci_assertion_v3_uncached') == 1
             assert metrics.get('pass_a_ci_assertion_v3_hits') == 1
-            assert 'pass-a.ci-assertion-v3-chain' in owner.derivation_bytes
     finally:
         receipt_scope._SCOPE_METRICS.reset(metrics_token)
 
@@ -146,22 +152,23 @@ def test_pass_a_v3_without_owner_uses_uncached_path_without_scope_metrics(monkey
     source_token = forward._ACTIVE_SOURCE_DERIVATION_SCOPE.set(None)
     metrics = {}
     metrics_token = receipt_scope._SCOPE_METRICS.set(metrics)
-    calls = []
-    expected = ({'prior': 1}, {'v2': 2}, {'v3': 3})
-    original = forward._ci_assertion_v3_chain_uncached
+    reads = []
+    original = forward.read_blob
 
-    def uncached(reader):
-        calls.append(reader)
-        return expected
+    def observed_read(path):
+        reads.append(path)
+        return original(path)
 
     try:
-        monkeypatch.setattr(forward, '_ci_assertion_v3_chain_uncached', uncached)
+        monkeypatch.setattr(forward, 'read_blob', observed_read)
         assert forward._ci_assertion_v2_scope_owner(forward.read_blob) is None
-        assert forward._ci_assertion_v3_chain() == expected
-        assert calls == [forward.read_blob]
+        chain = forward._ci_assertion_v3_chain()
+        assert type(chain) is tuple and len(chain) == 3
+        assert chain[2]['canonical_sha256'] == forward.CI_ASSERTION_V3_SHA256
+        assert forward.CI_ASSERTION_V3_RECEIPT in reads
         assert metrics == {}
     finally:
-        monkeypatch.setattr(forward, '_ci_assertion_v3_chain_uncached', original)
+        monkeypatch.setattr(forward, 'read_blob', original)
         receipt_scope._SCOPE_METRICS.reset(metrics_token)
         forward._ACTIVE_SOURCE_DERIVATION_SCOPE.reset(source_token)
         receipt_scope._ACTIVE_RECEIPT_SCOPES.reset(receipt_token)
