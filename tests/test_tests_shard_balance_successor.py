@@ -618,6 +618,27 @@ def test_parent_progress_redacts_quoted_credentials_in_serialized_outputs():
     reporter._emit('call', case_b)
     reporter._emit('call', long_a)
     reporter._emit('call', long_b)
+    header_cases = (
+        ('Authorization: Basic YXRoZW5hOmNhbmFyeS1zZWNyZXQ=',
+         ('YXRoZW5hOmNhbmFyeS1zZWNyZXQ=',)),
+        ('Proxy-Authorization: Digest username="proxy-user-canary",\n'
+         '  response="proxy-response-canary"',
+         ('proxy-user-canary', 'proxy-response-canary')),
+        ('Cookie: first=first-cookie-canary; session=second-cookie-canary',
+         ('first-cookie-canary', 'second-cookie-canary')),
+        ('Set-Cookie: session=set-cookie-canary; Path=/',
+         ('set-cookie-canary',)),
+    )
+    for header, _canaries in header_cases:
+        header_crash = SimpleNamespace(
+            message='ValueError: request rejected; ' + header,
+            path='tests/test_sample.py', lineno=27,
+        )
+        reporter.pytest_runtest_logreport(SimpleNamespace(
+            when='call', outcome='failed', duration=0.1, failed=True,
+            nodeid='tests/test_sample.py::test_header',
+            longrepr=SimpleNamespace(reprcrash=header_crash),
+        ))
     field_canaries = progress._ParentNodeProgress._redact_text(
         'token: "canary-token-plain" password = \'canary-password-plain\' '
         'api_key: \\"canary-api-plain\\"',
@@ -637,6 +658,16 @@ def test_parent_progress_redacts_quoted_credentials_in_serialized_outputs():
     jsonl_events = [json.loads(line) for line in reporter.jsonl.records]
     assert len(reporter.jsonl.records) == len(stdout_events)
     assert jsonl_events == stdout_events
+    header_events = [event for event in stdout_events
+                     if event['nodeid_display'] == 'tests/test_sample.py::test_header']
+    assert len(header_events) == len(header_cases)
+    for event, (_header, canaries) in zip(header_events, header_cases):
+        assert event['failure_category'] == 'ValueError'
+        assert event['failure_explanation'].startswith('ValueError: request rejected; ')
+        assert event['failure_explanation'].endswith('<redacted>')
+        for canary in canaries:
+            assert canary not in stdout_text
+            assert canary not in jsonl_text
     assert 'remain offline' in fields['failure_explanation']
     collection = [event for event in stdout_events if event['event'] == 'collection_inventory']
     assert len(collection) == 1

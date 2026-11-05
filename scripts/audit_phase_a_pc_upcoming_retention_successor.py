@@ -511,9 +511,9 @@ def authenticate_bootstrap_sources():
             raise ValueError("bootstrap predecessor auditor seam drift")
         expected_auditor = expected_auditor.replace(old.encode(), new.encode())
     from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
-    pass_a_details = pass_a._ci_assertion_v8_chain_details()
+    pass_a_details = pass_a._ci_assertion_v9_chain_details()
     (_prior, v2, successor, v4, v5, v6, v7, v7_phase_reader,
-     v8, v382_phase_reader) = pass_a_details
+     v8, v382_phase_reader, v9, v383_phase_reader) = pass_a_details
     from scripts import audit_tests_shard_balance_successor as shards
     shards._authenticate_v3()
     current_auditor = _bootstrap_blob(BOOTSTRAP_AUDITOR)
@@ -522,8 +522,8 @@ def authenticate_bootstrap_sources():
     # text projection is 61056... -> b5a55...; root performance continues to
     # e35a...; Pass-A V2 continues to the published V377 image; V3 and V5 bind
     # their exact current phases. V6 advances Pass-A, retention and B4 test
-    # sources; V7 terminates at V382; V8 overlays its exact current source
-    # identities only after the complete V382 phase has authenticated V7.
+    # sources; V7 terminates at V382; V8 terminates at V383; V9 overlays its
+    # exact current source identities only after authenticating that V383 phase.
     # No later receipt replaces an earlier proof.
     activation = pass_a._a2_text_receipt()['source_forward'][BOOTSTRAP_AUDITOR]
     _activation_before, activation_after = pass_a._apply_exact_source_forward_row(
@@ -556,7 +556,7 @@ def authenticate_bootstrap_sources():
     current_after = dict(BOOTSTRAP_AFTER)
     # Later authenticated receipts supersede earlier identities path by path.
     # Pass-A self-recipes are checked by the chain validator.
-    for receipt in (successor, v4, v5, v6, v7, v8):
+    for receipt in (successor, v4, v5, v6, v7, v8, v9):
         for path, row in receipt['source_forward'].items():
             if 'after' in row:
                 current_after[path] = row['after']
@@ -565,7 +565,9 @@ def authenticate_bootstrap_sources():
     current_after[pass_a.CI_ASSERTION_V7_SOURCE] = identity(
         pass_a._ci_assertion_v7_current_source_bytes(v7, v382_phase_reader))
     current_after[pass_a.CI_ASSERTION_V8_SOURCE] = identity(
-        pass_a._ci_assertion_v8_current_source_bytes(v8, pass_a.read_blob))
+        pass_a._ci_assertion_v8_current_source_bytes(v8, v383_phase_reader))
+    current_after[pass_a.CI_ASSERTION_V9_SOURCE] = identity(
+        pass_a._ci_assertion_v9_current_source_bytes(v9, pass_a.read_blob))
     for path, expected in current_after.items():
         if identity(_bootstrap_blob(path)) != expected:
             raise ValueError("bootstrap successor current source identity drift: " + path)
@@ -917,15 +919,15 @@ def _retention_scope_contract_components():
                          separators=(",", ":"), default=repr).encode("utf-8")
         components["constant:" + name] = hashlib.sha256(raw).hexdigest()
     # Retention scopes may reuse a prior authentication derivation. Bind the
-    # exact Pass-A V8 reader/validator contract that now supplies its latest
+    # exact Pass-A V9 reader/validator contract that now supplies its latest
     # source edges, so a helper replacement cannot hide behind a warm result.
     pass_a_contract = getattr(_pass_a_tests, "_ci_assertion_v2_contract_digest", None)
     pass_a_code = getattr(pass_a_contract, "__code__", None)
     if pass_a_code is None:
         return None
-    components["pass-a-v8-contract-function"] = (
+    components["pass-a-v9-contract-function"] = (
         str(id(pass_a_contract)) + ":" + str(id(pass_a_code)))
-    components["pass-a-v8-contract"] = pass_a_contract()
+    components["pass-a-v9-contract"] = pass_a_contract()
     return components
 
 
