@@ -463,6 +463,16 @@ def _scoped_source_read_contract():
         ('pass_a._ci_assertion_predecessor_source_with_reader',
          _ci_assertion_predecessor_source_with_reader),
         ('pass_a._ci_assertion_v3_projected_read', _ci_assertion_v3_projected_read),
+        ('pass_a._ci_assertion_v8_chain_details', _ci_assertion_v8_chain_details),
+        ('pass_a._ci_assertion_v8_chain_uncached', _ci_assertion_v8_chain_uncached),
+        ('pass_a._ci_assertion_v8_reconstitute_cached', _ci_assertion_v8_reconstitute_cached),
+        ('pass_a._ci_assertion_v8_current_source_bytes', _ci_assertion_v8_current_source_bytes),
+        ('pass_a._ci_assertion_v8_inventory_sources', _ci_assertion_v8_inventory_sources),
+        ('pass_a._ci_assertion_v8_projected_reader', _ci_assertion_v8_projected_reader),
+        ('pass_a._CIAssertionV8ProjectedReader.__init__',
+         _CIAssertionV8ProjectedReader.__init__),
+        ('pass_a._CIAssertionV8ProjectedReader.__call__',
+         _CIAssertionV8ProjectedReader.__call__),
         ('pass_a._predecessor_source_for_reader', _predecessor_source_for_reader),
         ('pass_a._tests_shard_v2_predecessor_source', _tests_shard_v2_predecessor_source),
         ('pass_a._integrated_lineage_predecessor', _integrated_lineage_predecessor),
@@ -2428,6 +2438,34 @@ CI_ASSERTION_V7_PATHS = frozenset({
     CI_ASSERTION_V7_TEST_SOURCE,
 })
 
+# V8 closes the exact V382-to-current source edge for the Pass-A verifier,
+# retention consumer, and its focused scope regression.  V383 is deliberately
+# outside this receipt and remains a later inventory successor.
+CI_ASSERTION_V8_RECEIPT = 'tests/fixtures/architecture/ci_assertion_source_successor_v8/receipt.json'
+CI_ASSERTION_V8_SHA256 = 'd268b5e83e4bcfeec7bf5ea1d587102aed9e68a46a2d1f35836591289d625c35'
+CI_ASSERTION_V8_SOURCE = CI_ASSERTION_V7_SOURCE
+CI_ASSERTION_V8_RETENTION_SOURCE = CI_ASSERTION_V7_RETENTION_SOURCE
+CI_ASSERTION_V8_TEST_SOURCE = CI_ASSERTION_V7_TEST_SOURCE
+CI_ASSERTION_V8_FIXTURES = 'tests/fixtures/architecture/ci_assertion_source_successor_v8/'
+CI_ASSERTION_V8_PREDECESSOR_RECEIPT = {
+    'path': CI_ASSERTION_V7_RECEIPT,
+    'canonical_sha256': CI_ASSERTION_V7_SHA256,
+    'rewritten': False,
+}
+CI_ASSERTION_V8_PREDECESSOR_INVENTORY = {
+    'path': 'tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v382.json',
+    'generation': 382,
+    'canonical_sha256': '1a53e7d9abcd819cffe91c4d82fd4f85582f47cb7928b1b5103baf6315ffeabf',
+    'rewritten': False,
+}
+CI_ASSERTION_V8_PREDECESSOR_RAW_SHA256 = 'd2c24e6394f9f44d2cd673a57e24a58054e80812fd3ad24018b6c1deacc90013'
+CI_ASSERTION_V8_PATHS = frozenset({
+    CI_ASSERTION_V8_SOURCE,
+    CI_ASSERTION_V8_RETENTION_SOURCE,
+    CI_ASSERTION_V8_TEST_SOURCE,
+})
+CI_ASSERTION_V8_DERIVATION_KEY = 'pass-a.ci-assertion-v8-chain-details-v1'
+
 
 def _ci_assertion_v1_successor_receipt(*, _reader=None):
     """Authenticate the frozen V375 anchor and fixed, authority-neutral scope."""
@@ -2496,6 +2534,11 @@ def _ci_assertion_v2_contract_digest():
         '_ci_assertion_v7_chain_uncached', '_ci_assertion_v7_chain_details',
         '_ci_assertion_v7_projected_reader', '_ci_assertion_v7_projected_read',
         '_ci_assertion_v7_current_source_bytes',
+        '_ci_assertion_v8_chain_uncached', '_ci_assertion_v8_chain_details',
+        '_ci_assertion_v8_reconstitute_cached', '_ci_assertion_v8_current_source_bytes',
+        '_ci_assertion_v8_inventory_sources', '_ci_assertion_v8_projected_reader',
+        '_CIAssertionV8ProjectedReader.__init__',
+        '_CIAssertionV8ProjectedReader.__call__',
         '_ci_assertion_v4_projected_reader',
         '_ci_assertion_v5_projected_read', '_ci_assertion_v5_projected_reader',
         '_record_ci_assertion_v3_scope_metric',
@@ -2569,6 +2612,13 @@ def _ci_assertion_v2_contract_digest():
         'CI_ASSERTION_V7_PREDECESSOR_RECEIPT',
         'CI_ASSERTION_V7_PREDECESSOR_RAW_SHA256',
         'CI_ASSERTION_V7_TEST_SOURCE', 'CI_ASSERTION_V7_RETENTION_SOURCE',
+        'CI_ASSERTION_V8_RECEIPT', 'CI_ASSERTION_V8_SHA256',
+        'CI_ASSERTION_V8_SOURCE', 'CI_ASSERTION_V8_RETENTION_SOURCE',
+        'CI_ASSERTION_V8_TEST_SOURCE', 'CI_ASSERTION_V8_FIXTURES',
+        'CI_ASSERTION_V8_PREDECESSOR_RECEIPT',
+        'CI_ASSERTION_V8_PREDECESSOR_INVENTORY',
+        'CI_ASSERTION_V8_PREDECESSOR_RAW_SHA256', 'CI_ASSERTION_V8_PATHS',
+        'CI_ASSERTION_V8_DERIVATION_KEY',
         'PYTEST_RESTORATION_RECEIPT', 'PYTEST_RESTORATION_SHA',
         'PYTEST_RESTORATION_PATHS', 'PYTEST_RESTORATION_V2_RECEIPT',
         'PYTEST_RESTORATION_V2_SHA', 'PYTEST_RESTORATION_V2_PATHS',
@@ -2602,6 +2652,8 @@ def _ci_assertion_v2_contract_digest():
         ('_CIAssertionV6ProjectedReader.__call__', _CIAssertionV6ProjectedReader.__call__),
         ('_CIAssertionV7ProjectedReader.__init__', _CIAssertionV7ProjectedReader.__init__),
         ('_CIAssertionV7ProjectedReader.__call__', _CIAssertionV7ProjectedReader.__call__),
+        ('_CIAssertionV8ProjectedReader.__init__', _CIAssertionV8ProjectedReader.__init__),
+        ('_CIAssertionV8ProjectedReader.__call__', _CIAssertionV8ProjectedReader.__call__),
     ):
         digest.update(name.encode('utf-8') + b'\0')
         digest.update(repr((id(function), id(function.__code__), function.__defaults__,
@@ -2777,55 +2829,18 @@ def _ci_assertion_v3_chain(*, _reader=None):
 
 
 def _ci_assertion_v3_chain_details(*, _reader=None):
-    """Preserve the five-value historical API after authenticating V7."""
+    """Preserve the five-value historical API after authenticating V8."""
     return _ci_assertion_v7_chain_details(_reader=_reader)[:5]
 
 
 def _ci_assertion_v6_chain_details(*, _reader=None):
-    """Preserve the six-value V6 API after authenticating its V7 successor."""
+    """Preserve the six-value V6 API after authenticating its V7/V8 successors."""
     return _ci_assertion_v7_chain_details(_reader=_reader)[:6]
 
 
 def _ci_assertion_v7_chain_details(*, _reader=None):
-    """Return the authenticated V1..V7 chain and V381 phase reader.
-
-    Scoped reuse stores only canonical receipt inputs. Each call reconstructs
-    the request-local V381 reader from freshly fenced fixture bytes, while the
-    existing source scope continues to enforce reader, execution-unit, and
-    live-input contracts.
-    """
-    reader = read_blob if _reader is None else _reader
-    owner = _ci_assertion_v2_scope_owner(reader)
-    if owner is None:
-        return _ci_assertion_v7_chain_uncached(reader)
-    active_source_scope = _active_source_derivation_scope()
-    if owner is active_source_scope:
-        reader = owner.read
-    contract = _ci_assertion_v2_contract_digest()
-    key = 'pass-a.ci-assertion-v7-chain-details'
-    cached = owner.load_derivation(key, contract)
-    if cached is not None:
-        if contract != _ci_assertion_v2_contract_digest():
-            raise ValueError('CI assertion V7 verifier changed during scoped reuse')
-        payload = json.loads(cached)
-        if (type(payload) is not dict or set(payload) != {'chain', 'v4', 'v5', 'v6', 'v7'}
-                or type(payload['chain']) is not list or len(payload['chain']) != 3
-                or any(type(payload[name]) is not dict for name in ('v4', 'v5', 'v6', 'v7'))):
-            raise ValueError('CI assertion V7 scoped derivation payload is malformed')
-        prior, v2, v3 = payload['chain']
-        _record_ci_assertion_v3_scope_metric(owner, 'pass_a_ci_assertion_v3_hits')
-        projected = _ci_assertion_v7_projected_reader(reader, payload['v7'])
-        return (prior, v2, v3, payload['v4'], payload['v5'], payload['v6'],
-                payload['v7'], projected)
-    _record_ci_assertion_v3_scope_metric(owner, 'pass_a_ci_assertion_v3_uncached')
-    details = _ci_assertion_v7_chain_uncached(reader)
-    if contract != _ci_assertion_v2_contract_digest():
-        raise ValueError('CI assertion V7 verifier changed during scoped authentication')
-    owner.store_derivation(
-        key, contract,
-        safe.canonical({'chain': list(details[:3]), 'v4': details[3],
-                        'v5': details[4], 'v6': details[5], 'v7': details[6]}))
-    return details
+    """Preserve the historical eight-value API after V8 authenticates live sources."""
+    return _ci_assertion_v8_chain_details(_reader=_reader)[:8]
 
 
 def _ci_assertion_v4_chain_uncached(reader):
@@ -3464,13 +3479,27 @@ def _ci_assertion_v7_projected_reader(reader, value):
 
 
 def _ci_assertion_v7_projected_read(path, raw, reader, *, _value=None):
-    """Project current bytes to V381 only after authenticating the V7 edge."""
-    if path not in CI_ASSERTION_V7_PATHS:
+    """Project current or V382 bytes to V381 after authenticating the live chain."""
+    if path not in CI_ASSERTION_V7_PATHS and (
+            type(reader) is not _CIAssertionV8ProjectedReader
+            or path not in CI_ASSERTION_V3_PATHS):
         return reader, raw
     # Older phase readers are validated by their own phase-specific branch in
     # _ci_assertion_v3_projected_read; they are never promoted to current input.
     if type(reader) in (_CIAssertionV3ProjectedReader, _CIAssertionV6ProjectedReader):
         return reader, raw
+    if type(reader) is _CIAssertionV8ProjectedReader:
+        current_reader = reader.source_reader
+        details = _ci_assertion_v8_chain_details(_reader=current_reader)
+        authenticated_v7, expected_v382 = details[6], details[9]
+        if _value is not None and _value != authenticated_v7:
+            raise ValueError('CI assertion V7 supplied projection is not current-authenticated')
+        if (type(reader.fixtures) is not dict or reader.fixtures != expected_v382.fixtures
+                or type(raw) is not bytes or raw != reader(path)
+                or reader(path) != expected_v382(path)):
+            raise ValueError('CI assertion V8 projected reader differs from authenticated fixtures: ' + path)
+        projected_v7 = details[7]
+        return projected_v7, projected_v7(path)
     if type(reader) is _CIAssertionV7ProjectedReader:
         current_reader = reader.source_reader
         details = _ci_assertion_v7_chain_details(_reader=current_reader)
@@ -3490,6 +3519,323 @@ def _ci_assertion_v7_projected_read(path, raw, reader, *, _value=None):
         raise ValueError('CI assertion V7 current source read changed: ' + path)
     projected = _ci_assertion_v7_projected_reader(reader, authenticated)
     return projected, projected(path)
+
+
+class _CIAssertionV8ProjectedReader:
+    """Request-local reader for the complete authenticated V382 source phase."""
+
+    __slots__ = ('source_reader', 'fixtures')
+
+    def __init__(self, source_reader, fixtures):
+        self.source_reader = source_reader
+        self.fixtures = fixtures
+
+    def __call__(self, path):
+        if path in self.fixtures:
+            return self.fixtures[path]
+        return self.source_reader(path)
+
+
+def _ci_assertion_v8_projected_reader(reader, value):
+    """Rebuild the exact three-path V382 view from authenticated V8 fixtures."""
+    rows = value.get('source_forward')
+    if type(rows) is not dict or set(rows) != CI_ASSERTION_V8_PATHS:
+        raise ValueError('CI assertion V8 source path set drift')
+    fixtures = {}
+    for path in sorted(CI_ASSERTION_V8_PATHS):
+        row = rows[path]
+        fixture_path = CI_ASSERTION_V8_FIXTURES + path.replace('/', '--') + '.before.txt'
+        fixture = reader(fixture_path)
+        if (type(row) is not dict or row.get('fixture') != fixture_path
+                or type(row.get('before')) is not dict
+                or type(fixture) is not bytes or safe.identity(fixture) != row['before']):
+            raise ValueError('CI assertion V8 projected fixture identity drift: ' + path)
+        fixtures[path] = fixture
+    return _CIAssertionV8ProjectedReader(reader, fixtures)
+
+
+def _ci_assertion_v8_current_source_bytes(value, reader):
+    """Prove the current Pass-A bytes through the authenticated V8 self-recipe."""
+    contract = _ci_assertion_v2_contract_digest()
+    if (type(value) is not dict or value.get('canonical_sha256') != CI_ASSERTION_V8_SHA256
+            or safe.canonical_digest(value) != CI_ASSERTION_V8_SHA256):
+        raise ValueError('CI assertion V8 Pass-A source proof is stale')
+    row = value.get('source_forward', {}).get(CI_ASSERTION_V8_SOURCE)
+    if type(row) is not dict or set(row) != {'fixture', 'before', 'recipe'}:
+        raise ValueError('CI assertion V8 Pass-A source row is malformed')
+    fixture = reader(row['fixture'])
+    raw = reader(CI_ASSERTION_V8_SOURCE)
+    recipe = row.get('recipe')
+    token = '<CI_ASSERTION_' + 'V8_DIGEST>'
+    if (type(fixture) is not bytes or safe.identity(fixture) != row['before']
+            or type(raw) is not bytes or type(recipe) is not dict
+            or set(recipe) != {'before', 'after'}
+            or recipe.get('before') != fixture.decode('utf-8')
+            or type(recipe.get('after')) is not str
+            or recipe['after'].count(token) != 1
+            or recipe['after'].replace(token, CI_ASSERTION_V8_SHA256).encode('utf-8') != raw
+            or contract != _ci_assertion_v2_contract_digest()):
+        raise ValueError('CI assertion V8 Pass-A live source differs from its authenticated recipe')
+    return raw
+
+
+def _ci_assertion_v8_inventory_sources(inventory):
+    """Return the pinned V382 source map after exact row-shape validation."""
+    rows = inventory.get('source_identities') if type(inventory) is dict else None
+    if type(rows) is not list or len(rows) != 1254:
+        raise ValueError('V382 source identity inventory shape drift')
+    sources = {}
+    for row in rows:
+        if (type(row) is not dict or set(row) != {'path', 'lf_source_sha256'}
+                or type(row.get('path')) is not str
+                or type(row.get('lf_source_sha256')) is not str
+                or len(row['lf_source_sha256']) != 64
+                or row['path'] in sources):
+            raise ValueError('V382 source identity row schema or uniqueness drift')
+        sources[row['path']] = row['lf_source_sha256']
+    return sources
+
+
+def _ci_assertion_v8_chain_uncached(reader):
+    """Authenticate V8 from exact V382 bytes, then run V7 on that phase view."""
+    contract = _ci_assertion_v2_contract_digest()
+    try:
+        raw = reader(CI_ASSERTION_V8_RECEIPT)
+        value = json.loads(raw)
+        inventory_raw = reader(CI_ASSERTION_V8_PREDECESSOR_INVENTORY['path'])
+        inventory = json.loads(inventory_raw)
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ValueError('CI assertion V8 receipt or V382 predecessor cannot be read') from exc
+    expected_receipt_keys = {
+        'authority_granted', 'canonical_sha256', 'historical_bytes_changed',
+        'policy_id', 'predecessor_inventory', 'predecessor_receipt',
+        'provider_or_delivery_authority_changed', 'reason', 'schema_version',
+        'source_forward', 'test_assignments_changed', 'test_selection_changed',
+        'workflow_changed',
+    }
+    if (type(raw) is not bytes or type(value) is not dict or type(inventory) is not dict
+            or safe.canonical(value) != raw
+            or safe.canonical_digest(value) != CI_ASSERTION_V8_SHA256
+            or value.get('canonical_sha256') != CI_ASSERTION_V8_SHA256
+            or value.get('policy_id') != 'ATHENA_PHASE_A_CI_ASSERTION_SOURCE_SUCCESSOR_V8'
+            or type(value.get('schema_version')) is not int or value['schema_version'] != 8
+            or type(value.get('reason')) is not str or not value['reason']
+            or set(value) != expected_receipt_keys
+            or value.get('predecessor_receipt') != CI_ASSERTION_V8_PREDECESSOR_RECEIPT
+            or value.get('predecessor_inventory') != CI_ASSERTION_V8_PREDECESSOR_INVENTORY
+            or any(value.get(key) is not False for key in (
+                'authority_granted', 'historical_bytes_changed',
+                'provider_or_delivery_authority_changed', 'test_assignments_changed',
+                'test_selection_changed', 'workflow_changed'))
+            or type(inventory_raw) is not bytes
+            or hashlib.sha256(inventory_raw).hexdigest() != CI_ASSERTION_V8_PREDECESSOR_RAW_SHA256
+            or safe.canonical(inventory) != inventory_raw
+            or safe.canonical_digest(inventory)
+                != CI_ASSERTION_V8_PREDECESSOR_INVENTORY['canonical_sha256']
+            or inventory.get('canonical_sha256')
+                != CI_ASSERTION_V8_PREDECESSOR_INVENTORY['canonical_sha256']
+            or type(inventory.get('generation')) is not int or inventory['generation'] != 382
+            or type(inventory.get('schema_version')) is not int or inventory['schema_version'] != 382
+            or inventory.get('policy_id')
+                != 'ATHENA_CORE_01D_CI_OFFLINE_TRANSPORT_SOURCE_INVENTORY_V382'
+            or inventory.get('predecessor_inventory')
+                != CI_ASSERTION_V7_PREDECESSOR_INVENTORY):
+        raise ValueError('CI assertion V8 receipt scope or V382 predecessor drift')
+
+    rows = value.get('source_forward')
+    if type(rows) is not dict or set(rows) != CI_ASSERTION_V8_PATHS:
+        raise ValueError('CI assertion V8 source path set drift')
+    inventory_sources = _ci_assertion_v8_inventory_sources(inventory)
+
+    fixture_bytes, current_bytes = {}, {}
+    for path in sorted(CI_ASSERTION_V8_PATHS):
+        row = rows[path]
+        fixture_path = CI_ASSERTION_V8_FIXTURES + path.replace('/', '--') + '.before.txt'
+        if (type(row) is not dict or row.get('fixture') != fixture_path
+                or type(row.get('before')) is not dict):
+            raise ValueError('CI assertion V8 source recipe shape drift: ' + path)
+        fixture, current = reader(fixture_path), reader(path)
+        if (type(fixture) is not bytes or type(current) is not bytes
+                or safe.identity(fixture) != row['before']
+                or inventory_sources.get(path) != row['before'].get('source_sha256')):
+            raise ValueError('CI assertion V8 V382 predecessor identity drift: ' + path)
+        fixture_bytes[path], current_bytes[path] = fixture, current
+        if path == CI_ASSERTION_V8_SOURCE:
+            recipe = row.get('recipe')
+            token = '<CI_ASSERTION_' + 'V8_DIGEST>'
+            if (set(row) != {'fixture', 'before', 'recipe'}
+                    or type(recipe) is not dict or set(recipe) != {'before', 'after'}
+                    or type(recipe.get('before')) is not str
+                    or type(recipe.get('after')) is not str
+                    or recipe['before'].encode('utf-8') != fixture
+                    or recipe['after'].count(token) != 1
+                    or recipe['after'].replace(token, CI_ASSERTION_V8_SHA256).encode('utf-8')
+                        != current):
+                raise ValueError('CI assertion V8 Pass-A exact source recipe drift')
+        else:
+            if (set(row) != {'fixture', 'before', 'after', 'patches'}
+                    or type(row.get('after')) is not dict or type(row.get('patches')) is not list):
+                raise ValueError('CI assertion V8 explicit source row schema drift: ' + path)
+            replayed_before, replayed_after = _apply_exact_source_forward_row(
+                path, row, reader, label='CI assertion V8')
+            if replayed_before != fixture or replayed_after != current:
+                raise ValueError('CI assertion V8 exact source after-image drift: ' + path)
+
+    # Validate the V7 prefix only through the complete V382 before-image map.
+    # The live reader remains attached to both returned phase wrappers.
+    projected_v382 = _CIAssertionV8ProjectedReader(reader, fixture_bytes)
+    prior, v2, v3, v4, v5, v6, v7, _v7_projected = (
+        _ci_assertion_v7_chain_uncached(projected_v382))
+    if _ci_assertion_v7_current_source_bytes(v7, projected_v382) \
+            != fixture_bytes[CI_ASSERTION_V8_SOURCE]:
+        raise ValueError('CI assertion V7 Pass-A self-recipe does not end at V382 before-image')
+    for path in (CI_ASSERTION_V8_RETENTION_SOURCE, CI_ASSERTION_V8_TEST_SOURCE):
+        prior_row = v7.get('source_forward', {}).get(path)
+        if (type(prior_row) is not dict or prior_row.get('after') != rows[path]['before']
+                or safe.identity(fixture_bytes[path]) != prior_row.get('after')):
+            raise ValueError('CI assertion V7->V8 source endpoint does not compose: ' + path)
+
+    for path, observed in current_bytes.items():
+        if reader(path) != observed:
+            raise ValueError('CI assertion V8 current source changed during authentication: ' + path)
+    if reader(CI_ASSERTION_V8_RECEIPT) != raw \
+            or reader(CI_ASSERTION_V8_PREDECESSOR_INVENTORY['path']) != inventory_raw:
+        raise ValueError('CI assertion V8 receipt or V382 bytes changed during authentication')
+    if contract != _ci_assertion_v2_contract_digest():
+        raise ValueError('CI assertion V8 verifier changed during source projection')
+    projected_v7 = _ci_assertion_v7_projected_reader(reader, v7)
+    projected_v382 = _CIAssertionV8ProjectedReader(reader, fixture_bytes)
+    return (prior, v2, v3, v4, v5, v6, v7, projected_v7, value, projected_v382)
+
+
+def _ci_assertion_v8_reconstitute_cached(reader, payload):
+    """Check cached canonical receipts against fresh scoped bytes and rebuild views."""
+    if type(payload) is not dict or type(payload.get('chain')) is not list:
+        raise ValueError('CI assertion V8 cached receipt chain is malformed')
+    receipts = (
+        (CI_ASSERTION_RECEIPT, payload['chain'][0], CI_ASSERTION_SHA256),
+        (CI_ASSERTION_V2_RECEIPT, payload['chain'][1], CI_ASSERTION_V2_SHA256),
+        (CI_ASSERTION_V3_RECEIPT, payload['chain'][2], CI_ASSERTION_V3_SHA256),
+        (CI_ASSERTION_V4_RECEIPT, payload['v4'], CI_ASSERTION_V4_SHA256),
+        (CI_ASSERTION_V5_RECEIPT, payload['v5'], CI_ASSERTION_V5_SHA256),
+        (CI_ASSERTION_V6_RECEIPT, payload['v6'], CI_ASSERTION_V6_SHA256),
+        (CI_ASSERTION_V7_RECEIPT, payload['v7'], CI_ASSERTION_V7_SHA256),
+        (CI_ASSERTION_V8_RECEIPT, payload['v8'], CI_ASSERTION_V8_SHA256),
+    )
+    for path, value, digest in receipts:
+        raw = reader(path)
+        if (type(value) is not dict or type(raw) is not bytes
+                or safe.canonical(value) != raw
+                or safe.canonical_digest(value) != digest
+                or value.get('canonical_sha256') != digest):
+            raise ValueError('CI assertion V8 cached receipt bytes changed: ' + path)
+    inventory_raw = reader(CI_ASSERTION_V8_PREDECESSOR_INVENTORY['path'])
+    inventory = json.loads(inventory_raw)
+    if (type(inventory_raw) is not bytes or type(inventory) is not dict
+            or hashlib.sha256(inventory_raw).hexdigest() != CI_ASSERTION_V8_PREDECESSOR_RAW_SHA256
+            or safe.canonical(inventory) != inventory_raw
+            or safe.canonical_digest(inventory)
+                != CI_ASSERTION_V8_PREDECESSOR_INVENTORY['canonical_sha256']
+            or inventory.get('canonical_sha256')
+                != CI_ASSERTION_V8_PREDECESSOR_INVENTORY['canonical_sha256']
+            or inventory.get('generation') != 382 or inventory.get('schema_version') != 382
+            or inventory.get('policy_id')
+                != 'ATHENA_CORE_01D_CI_OFFLINE_TRANSPORT_SOURCE_INVENTORY_V382'
+            or inventory.get('predecessor_inventory') != CI_ASSERTION_V7_PREDECESSOR_INVENTORY):
+        raise ValueError('CI assertion V8 cached V382 predecessor changed')
+
+    prior, v2, v3 = payload['chain']
+    v7, v8 = payload['v7'], payload['v8']
+    if (v8.get('policy_id') != 'ATHENA_PHASE_A_CI_ASSERTION_SOURCE_SUCCESSOR_V8'
+            or type(v8.get('schema_version')) is not int or v8['schema_version'] != 8
+            or type(v8.get('reason')) is not str or not v8['reason']
+            or v8.get('predecessor_receipt') != CI_ASSERTION_V8_PREDECESSOR_RECEIPT
+            or v8.get('predecessor_inventory') != CI_ASSERTION_V8_PREDECESSOR_INVENTORY
+            or any(v8.get(key) is not False for key in (
+                'authority_granted', 'historical_bytes_changed',
+                'provider_or_delivery_authority_changed', 'test_assignments_changed',
+                'test_selection_changed', 'workflow_changed'))
+            or type(v8.get('source_forward')) is not dict
+            or set(v8['source_forward']) != CI_ASSERTION_V8_PATHS):
+        raise ValueError('CI assertion V8 cached receipt scope drift')
+    inventory_sources = _ci_assertion_v8_inventory_sources(inventory)
+    for path in sorted(CI_ASSERTION_V8_PATHS):
+        row = v8['source_forward'][path]
+        if inventory_sources.get(path) != row.get('before', {}).get('source_sha256'):
+            raise ValueError('CI assertion V8 cached V382 source edge changed: ' + path)
+    projected_v7 = _ci_assertion_v7_projected_reader(reader, v7)
+    projected_v382 = _ci_assertion_v8_projected_reader(reader, v8)
+    if _ci_assertion_v7_current_source_bytes(v7, projected_v382) != projected_v382(CI_ASSERTION_V8_SOURCE):
+        raise ValueError('CI assertion V7 Pass-A cached phase does not match V382')
+    for path in (CI_ASSERTION_V8_RETENTION_SOURCE, CI_ASSERTION_V8_TEST_SOURCE):
+        prior_row = v7.get('source_forward', {}).get(path)
+        row = v8.get('source_forward', {}).get(path)
+        if (type(prior_row) is not dict or type(row) is not dict
+                or prior_row.get('after') != row.get('before')
+                or safe.identity(projected_v382(path)) != row.get('before')):
+            raise ValueError('CI assertion V7/V8 cached phase edge changed: ' + path)
+
+    _ci_assertion_v8_current_source_bytes(v8, reader)
+    for path in (CI_ASSERTION_V8_RETENTION_SOURCE, CI_ASSERTION_V8_TEST_SOURCE):
+        row = v8['source_forward'][path]
+        before, expected = _apply_exact_source_forward_row(
+            path, row, reader, label='CI assertion V8 cached')
+        if (before != projected_v382(path) or reader(path) != expected
+                or safe.identity(reader(path)) != row.get('after')):
+            raise ValueError('CI assertion V8 cached current source changed: ' + path)
+    return (prior, v2, v3, payload['v4'], payload['v5'], payload['v6'],
+            v7, projected_v7, v8, projected_v382)
+
+
+def _ci_assertion_v8_chain_details(*, _reader=None):
+    """Return authenticated V1..V8 data and fresh V381/V382 phase readers."""
+    request_reader = read_blob if _reader is None else _reader
+    owner = _ci_assertion_v2_scope_owner(request_reader)
+    if owner is None:
+        return _ci_assertion_v8_chain_uncached(request_reader)
+    active_source_scope = _active_source_derivation_scope()
+    reader = request_reader
+    if owner is active_source_scope:
+        # Use the same fenced ledger on cold and warm requests, including
+        # when a short-lived bound reader shares the outer source scope.
+        def read_scoped(path):
+            _verify_scoped_source_path(path)
+            return owner.read(path)
+        reader = read_scoped
+    contract = _ci_assertion_v2_contract_digest()
+    cached = owner.load_derivation(CI_ASSERTION_V8_DERIVATION_KEY, contract)
+    if cached is not None:
+        if contract != _ci_assertion_v2_contract_digest():
+            raise ValueError('CI assertion V8 verifier changed during scoped reuse')
+        payload = json.loads(cached)
+        expected_keys = {'chain', 'v4', 'v5', 'v6', 'v7', 'v8'}
+        if (type(payload) is not dict or set(payload) != expected_keys
+                or type(payload['chain']) is not list or len(payload['chain']) != 3
+                or safe.canonical(payload) != cached
+                or any(type(payload[name]) is not dict
+                       for name in ('v4', 'v5', 'v6', 'v7', 'v8'))):
+            raise ValueError('CI assertion V8 scoped derivation payload is malformed')
+        details = _ci_assertion_v8_reconstitute_cached(reader, payload)
+        _record_ci_assertion_v3_scope_metric(owner, 'pass_a_ci_assertion_v3_hits')
+        if contract != _ci_assertion_v2_contract_digest():
+            raise ValueError('CI assertion V8 verifier changed during scoped projection')
+    else:
+        _record_ci_assertion_v3_scope_metric(owner, 'pass_a_ci_assertion_v3_uncached')
+        details = _ci_assertion_v8_chain_uncached(reader)
+        if contract != _ci_assertion_v2_contract_digest():
+            raise ValueError('CI assertion V8 verifier changed during scoped authentication')
+        owner.store_derivation(
+            CI_ASSERTION_V8_DERIVATION_KEY, contract,
+            safe.canonical({'chain': list(details[:3]), 'v4': details[3],
+                            'v5': details[4], 'v6': details[5], 'v7': details[6],
+                            'v8': details[8]}))
+    # The selected owner authenticated the fixture maps in both branches.
+    # Keep the caller's live reader as the provenance of each returned view.
+    if reader is request_reader:
+        return details
+    return (details[:7] +
+            (_CIAssertionV7ProjectedReader(request_reader, details[7].fixtures),
+             details[8], _CIAssertionV8ProjectedReader(request_reader, details[9].fixtures)))
 
 
 def _record_ci_assertion_v3_scope_metric(owner, name):
@@ -3986,7 +4332,8 @@ def _install_ci_assertion_v3_context(context):
         if path in context['ADDED_PYTHON_IDENTITIES']:
             context['ADDED_PYTHON_IDENTITIES'][path] = after
     (_v7_prior, _v7_v2, _v7_v3, _v7_v4, _v7_v5, v6, v7,
-     v7_phase_reader) = _ci_assertion_v7_chain_details(_reader=read_blob)
+     v7_phase_reader, v8, v382_phase_reader) = _ci_assertion_v8_chain_details(
+         _reader=read_blob)
     v6_raw = read_blob(CI_ASSERTION_V6_RECEIPT)
     metadata[CI_ASSERTION_V6_RECEIPT] = safe.identity(v6_raw)
     for path, row in v6['source_forward'].items():
@@ -4009,8 +4356,24 @@ def _install_ci_assertion_v3_context(context):
     for path, row in v7['source_forward'].items():
         metadata[row['fixture']] = row['before']
         # As for V6, the Pass-A row is bound by its one-token self-recipe.
-        after = (safe.identity(_ci_assertion_v7_current_source_bytes(v7, read_blob))
+        # V7's self-recipe terminates at the authenticated V382 phase, not
+        # the newer V8 live Pass-A bytes.
+        after = (safe.identity(_ci_assertion_v7_current_source_bytes(v7, v382_phase_reader))
                  if path == CI_ASSERTION_V7_SOURCE else row['after'])
+        context['BOOTSTRAP_AFTER'][path] = after
+        if path in context['HISTORICAL_PREDECESSORS']:
+            context['HISTORICAL_PREDECESSORS'][path]['after'] = after
+        elif path.endswith('.py'):
+            context['HISTORICAL_PREDECESSORS'][path] = {
+                'fixture': row['fixture'], **row['before'], 'after': after}
+        if path in context['ADDED_PYTHON_IDENTITIES']:
+            context['ADDED_PYTHON_IDENTITIES'][path] = after
+    v8_raw = read_blob(CI_ASSERTION_V8_RECEIPT)
+    metadata[CI_ASSERTION_V8_RECEIPT] = safe.identity(v8_raw)
+    for path, row in v8['source_forward'].items():
+        metadata[row['fixture']] = row['before']
+        after = (safe.identity(_ci_assertion_v8_current_source_bytes(v8, read_blob))
+                 if path == CI_ASSERTION_V8_SOURCE else row['after'])
         context['BOOTSTRAP_AFTER'][path] = after
         if path in context['HISTORICAL_PREDECESSORS']:
             context['HISTORICAL_PREDECESSORS'][path]['after'] = after

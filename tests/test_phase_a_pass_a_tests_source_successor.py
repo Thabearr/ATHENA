@@ -332,13 +332,17 @@ def test_ci_assertion_v3_projection_rejects_forged_reader_and_value():
 def test_ci_assertion_v3_reader_helper_contract_drift_rejects_scoped_hit(monkeypatch):
     path = 'tests/test_tests_shard_balance_successor.py'
     current = forward.read_blob(path)
-    with pytest.raises(ValueError, match='derivation contract changed'):
-        with forward.source_derivation_scope():
-            forward._predecessor_source_for_reader(path, current)
-            monkeypatch.setattr(
-                forward, '_ci_assertion_v2_chain_uncached',
-                lambda reader: ({'forged': True}, {'forged': True}))
-            forward._predecessor_source_for_reader(path, current)
+
+    def forged_helper(_reader):
+        raise AssertionError('mutated reader helper must not execute')
+
+    with forward.source_derivation_scope():
+        forward._predecessor_source_for_reader(path, current)
+        with monkeypatch.context() as changed:
+            changed.setattr(forward, '_ci_assertion_v2_chain_uncached', forged_helper)
+            with pytest.raises(ValueError) as rejected:
+                forward._predecessor_source_for_reader(path, current)
+            assert str(rejected.value) == 'Pass-A source derivation reader changed during its request'
 
 
 def test_root_performance_projection_rejects_mismatched_v2_path_and_direction():
