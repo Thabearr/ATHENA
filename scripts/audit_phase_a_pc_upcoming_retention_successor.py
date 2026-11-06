@@ -836,6 +836,8 @@ _PASS_A_CONTEXT_INSTALLED = False
 
 def _ensure_pass_a_context():
     global _PASS_A_CONTEXT_INSTALLED
+    if _pass_a_tests._active_checkpoint_derivation_scope() is not None:
+        return
     if not _PASS_A_CONTEXT_INSTALLED:
         with _pass_a_tests.source_derivation_scope():
             _tests_shards.install_context(globals())
