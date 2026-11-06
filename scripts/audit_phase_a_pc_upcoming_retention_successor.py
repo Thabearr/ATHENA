@@ -831,27 +831,36 @@ def authenticate():
 # Separate owner-authorized Tests-only edge; all published retention receipts
 # and P4 snapshots remain immutable inputs.
 from scripts import audit_tests_shard_balance_successor as _tests_shards
-_tests_shards.install_context(globals())
+_PASS_A_CONTEXT_INSTALLED = False
+
+
+def _ensure_pass_a_context():
+    global _PASS_A_CONTEXT_INSTALLED
+    if not _PASS_A_CONTEXT_INSTALLED:
+        _b4_test_source.install_context(globals())
+        _pass_a_tests.install_context(globals())
+        _tests_shards.install_context(globals())
+        _PASS_A_CONTEXT_INSTALLED = True
 
 
 # Source-only correction of B4's stale caller; no verifier/workflow change.
 from scripts import audit_phase_a_b4_test_source_successor as _b4_test_source
-_b4_test_source.install_context(globals())
 _authenticate_before_b4_test_source = authenticate
 
 
 def authenticate():
+    _ensure_pass_a_context()
     _b4_test_source.authenticate_core()
     return _authenticate_before_b4_test_source()
 
 
 # Source-only Pass-A historical Tests view; current workflow stays unchanged.
 from scripts import audit_phase_a_pass_a_tests_source_successor as _pass_a_tests
-_pass_a_tests.install_context(globals())
 _authenticate_before_pass_a_tests = authenticate
 
 
 def authenticate():
+    _ensure_pass_a_context()
     _pass_a_tests.authenticate_core()
     return _authenticate_before_pass_a_tests()
 
@@ -945,6 +954,7 @@ _authenticate_with_pass_a = authenticate
 
 def authenticate():
     """Authenticate retained sources once per unchanged bounded audit scope."""
+    _ensure_pass_a_context()
     scope = _pass_a_tests._active_checkpoint_derivation_scope()
     if scope is None:
         return _authenticate_with_pass_a()
@@ -1028,5 +1038,6 @@ _expected_bootstrap_before_root_performance = expected_bootstrap_source
 
 
 def expected_bootstrap_source():
+    _ensure_pass_a_context()
     return _pass_a_tests.root_performance_bootstrap_source(
         _expected_bootstrap_before_root_performance())

@@ -2492,7 +2492,7 @@ CI_ASSERTION_V8_DERIVATION_KEY = 'pass-a.ci-assertion-v8-chain-details-v1'
 # V9 authenticates the exact V383 current image before projecting the three
 # admitted source paths back to V8. V383 remains immutable and is V9's parent.
 CI_ASSERTION_V9_RECEIPT = 'tests/fixtures/architecture/ci_assertion_source_successor_v9/receipt.json'
-CI_ASSERTION_V9_SHA256 = '4dd7952680c7bae8186a367edf142642dfa11eeeb55a2c0c4e7d63573e43b719'
+CI_ASSERTION_V9_SHA256 = 'ab9455cbf00eec794870d75ce3c3a098c1adeaea63d324a8217da272a6651818'
 CI_ASSERTION_V9_SOURCE = CI_ASSERTION_V8_SOURCE
 CI_ASSERTION_V9_RETENTION_SOURCE = CI_ASSERTION_V8_RETENTION_SOURCE
 CI_ASSERTION_V9_TEST_SOURCE = 'tests/test_tests_shard_balance_successor.py'
