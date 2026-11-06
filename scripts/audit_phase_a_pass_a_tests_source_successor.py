@@ -1955,7 +1955,15 @@ class _ParentNodeProgress:
 def pytest_configure(config):
     # pytest calls this only when this module is explicitly loaded with -p.
     # No PYTEST_ADDOPTS, environment marker, root conftest or child argv change.
+    config._athena_source_derivation_scope = source_derivation_scope()
+    config._athena_source_derivation_scope.__enter__()
     config.pluginmanager.register(_ParentNodeProgress(), 'athena-parent-node-progress')
+
+
+def pytest_unconfigure(config):
+    scope = getattr(config, "_athena_source_derivation_scope", None)
+    if scope is not None:
+        scope.__exit__(None, None, None)
 
 
 ROOT_PERFORMANCE_RECEIPT = 'artifacts/architecture/root_auth_performance_source_successor_v1.json'
