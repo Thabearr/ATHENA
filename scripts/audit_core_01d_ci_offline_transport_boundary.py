@@ -3829,7 +3829,10 @@ def _active_a2_derivation_scope():
     if engine is None or not engine._ACTIVE_RECEIPT_SCOPES.get():
         return None
     from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
-    scope = pass_a._active_checkpoint_derivation_scope()
+    active = engine._ACTIVE_RECEIPT_SCOPES.get()
+    scope = active.get("pytest-session-a2")
+    if scope is None:
+        scope = pass_a._active_checkpoint_derivation_scope()
     if scope is not None:
         require(scope.enabled,
                 "A2 same-invocation derivation requires an enabled receipt scope")
