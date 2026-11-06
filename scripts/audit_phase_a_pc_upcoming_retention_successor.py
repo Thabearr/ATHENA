@@ -837,9 +837,10 @@ _PASS_A_CONTEXT_INSTALLED = False
 def _ensure_pass_a_context():
     global _PASS_A_CONTEXT_INSTALLED
     if not _PASS_A_CONTEXT_INSTALLED:
-        _tests_shards.install_context(globals())
-        _b4_test_source.install_context(globals())
-        _pass_a_tests.install_context(globals())
+        with _pass_a_tests.source_derivation_scope():
+            _tests_shards.install_context(globals())
+            _b4_test_source.install_context(globals())
+            _pass_a_tests.install_context(globals())
         _PASS_A_CONTEXT_INSTALLED = True
 
 
