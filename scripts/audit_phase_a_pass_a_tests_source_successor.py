@@ -830,8 +830,18 @@ def _authenticate_core_for_reader(*, _reader=None):
 def authenticate_core():
     active = _active_source_derivation_scope()
     if active is not None:
+        contract = _scoped_source_read_contract() + ':' + _ci_assertion_v2_contract_digest()
+        cached = active.load_derivation('pass-a.authenticate-core', contract)
+        if cached is not None:
+            value = json.loads(cached)
+            if type(value) is not dict or safe.canonical(value) != cached:
+                raise ValueError('Pass-A cached authentication result is not canonical')
+            active.verify()
+            return value
         value = _authenticate_core_for_reader(_reader=active.read)
         active.verify()
+        active.store_derivation(
+            'pass-a.authenticate-core', contract, safe.canonical(value))
         return value
     scope = _SourceReadScope(read_blob)
     value = _authenticate_core_for_reader(_reader=scope.read)
@@ -2505,7 +2515,7 @@ CI_ASSERTION_V8_DERIVATION_KEY = 'pass-a.ci-assertion-v8-chain-details-v1'
 # V9 authenticates the exact V383 current image before projecting the three
 # admitted source paths back to V8. V383 remains immutable and is V9's parent.
 CI_ASSERTION_V9_RECEIPT = 'tests/fixtures/architecture/ci_assertion_source_successor_v9/receipt.json'
-CI_ASSERTION_V9_SHA256 = 'fcfe708eb6d1b9d4f8dcf9f6210d690c7e86ac3952723a371b4af42f888df2f5'
+CI_ASSERTION_V9_SHA256 = 'a316c1016be07c22a59c21a5441efc5dcfe587a4f71f43d18f107817fe4de125'
 CI_ASSERTION_V9_SOURCE = CI_ASSERTION_V8_SOURCE
 CI_ASSERTION_V9_RETENTION_SOURCE = CI_ASSERTION_V8_RETENTION_SOURCE
 CI_ASSERTION_V9_TEST_SOURCE = 'tests/test_tests_shard_balance_successor.py'
