@@ -1652,7 +1652,7 @@ def _checkpoint_direct_contract_digest(*roots):
             runtime = _receipt_scope_module._runtime_global(module_name, name, value)
             if runtime is None:
                 value = _receipt_scope_module._contract_value(
-                    value, include_mutable_contents=True)
+                    value, include_mutable_contents=False)
             else:
                 value = runtime
             digest.update(repr(value).encode("utf-8") + b"\0")
