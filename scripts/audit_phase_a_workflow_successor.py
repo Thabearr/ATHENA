@@ -232,25 +232,6 @@ def is_admitted_successor(name: str, source: bytes) -> bool:
     return True
 
 
-def project_observed_identities(observed: Mapping[str, Mapping[str, str]]) -> dict:
-    """Project a P4 {path: {git_blob_sha1, source_sha256}} mapping for listed workflows."""
-    projected = dict(observed)
-    for entry in PHASE_A_SUCCESSORS:
-        if not entry.path.startswith(WORKFLOW_DIR):
-            continue
-        if entry.path not in observed:
-            _fail(entry.path + " is absent from the observed identities")
-        current = dict(observed[entry.path])
-        state = authenticate_current_bytes(None, entry.path)
-        after = {"git_blob_sha1": entry.after_blob, "source_sha256": entry.after_sha256}
-        before = {"git_blob_sha1": entry.before_blob, "source_sha256": entry.before_sha256}
-        if current == after and state == "AFTER":
-            projected[entry.path] = before
-        elif current != before or state != "BEFORE":
-            _fail(entry.path + " observed identity does not match the authenticated working tree")
-    return projected
-
-
 def filter_changed_paths(changed: Iterable[str]) -> list[str]:
     """Drop listed workflow paths from a changed-path list only at exact AFTER bytes."""
     changed = list(changed)

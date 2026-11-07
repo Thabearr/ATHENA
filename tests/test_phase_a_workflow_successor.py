@@ -160,8 +160,6 @@ def test_e_deleted_workflow_fails_closed(tmp_path):
     # A listing without PATH passes through; the caller's frozen hash then fails.
     other = b"100644 blob " + b"e" * 40 + b"\t.github/workflows/athena-run.yml\n"
     assert phase_a.project_ls_tree(other) == other
-    with pytest.raises(phase_a.PhaseAWorkflowSuccessorError):
-        phase_a.project_observed_identities({})
 
 
 # f) PATH replaced by a symlink to identical bytes -> fails closed
@@ -192,19 +190,13 @@ def test_g_projection_commutes_with_the_b4_projection():
     assert apply_b4(phase_a.project_workflow_tree(tree)) == phase_a.project_workflow_tree(apply_b4(tree))
 
 
-def test_ls_tree_and_identity_projections_are_exact():
+def test_ls_tree_projection_is_exact():
     line = b"100644 blob " + phase_a.AFTER_BLOB.encode() + b"\t" + phase_a.PATH.encode() + b"\n"
     other = b"100644 blob " + b"e" * 40 + b"\t.github/workflows/athena-run.yml\n"
     projected = phase_a.project_ls_tree(other + line)
     assert projected == other + line.replace(phase_a.AFTER_BLOB.encode(), phase_a.BEFORE_BLOB.encode())
     with pytest.raises(phase_a.PhaseAWorkflowSuccessorError):
         phase_a.project_ls_tree(other + line + line)
-    observed = {phase_a.PATH: {"git_blob_sha1": phase_a.AFTER_BLOB, "source_sha256": phase_a.AFTER_SHA256}}
-    assert phase_a.project_observed_identities(observed)[phase_a.PATH] == {
-        "git_blob_sha1": phase_a.BEFORE_BLOB, "source_sha256": phase_a.BEFORE_SHA256}
-    forged = {phase_a.PATH: {"git_blob_sha1": phase_a.AFTER_BLOB, "source_sha256": "0" * 64}}
-    with pytest.raises(phase_a.PhaseAWorkflowSuccessorError):
-        phase_a.project_observed_identities(forged)
 
 
 def test_changed_path_filter_admits_only_the_after_bytes():
@@ -385,3 +377,11 @@ def test_f3_f4_registry_carries_only_the_exact_workflow_forward():
     assert before == {"git_blob_sha1": phase_a.BEFORE_BLOB, "source_sha256": phase_a.BEFORE_SHA256}
     assert after == {"git_blob_sha1": phase_a.AFTER_BLOB, "source_sha256": phase_a.AFTER_SHA256}
     assert "scripts/core_01d_historical_source.py" not in evolution.CORE01D_PR119_CONTROL_WORKFLOW_FORWARD
+
+
+def test_f3_f4_p4_forward_accepts_after_and_rejects_a_tampered_workflow(monkeypatch):
+    from scripts import audit_p4_workflow_evolution_ledger as evolution
+    evolution.validate_current_state()
+    _patched_read_bytes(monkeypatch, phase_a.PATH, _flip_one)
+    with pytest.raises(evolution.WorkflowEvolutionError):
+        evolution.validate_current_state()
