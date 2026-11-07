@@ -336,6 +336,21 @@ UX_01A_PREDECESSOR_SOURCE_BLOBS = {
     path: blob for path, (blob, _digest) in UX_01A_PREDECESSOR_SOURCE_IDENTITIES.items()
 }
 
+# VAR-01b (critical-path verification recovery): three new paths, one
+# A2-authenticated B4 auditor successor and one non-Python pytest
+# configuration successor whose exact current bytes are pinned here.
+VAR_01B_ADDITIVE_PATHS = {
+    "scripts/pytest_a2_chain_share.py",
+    "tests/test_var_01b_a2_chain_share.py",
+    "docs/engineering/VAR-D005_chain_checkpoint_ADR.md",
+}
+VAR_01B_A2_SOURCE_PREDECESSOR_BLOBS = {
+    "scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py":
+        "89fb32e561660a3dcdc70ae6d1df94f9d40027c9",
+}
+VAR_01B_PYTEST_INI_PREDECESSOR_BLOB = "27eec68ed708999a4b2ac00f8334a17f04c974cc"
+VAR_01B_PYTEST_INI_SHA256 = "5583438be30d72bc609ba3537ca5d0a629196020599d3fefaff21949abacabe7"
+
 
 def authenticate_fresh_holdout_20261015_evidence():
     from runtime.source_identity import read_tracked_head_blob
@@ -432,6 +447,20 @@ def validate_bounded_inventory(raw: bytes) -> None:
     )
     ux_predecessor_blobs = dict(UX_01A_PREDECESSOR_SOURCE_BLOBS)
     ux_additive_paths = {app.UX_SUCCESSOR, app.UX_STYLESHEET_FIXTURE}
+    # VAR-01b successors: the B4 auditor's current bytes must be the latest
+    # A2 identity and pytest.ini must be its exact pinned bytes before their
+    # main predecessor blobs are projected back.
+    var_01b_sources = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
+    var_01b_predecessor_blobs = {}
+    for path, blob in VAR_01B_A2_SOURCE_PREDECESSOR_BLOBS.items():
+        current = (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
+        policy.require(var_01b_sources.get(path) == policy.sha256(current),
+                       "VAR-01b source successor is not authenticated by A2: " + path)
+        var_01b_predecessor_blobs[path] = blob
+    pytest_ini = (ROOT / "pytest.ini").read_bytes().replace(b"\r\n", b"\n")
+    policy.require(policy.sha256(pytest_ini) == VAR_01B_PYTEST_INI_SHA256,
+                   "VAR-01b pytest configuration differs from its exact reviewed bytes")
+    var_01b_predecessor_blobs["pytest.ini"] = VAR_01B_PYTEST_INI_PREDECESSOR_BLOB
     from runtime.source_identity import read_tracked_head_blob
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion_v2
     from scripts import audit_core_01d_pr459_live_trigger_incident as incident
@@ -529,11 +558,14 @@ def validate_bounded_inventory(raw: bytes) -> None:
     policy.require(not (set(ux_predecessor_blobs) & set(predecessor_blobs)),
                    "UX-01A predecessor overlaps an existing historical source pin")
     predecessor_blobs.update(ux_predecessor_blobs)
+    policy.require(not (set(var_01b_predecessor_blobs) & set(predecessor_blobs)),
+                   "VAR-01b predecessor overlaps an existing historical source pin")
+    predecessor_blobs.update(var_01b_predecessor_blobs)
     unchanged_lines = []
     for line in raw.splitlines(keepends=True):
         metadata, separator, path_bytes = line.partition(b"\t")
         path = path_bytes.strip().decode()
-        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | E3_RUN_02A_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | FRESH_HOLDOUT_20261015_ADDITIVE_PATHS | pr459_additive_paths | ux_additive_paths:
+        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | E3_RUN_02A_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | FRESH_HOLDOUT_20261015_ADDITIVE_PATHS | pr459_additive_paths | ux_additive_paths | VAR_01B_ADDITIVE_PATHS:
             continue
         if path in PR459_PREDECESSOR_SOURCE_BLOBS:
             policy.require(metadata.split()[:2] == [b"100644", b"blob"]
