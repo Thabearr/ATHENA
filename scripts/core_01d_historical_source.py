@@ -42,6 +42,8 @@ def historical_tracked(root, path):
     current = receipt["production_source_identities"].get(str(path))
     if current is not None:
         live, live_identity = read_tracked_head_blob(root, path)
+        from scripts import audit_phase_a_workflow_successor as phase_a
+        live_identity = phase_a.project_source_identity(str(path), live, live_identity)
         if live_identity.git_blob_sha1 != current["git_blob_sha1"] or live_identity.git_blob_payload_sha256 != current["source_sha256"]:
             raise ValueError("unreviewed current producer source: " + str(path))
     raw, identity = read_tracked_head_blob(root, entry["fixture"])

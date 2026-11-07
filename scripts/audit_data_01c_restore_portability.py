@@ -207,7 +207,7 @@ def authenticate_workflow():
             continue
         source = (directory / row["name"]).read_bytes().replace(b"\r\n", b"\n")
         from scripts import audit_phase_a_workflow_successor as phase_a
-        if phase_a.is_admitted_successor(row["name"], source) and row["blob"] == phase_a.BEFORE_BLOB:
+        if phase_a.is_admitted_successor(row["name"], source) and row["blob"] == phase_a.entry_for(row["name"]).before_blob:
             continue
         expected_blob = after["git_blob_sha1"] if row["name"] == "port-02c-native-runtime.yml" else row["blob"]
         if identity(source)["git_blob_sha1"] != expected_blob:
