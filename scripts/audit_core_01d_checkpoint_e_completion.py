@@ -336,6 +336,15 @@ UX_01A_PREDECESSOR_SOURCE_BLOBS = {
     path: blob for path, (blob, _digest) in UX_01A_PREDECESSOR_SOURCE_IDENTITIES.items()
 }
 
+# VAR-01b (critical-path verification recovery): three new A2-authenticated
+# Python paths only. The B4 auditor successor keeps its existing D5
+# portability predecessor owner and its current bytes stay authenticated by A2.
+VAR_01B_ADDITIVE_PATHS = {
+    "conftest.py",
+    "scripts/pytest_a2_chain_share.py",
+    "tests/test_var_01b_a2_chain_share.py",
+}
+
 
 def authenticate_fresh_holdout_20261015_evidence():
     from runtime.source_identity import read_tracked_head_blob
@@ -533,7 +542,7 @@ def validate_bounded_inventory(raw: bytes) -> None:
     for line in raw.splitlines(keepends=True):
         metadata, separator, path_bytes = line.partition(b"\t")
         path = path_bytes.strip().decode()
-        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | E3_RUN_02A_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | FRESH_HOLDOUT_20261015_ADDITIVE_PATHS | pr459_additive_paths | ux_additive_paths:
+        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | E3_RUN_02A_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | FRESH_HOLDOUT_20261015_ADDITIVE_PATHS | pr459_additive_paths | ux_additive_paths | VAR_01B_ADDITIVE_PATHS:
             continue
         if path in PR459_PREDECESSOR_SOURCE_BLOBS:
             policy.require(metadata.split()[:2] == [b"100644", b"blob"]

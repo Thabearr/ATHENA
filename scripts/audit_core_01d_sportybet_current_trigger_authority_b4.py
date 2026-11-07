@@ -7,6 +7,9 @@ an Actions artifact payload.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+from contextvars import ContextVar
+import functools
 import hashlib
 import json
 from pathlib import Path
@@ -242,6 +245,47 @@ def _canonical_hash(value: Any) -> str:
     return hashlib.sha256(boundary.canonical(value)).hexdigest()
 
 
+# VAR-01b F1: one public B4 call authenticates the full A2 chain at most once.
+# The holder exists only while the outermost decorated call runs; it is
+# discarded when that call returns or raises, never shared across calls,
+# and a failed chain load is never stored (the next check reloads and fails
+# again exactly as before).  Outside a decorated call every check still
+# loads the whole chain itself.
+_A2_LATEST_ROWS_CALL_SCOPE: ContextVar[list | None] = ContextVar(
+    "b4_a2_latest_rows_call_scope", default=None)
+
+
+def _latest_a2_source_rows() -> dict[str, str]:
+    holder = _A2_LATEST_ROWS_CALL_SCOPE.get()
+    if holder:
+        return holder[0]
+    latest = boundary.load_inventory_generations()[-1][1]
+    rows = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
+    if holder is not None:
+        holder.append(rows)
+    return rows
+
+
+@contextmanager
+def _a2_latest_rows_call_scope():
+    if _A2_LATEST_ROWS_CALL_SCOPE.get() is not None:
+        yield
+        return
+    token = _A2_LATEST_ROWS_CALL_SCOPE.set([])
+    try:
+        yield
+    finally:
+        _A2_LATEST_ROWS_CALL_SCOPE.reset(token)
+
+
+def _a2_call_scoped(function):
+    @functools.wraps(function)
+    def wrapper(*args, **kwargs):
+        with _a2_latest_rows_call_scope():
+            return function(*args, **kwargs)
+    return wrapper
+
+
 def _historical_b4_workflow_bytes(path: str) -> bytes:
     fixture = B4_WORKFLOW_PREDECESSORS.get(path)
     require(fixture is not None, "unclassified B4 workflow predecessor: " + path)
@@ -254,8 +298,7 @@ def _historical_b4_workflow_bytes(path: str) -> bytes:
     # Current source is independently bound to the latest A2 inventory. Read
     # the authenticated chain directly here because this helper also runs
     # while A2 is projecting the historical workflow tree.
-    latest = boundary.load_inventory_generations()[-1][1]
-    current_rows = {row["path"]: row["lf_source_sha256"] for row in latest["source_identities"]}
+    current_rows = _latest_a2_source_rows()
     current = live_path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     require(current_rows.get(path) == hashlib.sha256(current).hexdigest(),
             "current B4 successor workflow differs from latest A2: " + path)
@@ -272,6 +315,7 @@ def _historical_b4_workflow_bytes(path: str) -> bytes:
     return committed
 
 
+@_a2_call_scoped
 def project_b4_workflow_tree(observed_tree: str) -> str:
     """Replace only A2-authenticated successors with the exact B4 tree bytes."""
     actual_tree = _git("rev-parse", "HEAD:.github/workflows").decode().strip()
@@ -360,6 +404,7 @@ def _current_repository_callers() -> dict[str, Any]:
             "external_manual_dispatch_authority": "PRESERVED_NOT_ERASED_BY_NO_REPOSITORY_CALLER"}
 
 
+@_a2_call_scoped
 def _validate_source_semantics() -> None:
     require(len(TARGETS) == 9 and len(set(TARGETS)) == 9, "B4 target surface set is not exactly nine unique keys")
     completion = boundary.read(COMPLETION_V6_PATH)
@@ -448,6 +493,7 @@ def _validate_source_semantics() -> None:
                     "PR-B exact head-ref guard drift")
 
 
+@_a2_call_scoped
 def build_source_inventory() -> dict[str, Any]:
     _validate_source_semantics()
     rows = [_identity(path) for path in sorted(SOURCE_PINS)]
@@ -612,6 +658,7 @@ def _local_paths(path: str) -> list[str]:
     raise AssertionError(f"unrecognized B4 local evidence path: {path}")
 
 
+@_a2_call_scoped
 def build_receipt() -> dict[str, Any]:
     _validate_source_semantics()
     inventory = build_source_inventory()
@@ -709,6 +756,7 @@ def validate_source_inventory(value: dict[str, Any] | None = None) -> dict[str, 
     return value
 
 
+@_a2_call_scoped
 def validate_receipt(value: dict[str, Any] | None = None) -> dict[str, Any]:
     if value is None:
         value = boundary.read(RECEIPT_PATH)

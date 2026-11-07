@@ -230,8 +230,17 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
     e3_projection_path = "tests/test_core_01d_workflow_consolidation_e3_source_projection.py"
     assert e3_projection_path in added
     assert first_added_generation[e3_projection_path] == 319
-    assert len(added - {e3_projection_path}) == 94
-    assert len(added) == 95
+    # VAR-01b admits exactly three new A2-authenticated Python paths, all first
+    # bound by generation V348; the earlier 94-path census stays exact.
+    var_01b_paths = {
+        "conftest.py",
+        "scripts/pytest_a2_chain_share.py",
+        "tests/test_var_01b_a2_chain_share.py",
+    }
+    assert var_01b_paths <= added
+    assert {first_added_generation[path] for path in var_01b_paths} == {348}
+    assert len(added - {e3_projection_path} - var_01b_paths) == 94
+    assert len(added) == 95 + len(var_01b_paths)
     assert first_added_generation["runtime/current_shadow_operation_authority.py"] == 263
     assert first_added_generation[
         "tests/test_core_01d_pass_a_v300_source_predecessors.py"
