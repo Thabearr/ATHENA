@@ -1187,6 +1187,8 @@ def validate_current_state(
     if head_tree != tree_sha or derived.get(PORT02C_REPLAY_WORKFLOW_PATH) != observed.get(PORT02C_REPLAY_WORKFLOW_PATH):
         derived = _port02c_current_source_forward(derived, observed,
             head_tree=head_tree, ledger_sha=ledger["canonical_sha256"])
+    from scripts import audit_phase_a_workflow_successor as phase_a
+    observed = phase_a.project_observed_identities(observed)
     validate_derived_tree(derived, observed)
     for path in PROTECTED:
         if path not in real_paths or path not in baseline:

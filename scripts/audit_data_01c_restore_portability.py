@@ -206,6 +206,9 @@ def authenticate_workflow():
         if path in b4.B4_WORKFLOW_PREDECESSORS:
             continue
         source = (directory / row["name"]).read_bytes().replace(b"\r\n", b"\n")
+        from scripts import audit_phase_a_workflow_successor as phase_a
+        if phase_a.is_admitted_successor(row["name"], source) and row["blob"] == phase_a.BEFORE_BLOB:
+            continue
         expected_blob = after["git_blob_sha1"] if row["name"] == "port-02c-native-runtime.yml" else row["blob"]
         if identity(source)["git_blob_sha1"] != expected_blob:
             raise ValueError("unrelated workflow changed in D5 successor: " + row["name"])
@@ -256,6 +259,8 @@ def project_historical_inventory(raw):
     authenticate_workflow()
     sources = snapshot()["sources"]
     d4_sources = historical_d4_sources()
+    from scripts import audit_phase_a_workflow_successor as phase_a
+    raw = phase_a.project_ls_tree(raw)
     lines = []
     for line in raw.splitlines(keepends=True):
         meta, sep, path = line.partition(b"\t")

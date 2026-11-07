@@ -332,6 +332,8 @@ def project_b4_workflow_tree(observed_tree: str) -> str:
         header, name = line.split(b"\t", 1)
         mode, kind, blob = header.decode("ascii").split(" ")
         name_text = name.decode("utf-8")
+        from scripts import audit_phase_a_workflow_successor as phase_a
+        blob = phase_a.project_tree_blob(name_text, blob)
         if name_text in replacements:
             require(kind == "blob", "B4 workflow successor is not a regular blob: " + name_text)
             blob = replacements[name_text]

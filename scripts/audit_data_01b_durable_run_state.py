@@ -231,6 +231,8 @@ def build_receipt():
         from scripts import audit_data_01c_restore_portability as d5
         d5.authenticate_workflow()
         changed = [path for path in changed if path != d5.WORKFLOW]
+    from scripts import audit_phase_a_workflow_successor as phase_a
+    changed = phase_a.filter_changed_paths(changed)
     # PR #461 changes only these two retained direct-share workflows, and the
     # current source is an offline-only revision. Keep D4's historical receipt
     # fixed while authenticating the current pair independently through A2 and
