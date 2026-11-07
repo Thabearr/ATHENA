@@ -3441,26 +3441,11 @@ def _authenticate_predecessors_uncached():
 def authenticate_predecessors():
     """Authenticate startup predecessors inside one bounded source-read scope."""
     from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
-    active = _active_a2_derivation_scope()
-    if active is not None:
-        contract = _a2_scoped_contract()
-        if contract is not None:
-            key = "a2.authenticate-predecessors"
-            cached = active.load_derivation(key, contract)
-            if cached is not None:
-                _verify_scoped_a2_live_state(active, directory=None, check_git=True)
-                return marshal.loads(cached)
     active = receipt_scope._ACTIVE_RECEIPT_SCOPES.get()
     if any(getattr(scope, "enabled", False)
            and getattr(scope, "unit", None) == receipt_scope._execution_unit()
            for scope in active.values()):
-        values = _authenticate_predecessors_uncached()
-        scope = _active_a2_derivation_scope()
-        contract = _a2_scoped_contract() if scope is not None else None
-        if scope is not None and contract is not None:
-            scope.store_derivation("a2.authenticate-predecessors", contract,
-                                   marshal.dumps(values, 4))
-        return values
+        return _authenticate_predecessors_uncached()
     roots = (sys.modules[__name__],)
     trusted = receipt_scope._auditor_contract_digest(*roots)
     with receipt_scope._bounded_receipt_scope(
