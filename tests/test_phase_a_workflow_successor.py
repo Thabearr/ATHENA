@@ -131,8 +131,9 @@ def test_e_deleted_workflow_fails_closed(tmp_path):
         phase_a.authenticate_current_bytes(root)
     with pytest.raises(phase_a.PhaseAWorkflowSuccessorError):
         phase_a.project_workflow_tree({".github/workflows/athena-run.yml": "e" * 40})
-    with pytest.raises(phase_a.PhaseAWorkflowSuccessorError):
-        phase_a.project_ls_tree(b"100644 blob " + b"e" * 40 + b"\t.github/workflows/athena-run.yml\n")
+    # A listing without PATH passes through; the caller's frozen hash then fails.
+    other = b"100644 blob " + b"e" * 40 + b"\t.github/workflows/athena-run.yml\n"
+    assert phase_a.project_ls_tree(other) == other
     with pytest.raises(phase_a.PhaseAWorkflowSuccessorError):
         phase_a.project_observed_identities({})
 
@@ -183,3 +184,17 @@ def test_ls_tree_and_identity_projections_are_exact():
 def test_changed_path_filter_admits_only_the_after_bytes():
     assert phase_a.filter_changed_paths(["a.py", phase_a.PATH]) == ["a.py"]
     assert phase_a.filter_changed_paths(["a.py"]) == ["a.py"]
+
+
+def test_before_bytes_derivation_is_exact_and_fails_closed(tmp_path):
+    assert phase_a.before_bytes() == _before_bytes()
+    flipped = _root_with(tmp_path / "flipped", _flip(_after_bytes()))
+    with pytest.raises(phase_a.PhaseAWorkflowSuccessorError):
+        phase_a.before_bytes(flipped)
+    main_state = _root_with(tmp_path / "main", _before_bytes())
+    assert phase_a.before_bytes(main_state) == _before_bytes()
+
+
+def test_review_a_reads_the_admitted_before_bytes():
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    assert review.source_bytes(phase_a.PATH) == _before_bytes()

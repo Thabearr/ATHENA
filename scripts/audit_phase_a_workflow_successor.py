@@ -27,6 +27,16 @@ BEFORE_SHA256 = "755cca90021183bbadf82ccb4ba3c90222eb088702f2e780aad8be9cebfe2c9
 AFTER_BLOB = "62dd84da0c426b0b03729cca5d9d7b4294fb0472"
 AFTER_SHA256 = "0ac54f9a5d2958e57d589f3e2489a0a7b505f6acc978a568906993960803c1e5"
 UNADMITTED = "phase A workflow successor: unadmitted current-shadow-all-market.yml blob"
+# The exact Phase A delta. BEFORE bytes are AFTER bytes minus these two hunks,
+# authenticated against BEFORE_SHA256, so no before object or fixture is needed.
+COPY_LINE = b"            '.cache/athena-research/current-shadow-sportybet-pc-upcoming-discovery' \\\n"
+VERIFY_BLOCK = (
+    b"          # Verify copied raw pages, manifests and capture epochs against the\n"
+    b"          # exact source tree and the completed run receipt before artifact upload.\n"
+    b"          # Runs last so a verification failure cannot skip the identity-state copy.\n"
+    b"          python -m scripts.verify_current_shadow_pc_upcoming_archive\n"
+    b"\n"
+)
 
 
 class PhaseAWorkflowSuccessorError(ValueError):
@@ -65,6 +75,20 @@ def authenticate_current_bytes(root: Path | None = None) -> str:
     raise AssertionError("unreachable")
 
 
+def before_bytes(root: Path | None = None) -> bytes:
+    """Main's exact reviewed workflow bytes, derived offline and authenticated."""
+    root = ROOT if root is None else root
+    state = authenticate_current_bytes(root)
+    raw = (root / PATH).read_bytes().replace(b"\r\n", b"\n")
+    if state == "AFTER":
+        if raw.count(COPY_LINE) != 1 or raw.count(VERIFY_BLOCK) != 1:
+            _fail("after bytes do not carry exactly one copy of each Phase A hunk")
+        raw = raw.replace(COPY_LINE, b"", 1).replace(VERIFY_BLOCK, b"", 1)
+    if (_git_blob_sha1(raw), hashlib.sha256(raw).hexdigest()) != (BEFORE_BLOB, BEFORE_SHA256):
+        _fail("derived before bytes are not the admitted before identity")
+    return raw
+
+
 def project_tree_blob(name: str, blob: str, *, root: Path | None = None) -> str:
     """Project one workflow-directory tree entry; every other entry is unchanged."""
     if name != NAME and name != PATH:
@@ -88,7 +112,11 @@ def project_workflow_tree(tree: Mapping[str, str], *, root: Path | None = None) 
 
 
 def project_ls_tree(raw: bytes, *, root: Path | None = None) -> bytes:
-    """Project a recursive ``git ls-tree -r`` listing; requires PATH to be present."""
+    """Project PATH in a ``git ls-tree -r`` listing; a listing without PATH is unchanged.
+
+    Callers also pass partial listings. When the full repository listing lacks
+    PATH, the caller's own frozen-hash comparison still fails closed.
+    """
     lines = []
     seen = 0
     for line in raw.splitlines(keepends=True):
@@ -99,8 +127,8 @@ def project_ls_tree(raw: bytes, *, root: Path | None = None) -> bytes:
             projected = project_tree_blob(PATH, blob.decode("ascii"), root=root)
             line = head + b" " + projected.encode("ascii") + sep + path
         lines.append(line)
-    if seen != 1:
-        _fail("workflow path is absent or duplicated in the tree listing")
+    if seen > 1:
+        _fail("workflow path is duplicated in the tree listing")
     return b"".join(lines)
 
 
