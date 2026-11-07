@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   source_admission:
-    name: athena-source-admission
+    name: ${{ github.event_name == 'pull_request_target' && 'athena-source-admission' || 'athena-source-admission-bootstrap' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -24,8 +24,9 @@ jobs:
           TARGET_HEAD: ${{ github.event.pull_request.head.sha }}
           TARGET_PR: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BOOTSTRAP_SELFTEST: ${{ github.event_name == 'pull_request' }}
         run: |
-          python - <<'PY'
+          cat > "$RUNNER_TEMP/athena-admission.py" <<'PY'
           import hashlib
           import json
           import os
@@ -184,3 +185,10 @@ jobs:
                   "sitecustomize current-to-V5 history is not exact")
           print("ATHENA source-admission: PR #465 historical sitecustomize transition authenticated")
           PY
+          python "$RUNNER_TEMP/athena-admission.py"
+          # A focused check of PR #465's pinned V5 transition.
+          # The trusted-main job never enters this bootstrap-only branch.
+          if [ "$BOOTSTRAP_SELFTEST" = "true" ] && [ "$TARGET_PR" = "468" ]; then
+            echo "Checking exact-head PR #465 historical admission proof"
+            TARGET_HEAD=e039d11aad40c76a52e7ef6503bbc81cdc37579e TARGET_PR=465 python "$RUNNER_TEMP/athena-admission.py"
+          fi
