@@ -1920,6 +1920,14 @@ class _ParentNodeProgress:
         import os
         if os.getpid() != self.pid:
             return
+        # The startup owner is only for the expensive pre-collection A2
+        # authentication. Test cases deliberately mutate and restore trusted
+        # seams, so retaining that owner through execution would incorrectly
+        # turn those independent-scope regressions into session failures.
+        scope = getattr(session.config, "_athena_a2_scope", None)
+        if scope is not None:
+            scope.__exit__(None, None, None)
+            session.config._athena_a2_scope = None
         nodeids = [item.nodeid if isinstance(item.nodeid, str) else str(item.nodeid)
                    for item in session.items]
         keys = [self._nodeid_key(nodeid) for nodeid in nodeids]
@@ -2530,7 +2538,7 @@ CI_ASSERTION_V8_DERIVATION_KEY = 'pass-a.ci-assertion-v8-chain-details-v1'
 # V9 authenticates the exact V383 current image before projecting the three
 # admitted source paths back to V8. V383 remains immutable and is V9's parent.
 CI_ASSERTION_V9_RECEIPT = 'tests/fixtures/architecture/ci_assertion_source_successor_v9/receipt.json'
-CI_ASSERTION_V9_SHA256 = 'f35b37ed6f6ca442048b4ddf81ec829c07ac898445d6cca041c30dee4ebcacb5'
+CI_ASSERTION_V9_SHA256 = '3fb098d880763b337ee484972decc44e936ea3423f242d8fb719c30d64643e4c'
 CI_ASSERTION_V9_SOURCE = CI_ASSERTION_V8_SOURCE
 CI_ASSERTION_V9_RETENTION_SOURCE = CI_ASSERTION_V8_RETENTION_SOURCE
 CI_ASSERTION_V9_TEST_SOURCE = 'tests/test_tests_shard_balance_successor.py'
