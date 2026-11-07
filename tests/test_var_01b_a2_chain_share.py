@@ -135,7 +135,7 @@ def test_shared_value_is_the_real_authenticated_chain_and_hits_reuse_it(tmp_path
     first = share.load()
     assert first == _real_loader()(str(directory))
     assert share.load() is first
-    assert share.metrics == {"hits": 1, "stores": 1, "unshared": 0}
+    assert (share.metrics["hits"], share.metrics["stores"], share.metrics["unshared"]) == (1, 1, 0)
 
 
 def test_restoring_good_bytes_after_tamper_reauthenticates(tmp_path):
@@ -186,7 +186,7 @@ def test_other_directories_are_never_shared(tmp_path):
     _seed(directory)
     share = _share(directory)
     share.load(str(directory) + "/")
-    assert share.metrics == {"hits": 0, "stores": 0, "unshared": 1}
+    assert (share.metrics["hits"], share.metrics["stores"], share.metrics["unshared"]) == (0, 0, 1)
 
 
 def test_in_place_mutation_of_shared_value_fails_the_session(tmp_path):
@@ -273,3 +273,197 @@ def test_tamper_matrix_in_a_fresh_process(tmp_path):
     output = subprocess.run([sys.executable, "-c", script, str(tmp_path)], cwd=boundary.ROOT,
                             check=True, capture_output=True, text=True).stdout
     assert json.loads(output.strip().splitlines()[-1]) == []
+
+
+# --- VAR-01c M1: callee identity is compared by object, never by id() -------
+def test_replaced_attribute_is_detected_even_after_the_original_is_freed(tmp_path):
+    import gc
+
+    directory = tmp_path / "chain"
+    _seed(directory)
+    module = types.ModuleType("a2_view")
+    module.__dict__.update(vars(boundary))
+    module.load_inventory_generations = _real_loader()
+    module.INVENTORY_DIRECTORY = str(directory)
+    module._var_01c_probe = [object()]
+    share = share_plugin._ChainShare(module)
+    share.load()
+    # Plain assignment, no monkeypatch; the test keeps no other reference to the
+    # original, so only the share's held capture keeps it alive.
+    module._var_01c_probe = [object()]
+    gc.collect()
+    share.load()
+    assert share.metrics["unshared"] == 1
+    _mutate_byte(directory)
+    expected = _outcome(lambda: _real_loader()(str(directory)))
+    assert expected[0] == "raise"
+    assert _outcome(share.load) == expected
+    assert share.metrics["unshared"] == 2
+
+
+def test_added_or_removed_attribute_bypasses_the_share(tmp_path):
+    directory = tmp_path / "chain"
+    _seed(directory)
+    share = _share(directory)
+    share.load()
+    share.a2.extra_attribute = 1
+    share.load()
+    del share.a2.extra_attribute
+    del share.a2.INVENTORY_PREFIX
+    share.load()
+    assert share.metrics["unshared"] == 2
+
+
+# --- VAR-01c M2: cheap stat key within a test, full re-hash first per test ---
+def _flip_middle_byte(directory):
+    target = _path(directory, 2)
+    raw = target.read_bytes()
+    mutated = raw.replace(b"LINUX_X86_64", b"LINUX_X86_65", 1)
+    assert mutated != raw and len(mutated) == len(raw)
+    target.write_bytes(mutated)
+
+
+def _flip_then_restore_times(directory):
+    target = _path(directory, 2)
+    before = os.stat(target)
+    _flip_middle_byte(directory)
+    os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+    after = os.stat(target)
+    assert (after.st_size, after.st_mtime_ns, after.st_ino) == \
+        (before.st_size, before.st_mtime_ns, before.st_ino)
+
+
+def _replace_via_rename(directory):
+    target = _path(directory, 2)
+    raw = target.read_bytes().replace(b"LINUX_X86_64", b"LINUX_X86_65", 1)
+    temporary = target.with_name(target.name + ".tmp")
+    temporary.write_bytes(raw)
+    os.replace(temporary, target)
+
+
+def _append_byte(directory):
+    with open(_path(directory, 2), "ab") as handle:
+        handle.write(b" ")
+
+
+M2_TAMPERS = {
+    "same_size_flip": _flip_middle_byte,
+    "flip_then_utime_restore": _flip_then_restore_times,
+    "replace_via_rename": _replace_via_rename,
+    "append_byte": _append_byte,
+}
+
+
+def _warm_in_test(share):
+    share.begin_test("tests/example.py::warm")
+    good = share.load()
+    assert share.load() is good
+    assert share.metrics["cheap_checks"] >= 1
+    return good
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cheap key is POSIX-only by design")
+@pytest.mark.parametrize("tamper", sorted(M2_TAMPERS))
+def test_cheap_key_tamper_inside_one_test_fails_closed(tmp_path, tamper):
+    directory = tmp_path / "chain"
+    _seed(directory)
+    share = _share(directory)
+    _warm_in_test(share)
+    M2_TAMPERS[tamper](directory)
+    expected = _outcome(lambda: _real_loader()(str(directory)))
+    assert expected[0] == "raise"
+    assert _outcome(share.load) == expected
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cheap key is POSIX-only by design")
+def test_delete_and_restore_identical_bytes_is_accepted(tmp_path):
+    directory = tmp_path / "chain"
+    _seed(directory)
+    share = _share(directory)
+    good = _warm_in_test(share)
+    target = _path(directory, 2)
+    raw = target.read_bytes()
+    target.unlink()
+    target.write_bytes(raw)
+    full_before = share.metrics["full_checks"]
+    assert share.load() is good
+    assert share.metrics["full_checks"] == full_before + 1
+    # The refreshed stat key is used again for the next load in this test.
+    cheap_before = share.metrics["cheap_checks"]
+    assert share.load() is good
+    assert share.metrics["cheap_checks"] == cheap_before + 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cheap key is POSIX-only by design")
+@pytest.mark.parametrize("order", ["forward", "reversed"])
+def test_cheap_key_tamper_matrix_is_order_independent(tmp_path, order):
+    names = sorted(M2_TAMPERS)
+    if order == "reversed":
+        names.reverse()
+    for index, name in enumerate(names):
+        directory = tmp_path / f"chain-{index}"
+        _seed(directory)
+        share = _share(directory)
+        _warm_in_test(share)
+        M2_TAMPERS[name](directory)
+        assert _outcome(share.load) == _outcome(lambda: _real_loader()(str(directory))), name
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cheap key is POSIX-only by design")
+def test_cheap_key_tamper_matrix_in_a_fresh_process(tmp_path):
+    script = (
+        "import sys, json\n"
+        "sys.path.insert(0, 'tests')\n"
+        "import test_var_01b_a2_chain_share as t\n"
+        "from pathlib import Path\n"
+        "root = Path(sys.argv[1])\n"
+        "bad = []\n"
+        "for i, name in enumerate(sorted(t.M2_TAMPERS)):\n"
+        "    d = root / f'c{i}'\n"
+        "    t._seed(d)\n"
+        "    s = t._share(d)\n"
+        "    t._warm_in_test(s)\n"
+        "    t.M2_TAMPERS[name](d)\n"
+        "    if t._outcome(s.load) != t._outcome(lambda: t._real_loader()(str(d))):\n"
+        "        bad.append(name)\n"
+        "print(json.dumps(bad))\n"
+    )
+    output = subprocess.run([sys.executable, "-c", script, str(tmp_path)], cwd=boundary.ROOT,
+                            check=True, capture_output=True, text=True).stdout
+    assert json.loads(output.strip().splitlines()[-1]) == []
+
+
+def test_first_load_of_every_test_uses_the_full_key(tmp_path):
+    directory = tmp_path / "chain"
+    _seed(directory)
+    share = _share(directory)
+    share.cheap_allowed = True
+    _warm_in_test(share)
+    share.begin_test("tests/example.py::next")
+    full_before, cheap_before = share.metrics["full_checks"], share.metrics["cheap_checks"]
+    share.load()
+    assert share.metrics["full_checks"] == full_before + 1
+    assert share.metrics["cheap_checks"] == cheap_before
+
+
+def test_windows_branch_always_uses_the_full_key(tmp_path):
+    directory = tmp_path / "chain"
+    _seed(directory)
+    share = _share(directory)
+    share.cheap_allowed = False  # the os.name == "nt" branch
+    share.begin_test("tests/example.py::nt")
+    good = share.load()
+    for _ in range(3):
+        assert share.load() is good
+    assert share.metrics["cheap_checks"] == 0
+    assert share.metrics["full_checks"] >= 4
+    _flip_then_restore_times(directory) if os.name != "nt" else _flip_middle_byte(directory)
+    expected = _outcome(lambda: _real_loader()(str(directory)))
+    assert _outcome(share.load) == expected
+
+
+def test_install_selects_cheap_key_only_off_windows():
+    module = types.ModuleType("a2_view")
+    module.__dict__.update(vars(boundary))
+    share = share_plugin._ChainShare(module)
+    assert share.cheap_allowed is (os.name != "nt")
