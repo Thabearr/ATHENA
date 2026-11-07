@@ -87,6 +87,18 @@ def validate_snapshot(value: dict) -> None:
 
 
 def authenticate_sources() -> dict:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    scope = receipt_scope._active_receipt_scope("drive-transfer-v4-sources")
+    cached = None if scope is None else scope.load()
+    if cached is not None:
+        return cached
+    snapshot = _authenticate_sources()
+    if scope is not None:
+        scope.store(snapshot)
+    return snapshot
+
+
+def _authenticate_sources() -> dict:
     snapshot = authenticated_json(SNAPSHOT_PATH, SNAPSHOT_SHA256)
     validate_snapshot(snapshot)
     history = authenticated_json(HISTORY_PATH, HISTORY_SHA256)

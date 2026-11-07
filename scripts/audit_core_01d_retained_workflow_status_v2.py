@@ -62,6 +62,11 @@ HISTORICAL_SUPPORTING_SOURCE_PREDECESSORS = {
         "git_blob_sha1": "77927732b2abc2b13f20a4979ad7092307873900",
         "source_sha256": "1e6cde7b5414847c2bd1fed4996d1e02deaf022bc2efaf56f9df696443ffaf22",
     },
+    "tests/test_p4_2_athena_run_workflow.py": {
+        "fixture_path": "tests/fixtures/architecture/phase_a_retention/historical_consumers/tests--test_p4_2_athena_run_workflow.py.txt",
+        "git_blob_sha1": "c8d83b0c39c8d8eff4abf698405e26d60bbeefbf",
+        "source_sha256": "9502109759e17534bc11ce2052e6fa6f7852513f8118b0194af186349f626f70",
+    },
 }
 PAYLOAD_FIXTURE_SHA256 = "d596baef519ef1ac3ad459b0f49f4acf58557d416c549c159f3bd30d13b15ad0"
 HISTORICAL_BLOCKER = "PROTECTED_FRESH_HOLDOUT_PR119_EXACT_FALLBACK_NOT_DURABLY_RECOVERED"
@@ -396,6 +401,18 @@ def _evolution_context() -> tuple[dict, str]:
 
 
 def build_receipt() -> dict:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    scope = receipt_scope._active_receipt_scope("checkpoint-retained-status-v2")
+    cached = None if scope is None else scope.load()
+    if cached is not None:
+        return cached
+    value = _build_receipt()
+    if scope is not None:
+        scope.store(value)
+    return value
+
+
+def _build_receipt() -> dict:
     predecessor = _read_v1()
     require(predecessor["missing_artifact_count"] == 8
             and predecessor["exact_archive_recovered_count"] == 0
@@ -699,6 +716,11 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, RetainedWorkflowStatusV2Error, TypeError, ValueError, yaml.YAMLError) as exc:
         print(json.dumps({"result": "BLOCKED", "error": str(exc)}, sort_keys=True), file=sys.stderr)
         return 1
+
+
+from scripts import audit_core_01d_checkpoint_e_completion_v8 as _receipt_scope_module
+_TRUSTED_RETAINED_STATUS_V2_CONTRACT = _receipt_scope_module._auditor_contract_digest(
+    sys.modules[__name__])
 
 
 if __name__ == "__main__":

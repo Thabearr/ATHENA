@@ -344,7 +344,11 @@ def audit(latest=None):
                    # current bytes are authenticated through the A2 inventory.
                    "scripts/audit_core_01d_checkpoint_e_completion.py",
                    "scripts/audit_core_01d_checkpoint_e_completion_v2.py",
-                   "scripts/audit_core_01d_port02c_trigger_authority_b6.py"}
+                   "scripts/audit_core_01d_port02c_trigger_authority_b6.py",
+                   # RCV-04 advances the retained-workflow V4 auditor through an
+                   # exact source-forward receipt; authenticate its current bytes
+                   # through the latest A2 inventory while preserving D5 history.
+                   "scripts/audit_core_01d_retained_workflow_status_v4.py"}
         # Exact RUN-02A prerequisite historical audit seams. Their current
         # source is authenticated below; historical receipt bytes stay frozen.
         evolved |= {"scripts/audit_core_01d_sportybet_current_trigger_authority_b4.py",
@@ -404,6 +408,20 @@ def audit(latest=None):
         "scripts/audit_core_01d_owner_one_shot_issue_comment_authority_b3.py",
         "scripts/audit_core_01d_frozen_artifact_replay_authority_b5.py",
         "scripts/audit_core_01d_scheduled_shadow_ownership.py"}
+        # RCV-04's bounded checkpoint receipt scopes are current-source
+        # successors. Their exact bytes are authenticated by the current A2
+        # inventory; D5's retained historical projection remains unchanged.
+        evolved |= {"scripts/audit_core_01d_checkpoint_e_completion_v8.py",
+                    "scripts/audit_core_01d_checkpoint_e_completion_v9.py",
+                    "scripts/audit_core_01d_checkpoint_e_completion_v10.py",
+                    "scripts/audit_core_01d_win_either_half_trigger_authority_b7.py"}
+        from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+        retention.authenticate()
+        evolved |= {"tests/test_p4_2_athena_run_workflow.py",
+                    "tests/test_p4_4a_workflow_evolution_guard.py"}
+        # The source-only restoration contract authenticates this exact V3
+        # historical identity seam before the unchanged D5/A2 comparison.
+        evolved |= {retention.RESTORED_V3_PATH}
         # UX-01A's APP auditor now authenticates the UI successor while the
         # immutable D5 predecessor remains unchanged; bind its current bytes by A2.
         evolved |= {"scripts/audit_app_01a_local_shell.py"}

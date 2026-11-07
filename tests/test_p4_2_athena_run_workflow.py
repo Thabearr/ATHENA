@@ -287,4 +287,9 @@ def test_protected_and_legacy_workflows_remain_exact_base_bytes():
                 relative,
                 (None, latest_maintenance.get(relative, {"git_blob_sha1": expected})),
             )[1]
+            from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+            if relative == retention.WORKFLOW:
+                retention.authenticate()
+                assert retention.BEFORE["git_blob_sha1"] == expected_current["git_blob_sha1"]
+                expected_current = retention.AFTER
             assert audit._git_blob_sha1(relative) == expected_current["git_blob_sha1"]

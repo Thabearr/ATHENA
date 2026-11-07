@@ -42,6 +42,12 @@ def historical_tracked(root, path):
     current = receipt["production_source_identities"].get(str(path))
     if current is not None:
         live, live_identity = read_tracked_head_blob(root, path)
+        from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+        if str(path) == retention.WORKFLOW:
+            retention.authenticate()
+            # Authenticate the live successor first; the frozen cutover receipt
+            # continues to compare against its exact pre-retention producer.
+            live, live_identity = read_tracked_head_blob(root, retention.FIXTURE)
         if live_identity.git_blob_sha1 != current["git_blob_sha1"] or live_identity.git_blob_payload_sha256 != current["source_sha256"]:
             raise ValueError("unreviewed current producer source: " + str(path))
     raw, identity = read_tracked_head_blob(root, entry["fixture"])

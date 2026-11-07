@@ -312,3 +312,31 @@ def test_child_cannot_remove_kernel_filter():
     result = subprocess.run([sys.executable, "-c",
         "import offline_linux as k; import errno; assert k.native_socket_probe()==errno.EPERM"], capture_output=True)
     assert result.returncode == 0, result.stderr
+
+
+
+@pytest.mark.parametrize("unsafe_mode,reparse", [(0o120000, 0), (0o100000, 0), (0o040000, 0x400)])
+def test_retention_source_parent_is_rejected_before_descendant_lookup(tmp_path, monkeypatch, unsafe_mode, reparse):
+    """Synthetic lstat seam proves ordering; this is not native link qualification."""
+    from types import SimpleNamespace
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    root = tmp_path / "repository"
+    parent = root / "evidence"
+    parent.mkdir(parents=True)
+    leaf = parent / "receipt.json"
+    leaf.write_bytes(b"unchanged")
+    monkeypatch.setattr(retention, "ROOT", root)
+    assert retention._safe_materialized("evidence/receipt.json") == leaf
+    original = Path.lstat
+    inspected = []
+    def inspect(path):
+        if path == leaf:
+            pytest.fail("descendant metadata queried before unsafe parent rejection")
+        if path == parent:
+            inspected.append(path)
+            return SimpleNamespace(st_mode=unsafe_mode, st_file_attributes=reparse)
+        return original(path)
+    monkeypatch.setattr(Path, "lstat", inspect)
+    with pytest.raises(ValueError, match="linked or nonregular"):
+        retention._safe_materialized("evidence/receipt.json")
+    assert inspected == [parent]

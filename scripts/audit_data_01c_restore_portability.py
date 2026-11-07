@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 
 from scripts.qualify_data_01c_restore_portability import canonical, NODEIDS, PHASES, validate_receipt
 
@@ -181,7 +182,7 @@ def successor_context():
     return _successor_context(expected_e3_native_workflow())
 
 
-def authenticate_workflow():
+def _authenticate_workflow_uncached():
     for path, digest in FROZEN_EVIDENCE.items():
         if hashlib.sha256((ROOT / path).read_bytes().replace(b"\r\n", b"\n")).hexdigest() != digest:
             raise ValueError("frozen PORT-02C historical evidence drift: " + path)
@@ -199,17 +200,42 @@ def authenticate_workflow():
     ).strip()
     from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
     projected_tree = b4.project_b4_workflow_tree(actual_tree)
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    projected_tree = retention.project_b4_tree(projected_tree)
     if projected_tree != tree:
         raise ValueError("direct-share workflow successors exceed the exact B4-to-D5 workflow projection")
     for row in entries:
         path = ".github/workflows/" + row["name"]
         if path in b4.B4_WORKFLOW_PREDECESSORS:
             continue
+        from scripts import audit_tests_shard_balance_successor as shards
+        if path == shards.WORKFLOW and actual_tree in {shards.AFTER_TREE, shards.V3_AFTER_TREE}:
+            shards.authenticate()
+            continue
+        if path == retention.WORKFLOW and shards.project_tree(actual_tree) == retention.AFTER_TREE:
+            retention.authenticate()
+            continue
         source = (directory / row["name"]).read_bytes().replace(b"\r\n", b"\n")
         expected_blob = after["git_blob_sha1"] if row["name"] == "port-02c-native-runtime.yml" else row["blob"]
         if identity(source)["git_blob_sha1"] != expected_blob:
             raise ValueError("unrelated workflow changed in D5 successor: " + row["name"])
     return after, tree
+
+
+def authenticate_workflow():
+    """Authenticate current workflow state, reusing only within checkpoint scope."""
+    if authenticate_workflow.__code__ is not _TRUSTED_AUTHENTICATE_WORKFLOW_CODE:
+        raise ValueError("PORT-02C workflow verifier code changed")
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    scope = pass_a._active_checkpoint_derivation_scope()
+    if scope is not None and getattr(scope, "enabled", False):
+        from scripts import audit_checkpoint_e_workflows as checkpoint
+        return checkpoint._scoped_portability_authenticate_workflow()
+    return _authenticate_workflow_uncached()
+
+
+_TRUSTED_AUTHENTICATE_WORKFLOW_CODE = authenticate_workflow.__code__
+_TRUSTED_AUTHENTICATE_WORKFLOW = authenticate_workflow
 
 
 def authenticated_current_workflow_tree():
@@ -226,7 +252,8 @@ def historical_workflow_tree(observed_tree):
     _, d5_tree = d5_successor_context()
     _, tree = authenticate_workflow()
     actual_tree = authenticated_current_workflow_tree()
-    if observed_tree not in {d5_tree, tree, actual_tree}:
+    from scripts import audit_tests_shard_balance_successor as shards
+    if observed_tree not in {d5_tree, tree, actual_tree, shards.BEFORE_TREE}:
         raise ValueError("unknown PORT-02C source-forward workflow tree")
     return PREDECESSOR_TREE
 

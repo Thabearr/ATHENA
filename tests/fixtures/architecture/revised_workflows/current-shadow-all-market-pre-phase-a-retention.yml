@@ -1,0 +1,280 @@
+name: ATHENA Current Shadow daily + on-demand
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_size:
+        description: Requested research fold target, 1..50 (never padded)
+        required: true
+        default: "20"
+        type: string
+      fixture_scope:
+        description: Legacy today-only or three-day research horizon
+        required: true
+        default: today
+        type: choice
+        options:
+          - today
+          - three-day
+      fixture_dates:
+        description: Optional comma-separated UTC YYYYMMDD dates, 1..7 inside today..today+6
+        required: false
+        default: ""
+        type: string
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: current-shadow-all-market
+  cancel-in-progress: false
+
+jobs:
+  current-shadow-all-market:
+    if: github.event_name != 'issue_comment' || (github.event.issue.number == 276 && github.event.comment.user.login == github.repository_owner && startsWith(github.event.comment.body, '/athena-shadow '))
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact requested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Restore latest trusted-main durable-history prime artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cache_dir='.cache/athena-research/current-shadow-history-github-binary-cache-v1'
+          restored=false
+          mapfile -t prime_runs < <(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/current-shadow-history-cache-prime.yml/runs?status=success&per_page=10" \
+              --jq '.workflow_runs[] | select(.head_branch == "main") | [.id, .head_sha] | @tsv'
+          )
+          for run_row in "${prime_runs[@]}"; do
+            IFS=$'\t' read -r run_id run_sha <<< "${run_row}"
+            if ! [[ "${run_id}" =~ ^[0-9]+$ ]] || ! [[ "${run_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+              continue
+            fi
+            rm -rf /tmp/athena-current-shadow-history-prime
+            mkdir -p /tmp/athena-current-shadow-history-prime
+            if gh run download "${run_id}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --name current-shadow-history-cache-prime \
+              --dir /tmp/athena-current-shadow-history-prime >/dev/null 2>&1
+            then
+              if python -m scripts.restore_current_shadow_history_prime_artifact \
+                --artifact-dir /tmp/athena-current-shadow-history-prime \
+                --cache-dir "${cache_dir}" \
+                --expected-prime-commit-sha "${run_sha}"
+              then
+                echo "Restored verified durable-history prime artifact from trusted main run ${run_id} at ${run_sha}."
+                restored=true
+                break
+              fi
+            fi
+          done
+          if [ "${restored}" != true ]; then
+            echo "No valid trusted-main durable-history prime artifact was restorable; using verified live transport fallback."
+          fi
+
+      - name: Resolve daily/on-demand request
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TARGET_SIZE: ${{ inputs.target_size }}
+          INPUT_FIXTURE_SCOPE: ${{ inputs.fixture_scope }}
+          INPUT_FIXTURE_DATES: ${{ inputs.fixture_dates }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          case "${EVENT_NAME}" in
+            schedule)
+              target_size="20"
+              fixture_scope="today"
+              fixture_dates=""
+              ;;
+            workflow_dispatch)
+              target_size="${INPUT_TARGET_SIZE}"
+              fixture_scope="${INPUT_FIXTURE_SCOPE}"
+              fixture_dates="${INPUT_FIXTURE_DATES}"
+              ;;
+            issue_comment)
+              parsed="$(python -m scripts.resolve_athena_shadow_issue_comment)" || {
+                echo "ATHENA request comment does not match the reviewed command grammar" >&2
+                exit 2
+              }
+              target_size="$(printf '%s\n' "${parsed}" | sed -n '1p')"
+              fixture_scope="$(printf '%s\n' "${parsed}" | sed -n '2p')"
+              fixture_dates="$(printf '%s\n' "${parsed}" | sed -n '3p')"
+              ;;
+            *)
+              echo "unsupported ATHENA trigger: ${EVENT_NAME}" >&2
+              exit 2
+              ;;
+          esac
+
+          if ! [[ "${target_size}" =~ ^[0-9]+$ ]] || [ "${target_size}" -lt 1 ] || [ "${target_size}" -gt 50 ]; then
+            echo "target_size must be an integer from 1 through 50" >&2
+            exit 2
+          fi
+          case "${fixture_scope}" in
+            today|three-day) ;;
+            *)
+              echo "fixture_scope must be today or three-day" >&2
+              exit 2
+              ;;
+          esac
+
+          if [ -n "${fixture_dates}" ]; then
+            ATHENA_REQUESTED_DATES="${fixture_dates}" python - <<'PY'
+          import datetime as dt
+          import os
+          from domain import current_shadow_fixture_date_request as request
+
+          values = request.parse_fixture_dates_text(os.environ["ATHENA_REQUESTED_DATES"])
+          request.validate_fixture_dates(values, current_utc=dt.datetime.now(dt.timezone.utc))
+          PY
+          fi
+
+          printf 'ATHENA_TARGET_SIZE=%s\n' "${target_size}" >> "${GITHUB_ENV}"
+          printf 'ATHENA_FIXTURE_SCOPE=%s\n' "${fixture_scope}" >> "${GITHUB_ENV}"
+          printf 'ATHENA_FIXTURE_DATES=%s\n' "${fixture_dates}" >> "${GITHUB_ENV}"
+          printf 'Resolved ATHENA request: target=%s scope=%s dates=%s\n' \
+            "${target_size}" "${fixture_scope}" "${fixture_dates:-legacy-scope}"
+
+      - name: Restore fixed PR119 materialized bootstrap
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .cache/athena-research/pr119-bootstrap
+          gh release download athena-fresh-holdout-bootstrap-v1 \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern pr119-materialized.ndjson \
+            --dir .cache/athena-research/pr119-bootstrap \
+            --clobber
+          printf '%s  %s\n' \
+            'e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2' \
+            '.cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson' \
+            | sha256sum --check --strict
+
+      - name: Restore prior persistent Shadow identity state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state_dir='.cache/athena-research/current-shadow-fixture-identity-v2'
+          state_name='current-shadow-fixture-identity-v2-state.json'
+          state_path="${state_dir}/${state_name}"
+          mkdir -p "${state_dir}"
+          printf 'ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH=%s\n' "${state_path}" >> "${GITHUB_ENV}"
+
+          mapfile -t prior_runs < <(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/current-shadow-all-market.yml/runs?status=success&per_page=5" \
+              --jq '.workflow_runs[].id'
+          )
+          for run_id in "${prior_runs[@]}"; do
+            if [ "${run_id}" = "${GITHUB_RUN_ID}" ]; then
+              continue
+            fi
+            rm -rf /tmp/athena-prior-shadow
+            mkdir -p /tmp/athena-prior-shadow
+            if gh run download "${run_id}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --name current-shadow-all-market-request \
+              --dir /tmp/athena-prior-shadow >/dev/null 2>&1
+            then
+              candidate="$(find /tmp/athena-prior-shadow -type f -name "${state_name}" -print -quit)"
+              if [ -n "${candidate}" ]; then
+                cp "${candidate}" "${state_path}"
+                echo "Restored persistent Shadow identity state from run ${run_id}."
+                break
+              fi
+            fi
+          done
+
+      - name: Resolve exact lineage main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          lineage_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          test "${#lineage_main_sha}" -eq 40
+          printf 'ATHENA_EXPECTED_LINEAGE_MAIN_SHA=%s\n' "${lineage_main_sha}" >> "${GITHUB_ENV}"
+
+      - name: Execute current research Shadow request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATHENA_PR119_BOOTSTRAP_PATH: .cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson
+          ATHENA_CURRENT_SHADOW_HISTORY_CACHE_DIR: .cache/athena-research/current-shadow-history-github-binary-cache-v1
+        run: |
+          args=(
+            --target-size "${ATHENA_TARGET_SIZE}"
+            --fixture-scope "${ATHENA_FIXTURE_SCOPE}"
+            --output-dir artifacts/current-shadow-all-market
+          )
+          if [ -n "${ATHENA_FIXTURE_DATES}" ]; then
+            args+=(--fixture-dates "${ATHENA_FIXTURE_DATES}")
+          fi
+          python -m scripts.execute_current_shadow_request "${args[@]}"
+
+      - name: Preserve exact current source evidence
+        if: always()
+        run: |
+          evidence_root='artifacts/current-shadow-all-market/source-evidence'
+          mkdir -p "${evidence_root}"
+          for source_dir in \
+            '.cache/athena-research/current-shadow-sportybet-catalog-fanout' \
+            '.cache/athena-research/current-shadow-sportybet-upcoming-discovery' \
+            '.cache/athena-research/sportybet-live-event-quote-evidence' \
+            '.cache/athena-research/fotmob-data-matches-captures'
+          do
+            if [ -d "${source_dir}" ]; then
+              cp -a "${source_dir}" "${evidence_root}/"
+            fi
+          done
+
+          if [ -n "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH:-}" ] \
+            && [ -f "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH}" ]
+          then
+            identity_root='artifacts/current-shadow-all-market/identity-state'
+            mkdir -p "${identity_root}"
+            cp "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH}" "${identity_root}/"
+          fi
+
+      - name: Email durable Shadow result when configured
+        if: always()
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        run: |
+          receipt='artifacts/current-shadow-all-market/current-shadow-all-market-run-receipt.json'
+          if [ ! -f "${receipt}" ]; then
+            echo "ATHENA email delivery skipped: durable Shadow run receipt is unavailable."
+            exit 0
+          fi
+          python -m scripts.send_current_shadow_email \
+            --receipt "${receipt}" \
+            --delivery-receipt 'artifacts/current-shadow-all-market/current-shadow-email-delivery-receipt.json'
+
+      - name: Upload durable research receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: current-shadow-all-market-request
+          path: artifacts/current-shadow-all-market
+          if-no-files-found: error
+          retention-days: 30

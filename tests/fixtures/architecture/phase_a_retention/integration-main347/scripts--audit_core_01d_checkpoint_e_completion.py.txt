@@ -1,0 +1,756 @@
+"""Independent 19-criterion current status; retention acceptance is not completion."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+
+import yaml
+
+from scripts import audit_core_01d_historical_retention_acceptance as policy
+from scripts import audit_core_01d_retained_workflow_status_v5 as v5
+from scripts import audit_p4_workflow_evolution_ledger as evolution
+from scripts import audit_core_01d_scheduled_shadow_ownership as schedule
+
+ROOT = policy.ROOT
+POLICY_ID = "ATHENA_CORE_01D_CHECKPOINT_E_COMPLETION_V1"
+RECEIPT_PATH = v5.COMPLETION_PATH
+CRITERIA = (
+    "canonical_workflow_family_exists",
+    "all_live_workflows_and_triggers_enumerated",
+    "every_surface_has_successor_or_explicit_retained_disposition",
+    "canonical_artifact_roles_and_failed_producer_guard_preserved",
+    "notification_explicit_and_non_authoritative",
+    "retirement_requires_complete_evidence_no_unreviewed_deletions",
+    "no_supported_current_run_depends_on_date_hardcoded_workflow",
+    "historical_sources_and_evolution_prefix_preserved",
+    "clean_successor_gate_satisfied",
+    "scheduled_shadow_canonical_ownership_proven_preserving_main",
+    "all_retained_workflow_authority_and_dynamic_reachability_review_complete",
+    "no_supported_current_operation_depends_on_unavailable_exact_historical_artifact",
+    "historical_retention_limitations_explicitly_dispositioned",
+    "no_unknown_current_artifact_or_notification_authority",
+    "no_new_retirement_or_deletion_required_for_checkpoint_e",
+    "workflow_evolution_current_state_authenticated",
+    "existing_retirement_ledger_authenticated",
+    "live_side_effect_count_for_pass4",
+    "semantic_delta_for_pass4",
+)
+COMPLETE_TERMINAL = "CORE_01D_HISTORICAL_RETENTION_ACCEPTANCE_REVIEW_READY_CHECKPOINT_E_COMPLETE_DO_NOT_MERGE"
+BLOCKED_TERMINAL = "CORE_01D_HISTORICAL_RETENTION_ACCEPTANCE_REVIEW_READY_CHECKPOINT_E_STILL_BLOCKED_DO_NOT_MERGE"
+ALLOWED_PASS4_PATHS = {
+    policy.RECEIPT_PATH, v5.RECEIPT_PATH, RECEIPT_PATH,
+    "scripts/audit_core_01d_historical_retention_acceptance.py",
+    "scripts/audit_core_01d_retained_workflow_status_v5.py",
+    "scripts/audit_core_01d_checkpoint_e_completion.py",
+    policy.SNAPSHOT_PATH,
+    "tests/test_core_01d_historical_retention_acceptance.py",
+    "tests/test_core_01d_checkpoint_e_completion.py",
+    "scripts/audit_checkpoint_e_workflows.py",
+    "docs/architecture/core_01d_checkpoint_e.md",
+    "tests/test_core_01d_canonical_drive_transfer_completed_history.py",
+}
+APP01C_BOUNDED_PATHS = {
+    "api/app_factory.py",
+    "api/schemas.py",
+    "api/server.py",
+    "api/v1/common.py",
+    "api/v1/exports.py",
+    "api/v1/fixtures.py",
+    "api/v1/runs.py",
+    "docs/product/app_01c_versioned_api.md",
+    "run_desktop.py",
+    "scripts/audit_checkpoint_e_workflows.py",
+    "scripts/audit_core_01d_checkpoint_e_completion_v2.py",
+    "services/athena_capability_service.py",
+    "services/athena_read_service.py",
+    "tests/fixtures/core_01d/app_01c_historical/api_server.py.b64",
+    "tests/fixtures/core_01d/app_01c_historical/checkpoint_e_completion.py.b64",
+    "tests/fixtures/core_01d/app_01c_historical/run_desktop.py.txt",
+    "tests/fixtures/core_01d/app_01c_historical/test_api_error_handling.py.txt",
+    "tests/fixtures/core_01d/app_01c_historical/test_product_baseline_v1.py.txt",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v31.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v32.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v33.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v34.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v35.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v36.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v37.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v38.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v39.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v40.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v41.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v42.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v43.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v44.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v45.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v46.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v47.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v48.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v49.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v50.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v51.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v52.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v53.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v54.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v55.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v56.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v57.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v58.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v59.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v60.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v61.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v62.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v63.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v64.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v65.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v66.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v67.json",
+    "tests/fixtures/core_01d/ci-offline-transport-boundary-source-inventory-v68.json",
+    "tests/test_api_error_handling.py",
+    "tests/test_app_01a_local_shell.py",
+    "tests/test_app_01b_preview_admission.py",
+    "tests/test_app_01c_versioned_read_api.py",
+    "tests/test_core_01d_ci_offline_transport_inventory_evolution.py",
+    "tests/test_core_01d_exact_pr_trigger_disposition_b1.py",
+    "tests/test_core_01d_frozen_artifact_replay_authority_b5.py",
+    "tests/test_core_01d_owner_one_shot_issue_comment_authority_b3.py",
+    "tests/test_core_01d_port02c_trigger_authority_b6.py",
+    "tests/test_product_baseline_v1.py",
+}
+APP01C_CURRENT_SOURCE_PATHS = {
+    "scripts/audit_core_01d_authority_reachability_review_a.py",
+}
+APP01C_PREDECESSOR_SOURCE_BLOBS = {
+    "scripts/audit_core_01d_authority_reachability_review_a.py":
+        "036e483000ce07b2dab5fb7136e4992820026262",
+}
+
+INCIDENT_20261010_PREDECESSOR_BLOBS = {
+    "artifacts/product/data_01c_app_store_complete_v1.json":
+        "6727c011ead7da533a8af00ef4c4b352ea35492b",
+    "domain/current_shadow_sportybet_pc_upcoming_reconciliation.py":
+        "1aa242e6db460c66b388b1acfd43859d382c82f9",
+    "scripts/audit_p4_4q_pc_upcoming_simple_tournament_identity.py":
+        "45b046ad0e6f44823561fe39ab43d03b80c2eab5",
+    "scripts/audit_p4_4r_shadow_runtime_composition_stabilization.py":
+        "ac9c320157b4230288203e67c3e31df9914ad5b8",
+    "scripts/verify_p3_0_e1_live_readiness.py":
+        "968781d51a3d2b2a7ebb6aa85d998ba888aa47dc",
+    "tests/test_current_shadow_sportybet_pc_upcoming_reconciliation.py":
+        "81d71a20f0dcca8204eeb7b8d8a9c6b268f09ef5",
+    "tests/test_p3_0_e1_source_diagnostics_auditor.py":
+        "ddf261c7bbda34331dc5590ba68fbbf4d6a3ee81",
+    "tests/test_p4_4n_sportybet_team_label_shape_compatibility.py":
+        "5bef37d4a8f25b9c693441c089ca723b7ee0bdd2",
+    "tests/test_p4_4o_pc_upcoming_stable_epoch_recovery.py":
+        "3e16c2df91f4fab539bca51b5bd9d077b15d1fec",
+    "tests/test_p4_4o_pc_upcoming_stable_epoch_recovery_audit.py":
+        "6725e92b83c55bc8d510f3177d0fc6f8e50df051",
+    "tests/test_p4_4p_pc_upcoming_preparse_response_evidence.py":
+        "1355855d4427d401307f9d02ff60e5439eb7424f",
+    "tests/test_p4_4q_pc_upcoming_simple_tournament_identity.py":
+        "7bb5659ee6020c0c9f36ff105297c5048c9f83d7",
+}
+INCIDENT_20261010_NEW_PATHS = {
+    "tests/fixtures/core_01d/inc_20261010/inc_20261010_pc_upcoming_bounded_epoch_stabilization_v1.json",
+    "scripts/audit_inc_20261010_pc_upcoming_bounded_epoch_stabilization.py",
+    "tests/test_inc_20261010_pc_upcoming_bounded_epoch_stabilization.py",
+    "tests/fixtures/core_01d/inc_20261010/pc-upcoming-reconciliation-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/verify-p3-live-readiness-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/audit-p44q-simple-tournament-identity-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/audit-p44r-runtime-composition-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-current-shadow-pc-upcoming-reconciliation-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p3-e1-source-diagnostics-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p44n-team-label-shape-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p44o-stable-epoch-recovery-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p44o-stable-epoch-recovery-audit-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p44p-preparse-response-evidence-predecessor.py.txt",
+    "tests/fixtures/core_01d/inc_20261010/test-p44q-simple-tournament-identity-predecessor.py.txt",
+}
+RUN_01B_ADDITIVE_PATHS = {
+    "artifacts/product/run_01b_worker_lifecycle_v1.json",
+    "docs/product/run_01b_worker_lifecycle.md",
+    "scripts/audit_run_01b_worker_lifecycle.py",
+    "services/worker_coordinator.py",
+    "tests/native/test_run_01b_worker_coordinator_native.py",
+    "tests/test_run_01b_worker_lifecycle.py",
+}
+ALLOWED_PASS4_PATHS |= APP01C_BOUNDED_PATHS | APP01C_CURRENT_SOURCE_PATHS | RUN_01B_ADDITIVE_PATHS
+RUN_02A_PRE_ADDITIVE_PATHS = {
+    "artifacts/product/run_02a_pre_durable_share_send_v1.json",
+    "docs/product/run_02a_pre_durable_share_send.md",
+    "scripts/audit_run_02a_pre_durable_share_send.py",
+    "services/durable_share_code_transport.py",
+    "tests/test_run_02a_pre_durable_share_send.py",
+    "tests/native/test_run_02a_pre_share_send_publication.py",
+    "tests/fixtures/core_01d/run_01b_historical/source_bytes_v1.json",
+    "tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/direct-share-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/auth-worker-boundary-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/run-repository-pr463-base.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/athena-job-service-pr463-base.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/auth-worker-boundary-pr463-base.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/worker-entry-pr463-base.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/test-worker-launcher-pr463-base.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/audit-run-01a-admission-pr463-base.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr463/run-desktop-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr463/test-run-01a-durable-admission-predecessor.py.txt",
+    "tests/fixtures/core_01d/run_01a_historical/pr463/test-data-01c-app-storage-predecessor.py.txt",
+    "runtime/worker_startup_gate.py",
+    "services/worker_process_control.py",
+    "services/recovery_service.py",
+    "tests/native/test_run_02a_process_tree.py",
+    "tests/test_run_02a_recovery.py",
+    "tests/test_run_01a_durable_admission.py",
+    "tests/test_run_01b_worker_lifecycle.py",
+    "tests/test_data_01b_durable_run_state.py",
+    "tests/test_lg_a_worker_entry_historical_projection.py",
+}
+RUN_02A_PRE_PREDECESSOR_SOURCE_BLOBS = {
+    "scripts/audit_lg_a_worker_launch_failure_remediation.py":
+        "0e8a349d49ad2cb9a41a709ad134e48e6c766069",
+    "scripts/audit_run_01a_durable_admission.py":
+        "42d7550bec98ddc25b5999b20ed6195a442cd69f",
+    "tests/test_worker_launcher.py":
+        "973e00174e8967569e98fbf15bc58d2c13a3a20d",
+}
+E3_RUN_02A_ADDITIVE_PATHS = frozenset({
+    # New gate-context primitive did not exist in the immutable predecessor
+    # tree. Its current bytes are authenticated by the latest A2 inventory.
+    "runtime/current_shadow_operation_authority.py",
+    # Exact E3 evidence and predecessor snapshots were added after the
+    # immutable V1 Pass-4 inventory. These paths are excluded by exact name;
+    # evolved sources remain represented by their pinned predecessor blobs.
+    "docs/run-02a/current-shadow-operation-fence.md",
+    "tests/test_core_01d_workflow_consolidation_e3_source_projection.py",
+    "tests/fixtures/core_01d/e3_b6_three_source_forward/original-current-fotmob-latest-durable-fresh-history.py.txt",
+    "tests/fixtures/core_01d/e3_b6_three_source_forward/original-current-shadow-sportybet-pc-upcoming-discovery.py.txt",
+    "tests/fixtures/core_01d/e3_b6_three_source_forward/original-issue-current-fotmob-reviewed-source.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-capture-fotmob-data-matches.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-checkpoint-e-completion-v2.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-current-shadow-all-market-runner.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-execute-current-shadow-request.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-fresh-holdout-activation-runner.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-ordinary-ft-source-history-acquisition.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-port02c-trigger-authority-b6.py.txt",
+    "tests/fixtures/core_01d/e3_cross_contract_source_forward/original-reviewed-fixture-catalog-admission-source-replay.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-core-01d-frozen-artifact-replay-authority-b5.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-core-01d-owner-one-shot-issue-comment-authority-b3.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-core-01d-scheduled-shadow-ownership.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-p4-4e-current-fotmob-ingest-issuer.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-p4-4f-current-fotmob-exact-lane-caller-migration.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-p4-4g-current-fotmob-canonical-only-workflow.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-p4-4h-current-shadow-canonical-run-migration-review.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-audit-port-01-source-identity-parity.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-execute-current-shadow-daily.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-test-issue-current-fotmob-reviewed-source.py.txt",
+    "tests/fixtures/core_01d/pass_a_e3_audit_predecessors/original-test-p4-4h-current-shadow-canonical-run-migration-review.py.txt",
+    "tests/fixtures/core_01d/run_02a_pre_historical/b1-disposition-audit-v154.py.txt",
+    "tests/fixtures/core_01d/sportybet_event_detail_e3_forward/original-b4-b6-sportybet-live-event-quote-evidence.py.txt",
+    "tests/test_core_01d_pass_a_v300_source_predecessors.py",
+    # Exact source snapshots used to authenticate older Pass-4/V2 trees.
+    "tests/fixtures/core_01d/pass_a_v1_original_raw_tree/ls-tree-v1-pass4.txt",
+    "tests/fixtures/core_01d/pass_a_v2_source_predecessors/test-port-01-source-identity-parity.py.txt",
+    "tests/fixtures/core_01d/pass_a_v2_source_predecessors/test-p3-0-canonical-pre-router-pipeline.py.txt",
+    "tests/fixtures/core_01d/pass4_source_predecessors/original-port02c-trigger-authority-b6-v1.py.txt",
+    "tests/fixtures/core_01d/pass4_source_predecessors/original-test-checkpoint-e-completion-v2-v1.py.txt",
+    "tests/fixtures/core_01d/pass4_source_predecessors/original-test-checkpoint-e-completion-v9-v1.py.txt",
+    "tests/fixtures/core_01d/e3_v309_source_forward/original-checkpoint-e-completion-v2-v308.py.txt",
+})
+
+PASS4_E3_SOURCE_PREDECESSORS = {
+    "scripts/audit_core_01d_port02c_trigger_authority_b6.py": (
+        "tests/fixtures/core_01d/pass4_source_predecessors/original-port02c-trigger-authority-b6-v1.py.txt",
+        "cdee96e9a5cca5ee272b47e00cbede9ca96a4d22",
+        "b394f9578a06194c65d53a60a7a3859b8e7bfb0153ebf3dfcf1aada3af6b36cf",
+        61205,
+    ),
+    "tests/test_core_01d_checkpoint_e_completion_v2.py": (
+        "tests/fixtures/core_01d/pass4_source_predecessors/original-test-checkpoint-e-completion-v2-v1.py.txt",
+        "f46260e3e9b0a850c1a95a96dcd8b033b001e564",
+        "f0dbc7593241c97826a0b0aede688383f0ab152a1589a5a5c77376b5a227f84d",
+        5242,
+    ),
+    "tests/test_core_01d_checkpoint_e_completion_v9.py": (
+        "tests/fixtures/core_01d/pass4_source_predecessors/original-test-checkpoint-e-completion-v9-v1.py.txt",
+        "23645979f5577fc3691282b6813862c85f3f66a8",
+        "1ebfb2989bf7b3a197e081bd8bd01d5d56cc7edf24ff441dc99da09c9f4c82a9",
+        4989,
+    ),
+}
+ALLOWED_PASS4_PATHS |= RUN_02A_PRE_ADDITIVE_PATHS | {
+    "runtime/worker_entry.py", "scripts/sportybet_direct_share_bridge.py",
+    "scripts/audit_auth_01_analysis_only_shadow_worker_boundary.py",
+}
+ALLOWED_PASS4_PATHS |= E3_RUN_02A_ADDITIVE_PATHS
+FRESH_HOLDOUT_20261014_ADDITIVE_PATHS = {'artifacts/product/fresh_holdout_20261014_pass_a_source_projection_v1.json',
+ 'docs/product/fresh_holdout_20261014_pass_a_source_projection.md',
+ 'tests/fixtures/core_01d/fresh_holdout_20261014/capture-qualification-predecessor.py.txt',
+ 'tests/fixtures/core_01d/fresh_holdout_20261014/settlement-schema-predecessor.py.txt',
+ 'tests/fixtures/core_01d/fresh_holdout_20261014/tick-predecessor.py.txt',
+ 'tests/fixtures/fotmob_fresh_holdout_20261014/07e6dd3e5a85eaa4e9be1c96-manifest.json',
+ 'tests/fixtures/fotmob_fresh_holdout_20261014/6cb5f96614054a5c91a63515-manifest.json',
+ 'tests/fixtures/fotmob_fresh_holdout_20261014/README.md',
+ 'tests/fixtures/fotmob_fresh_holdout_20261014/afc-cl2-9469-20261014-wrappers.json',
+ 'tests/native/test_fresh_holdout_pass_a_source_projection.py'}
+FRESH_HOLDOUT_20261014_ADDITIVE_PATHS |= {'tests/fixtures/core_01d/fresh_holdout_20261014/checkpoint-completion-predecessor.py.txt', 'tests/fixtures/core_01d/fresh_holdout_20261014/share-prerequisite-predecessor.py.txt', 'tests/fixtures/core_01d/fresh_holdout_20261014/b1-tests-predecessor.py.txt', 'tests/fixtures/core_01d/fresh_holdout_20261014/checkpoint-workflows-predecessor.py.txt', 'tests/fixtures/core_01d/fresh_holdout_20261014/checkpoint-completion-v2-predecessor.py.txt'}
+FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS = {'domain/fotmob_fresh_holdout_capture_qualification_adapter.py': '17dd1b044a90e02a2c5998164b7e5de7caa5b5ee',
+ 'domain/fotmob_fresh_holdout_ordinary_ft_settlement_schema_adapter.py': '60f7fef2062fdad3e1ffb0c8023fd01398f88043',
+ 'scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py': '25392b65a4c968474b908ced0d0d8444c4fb1a1a',
+ 'tests/test_fotmob_fresh_holdout_duplicate_group_wrapper.py': 'e989f73070cd5f8710e4f5f30f22e8e31af4cc62'}
+FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS["tests/test_fotmob_fresh_holdout_team_shortname_compatibility.py"] = "862f454061ef4eb596ec727cc86764c54bd64dd3"
+ALLOWED_PASS4_PATHS |= FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | set(FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS)
+# PR #462 adds three retained evidence paths and one source-authenticated
+# native compatibility test. Its five evolved Python paths already have
+# stronger October 14 predecessor owners above: reuse those exact blobs
+# instead of replacing them with October 15 main-base identities.
+FRESH_HOLDOUT_20261015_ADDITIVE_IDENTITIES = {
+    "tests/fixtures/fotmob_fresh_holdout_20261015/7d46b089a3363f67e42f5fdc-manifest.json":
+        ("d25b12bf2fa70d526795de2eb407124e1cd75488", "e6a794624b0c13ce1572003fe70789238d9b99e05c6594bb81215deeff0467fd"),
+    "tests/fixtures/fotmob_fresh_holdout_20261015/README.md":
+        ("bf894446bec41d65819a2f6e871d4b5bb70f633a", "223fa83207fdb3d9066305a3561a68a23b9a867673fe06ab629f12ebfe1d4312"),
+    "tests/fixtures/fotmob_fresh_holdout_20261015/afc-cl2-9469-20261015-wrappers.json":
+        ("7f370cb6f7750bf8637c90d3630c2371903cfb6c", "e0e824e8c8688209bcb6452e3694b20b2f1d780a795a9524f8b17493e228651d"),
+    "tests/native/test_fresh_holdout_20261015_v7_native_compatibility.py":
+        ("988ec6e84076b21a01f8d12111e2f8fcd461d991", "6bd390bd14ab224d08c9c9cb8bf4756273664b1c913566161f16a57c65f9372d"),
+}
+FRESH_HOLDOUT_20261015_ADDITIVE_PATHS = set(FRESH_HOLDOUT_20261015_ADDITIVE_IDENTITIES)
+ALLOWED_PASS4_PATHS |= FRESH_HOLDOUT_20261015_ADDITIVE_PATHS
+
+UX_01A_PREDECESSOR_SOURCE_IDENTITIES = {
+    "ui/app.js": (
+        "fd96013b07339228a3ab1273a69e19e83b6c4a35",
+        "d9c8e62fd5327b1f65b99af154123526f3c78b6d6f1f5e66ba2f9d0e1a2ee7ae",
+    ),
+    "ui/index.html": (
+        "7ef1f575bfc67eff5cfbe640fe8e9789cbeb95a3",
+        "31233591bb50bbabb66c1659877c2fec59952912c7427efcf71ca37333b70b82",
+    ),
+    "ui/styles.css": (
+        "805c2832c712d2ed0977d279f4ba9156abc7b5f9",
+        "6e8e3243dbafcf351c6c8e5e1bbd15731d8537fde183be1f668d0ef0762b3215",
+    ),
+}
+UX_01A_PREDECESSOR_SOURCE_BLOBS = {
+    path: blob for path, (blob, _digest) in UX_01A_PREDECESSOR_SOURCE_IDENTITIES.items()
+}
+
+
+def authenticate_fresh_holdout_20261015_evidence():
+    from runtime.source_identity import read_tracked_head_blob
+    for path, (blob, digest) in FRESH_HOLDOUT_20261015_ADDITIVE_IDENTITIES.items():
+        payload, identity = read_tracked_head_blob(ROOT, path)
+        policy.require(identity.git_blob_sha1 == blob and policy.sha256(payload) == digest,
+                       "October 15 additive evidence identity drift: " + path)
+    return FRESH_HOLDOUT_20261015_ADDITIVE_PATHS
+
+
+def authenticate_pass4_e3_source_predecessor(path: str, a2=None, latest=None) -> tuple[str, str]:
+    """Bind one exact V1 predecessor fixture to the current A2 successor."""
+    if a2 is None:
+        from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    descriptor = PASS4_E3_SOURCE_PREDECESSORS.get(path)
+    policy.require(descriptor is not None,
+                   "Pass-4 source path has no exact E3 predecessor authority: " + path)
+    fixture_path, expected_blob, expected_sha, expected_size = descriptor
+    for relative in (path, fixture_path):
+        candidate = ROOT / relative
+        policy.require(candidate.is_file()
+                       and not any(parent.is_symlink() for parent in (candidate, *candidate.parents)),
+                       "Pass-4 E3 predecessor requires regular source/fixture: " + relative)
+        a2._e3_path_stat(relative, label="Pass-4 E3 predecessor")
+    if latest is None:
+        latest = a2.authenticate_inventory()
+    current_rows = {row["path"]: row for row in latest["source_identities"]}
+    current = a2.lf((ROOT / path).read_bytes())
+    head_blob = a2.git("rev-parse", "HEAD:" + path).decode("ascii").strip()
+    worktree_blob = a2.git("hash-object", path).decode("ascii").strip()
+    policy.require(current_rows.get(path, {}).get("lf_source_sha256")
+                   == hashlib.sha256(current).hexdigest()
+                   and head_blob == worktree_blob,
+                   "current Pass-4 E3 source differs from authenticated A2 successor: " + path)
+    fixture = a2.lf((ROOT / fixture_path).read_bytes())
+    fixture_blob = hashlib.sha1(
+        b"blob " + str(len(fixture)).encode("ascii") + b"\0" + fixture
+    ).hexdigest()
+    tracked_blob = a2.git("rev-parse", "HEAD:" + fixture_path).decode("ascii").strip()
+    policy.require(len(fixture) == expected_size
+                   and hashlib.sha256(fixture).hexdigest() == expected_sha
+                   and fixture_blob == expected_blob == tracked_blob,
+                   "Pass-4 E3 predecessor fixture identity drift: " + fixture_path)
+    return expected_blob, expected_sha
+
+
+# Exact handoff ls-tree inventory excluding only the enumerated bounded
+# additive paths. Available in shallow CI without requiring the handoff commit
+# object.
+UNCHANGED_REPOSITORY_INVENTORY_SHA = "6b407c284a7c2f759e6345f53444478de53427ceae1aaa7d412d078270c5ad27"
+PR459_PREDECESSOR_SOURCE_BLOBS = {
+    ".github/workflows/create-saturday-2026-08-22-sportybet-direct-20-code.yml":
+        "84fd86333c34e8b6e27afe7f9d6e0e1c4234e93c",
+    ".github/workflows/prove-sportybet-direct-share-code.yml":
+        "18e5656c232102df141aaa614aca3d5d7575ec5b",
+    "scripts/audit_p4_3_workflow_retirement_ledger.py":
+        "77927732b2abc2b13f20a4979ad7092307873900",
+    "tests/test_core_01d_sportybet_current_trigger_authority_b4.py":
+        "ad0f75490126ffd020124fd7ec7ecc14d78b66a6",
+    "tests/test_p4_3d_retirement_audit_extensibility.py":
+        "5e7de20231b2455f15fdc20c4fd21e1720714f64",
+}
+
+
+def validate_bounded_inventory(raw: bytes) -> None:
+    from scripts.audit_data_01c_restore_portability import (
+        historical_d4_source_paths,
+        project_historical_inventory,
+    )
+    authenticate_fresh_holdout_20261015_evidence()
+    raw = project_historical_inventory(raw)
+    from scripts import audit_data_01a_app_schema_core as data01a
+    data01a.historical_build_config()
+    successor_paths = data01a.successor_paths()
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    latest = a2.authenticate_inventory()
+    # Preserve the frozen V1 inventory across the APP UX successor: restore
+    # only its three authenticated predecessor UI blobs and omit its two new
+    # evidence files.
+    from scripts import audit_app_01a_local_shell as app
+    app_historical = app.augment_ux_historical_runtime_sources(app.validate())
+    for path in ("ui/app.js", "ui/index.html"):
+        blob, digest = UX_01A_PREDECESSOR_SOURCE_IDENTITIES[path]
+        policy.require(
+            app_historical["source_identities"].get(path) == digest,
+            "APP-01A predecessor UI source identity drift: " + path,
+        )
+    styles_blob, styles_digest = UX_01A_PREDECESSOR_SOURCE_IDENTITIES["ui/styles.css"]
+    styles_meta = app_historical["base_identities"]["ui/styles.css"]
+    policy.require(
+        styles_meta["git_blob_sha1"] == styles_blob
+        and styles_meta["sha256"] == styles_digest,
+        "APP-01A predecessor UI stylesheet identity drift",
+    )
+    ux_predecessor_blobs = dict(UX_01A_PREDECESSOR_SOURCE_BLOBS)
+    ux_additive_paths = {app.UX_SUCCESSOR, app.UX_STYLESHEET_FIXTURE}
+    from runtime.source_identity import read_tracked_head_blob
+    from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion_v2
+    from scripts import audit_core_01d_pr459_live_trigger_incident as incident
+    incident.historical_incident_source()
+    pr459_additive_paths = completion_v2.PR459_HISTORICAL_SOURCE_FORWARD_PATHS | {
+        incident.AUDIT_SCRIPT, incident.POLICY_TEST, incident.NATIVE_TEST,
+    }
+    current_sources = {row["path"]: row["lf_source_sha256"]
+                       for row in latest["source_identities"]}
+    pr459_current_blobs = {}
+    for path in PR459_PREDECESSOR_SOURCE_BLOBS:
+        payload, identity = read_tracked_head_blob(ROOT, path)
+        policy.require(current_sources.get(path) == policy.sha256(payload.replace(b"\r\n", b"\n")),
+                       "PR459 current source is not authenticated by A2: " + path)
+        pr459_current_blobs[path] = identity.git_blob_sha1
+    # Preserve every pre-incident A2 inventory row exactly. Only generations
+    # appended by this bounded incident successor are additive scope and may be
+    # removed from the historical Checkpoint-E projection.
+    a2_successor_inventory_paths = {
+        path for generation, path in a2.discover_inventory_generations()
+        if generation >= 120
+    }
+    # These six D5-authenticated paths already existed at V74; project their
+    # exact D4 bytes above, then retain them in this historical inventory.
+    successor_paths -= historical_d4_source_paths()
+    predecessor_blobs = {
+        "scripts/audit_app_01a_local_shell.py": "a87d9e5edaeae54f6514bb6efae6874244d32ead",
+        "scripts/audit_core_01d_port02c_trigger_authority_b6.py": "cdee96e9a5cca5ee272b47e00cbede9ca96a4d22",
+        data01a.BUILD_CONFIG: data01a.BUILD_CONFIG_BLOB,
+        "services/athena_preview_service.py": "b8c3898baa28a4243c80a2b58ed284365ae854ab",
+    }
+    predecessor_blobs.update(RUN_02A_PRE_PREDECESSOR_SOURCE_BLOBS)
+    # These evolved current sources remain rows in the immutable Pass-A tree.
+    # Authenticate their exact predecessor fixture bytes and current A2 source
+    # bytes before substituting only the predecessor Git blob in that view.
+    for path in (
+        "scripts/audit_run_01a_durable_admission.py",
+        "tests/test_worker_launcher.py",
+    ):
+        descriptor = completion_v2.RUN_02A_PRE_PREDECESSOR_SOURCES.get(path)
+        if descriptor is None:
+            continue
+        fixture, blob, digest = descriptor
+        for logical in (path, fixture):
+            candidate = ROOT / logical
+            policy.require(candidate.is_file() and not any(p.is_symlink() for p in (candidate, *candidate.parents)),
+                           "E3 Pass-A predecessor requires regular source/fixture: " + logical)
+        predecessor = (ROOT / fixture).read_bytes().replace(b"\r\n", b"\n")
+        current = (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
+        current_sha = current_sources.get(path)
+        predecessor_blob = hashlib.sha1(
+            b"blob " + str(len(predecessor)).encode() + b"\0" + predecessor
+        ).hexdigest()
+        policy.require(
+            predecessor_blob == blob and policy.sha256(predecessor) == digest,
+            "E3 Pass-A predecessor fixture identity mismatch: " + path,
+        )
+        policy.require(
+            current_sha == policy.sha256(current),
+            "current E3 source is not authenticated by A2: " + path,
+        )
+    predecessor_blobs.update(PR459_PREDECESSOR_SOURCE_BLOBS)
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    for path in sorted(a2.E3_CROSS_CONTRACT_SOURCE_FORWARD_PATHS):
+        predecessor = a2.read_authenticated_cross_contract_predecessor(path)
+        predecessor_blobs[path] = hashlib.sha1(
+            b"blob " + str(len(predecessor)).encode("ascii") + b"\0" + predecessor
+        ).hexdigest()
+    # V300 is a distinct exact eight-path contract. Preserve its own
+    # predecessor bytes without falling back to or overriding through V284.
+    pass_a_predecessors = a2.read_authenticated_pass_a_source_predecessors()
+    for path in sorted(a2.E3_PASS_A_SOURCE_FORWARD_PATHS):
+        predecessor = pass_a_predecessors[path]
+        predecessor_blobs[path] = hashlib.sha1(
+            b"blob " + str(len(predecessor)).encode("ascii") + b"\0" + predecessor
+        ).hexdigest()
+    # These existing Pass-A tests have exact V2 predecessor fixtures and
+    # separately A2-authenticated current successors.
+    pass_a_v2_predecessors = completion_v2.authenticate_pass_a_e3_compat_predecessors(a2, latest)
+    for path in completion_v2.PASS_A_V2_AUTHENTICATED_SOURCE_PREDECESSORS:
+        predecessor_blobs[path] = pass_a_v2_predecessors[path]
+    # A later V284 transition for B6 retained-source readers has its own exact
+    # predecessor; Pass-4's older cdee identity remains the owner here.
+    for path in PASS4_E3_SOURCE_PREDECESSORS:
+        blob, _digest = authenticate_pass4_e3_source_predecessor(path, a2, latest)
+        predecessor_blobs[path] = blob
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    for path in review.FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
+        review.source_bytes(path)
+    predecessor_blobs.update(FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS)
+    from scripts import audit_run_02a_pre_durable_share_send as prerequisite
+    for path, (_fixture, blob, _digest) in prerequisite.TRANSPORT_PREDECESSORS.items():
+        prerequisite.historical_transport_bytes(path)
+        predecessor_blobs[path] = blob
+    policy.require(not (set(ux_predecessor_blobs) & set(predecessor_blobs)),
+                   "UX-01A predecessor overlaps an existing historical source pin")
+    predecessor_blobs.update(ux_predecessor_blobs)
+    unchanged_lines = []
+    for line in raw.splitlines(keepends=True):
+        metadata, separator, path_bytes = line.partition(b"\t")
+        path = path_bytes.strip().decode()
+        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | E3_RUN_02A_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | FRESH_HOLDOUT_20261015_ADDITIVE_PATHS | pr459_additive_paths | ux_additive_paths:
+            continue
+        if path in PR459_PREDECESSOR_SOURCE_BLOBS:
+            policy.require(metadata.split()[:2] == [b"100644", b"blob"]
+                           and metadata.rsplit(b" ", 1)[-1].decode() in {
+                               pr459_current_blobs[path], PR459_PREDECESSOR_SOURCE_BLOBS[path],
+                           }, "PR459 source inventory identity is unverified: " + path)
+        if path in INCIDENT_20261010_PREDECESSOR_BLOBS:
+            metadata = (
+                metadata.rsplit(b" ", 1)[0]
+                + b" "
+                + INCIDENT_20261010_PREDECESSOR_BLOBS[path].encode()
+            )
+            line = metadata + separator + path_bytes
+        if path in predecessor_blobs:
+            metadata = metadata.rsplit(b" ", 1)[0] + b" " + predecessor_blobs[path].encode()
+            line = metadata + separator + path_bytes
+        if path in ALLOWED_PASS4_PATHS and path not in APP01C_CURRENT_SOURCE_PATHS and path not in prerequisite.TRANSPORT_PREDECESSORS and path not in FRESH_HOLDOUT_20261014_PREDECESSOR_BLOBS:
+            continue
+        if path in APP01C_PREDECESSOR_SOURCE_BLOBS:
+            metadata = metadata.rsplit(b" ", 1)[0] + b" " + APP01C_PREDECESSOR_SOURCE_BLOBS[path].encode()
+            line = metadata + separator + path_bytes
+        unchanged_lines.append(line)
+    unchanged = b"".join(unchanged_lines)
+    policy.require(policy.sha256(unchanged) == UNCHANGED_REPOSITORY_INVENTORY_SHA,
+                   "unapproved repository change: runtime/workflows/ledgers/history must remain exact")
+
+
+def authenticate_bounded_scope() -> bool:
+    validate_bounded_inventory(policy.v4.v3._git("ls-tree", "-r", "HEAD"))
+    dirty = policy.v4.v3._git("diff", "--name-only", "HEAD").decode().splitlines()
+    policy.require(set(dirty) <= ALLOWED_PASS4_PATHS,
+                   "working tree has an unapproved operational or historical source change")
+    return True
+
+
+def authenticate_notification_without_transport() -> bool:
+    """Authenticate C3 bytes/guards without invoking even a mocked sender."""
+    from scripts import audit_core_01c_notification_comment_compatibility as notification
+    value = policy.roles.strict_json(notification.tracked(notification.RECEIPT_PATH))
+    policy.require(value["canonical_sha256"] ==
+                   "d89c38790bb0dc36a052e865bf2e5bd17411d0089ec4797b5aa145f40705ffc8"
+                   == evolution.canonical_sha256(value), "sealed C3 notification identity drift")
+    for path in notification.SOURCE_PATHS:
+        policy.require(evolution.source_identity(notification.tracked(path)) == value["source_identities"][path],
+                       f"notification historical source identity drift: {path}")
+    notification.verify_workflow_authority(notification.tracked(notification.BEFORE_FIXTURE),
+                                           notification.tracked(notification.WORKFLOW))
+    facts = value["notification"]
+    return (facts["status"] == "EXPLICIT_RETAINED_SECONDARY_NON_AUTHORITATIVE"
+            and facts["integrity_security_failure"] == "FAIL_CLOSED"
+            and facts["transport_failure"] == "EMAIL_FAILED_WARNING_EXIT_ZERO"
+            and facts["business_receipt_mutation"] is False and facts["core_rerun"] is False)
+
+
+def status_from_criteria(criteria: dict) -> tuple[str, list[str]]:
+    policy.require(set(criteria) == set(CRITERIA)
+                   and all(type(flag) is bool for flag in criteria.values()),
+                   "all 19 explicit boolean criteria are mandatory")
+    blockers = [key for key in CRITERIA if criteria[key] is not True]
+    return ("INCOMPLETE" if blockers else "COMPLETE"), blockers
+
+
+def build_receipt() -> dict:
+    # Use historical source derivation, not the master audit's CURRENT answer;
+    # otherwise the new completion receipt would authenticate itself in a cycle.
+    from scripts import audit_checkpoint_e_workflows as checkpoint
+    from scripts import audit_p4_3_workflow_retirement_ledger as retirement
+    from scripts import audit_core_01b_canonical_artifact_ancestry as ancestry
+
+    old = policy.predecessor()
+    bounded_scope_verified = authenticate_bounded_scope()
+    availability = policy.load_snapshot()
+    accepted = policy.build_receipt(old)
+    policy.validate_receipt(policy.roles.strict_json((ROOT / policy.RECEIPT_PATH).read_bytes()), accepted)
+    retained = v5.build_receipt(old, accepted)
+    v5.validate_receipt(policy.roles.strict_json((ROOT / v5.RECEIPT_PATH).read_bytes()), retained)
+    historical_matrix, historical_checkpoint = checkpoint.expected_documents()
+    forward = schedule.audit_forward_checkpoint()
+    matrix_path = schedule.FORWARD_MATRIX
+    matrix = policy.roles.strict_json((ROOT / matrix_path).read_bytes())
+    policy.require(matrix["canonical_sha256"] == forward["workflow_matrix_sha256"]
+                   == policy.v4.v1.PREDECESSOR_V2_MATRIX_SHA256,
+                   "immutable forward matrix identity drift")
+    policy.require(matrix["canonical_sha256"] == checkpoint.self_sha(matrix), "forward matrix self-hash drift")
+    rows = matrix["workflow_rows"]
+    paths = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / ".github/workflows").glob("*.yml"))
+    policy.require(paths == [r["workflow_path"] for r in rows], "current workflow enumeration drift")
+    inventory, unknown = [], []
+    covered = True
+    for row in rows:
+        path = row["workflow_path"]
+        source = (ROOT / path).read_bytes()
+        identity = policy.v4.v3._source_identity(path)
+        from scripts import audit_data_01c_restore_portability as d5
+        if path == d5.WORKFLOW:
+            d5.authenticate_workflow()
+            source = d5.predecessor_source(path)
+            identity = {**identity, **d5.identity(source)}
+        from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+        if path in b4.B4_WORKFLOW_PREDECESSORS:
+            source = b4._historical_b4_workflow_bytes(path)
+            identity = {**identity, **d5.identity(source)}
+        doc = yaml.load(source, Loader=yaml.BaseLoader)
+        actual = sorted(doc["on"])
+        represented = sorted(s["trigger_kind"] for s in row["trigger_surfaces"])
+        policy.require(actual == represented, f"current trigger enumeration drift: {path}")
+        inventory.append({**identity, "trigger_kinds": actual})
+        for surface in row["trigger_surfaces"]:
+            covered = covered and surface["supported_status"] in checkpoint.ALLOWED_STATUS and bool(surface["retained_reason"])
+            # These UNKNOWN fields are unreviewed authority, not inferred live
+            # authority. Explicit retained status alone does not review them.
+            unknown_fields = {key: surface.get(key) for key in
+                ("authority_profile", "acquisition_authority", "delivery_authority", "wager_authority")
+                if "UNKNOWN" in str(surface.get(key, ""))}
+            if unknown_fields:
+                unknown.append({"workflow_path": path, "trigger_kind": surface["trigger_kind"],
+                                "unreviewed_authority_fields": unknown_fields,
+                                "notification_behavior": surface["notification_behavior"],
+                                "current_source_sha256": identity["source_sha256"],
+                                "evidence": matrix_path})
+    ledger = evolution.validate_current_state()
+    p43 = retirement.validate_retirement_history()
+    role_audit = ancestry.audit()
+    notification_source_verified = authenticate_notification_without_transport()
+    authority_review_complete = not unknown and forward["checkpoint_criteria"][CRITERIA[10]]
+    effects = policy.ZERO_ACTIONS
+    delta = policy.ZERO_DELTA
+    criteria = dict(zip(CRITERIA, (
+        checkpoint.CANONICAL in paths and ".github/workflows/athena-ingest.yml" in paths,
+        len(inventory) == matrix["workflow_count"] == 39 and sum(len(r["trigger_kinds"]) for r in inventory) == matrix["trigger_surface_count"] == 57,
+        bool(covered),
+        role_audit["result"] == "PASS" and historical_checkpoint["historical_failed_lg_a"]["restore_eligible"] is False,
+        notification_source_verified and historical_checkpoint["notification_disposition"]["legacy"] == "EXPLICIT_RETAINED_SECONDARY_NON_AUTHORITATIVE",
+        p43["canonical_sha256"] == policy.v4.v3.P43_LEDGER_SHA256 and matrix["retired_in_this_pr"] == [],
+        not any(r["supported_current_runtime_root"] and r["date_hardcoded_historical_evidence"] for r in rows),
+        old["canonical_sha256"] == policy.V4_SHA and ledger["canonical_sha256"] == policy.v4.v3.EVOLUTION_LEDGER_SHA256,
+        historical_checkpoint["accepted_lg_a"]["run_id"] == 36860297707 and historical_checkpoint["checkpoint_criteria"]["clean_successor_gate_satisfied"],
+        forward["checkpoint_criteria"]["scheduled_shadow_canonical_ownership_proven_preserving_main"],
+        bool(authority_review_complete),
+        not any(r["trigger_lifecycle"].startswith("LIVE_") for r in old["current_artifact_trigger_relationships"])
+            and not any(r["supported_current_runtime_dependency"] for r in accepted["artifact_retentions"]),
+        len(accepted["artifact_retentions"]) == 9 and all(r["retention_disposition"] == "ACCEPTED_HISTORICAL_RETENTION_LIMITATION" for r in accepted["artifact_retentions"]),
+        not unknown,
+        bool(covered) and not any(r["deletion_eligible"] for r in rows),
+        ledger["canonical_sha256"] == policy.v4.v3.EVOLUTION_LEDGER_SHA256 and len(ledger["transitions"]) == 14,
+        p43["canonical_sha256"] == policy.v4.v3.P43_LEDGER_SHA256,
+        all(type(count) is int and count == 0 for count in effects.values())
+            and availability["read_only"] is True and availability["new_provider_or_workflow_operation"] is False,
+        bounded_scope_verified and all(type(count) is int and count == 0 for count in delta.values()),
+    )))
+    status, blockers = status_from_criteria(criteria)
+    return policy.seal({
+        "schema_version": 1, "policy_id": POLICY_ID, "repository": "Thabearr/ATHENA",
+        "master_issue": 337, "base_main_sha": policy.BASE_MAIN, "base_tree_sha": policy.BASE_TREE,
+        "retention_acceptance": {"path": policy.RECEIPT_PATH, "canonical_sha256": accepted["canonical_sha256"]},
+        "retained_status_v5": {"path": v5.RECEIPT_PATH, "canonical_sha256": retained["canonical_sha256"]},
+        "historical_checkpoint_e_v1": {"path": checkpoint.RECEIPT_PATH, "canonical_sha256": historical_checkpoint["canonical_sha256"], "status": "INCOMPLETE", "rewritten": False},
+        "historical_forward_checkpoint_e_v2": {"path": schedule.FORWARD_RECEIPT, "canonical_sha256": forward["canonical_sha256"], "status": "INCOMPLETE", "rewritten": False},
+        "forward_matrix": {"path": matrix_path, "canonical_sha256": matrix["canonical_sha256"]},
+        "workflow_source_inventory": inventory, "workflow_count": len(inventory),
+        "trigger_surface_count": sum(len(r["trigger_kinds"]) for r in inventory),
+        "workflow_tree_before_sha1": policy.v4.v3.WORKFLOW_TREE_SHA1,
+        "workflow_tree_after_sha1": policy.v4.v3.WORKFLOW_TREE_SHA1,
+        "evolution_ledger_before_sha256": ledger["canonical_sha256"],
+        "evolution_ledger_after_sha256": ledger["canonical_sha256"], "transition_count": len(ledger["transitions"]),
+        "retirement_ledger_sha256": p43["canonical_sha256"], "retired_workflow_count": old["retired_workflow_count"],
+        "checkpoint_criteria": criteria,
+        "unreviewed_authority_surfaces": unknown,
+        "criterion_failure_evidence": {key: {
+            "reason": "The immutable forward matrix retains unreviewed authority fields; no independent current authority/dynamic-caller review closes them. Retention acceptance does not supply that proof.",
+            "matrix_path": matrix_path, "unreviewed_surface_count": len(unknown),
+            "no_retirement_proof_required_or_inferred": True,
+        } for key in blockers},
+        "checkpoint_e_status": status, "p4_4_status": status, "remaining_blocker_ids": blockers,
+        "retention_blocker_D_closed": True, "exact_bytes_recovered": 0,
+        "live_missing_artifact_relation_count": 0, "historical_relation_count": 14,
+        "supported_operations_depending_on_unavailable_bytes": 0,
+        "actions": effects, "protected_semantic_delta": delta, **policy.NO_AUTHORITY,
+        "source_review_counter_while_open": "1/5", "source_review_counter_if_owner_merges": "2/5",
+        "mandatory_source_reread_due": False,
+        "terminal": COMPLETE_TERMINAL if status == "COMPLETE" else BLOCKED_TERMINAL,
+    })
+
+
+def validate_receipt(value: dict, expected: dict | None = None) -> None:
+    policy.require(value.get("canonical_sha256") == policy.sha256(policy.canonical_bytes(
+        {k: v for k, v in value.items() if k != "canonical_sha256"})), "completion self-hash mismatch")
+    status, blockers = status_from_criteria(value["checkpoint_criteria"])
+    policy.require(value["checkpoint_e_status"] == value["p4_4_status"] == status
+                   and value["remaining_blocker_ids"] == blockers,
+                   "completion requires all 19 proven criteria and no blockers")
+    policy.require(all(value[k] is False for k in policy.NO_AUTHORITY), "completion grants forbidden authority")
+    policy.require(value == (build_receipt() if expected is None else expected),
+                   "completion differs from independently authenticated current criteria")
+
+
+def audit() -> dict:
+    value = policy.roles.strict_json((ROOT / RECEIPT_PATH).read_bytes())
+    validate_receipt(value)
+    return {"result": "PASS", "policy_id": POLICY_ID, "receipt_sha256": value["canonical_sha256"],
+            "checkpoint_e": value["checkpoint_e_status"], "p4_4": value["p4_4_status"],
+            "remaining_blockers": value["remaining_blocker_ids"], "terminal": value["terminal"]}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--write", action="store_true")
+    args = parser.parse_args(argv)
+    if args.write:
+        value = build_receipt()
+        (ROOT / RECEIPT_PATH).write_bytes(policy.canonical_bytes(value))
+        print(json.dumps({"result": "WROTE", "receipt_sha256": value["canonical_sha256"],
+                          "status": value["checkpoint_e_status"], "blockers": value["remaining_blocker_ids"]}))
+    else:
+        print(json.dumps(audit(), sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

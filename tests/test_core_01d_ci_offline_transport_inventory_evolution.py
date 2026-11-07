@@ -9,10 +9,12 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import queue
 import runpy
 import shutil
 import subprocess
 import sys
+import threading
 
 import pytest
 
@@ -268,6 +270,47 @@ def test_e3_pass_a_source_successor_extension_is_append_only_and_exact(monkeypat
         transition["predecessor_git_blob_sha1"]
     )
 
+
+def test_b6_v377_successor_preserves_v284_predecessor_and_rejects_tampering(monkeypatch):
+    path = "scripts/audit_core_01d_port02c_trigger_authority_b6.py"
+    chain = boundary.load_inventory_generations()
+    latest = chain[-1][1]
+    transitions = latest["e3_cross_contract_source_forward_successor_extensions"]
+    matches = [row for row in transitions if row.get("path") == path]
+    assert len(matches) == 1
+    extension = matches[0]
+    prior = chain[375][1]
+    transition = boundary.E3_CROSS_CONTRACT_SOURCE_FORWARD_TRANSITIONS[path]
+    assert extension["generation"] == 377
+    assert extension["predecessor_inventory"] == {
+        "path": boundary.inventory_generation_path(376),
+        "canonical_sha256": prior["canonical_sha256"],
+        "generation": 376,
+        "rewritten": False,
+    }
+    assert extension["previous_successor"]["git_blob_sha1"] == (
+        transition["successor_git_blob_sha1"]
+    )
+    assert extension["previous_successor"]["lf_source_sha256"] == (
+        transition["successor_lf_source_sha256"]
+    )
+    assert extension["authority_granted"] is False
+    assert extension["historical_bytes_changed"] is False
+    assert extension["rewritten"] is False
+
+    original_successor = extension["successor"]["lf_source_sha256"]
+    extension["successor"]["lf_source_sha256"] = "0" * 64
+    try:
+        with pytest.raises(AssertionError, match="E3 source-forward successor extension is missing or altered"):
+            boundary._authenticated_e3_successor_identity(path, chain, latest)
+    finally:
+        extension["successor"]["lf_source_sha256"] = original_successor
+
+    predecessor = boundary.read_authenticated_cross_contract_predecessor(path)
+    assert hashlib.sha1(
+        b"blob " + str(len(predecessor)).encode() + b"\0" + predecessor
+    ).hexdigest() == transition["predecessor_git_blob_sha1"]
+
     original = boundary.load_inventory_generations
     def altered(directory=None):
         rows = list(original(directory))
@@ -489,8 +532,45 @@ def test_root_bootstrap_pin_binds_the_current_auditor_and_rejects_drift(monkeypa
     auditor = "scripts/audit_core_01d_ci_offline_transport_boundary.py"
     protected = sorted((set(boundary.GUARD_PATHS) - {"sitecustomize.py"}) | {auditor})
     assert sorted(pins) == protected
-    assert pins[auditor] == boundary.source(auditor)["lf_source_sha256"]
-    assert pins[auditor] == hashlib.sha256(_worktree_bytes(auditor)).hexdigest()
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    before = ast.parse(retention.bootstrap_predecessor("sitecustomize.py").decode())
+    before_pins = next(ast.literal_eval(node.value) for node in before.body
+                       if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
+                       and target.id == "ROOT_TEST_SOURCE_PINS" for target in node.targets))
+    assert pins == before_pins  # Every original pin remains unchanged.
+    successors = next(ast.literal_eval(node.value) for node in startup.body
+                      if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
+                      and target.id == "ROOT_TEST_SOURCE_SUCCESSORS" for target in node.targets))
+    assert set(successors) == {auditor}
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    root_successor = pass_a._authenticate_root_performance()["source_forward"][auditor]
+    _prior, admission_v2, admission_v3, _admission_v4, admission_v5 = (
+        pass_a._ci_assertion_v3_chain_details())
+    admitted_a2_v2 = admission_v2["source_forward"][auditor]["after"]["source_sha256"]
+    admitted_a2_v3 = admission_v3["source_forward"][auditor]["after"]["source_sha256"]
+    admitted_a2_v5 = admission_v5["source_forward"][auditor]["after"]["source_sha256"]
+    previous_startup = ast.parse(pass_a.read_blob(
+        admission_v3["source_forward"]["sitecustomize.py"]["fixture"]).decode())
+    previous_successors = next(ast.literal_eval(node.value) for node in previous_startup.body
+                               if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
+                               and target.id == "ROOT_TEST_SOURCE_SUCCESSORS" for target in node.targets))
+    latest = boundary.authenticate_inventory()
+    prior_chain = previous_successors[auditor]
+    assert prior_chain[:3] == (
+        retention.PRIOR_ADMITTED_AUDITOR_SHA,
+        root_successor["before"]["source_sha256"],
+        root_successor["after"]["source_sha256"],
+    )
+    assert prior_chain[3:] == (admitted_a2_v2,)
+    assert successors[auditor] == prior_chain + (admitted_a2_v3, admitted_a2_v5)
+    assert len(successors[auditor]) == 6
+    assert [row for row in latest["source_identities"] if row["path"] == auditor] == [
+        boundary.source(auditor)
+    ]
+    assert successors[auditor][-1] == hashlib.sha256(_worktree_bytes(auditor)).hexdigest()
+    assert retention.authenticate_bootstrap_sources() is True
+    retention.authenticate_bootstrap_successor(
+        (boundary.ROOT / "sitecustomize.py").read_text(encoding="utf-8"), boundary.source)
 
     original = Path.read_bytes
     def altered(path):
@@ -502,6 +582,60 @@ def test_root_bootstrap_pin_binds_the_current_auditor_and_rejects_drift(monkeypa
     monkeypatch.setattr(offline_transport, "install", lambda: pytest.fail("UNGUARDED_INSTALL"))
     with pytest.raises(SystemExit, match="failed to activate"):
         runpy.run_path(str(boundary.ROOT / "sitecustomize.py"))
+
+
+def test_retention_authenticate_checks_b4_test_v5_successor(monkeypatch):
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    path = "tests/test_core_01d_sportybet_current_trigger_authority_b4.py"
+    original = retention._read
+    observed = []
+
+    def track_b4_test(candidate):
+        value = original(candidate)
+        if candidate == path:
+            observed.append(candidate)
+        return value
+
+    monkeypatch.setattr(retention, "_read", track_b4_test)
+    receipt = retention.authenticate()
+    assert receipt["canonical_sha256"] == retention.RECEIPT_SHA256
+    assert path in observed
+
+
+def test_retention_projection_composes_root_pin_test_v3_to_v5():
+    import subprocess
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    latest = boundary.authenticate_inventory()
+    raw = subprocess.check_output(["git", "ls-tree", "-r", "HEAD"], cwd=boundary.ROOT)
+    projected = retention._project_retention_inventory_uncached(raw, latest=latest)
+    _prior, _v2, v3, _v4, v5 = pass_a._ci_assertion_v3_chain_details()
+    path = "tests/test_core_01d_ci_offline_transport_inventory_evolution.py"
+    assert v3["source_forward"][path]["after"] == v5["source_forward"][path]["before"]
+    assert (v5["source_forward"][path]["after"]["source_sha256"]
+            == boundary.source(path)["lf_source_sha256"])
+    rows = {line.split(b"\t", 1)[1].decode(): line.split(b"\t", 1)[0]
+            for line in projected.splitlines()}
+    assert rows[path].split()[-1].decode() == retention.BOOTSTRAP_PREDECESSORS[path]["git_blob_sha1"]
+
+
+@pytest.mark.parametrize("mutation", ["extra", "reordered", "replaced"])
+def test_root_bootstrap_rejects_unreviewed_successor_pin_chain(mutation):
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+    text = (boundary.ROOT / "sitecustomize.py").read_text(encoding="utf-8")
+    row = pass_a._authenticate_root_performance()["source_forward"][retention.BOOTSTRAP_AUDITOR]
+    before, after = row["before"]["source_sha256"], row["after"]["source_sha256"]
+    pair = '        "' + before + '",\n        "' + after + '",\n'
+    assert text.count(pair) == 1
+    if mutation == "extra":
+        changed = text.replace(pair, pair + '        "' + '0' * 64 + '",\n')
+    elif mutation == "reordered":
+        changed = text.replace(pair, '        "' + after + '",\n        "' + before + '",\n')
+    else:
+        changed = text.replace(pair, '        "' + before + '",\n        "' + '0' * 64 + '",\n')
+    with pytest.raises(ValueError, match="bootstrap successor startup source differs from exact recipe"):
+        retention.authenticate_bootstrap_successor(changed, boundary.source)
 
 
 # --- O. boundary semantics --------------------------------------------------
@@ -807,3 +941,278 @@ def test_app01a_v18_preserves_v17_and_binds_current_receipt_inventory():
         "generation": latest["generation"] - 1,
         "rewritten": False,
     }
+
+
+def test_checkpoint_derivation_reuse_is_bounded_cloned_and_contract_sensitive():
+    from scripts import audit_checkpoint_e_workflows as checkpoint
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    from scripts import audit_data_01c_restore_portability as d5
+    from scripts import audit_phase_a_pass_a_tests_source_successor as pass_a
+
+    metrics = {}
+    token = receipt_scope._SCOPE_METRICS.set(metrics)
+    try:
+        with checkpoint._checkpoint_master_scope() as scope:
+            assert scope.enabled is True
+            first_chain = pass_a._ci_assertion_v2_chain()
+            assert 'pass-a.ci-assertion-v2-chain' in scope.derivation_bytes
+            hits = metrics.get('checkpoint-master-audit.derivation_hits', 0)
+            second_chain = pass_a._ci_assertion_v2_chain()
+            assert metrics.get('checkpoint-master-audit.derivation_hits', 0) == hits + 1
+            assert first_chain == second_chain
+            assert first_chain is not second_chain
+            assert first_chain[0] is not second_chain[0]
+            assert first_chain[1] is not second_chain[1]
+
+            a2_scope = pass_a._active_checkpoint_derivation_scope()
+            source_state = a2._load_scoped_a2_source_state(a2_scope)
+            assert source_state["schema"] == 3
+            assert set(source_state["pass_a_successors"]) == set(a2.E3_PASS_A_SOURCE_FORWARD_PATHS)
+            for path, transition in a2.E3_PASS_A_SOURCE_FORWARD_TRANSITIONS.items():
+                assert source_state["pass_a_successors"][path] == {
+                    "git_blob_sha1": transition["successor_git_blob_sha1"],
+                    "lf_source_sha256": transition["successor_lf_source_sha256"],
+                }
+
+            first_restoration = pass_a._pytest_restoration_chain()
+            assert 'pass-a.pytest-restoration-v2-chain' in scope.derivation_bytes
+            hits = metrics.get('checkpoint-master-audit.derivation_hits', 0)
+            second_restoration = pass_a._pytest_restoration_chain()
+            assert metrics.get('checkpoint-master-audit.derivation_hits', 0) == hits + 1
+            assert first_restoration == second_restoration
+            assert first_restoration is not second_restoration
+            assert first_restoration[0] is not second_restoration[0]
+            assert first_restoration[1] is not second_restoration[1]
+
+            first_workflow = d5.authenticate_workflow()
+            assert 'checkpoint-master.d5-workflow-tree' in scope.derivation_bytes
+            hits = metrics.get('checkpoint-master-audit.derivation_hits', 0)
+            second_workflow = d5.authenticate_workflow()
+            assert first_workflow == second_workflow
+            assert first_workflow is not second_workflow
+            assert first_workflow[0] is not second_workflow[0]
+            assert metrics.get('checkpoint-master-audit.derivation_hits', 0) == hits + 1
+
+            pass_a_path = pass_a.__name__.replace('.', '/') + '.py'
+            hits = metrics.get('checkpoint-master-audit.derivation_hits', 0)
+            assert pass_a.read_blob(pass_a_path) == pass_a.read_blob(pass_a_path)
+            assert 'pass-a.source-blob:' + pass_a_path in scope.derivation_bytes
+            assert metrics.get('checkpoint-master-audit.derivation_hits', 0) >= hits + 1
+
+            original_digest = pass_a.CI_ASSERTION_V2_SHA256
+            pass_a.CI_ASSERTION_V2_SHA256 = "0" * 64
+            try:
+                with pytest.raises(AssertionError,
+                                   match="bounded derivation verifier contract changed"):
+                    pass_a._ci_assertion_v2_chain()
+            finally:
+                pass_a.CI_ASSERTION_V2_SHA256 = original_digest
+    finally:
+        receipt_scope._SCOPE_METRICS.reset(token)
+
+    assert metrics.get("checkpoint-master-audit.derivation_hits", 0) >= 2
+    assert metrics.get("checkpoint-master-audit.derivation_stores", 0) >= 2
+
+
+@pytest.mark.parametrize("mutation", ["v377-bytes", "rogue-generation"])
+def test_scoped_a2_cache_hits_reject_live_generation_mutation_and_recover(mutation):
+    from scripts import audit_checkpoint_e_workflows as checkpoint
+
+    inventory_root = boundary.ROOT / boundary.INVENTORY_DIRECTORY
+    v377 = inventory_root / (boundary.INVENTORY_PREFIX + "v377.json")
+    original_read_bytes = Path.read_bytes
+    original_iterdir = Path.iterdir
+    mutate = False
+
+    def altered_read_bytes(path):
+        raw = original_read_bytes(path)
+        if mutate and Path(path) == v377:
+            return raw + b"\n"
+        return raw
+
+    def altered_iterdir(path):
+        entries = list(original_iterdir(path))
+        if mutate and Path(path) == inventory_root:
+            entries.append(inventory_root / (boundary.INVENTORY_PREFIX + "v378.json"))
+        return iter(entries)
+
+    try:
+        with checkpoint._checkpoint_master_scope():
+            assert boundary.authenticate_inventory()["generation"] == 377
+            assert len(boundary.load_inventory_generations()) == 377
+            mutate = True
+            if mutation == "v377-bytes":
+                Path.read_bytes = altered_read_bytes
+                reason = "receipt execution state changed during scope:.*a2-bytes:"
+            else:
+                Path.iterdir = altered_iterdir
+                reason = "A2 scoped generation namespace changed"
+            with pytest.raises(AssertionError, match=reason):
+                boundary.authenticate_inventory()
+            with pytest.raises(AssertionError, match=reason):
+                boundary.load_inventory_generations()
+            mutate = False
+            assert boundary.authenticate_inventory()["generation"] == 377
+            assert len(boundary.load_inventory_generations()) == 377
+    finally:
+        Path.read_bytes = original_read_bytes
+        Path.iterdir = original_iterdir
+
+
+def test_scoped_a2_cache_hit_rehashes_v376_when_stat_changes_and_recovers():
+    from scripts import audit_checkpoint_e_workflows as checkpoint
+
+    v376 = boundary.ROOT / boundary.INVENTORY_DIRECTORY / (
+        boundary.INVENTORY_PREFIX + "v376.json")
+    original = v376.read_bytes()
+    altered = bytearray(original)
+    altered[0] ^= 1
+    altered = bytes(altered)
+    assert len(altered) == len(original)
+
+    try:
+        # The in-scope load hit must notice the changed stat tuple, reread V376,
+        # and reject its raw bytes immediately. Restoring the content cannot
+        # restore ctime, so the owning scope also correctly rejects at exit.
+        with pytest.raises(AssertionError, match="receipt execution state changed during scope:.*a2-path-stat:.*v376"):
+            with checkpoint._checkpoint_master_scope():
+                assert boundary.authenticate_inventory()["generation"] == 377
+                try:
+                    v376.write_bytes(altered)
+                    with pytest.raises(AssertionError, match="receipt execution state changed during scope: a2-bytes:.*v376"):
+                        boundary.load_inventory_generations()
+                finally:
+                    v376.write_bytes(original)
+    finally:
+        if v376.read_bytes() != original:
+            v376.write_bytes(original)
+
+    # A later independent scope sees the restored canonical bytes and remains
+    # usable; no failed derivation or mutation state leaked across calls.
+    with checkpoint._checkpoint_master_scope():
+        assert len(boundary.load_inventory_generations()) == 377
+        assert boundary.authenticate_inventory()["generation"] == 377
+
+
+def test_scoped_a2_cache_hit_rejects_live_head_drift_and_scope_exit():
+    from scripts import audit_checkpoint_e_workflows as checkpoint
+
+    original_check_output = subprocess.check_output
+    manager = checkpoint._checkpoint_master_scope()
+    scope = manager.__enter__()
+    try:
+        assert boundary.authenticate_inventory()["generation"] == 377
+
+        def altered_check_output(args, *positional, **keywords):
+            argv = tuple(args)
+            if argv[:3] == ("git", "rev-parse", "HEAD"):
+                return b"0" * 40 + b"\n"
+            if argv[:6] == ("git", "diff", "--binary", "--no-ext-diff",
+                            "--no-textconv", "HEAD"):
+                return b"simulated tracked Python source diff\n"
+            return original_check_output(args, *positional, **keywords)
+
+        subprocess.check_output = altered_check_output
+        with pytest.raises(AssertionError, match="receipt execution state changed during scope:.*(git rev-parse HEAD|git diff)"):
+            boundary.authenticate_inventory()
+        with pytest.raises(AssertionError, match="receipt execution state changed during scope:.*(git rev-parse HEAD|git diff)"):
+            manager.__exit__(None, None, None)
+    finally:
+        subprocess.check_output = original_check_output
+    assert not checkpoint._receipt_scope_module._ACTIVE_RECEIPT_SCOPES.get()
+    with checkpoint._checkpoint_master_scope():
+        assert boundary.authenticate_inventory()["generation"] == 377
+
+
+def test_bounded_receipt_scope_exception_clears_partial_derivations_and_receipt():
+    from scripts import audit_checkpoint_e_workflows as checkpoint
+
+    escaped_scope = None
+    with pytest.raises(RuntimeError, match="controlled derivation failure"):
+        with checkpoint._checkpoint_master_scope() as scope:
+            escaped_scope = scope
+            scope.store({"result": "synthetic-only"})
+            scope.store_derivation("test.partial", "test-contract", b"partial")
+            raise RuntimeError("controlled derivation failure")
+    assert escaped_scope is not None
+    assert escaped_scope.receipt_bytes is None
+    assert escaped_scope.derivation_bytes == {}
+    assert escaped_scope.derivation_objects == {}
+
+
+@pytest.mark.parametrize("seam", ["d5-workflow", "a2-head-reader", "a2-cross-reader"])
+def test_scoped_derivations_preserve_public_reader_monkeypatch_seams(seam):
+    from scripts import audit_checkpoint_e_workflows as checkpoint
+    from scripts import audit_data_01c_restore_portability as d5
+
+    original_d5 = d5.authenticate_workflow
+    original_head_reader = boundary.read_tracked_head_blob
+    original_cross_reader = boundary.read_authenticated_cross_contract_predecessor
+    try:
+        with checkpoint._checkpoint_master_scope():
+            if seam == "d5-workflow":
+                checkpoint._scoped_portability_authenticate_workflow()
+
+                def replacement():
+                    return "patched-d5-tree", "patched-d5-contract"
+
+                d5.authenticate_workflow = replacement
+                try:
+                    assert checkpoint._scoped_portability_authenticate_workflow() == (
+                        "patched-d5-tree", "patched-d5-contract")
+                finally:
+                    d5.authenticate_workflow = original_d5
+            elif seam == "a2-head-reader":
+                boundary.authenticate_inventory()
+
+                def replacement(*_args, **_kwargs):
+                    raise AssertionError("RCV_SCOPE_PATCHED_HEAD_READER")
+
+                boundary.read_tracked_head_blob = replacement
+                try:
+                    with pytest.raises(AssertionError, match="A2 verifier contract changed"):
+                        boundary.authenticate_inventory()
+                finally:
+                    boundary.read_tracked_head_blob = original_head_reader
+            else:
+                path = sorted(boundary.E3_CROSS_CONTRACT_V284_SOURCE_FORWARD_PATHS)[0]
+                boundary.read_authenticated_cross_contract_predecessors((path,))
+
+                def replacement(_path):
+                    return b"patched-predecessor-seam"
+
+                boundary.read_authenticated_cross_contract_predecessor = replacement
+                try:
+                    assert boundary.read_authenticated_cross_contract_predecessors((path,)) == {
+                        path: b"patched-predecessor-seam"}
+                finally:
+                    boundary.read_authenticated_cross_contract_predecessor = original_cross_reader
+    finally:
+        d5.authenticate_workflow = original_d5
+        boundary.read_tracked_head_blob = original_head_reader
+        boundary.read_authenticated_cross_contract_predecessor = original_cross_reader
+
+
+def test_bounded_receipt_derivation_cannot_cross_thread_boundary():
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    from scripts import audit_core_01d_checkpoint_e_completion as completion_v1
+
+    result_queue = queue.Queue()
+    with receipt_scope._bounded_receipt_scope(
+            "checkpoint-v1", (completion_v1,), completion_v1._TRUSTED_V1_CONTRACT) as scope:
+        scope.store_derivation("thread-boundary", "thread-contract", b"payload")
+
+        def worker():
+            try:
+                scope.load_derivation("thread-boundary", "thread-contract")
+            except BaseException as error:
+                result_queue.put(error)
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+    error = result_queue.get_nowait()
+    assert isinstance(error, AssertionError)
+    assert "crossed process, thread, or async-task boundary" in str(error)

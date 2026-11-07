@@ -1,0 +1,156 @@
+name: Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test_shard:
+    name: test shard ${{ matrix.shard }} of 8
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Select deterministic test-file shard
+        env:
+          SHARD_NUMBER: ${{ matrix.shard }}
+          SHARD_COUNT: "8"
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          shard_number = int(os.environ["SHARD_NUMBER"])
+          shard_count = int(os.environ["SHARD_COUNT"])
+          files = sorted(Path("tests").rglob("test_*.py"))
+          if not files:
+              raise SystemExit("no pytest files discovered under tests/")
+          if shard_count != 8 or not 1 <= shard_number <= shard_count:
+              raise SystemExit("the reviewed partition requires exactly eight shards")
+          # Exact-head hosted timings from run 40086219683 showed the long V1
+          # checkpoint and retained-status reconstructions dominating shards 1
+          # and 7. Move the V2 checkpoint to 7 and retained-status work to the
+          # freed shard 3; use shard 1 for V10 and shard 6 for the V1 checkpoint.
+          # Consolidation moves with V2 to preserve headroom.
+          # All remaining files are still assigned once in sorted round-robin.
+          heavy = {
+              "tests/test_core_01d_checkpoint_e_completion.py": 6,
+              "tests/test_lg_a_worker_launch_failure_remediation.py": 2,
+              "tests/test_core_01d_checkpoint_e_completion_v2.py": 7,
+              "tests/test_core_01d_port02c_trigger_authority_b6.py": 4,
+              "tests/test_core_01d_checkpoint_e_completion_v9.py": 5,
+              "tests/test_core_01d_checkpoint_e_completion_v10.py": 1,
+              "tests/test_core_01d_retained_workflow_status.py": 3,
+              "tests/test_core_01d_canonical_drive_transfer_completed_history.py": 8,
+              "tests/test_core_01d_win_either_half_trigger_authority_b7.py": 5,
+              "tests/test_core_01d_workflow_consolidation.py": 7,
+              "tests/test_core_01d_authority_reachability_review_a.py": 1,
+              "tests/test_core_01d_workflow_consolidation_e3_source_projection.py": 4,
+          }
+          if set(heavy) - {path.as_posix() for path in files}:
+              raise SystemExit("reviewed heavy test file is missing")
+          ordinary = [path for path in files if path.as_posix() not in heavy]
+          assignments = {
+              path.as_posix(): index % shard_count + 1
+              for index, path in enumerate(ordinary)
+          }
+          assignments.update(heavy)
+          if (len(assignments) != len(files)
+                  or set(assignments) != {path.as_posix() for path in files}
+                  or any(type(value) is not int or not 1 <= value <= 8
+                         for value in assignments.values())):
+              raise SystemExit("test partition is not complete and exactly once")
+          selected = [path for path in files
+                      if assignments[path.as_posix()] == shard_number]
+          if not selected:
+              raise SystemExit(
+                  f"test shard {shard_number}/{shard_count} selected no files"
+              )
+          Path(".pytest-shard-files").write_text(
+              "".join(f"{path.as_posix()}\n" for path in selected),
+              encoding="utf-8",
+          )
+          print(
+              f"shard {shard_number}/{shard_count}: "
+              f"{len(selected)} of {len(files)} test files"
+          )
+          for path in selected:
+              print(path.as_posix())
+          PY
+
+      - name: Run test shard
+        env:
+          # Keep subprocess `python -m ...` checks rooted in the checkout even
+          # when a hosted runner enables Python's safe-path mode.
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          mapfile -t test_files < .pytest-shard-files
+          python -m pytest -q --durations=20 "${test_files[@]}"
+
+  syntax:
+    name: syntax
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate Python syntax
+        run: >-
+          python -m compileall -q
+          api config core database domain engine intelligence models
+          providers reports repositories scripts services tools workers
+          build_acca.py
+
+  test:
+    name: test
+    if: always()
+    needs:
+      - test_shard
+      - syntax
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify all hosted test gates
+        env:
+          SHARD_RESULT: ${{ needs.test_shard.result }}
+          SYNTAX_RESULT: ${{ needs.syntax.result }}
+        run: |
+          echo "test shards: ${SHARD_RESULT}"
+          echo "syntax: ${SYNTAX_RESULT}"
+          test "${SHARD_RESULT}" = "success"
+          test "${SYNTAX_RESULT}" = "success"

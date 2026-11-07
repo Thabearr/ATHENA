@@ -93,6 +93,19 @@ def _blob(path: str, revision: str = "HEAD") -> bytes:
 
 
 def _source_identity(path: str, *, must_match_head: bool = True) -> dict[str, str]:
+    # This module derives retained historical status; a current retention-only
+    # workflow successor must be authenticated before using its frozen identity.
+    if path == ".github/workflows/current-shadow-all-market.yml":
+        from scripts import audit_phase_a_pc_upcoming_retention_successor as forward
+        forward.authenticate()
+        historical = forward.identity(forward._raw_blob(forward.FIXTURE))
+        return {"path": path, **{key: historical[key] for key in
+                                ("git_blob_sha1", "source_sha256")}}
+    if path == ".github/workflows/tests.yml":
+        from scripts import audit_tests_shard_balance_successor as shards
+        shards.authenticate()
+        return {"path": path, **{key: shards.BEFORE[key] for key in
+                                ("git_blob_sha1", "source_sha256")}}
     working = (ROOT / path).read_bytes()
     normalized = working.replace(b"\r\n", b"\n")
     blob = subprocess.run(

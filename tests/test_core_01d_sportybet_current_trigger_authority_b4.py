@@ -334,12 +334,36 @@ def test_e3_cross_contract_matrix_authenticates_every_predecessor_and_current_su
 
     chain = a2.load_inventory_generations()
     latest = chain[-1][1]
-    current_successor = {
-        "git_blob_sha1": transition["successor_git_blob_sha1"],
-        "lf_source_sha256": transition["successor_lf_source_sha256"],
-    }
-    if path == a2.E3_PASS_A_COMPAT_SUCCESSOR_EXTENSION_PATH:
-        current_successor = a2._authenticated_e3_successor_identity(path, chain, latest)
+    # Resolve every current source through its authenticated latest edge. Some
+    # paths retain their V284 successor; B6 has a distinct V377 successor.
+    current_successor = a2._authenticated_e3_successor_identity(path, chain, latest)
+    if path == "scripts/audit_core_01d_port02c_trigger_authority_b6.py":
+        v376_path, v376 = chain[375]
+        v377, = [row for row in latest["e3_cross_contract_source_forward_successor_extensions"]
+                 if row["path"] == path and row["generation"] == 377]
+        assert v376_path == a2.inventory_generation_path(376)
+        assert v376["generation"] == 376
+        assert v376["canonical_sha256"] == a2.RCV_RECOVERY_V376_SOURCE_PREDECESSOR_SHA256
+        assert v377["predecessor_inventory"] == {
+            "path": v376_path,
+            "canonical_sha256": v376["canonical_sha256"],
+            "generation": 376,
+            "rewritten": False,
+        }
+        assert v377["previous_successor"] == {
+            "generation": 376,
+            "canonical_sha256": v376["canonical_sha256"],
+            "git_blob_sha1": transition["successor_git_blob_sha1"],
+            "lf_source_sha256": transition["successor_lf_source_sha256"],
+            "rewritten": False,
+        }
+        assert v377["successor"] == {
+            **current_successor,
+            "git_mode": "100644",
+        }
+        assert v377["authority_granted"] is False
+        assert v377["historical_bytes_changed"] is False
+        assert v377["rewritten"] is False
     current, current_identity = a2.read_tracked_head_blob(b4.ROOT, path)
     normalized_current = current.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     assert current_identity.git_blob_sha1 == current_successor["git_blob_sha1"]
@@ -693,25 +717,161 @@ def test_e3_forward_source_policy_is_exactly_four_paths_and_rejects_forged_inven
         a2.read_authenticated_forward_predecessor(path)
     monkeypatch.setattr(a2, "SOURCE_FORWARD_TRANSITIONS", original_transitions)
 
-    current_row_path = "domain/sportybet_live_event_quote_evidence.py"
 
-    def forged_current_row():
-        chain = original_chain()
-        latest_path, latest = chain[-1]
-        latest = deepcopy(latest)
-        for row in latest["source_identities"]:
-            if row["path"] == current_row_path:
-                row["lf_source_sha256"] = "0" * 64
-        chain[-1] = (latest_path, latest)
-        return chain
-    monkeypatch.setattr(a2, "load_inventory_generations", forged_current_row)
-    with pytest.raises(AssertionError, match="current successor row differs from authenticated latest inventory"):
+
+def test_e3_forward_current_identity_rejects_forged_row_with_disk_latest_intact(monkeypatch):
+    a2 = b4.boundary
+    current_row_path = "domain/sportybet_live_event_quote_evidence.py"
+    original_chain = a2.load_inventory_generations
+    baseline_chain = original_chain()
+    latest_path, latest = baseline_chain[-1]
+    assert latest["generation"] == len(baseline_chain)
+    assert latest_path == a2.inventory_generation_path(latest["generation"])
+    latest_disk_before = Path(latest_path).read_bytes()
+    forged_latest = deepcopy(latest)
+    matching_rows = [
+        row for row in forged_latest["source_identities"]
+        if row["path"] == current_row_path
+    ]
+    assert len(matching_rows) == 1
+    matching_rows[0]["lf_source_sha256"] = "0" * 64
+    forged_chain = list(baseline_chain)
+    forged_chain[-1] = (latest_path, forged_latest)
+
+    monkeypatch.setattr(a2, "load_inventory_generations", lambda: forged_chain)
+    with pytest.raises(
+        AssertionError,
+        match="current successor row differs from authenticated latest inventory",
+    ):
         a2.read_authenticated_forward_predecessor(current_row_path)
+
+    # Only the in-memory projection above was forged; the current disk generation
+    # remains present and byte-identical for this separate downstream identity check.
+    assert Path(latest_path).read_bytes() == latest_disk_before
+    assert len(original_chain()) == len(baseline_chain)
+
+
+def test_retention_v378_source_edge_survives_later_a2_successors():
+    a2 = b4.boundary
+    path = "scripts/audit_core_01d_checkpoint_e_completion_v2.py"
+    chain = a2.load_inventory_generations()
+    latest_path, latest = chain[-1]
+    assert len(chain) > a2.RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION
+    assert latest_path == a2.inventory_generation_path(latest["generation"])
+    observed = a2._authenticated_e3_successor_identity(path, chain, latest)
+    expected_history = [
+        row for row in latest["e3_cross_contract_source_forward_successor_extensions"]
+        if row.get("path") == path
+    ]
+    frozen_edges = [
+        row for row in chain[a2.RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION - 1][1][
+            "e3_cross_contract_source_forward_successor_extensions"
+        ]
+        if row.get("path") == path
+        and row.get("generation") == a2.RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION
+    ]
+    assert len(frozen_edges) == 1
+    assert expected_history[-1] == frozen_edges[0]
+    assert observed == frozen_edges[0]["successor"]
+
+
+@pytest.mark.parametrize("mutation", [
+    "successor_source_row", "frozen_v378_extension", "predecessor_link",
+])
+def test_later_a2_successor_rejects_v378_edge_drift(mutation):
+    a2 = b4.boundary
+    path = "scripts/audit_core_01d_checkpoint_e_completion_v2.py"
+    chain = a2.load_inventory_generations()
+    generation = a2.RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION
+    assert len(chain) > generation
+    v378 = chain[generation - 1][1]
+    frozen_edges = [
+        row for row in v378["e3_cross_contract_source_forward_successor_extensions"]
+        if row.get("path") == path and row.get("generation") == generation
+    ]
+    assert len(frozen_edges) == 1
+    expected_history = deepcopy([
+        row for row in chain[-1][1]["e3_cross_contract_source_forward_successor_extensions"]
+        if row.get("path") == path
+    ])
+    assert expected_history[-1] == frozen_edges[0]
+    changed = deepcopy(chain)
+    latest_path, latest = changed[-1]
+    latest = deepcopy(latest)
+    if mutation == "successor_source_row":
+        rows = [row for row in latest["source_identities"] if row.get("path") == path]
+        assert len(rows) == 1
+        rows[0]["lf_source_sha256"] = "0" * 64
+    elif mutation == "frozen_v378_extension":
+        rows = [row for row in latest["e3_cross_contract_source_forward_successor_extensions"]
+                if row.get("path") == path and row.get("generation") == generation]
+        assert len(rows) == 1
+        rows[0]["successor"]["lf_source_sha256"] = "0" * 64
+    else:
+        latest["predecessor_inventory"]["canonical_sha256"] = "0" * 64
+    changed[-1] = (latest_path, latest)
+    with pytest.raises(
+        AssertionError,
+        match="retention A2 successor does not preserve the complete frozen V378 checkpoint history",
+    ):
+        a2._e3_require_frozen_v378_source_edge_preserved(changed, path, expected_history)
+
+
+def test_later_inventory_rejects_extra_checkpoint_edge_in_intermediate_generation():
+    a2 = b4.boundary
+    path = "scripts/audit_core_01d_checkpoint_e_completion_v2.py"
+    chain = a2.load_inventory_generations()
+    v378_generation = a2.RCV_RECOVERY_V378_CHECKPOINT_V2_GENERATION
+    assert len(chain) >= v378_generation + 1
+    v378 = chain[v378_generation - 1][1]
+    expected_history = deepcopy([
+        row for row in v378["e3_cross_contract_source_forward_successor_extensions"]
+        if row.get("path") == path
+    ])
+    assert expected_history[-1]["generation"] == v378_generation
+
+    # Construct V378 -> V379 -> V380. V379 carries one extra checkpoint edge;
+    # V380 carries the expected history only, reproducing the reviewed gap.
+    v379_path, archived_v379 = chain[v378_generation]
+    synthetic_v379 = deepcopy(archived_v379)
+    extra_edge = deepcopy(expected_history[-1])
+    extra_edge["generation"] = v378_generation + 1
+    synthetic_v379["e3_cross_contract_source_forward_successor_extensions"].append(extra_edge)
+    synthetic_v379["canonical_sha256"] = "a" * 64
+
+    synthetic_v380 = deepcopy(archived_v379)
+    synthetic_v380["generation"] = v378_generation + 2
+    synthetic_v380["schema_version"] = v378_generation + 2
+    synthetic_v380["canonical_sha256"] = "b" * 64
+    synthetic_v380["predecessor_inventory"] = {
+        "path": v379_path,
+        "canonical_sha256": synthetic_v379["canonical_sha256"],
+        "generation": v378_generation + 1,
+        "rewritten": False,
+    }
+    v380_checkpoint_history = [
+        row for row in synthetic_v380["e3_cross_contract_source_forward_successor_extensions"]
+        if row.get("path") == path
+    ]
+    assert v380_checkpoint_history == expected_history
+
+    synthetic_chain = list(chain[:v378_generation])
+    synthetic_chain.extend([
+        (v379_path, synthetic_v379),
+        (a2.inventory_generation_path(v378_generation + 2), synthetic_v380),
+    ])
+    with pytest.raises(
+        AssertionError,
+        match="retention A2 successor does not preserve the complete frozen V378 checkpoint history",
+    ):
+        a2._e3_require_frozen_v378_source_edge_preserved(
+            synthetic_chain, path, expected_history,
+        )
 
 
 @pytest.mark.parametrize("mutation", [
     "missing_latest_row", "stale_latest_generation", "broken_predecessor_sha",
-    "broken_authorization_sha",
+    "broken_authorization_sha", "stale_latest_corpus",
 ])
 def test_e3_three_source_forward_rejects_forged_a2_authorization_chain(monkeypatch, mutation):
     a2 = b4.boundary
@@ -721,7 +881,12 @@ def test_e3_three_source_forward_rejects_forged_a2_authorization_chain(monkeypat
     def altered_chain():
         chain = original_chain()
         if mutation == "stale_latest_generation":
-            return chain[:-1]
+            # V379 predates the V5 A2 transition. Dropping only the latest
+            # generation can leave the current auditor bound on later heads.
+            stale_generation = 379
+            assert len(chain) > stale_generation
+            assert chain[stale_generation - 1][0] == a2.inventory_generation_path(stale_generation)
+            return chain[:stale_generation]
         if mutation == "broken_predecessor_sha":
             index = a2.E3_B6_SOURCE_FORWARD_PREDECESSOR_GENERATION - 1
         elif mutation == "broken_authorization_sha":
@@ -734,6 +899,15 @@ def test_e3_three_source_forward_rejects_forged_a2_authorization_chain(monkeypat
             value["source_identities"] = [
                 row for row in value["source_identities"] if row["path"] != path
             ]
+        elif mutation == "stale_latest_corpus":
+            # Leave the current A2 row and generation chain intact so the
+            # production verifier reaches the full corpus comparison.
+            bootstrap_row, = [
+                row for row in value["source_identities"] if row["path"] == "sitecustomize.py"
+            ]
+            assert bootstrap_row["lf_source_sha256"] != "0" * 64
+            bootstrap_row["lf_source_sha256"] = "0" * 64
+            value = a2.seal(value)
         else:
             value["canonical_sha256"] = "0" * 64
         chain[index] = (row_path, value)
@@ -743,7 +917,13 @@ def test_e3_three_source_forward_rejects_forged_a2_authorization_chain(monkeypat
     if mutation == "stale_latest_generation":
         with pytest.raises(
             AssertionError,
-            match="E3 cross-contract|E3 Pass-A latest inventory|current A2 source differs from authenticated latest A2",
+            match=r"^E3 Pass-A current A2 source differs from authenticated latest A2$",
+        ):
+            a2.read_authenticated_cross_contract_predecessor(path)
+    elif mutation == "stale_latest_corpus":
+        with pytest.raises(
+            AssertionError,
+            match=r"^E3 Pass-A latest inventory is stale against the current source corpus$",
         ):
             a2.read_authenticated_cross_contract_predecessor(path)
     else:
@@ -751,14 +931,9 @@ def test_e3_three_source_forward_rejects_forged_a2_authorization_chain(monkeypat
             a2.read_authenticated_cross_contract_predecessor(path)
 
 
-def test_audit_does_not_require_the_base_commit_object(monkeypatch):
-    original = b4._git
-
-    def reject_historical_base_lookup(*args):
-        assert b4.BASE_MAIN not in args
-        return original(*args)
-
-    monkeypatch.setattr(b4, "_git", reject_historical_base_lookup)
+def test_audit_does_not_require_the_base_commit_object():
+    # Qualification runs this unmodified audit from a depth-1 isolated checkout
+    # after externally proving BASE_MAIN is absent from its object database.
     assert b4.audit()["result"] == "PASS"
 
 
@@ -769,3 +944,105 @@ def test_b4_never_changes_workflow_or_authorizes_live_operations(receipt):
     assert set(receipt["actions"].values()) == {0}
     assert receipt["criterion_11"] is False and receipt["criterion_14"] is False
     assert receipt["checkpoint_e_status"] == receipt["p4_4_status"] == "INCOMPLETE"
+
+
+def test_phase_a_one_path_retention_preserves_b4_projection():
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+    from scripts import audit_data_01c_restore_portability as d5
+    from scripts import audit_tests_shard_balance_successor as shards
+    from scripts import audit_phase_a_b4_test_source_successor as test_source
+    actual_tree = b4._git("rev-parse", "HEAD:.github/workflows").decode().strip()
+    assert actual_tree in {shards.AFTER_TREE, shards.V3_AFTER_TREE}
+    shards.authenticate()
+    test_source.authenticate()
+    retention.authenticate()
+    projected = b4.project_b4_workflow_tree(actual_tree)
+    assert projected == retention.BEFORE_B4_TREE == d5.successor_context()[1]
+    # A historical adapter is not authority to call the live-tree entrypoint
+    # with an old or caller-selected tree. The strict HEAD fence stays intact.
+    for rejected in (retention.AFTER_TREE, 'f' * 40):
+        with pytest.raises(AssertionError, match="not for the checked-out tree"):
+            b4.project_b4_workflow_tree(rejected)
+    # Unknown neighboring trees have no new acceptance edge.
+    assert retention.project_b4_tree('f' * 40) == 'f' * 40
+
+
+def test_phase_a_b4_test_source_retains_exact_predecessor():
+    from scripts import audit_phase_a_b4_test_source_successor as forward
+    receipt = forward.authenticate_core()
+    assert receipt["source_path"] == forward.SOURCE
+    assert receipt["authority_granted"] is False
+    assert receipt["workflow_changed"] is False
+    assert forward.predecessor_source(forward.SOURCE, forward.read_blob(forward.SOURCE)) == forward.read_blob(forward.FIXTURE)
+
+
+@pytest.mark.parametrize("which", ["current", "predecessor"])
+def test_phase_a_b4_test_source_rejects_changed_bytes(monkeypatch, which):
+    from scripts import audit_phase_a_b4_test_source_successor as forward
+    path = forward.SOURCE if which == "current" else forward.FIXTURE
+    original = forward.read_blob
+    monkeypatch.setattr(forward, "read_blob", lambda p: original(p) + (b" " if p == path else b""))
+    with pytest.raises(ValueError, match="source|predecessor"):
+        forward.authenticate_core()
+
+
+@pytest.mark.parametrize("kind", ["symlink", "reparse", "hardlink", "ancestor"])
+def test_phase_a_b4_test_source_rejects_linked_evidence_before_read(monkeypatch, kind):
+    from scripts import audit_phase_a_b4_test_source_successor as forward
+    target = forward.ROOT / forward.FIXTURE
+    affected = target.parent if kind == "ancestor" else target
+    original = Path.lstat
+    def linked(candidate):
+        status = original(candidate)
+        if candidate == target and kind == "ancestor":
+            raise AssertionError("followed linked ancestor")
+        if candidate != affected:
+            return status
+        return SimpleNamespace(
+            st_mode=(stat.S_IFLNK | 0o777) if kind in {"symlink", "ancestor"} else status.st_mode,
+            st_file_attributes=0x400 if kind == "reparse" else 0,
+            st_nlink=2 if kind == "hardlink" else 1,
+        )
+    monkeypatch.setattr(Path, "lstat", linked)
+    with pytest.raises(ValueError, match="linked|nonregular"):
+        forward.read_blob(forward.FIXTURE)
+
+
+@pytest.mark.parametrize("mode", ["100755", "120000", "160000"])
+def test_phase_a_b4_test_source_rejects_wrong_git_mode(monkeypatch, mode):
+    from scripts import audit_phase_a_b4_test_source_successor as forward
+    # Authenticate a positive control and warm the immutable-payload cache.
+    forward.read_blob(forward.FIXTURE)
+    original = forward.subprocess.check_output
+    intercepted = []
+    def wrong(args, **kwargs):
+        raw = original(args, **kwargs)
+        if args[:2] == ["git", "ls-tree"] and args[-2:] == ["--", forward.FIXTURE]:
+            before, separator, rest = raw.partition(b" ")
+            assert before == b"100644" and separator == b" "
+            intercepted.append(True)
+            return mode.encode() + separator + rest
+        return raw
+    monkeypatch.setattr(forward.subprocess, "check_output", wrong)
+    with pytest.raises(ValueError, match="mode"):
+        forward.read_blob(forward.FIXTURE)
+    assert intercepted == [True]
+
+
+@pytest.mark.parametrize("mutation", ["stale", "predecessor", "source", "seal"])
+def test_phase_a_b4_test_source_rejects_stale_or_forged_inventory(mutation):
+    import json
+    from scripts import audit_phase_a_b4_test_source_successor as forward
+    value = json.loads(forward.read_blob(forward.INVENTORY))
+    if mutation == "stale":
+        value["generation"] = 354
+    elif mutation == "predecessor":
+        value["predecessor_inventory"]["canonical_sha256"] = "0" * 64
+    elif mutation == "source":
+        next(row for row in value["source_identities"] if row["path"] == forward.SOURCE)["lf_source_sha256"] = "0" * 64
+    if mutation != "seal":
+        value["canonical_sha256"] = forward.canonical_digest(value)
+    else:
+        value["canonical_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="inventory"):
+        forward.verify_first_inventory(value)

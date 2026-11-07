@@ -169,7 +169,13 @@ def test_current_workflow_tree_and_protected_paths_match_reviewed_evolution() ->
     for path in evolution.PROTECTED:
         assert path in baseline
         raw = Path(path).read_bytes().replace(b"\r\n", b"\n")
-        assert evolution.source_identity(raw) == latest.get(path, baseline[path])
+        expected = latest.get(path, baseline[path])
+        from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+        if path == retention.WORKFLOW:
+            retention.authenticate()
+            assert evolution.source_identity(Path(retention.FIXTURE).read_bytes()) == expected
+            expected = {key: retention.AFTER[key] for key in evolution.IDENTITY_KEYS}
+        assert evolution.source_identity(raw) == expected
 
 
 def test_historical_audits_accept_the_new_current_state() -> None:

@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 import yaml
 
@@ -283,7 +284,7 @@ def discover_repository_callers() -> list[dict[str, str]]:
 
 def build_source_inventory() -> dict[str, object]:
     boundary.authenticate_predecessors()
-    chain = boundary.load_inventory_generations()
+    chain = _load_b2_generation_chain()
     generations = list(range(1, len(chain) + 1))
     require(generations[:3] == [1, 2, 3] and generations[-1] >= 3,
             "A2 inventory chain is not contiguous from the immutable reviewed V3 prefix")
@@ -522,6 +523,26 @@ def _review_row(key: tuple[str, str], inventory: dict[str, object]) -> dict[str,
 
 
 def build_receipt() -> dict[str, object]:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    with receipt_scope._bounded_receipt_scope(
+            "checkpoint-b2-generation-chain", (sys.modules[__name__],),
+            receipt_scope._TRUSTED_B2_CONTRACT):
+        return _build_receipt()
+
+
+def _load_b2_generation_chain():
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    scope = receipt_scope._active_receipt_scope("checkpoint-b2-generation-chain")
+    cached = None if scope is None else scope.load()
+    if cached is not None:
+        return cached
+    chain = boundary.load_inventory_generations()
+    if scope is not None:
+        scope.store(chain)
+    return chain
+
+
+def _build_receipt() -> dict[str, object]:
     # B2 is immutable historical evidence. Later A2 generations supersede V4
     # as the current corpus head, so authenticate B2 against its exact V4
     # predecessor snapshot while the current A2 chain remains separately
@@ -533,7 +554,7 @@ def build_receipt() -> dict[str, object]:
                                                      "canonical_sha256": A2_V3_SHA,
                                                      "generation": 3, "rewritten": False},
             "immutable B2 A2 V4 source inventory predecessor drift")
-    chain = boundary.load_inventory_generations()
+    chain = _load_b2_generation_chain()
     require(len(chain) >= 4 and chain[3][1] == a2_v4,
             "A2 generation chain no longer contains the exact B2 V4 inventory")
     required_python = {

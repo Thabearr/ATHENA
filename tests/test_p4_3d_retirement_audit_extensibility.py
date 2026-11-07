@@ -252,3 +252,13 @@ def test_checkpoint_audit_receipt_files_are_byte_identical_to_base() -> None:
             assert audit._git("hash-object", f"--path={path}", ledger.P43C_LEDGER_SNAPSHOT_PATH.as_posix()).decode("ascii").strip() == expected_blob
         else:
             assert audit._blob("HEAD", path) == expected_blob
+
+
+def test_p43_historical_tests_workflow_uses_the_authenticated_predecessor() -> None:
+    from scripts import audit_phase_a_pass_a_tests_source_successor as tests_source
+    from scripts import audit_tests_shard_balance_successor as shards
+
+    frozen = ledger.validate_ledger()
+    historical = ledger.resolve_reviewed_workflow_source(shards.WORKFLOW, ledger=frozen)
+    assert historical == tests_source.historical_workflow_source()
+    assert shards.identity(historical) == shards.BEFORE

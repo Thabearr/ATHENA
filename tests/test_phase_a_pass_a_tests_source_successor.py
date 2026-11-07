@@ -1,0 +1,784 @@
+"""Exact historical reachability, with current source qualification retained."""
+from copy import deepcopy
+import json
+from pathlib import Path
+from types import SimpleNamespace
+import stat
+
+import pytest
+
+from scripts import audit_phase_a_pass_a_tests_source_successor as forward
+from scripts import audit_tests_shard_balance_successor as shards
+
+
+def test_pass_a_inventory_matches_frozen_source_and_edges():
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    frozen = review.authenticate_inventory()
+    assert frozen['canonical_sha256'] == review.INVENTORY_SHA
+    assert review.source_bytes(shards.WORKFLOW) == forward.read_blob(shards.FIXTURE)
+    assert shards.identity(forward.read_blob(shards.WORKFLOW)) == shards.V3_AFTER
+    # Metadata/caller discovery still reads actual YAML: no projection needed.
+    assert review.workflow_metadata(shards.WORKFLOW) == frozen['workflow_metadata'][shards.WORKFLOW]
+    assert review.discover(shards.WORKFLOW) == frozen['static_discovery_edges'][shards.WORKFLOW]
+
+
+def test_pass_a_source_successor_is_exact_and_does_not_map_unknown_paths():
+    value = forward.authenticate_core()
+    assert value['authority_granted'] is value['workflow_changed'] is False
+    for path, row in forward.EDGES.items():
+        assert forward.predecessor_source(path, forward.read_blob(path)) == forward.read_blob(row['fixture'])
+    assert forward.predecessor_source('domain/unrelated.py', b'unrelated') == b'unrelated'
+
+
+@pytest.mark.parametrize('which', ['current', 'predecessor', 'receipt'])
+def test_pass_a_source_successor_rejects_changed_evidence(monkeypatch, which):
+    row = forward.EDGES[forward.SOURCE]
+    target = {'current': forward.SOURCE, 'predecessor': row['fixture'], 'receipt': forward.RECEIPT}[which]
+    original = forward.read_blob
+    monkeypatch.setattr(forward, 'read_blob', lambda p: original(p) + (b' ' if p == target else b''))
+    with pytest.raises(ValueError, match='source|receipt|predecessor'):
+        forward.authenticate_core()
+
+
+@pytest.mark.parametrize('which', ['workflow', 'fixture', 'frozen'])
+def test_pass_a_historical_workflow_rejects_tampered_bytes(monkeypatch, which):
+    targets = {'workflow': shards.WORKFLOW, 'fixture': shards.FIXTURE,
+               'frozen': 'tests/fixtures/core_01d/authority-reachability-pass-a-source-inventory-v1.json'}
+    original = forward.read_blob
+    monkeypatch.setattr(forward, 'read_blob', lambda p: original(p) + (b' ' if p == targets[which] else b''))
+    with pytest.raises(ValueError, match='workflow|predecessor|inventory'):
+        forward.historical_workflow_source()
+
+
+@pytest.mark.parametrize('which', ['source', 'generation', 'missing'])
+def test_pass_a_requires_current_a2_before_historical_substitution(monkeypatch, which):
+    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+    value = deepcopy(a2.authenticate_inventory())
+    if which == 'generation':
+        value['generation'] = 357
+    else:
+        for row in value['source_identities']:
+            if row['path'] == forward.SOURCE:
+                row['lf_source_sha256'] = '0' * 64
+        if which == 'missing':
+            value['source_identities'] = [r for r in value['source_identities'] if r['path'] != forward.SOURCE]
+    monkeypatch.setattr(a2, 'authenticate_inventory', lambda: value)
+    with pytest.raises(ValueError, match='latest A2'):
+        forward.historical_workflow_source()
+
+
+def test_pass_a_has_no_caller_selected_tree_and_keeps_live_fence():
+    from scripts import audit_core_01d_sportybet_current_trigger_authority_b4 as b4
+    with pytest.raises(TypeError):
+        forward.historical_workflow_source(shards.BEFORE_TREE)
+    for stale in (shards.BEFORE_TREE, 'f' * 40):
+        with pytest.raises(AssertionError, match='not for the checked-out tree'):
+            b4.project_b4_workflow_tree(stale)
+
+
+def _mutable_mapping_node_ids(value):
+    found = set()
+    pending = [value]
+    visited = set()
+    while pending:
+        item = pending.pop()
+        if type(item) in (dict, list):
+            if id(item) in visited:
+                continue
+            visited.add(id(item))
+            found.add(id(item))
+            pending.extend(item.values() if type(item) is dict else item)
+        elif type(item) is tuple:
+            pending.extend(item)
+    return found
+
+
+def test_pass_a_v3_return_shape_is_stable_for_unscoped_cold_and_scope_hit():
+    unscoped = forward._ci_assertion_v3_chain()
+    assert type(unscoped) is tuple and len(unscoped) == 3
+    assert type(unscoped[0]) is dict and type(unscoped[1]) is dict and type(unscoped[2]) is dict
+
+    with forward.source_derivation_scope() as owner:
+        derivations_before = set(owner.derivation_bytes)
+        cold = forward._ci_assertion_v3_chain()
+        assert type(cold) is tuple and len(cold) == 3
+        cold_derivations = set(owner.derivation_bytes)
+        assert cold_derivations > derivations_before
+        hits_before = owner.metrics.get('derivation_hits', 0)
+        hit = forward._ci_assertion_v3_chain()
+        assert owner.metrics.get('derivation_hits', 0) > hits_before
+        assert set(owner.derivation_bytes) == cold_derivations
+        assert owner.metrics.get('pass_a_ci_assertion_v3_uncached') == 1
+        assert owner.metrics.get('pass_a_ci_assertion_v3_hits') == 1
+
+    assert type(hit) is tuple and len(hit) == 3
+    assert unscoped == cold == hit
+    graphs = [_mutable_mapping_node_ids(item) for item in (unscoped, cold, hit)]
+    assert all(graphs[i].isdisjoint(graphs[j]) for i in range(len(graphs))
+               for j in range(i + 1, len(graphs)))
+
+    historical_pair = forward._ci_assertion_v2_chain()
+    assert type(historical_pair) is tuple and len(historical_pair) == 2
+    assert historical_pair == unscoped[:2]
+
+
+def test_pass_a_v3_scope_metrics_route_through_checkpoint_owner(monkeypatch):
+    from scripts import audit_checkpoint_e_workflows as checkpoint
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+
+    metrics = {}
+    metrics_token = receipt_scope._SCOPE_METRICS.set(metrics)
+    try:
+        with checkpoint._checkpoint_master_scope() as owner:
+            assert owner.enabled is True
+            assert forward._ci_assertion_v2_scope_owner(forward.read_blob) is owner
+            derivations_before = set(owner.derivation_bytes)
+            cold = forward._ci_assertion_v3_chain()
+            cold_derivations = set(owner.derivation_bytes)
+            assert cold_derivations > derivations_before
+            hit = forward._ci_assertion_v3_chain()
+            assert cold == hit
+            assert set(owner.derivation_bytes) == cold_derivations
+            assert metrics.get('pass_a_ci_assertion_v3_uncached') == 1
+            assert metrics.get('pass_a_ci_assertion_v3_hits') == 1
+    finally:
+        receipt_scope._SCOPE_METRICS.reset(metrics_token)
+
+
+def test_pass_a_v3_without_owner_uses_uncached_path_without_scope_metrics(monkeypatch):
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+
+    receipt_token = receipt_scope._ACTIVE_RECEIPT_SCOPES.set({})
+    source_token = forward._ACTIVE_SOURCE_DERIVATION_SCOPE.set(None)
+    metrics = {}
+    metrics_token = receipt_scope._SCOPE_METRICS.set(metrics)
+    reads = []
+    original = forward.read_blob
+
+    def observed_read(path):
+        reads.append(path)
+        return original(path)
+
+    try:
+        monkeypatch.setattr(forward, 'read_blob', observed_read)
+        assert forward._ci_assertion_v2_scope_owner(forward.read_blob) is None
+        chain = forward._ci_assertion_v3_chain()
+        assert type(chain) is tuple and len(chain) == 3
+        assert chain[2]['canonical_sha256'] == forward.CI_ASSERTION_V3_SHA256
+        assert forward.CI_ASSERTION_V3_RECEIPT in reads
+        assert metrics == {}
+    finally:
+        monkeypatch.setattr(forward, 'read_blob', original)
+        receipt_scope._SCOPE_METRICS.reset(metrics_token)
+        forward._ACTIVE_SOURCE_DERIVATION_SCOPE.reset(source_token)
+        receipt_scope._ACTIVE_RECEIPT_SCOPES.reset(receipt_token)
+
+
+@pytest.mark.parametrize('mutation', ['missing_policy', 'wrong_policy', 'extra_key'])
+def test_pass_a_v3_receipt_requires_policy_and_exact_schema(monkeypatch, mutation):
+    raw = forward.read_blob(forward.CI_ASSERTION_V3_RECEIPT)
+    value = json.loads(raw)
+    if mutation == 'missing_policy':
+        del value['policy_id']
+    elif mutation == 'wrong_policy':
+        value['policy_id'] = 'ATHENA_UNAPPROVED_POLICY'
+    else:
+        value['unreviewed_extra'] = False
+    value['canonical_sha256'] = ''
+    value['canonical_sha256'] = forward.safe.canonical_digest(value)
+    monkeypatch.setattr(forward, 'CI_ASSERTION_V3_SHA256', value['canonical_sha256'])
+    altered = forward.safe.canonical(value)
+
+    def reader(path):
+        return altered if path == forward.CI_ASSERTION_V3_RECEIPT else forward.read_blob(path)
+
+    with pytest.raises(ValueError, match='CI assertion V3 receipt scope'):
+        forward._ci_assertion_v3_chain_uncached(reader)
+
+
+def _apply_source_patches(raw, patches):
+    value = raw
+    for patch in patches:
+        old, new = patch['before'].encode('utf-8'), patch['after'].encode('utf-8')
+        assert old and value.count(old) == 1
+        value = value.replace(old, new)
+    return value
+
+
+def test_root_performance_projection_authenticates_current_then_projects_v3_v2():
+    path = 'sitecustomize.py'
+    current = forward.read_blob(path)
+    projected_reader, projected = forward._ci_assertion_v3_projected_read(
+        path, current, forward.read_blob)
+    through_existing_projection = forward._root_performance_project_checked_source(
+        path, projected, _reader=projected_reader)
+    from_unprojected_source = forward._root_performance_project_checked_source(
+        path, current, _reader=forward.read_blob)
+    assert through_existing_projection == from_unprojected_source
+
+    _prior, v2, v3 = forward._ci_assertion_v3_chain()
+    v2_row = v2['source_forward'][path]
+    v3_row = v3['source_forward'][path]
+    v2_before = forward.read_blob(v2_row['fixture'])
+    v3_before = forward.read_blob(v3_row['fixture'])
+    assert forward.safe.identity(v2_before) == v2_row['before']
+    assert forward._apply_exact_source_forward_row(
+        path, v2_row, forward.read_blob, label='test V2')[1] == v3_before
+    assert forward.safe.identity(v3_before) == v3_row['before']
+    assert v2_row['after'] == v3_row['before']
+    assert forward._require_v2_v3_source_edge(
+        path, v2_row, v3_row, forward.read_blob) == v3_before
+    root_row = forward._root_performance_receipt()['source_forward'][path]
+    assert through_existing_projection == forward.read_blob(root_row['fixture'])
+
+
+def test_ci_assertion_current_v3_then_historical_v2_v1_projection_unscoped():
+    path = 'tests/test_tests_shard_balance_successor.py'
+    current = forward.read_blob(path)
+
+    # CI V1 is an intermediate projection here; parent-progress and shard V2
+    # are later, independently authenticated historical edges.
+    prior, _v2, _v3 = forward._ci_assertion_v3_chain(_reader=forward.read_blob)
+    ci_fixture = prior['source_forward'][path]['fixture']
+    ci_v1 = forward._ci_assertion_predecessor_source(
+        path, current, _reader=forward.read_blob)
+    assert ci_v1 == forward.read_blob(ci_fixture)
+    assert forward.safe.identity(ci_v1)['byte_count'] == 14741
+
+    parent_row = forward._parent_progress_receipt()['source_forward'][path]
+    parent = forward._parent_progress_predecessor_source(
+        path, ci_v1, _reader=forward.read_blob)
+    assert parent == forward.read_blob(parent_row['fixture'])
+    assert forward.safe.identity(parent)['byte_count'] == 9974
+
+    shard_row = forward._tests_shard_v2_receipt()['source_forward'][path]
+    through_shard = forward._tests_shard_v2_predecessor_source(
+        path, current, _reader=forward.read_blob)
+    through_actual_route = forward._predecessor_source_for_reader(path, current)
+    assert through_shard == through_actual_route == forward.read_blob(shard_row['fixture'])
+    assert forward.safe.identity(through_actual_route)['byte_count'] == 6365
+
+    # Also compare the already-authenticated V3 projection entry with the
+    # direct-current helper endpoint; neither may skip the CI V1 edge.
+    projected_reader, projected = forward._ci_assertion_v3_projected_read(
+        path, current, forward.read_blob)
+    through_projection = forward._ci_assertion_predecessor_source(
+        path, projected, _reader=projected_reader,
+        _current_reader=forward.read_blob)
+    assert through_projection == ci_v1
+    assert forward.predecessor_source('domain/unrelated.py', b'unrelated') == b'unrelated'
+
+
+def test_checkpoint_current_v3_to_ci_v2_then_integrated_projection_once():
+    path = 'scripts/audit_checkpoint_e_workflows.py'
+    current = forward.read_blob(path)
+    _prior, v2, _v3 = forward._ci_assertion_v3_chain(_reader=forward.read_blob)
+    ci_fixture = v2['source_forward'][path]['fixture']
+    ci_v2 = forward._ci_assertion_predecessor_source(
+        path, current, _reader=forward.read_blob)
+    assert ci_v2 == forward.read_blob(ci_fixture)
+    assert forward.safe.identity(ci_v2)['byte_count'] == 95388
+
+    integrated_row = forward._integrated_lineage_receipt()['source_forward'][path]
+    expected_integrated = forward.read_blob(integrated_row['fixture'])
+    direct_composite = forward._integrated_lineage_predecessor(
+        path, current, _reader=forward.read_blob)
+    production_composition = forward._predecessor_source_for_reader(path, current)
+    assert direct_composite == production_composition == expected_integrated
+    assert forward.safe.identity(production_composition)['byte_count'] == 94054
+
+
+@pytest.mark.parametrize('target', ['current', 'fixture'])
+def test_ci_assertion_v3_projection_rejects_tampered_current_or_fixture(
+        monkeypatch, target):
+    path = 'tests/test_tests_shard_balance_successor.py'
+    receipt = json.loads(forward.read_blob(forward.CI_ASSERTION_V3_RECEIPT))
+    workflow_row = receipt['source_forward']['.github/workflows/tests.yml']
+    target_path = ('.github/workflows/tests.yml' if target == 'current'
+                   else workflow_row['fixture'])
+    original = forward.read_blob
+
+    def altered(candidate):
+        raw = original(candidate)
+        return raw + b' ' if candidate == target_path else raw
+
+    monkeypatch.setattr(forward, 'read_blob', altered)
+    expected_failure = ('CI assertion V3 current source identity drift'
+                        if target == 'current'
+                        else 'CI assertion V3 source predecessor drift')
+    with pytest.raises(ValueError, match=expected_failure):
+        forward._predecessor_source_for_reader(path, original(path))
+
+
+def test_ci_assertion_v3_projection_rejects_forged_reader_and_value():
+    path = 'tests/test_tests_shard_balance_successor.py'
+    current = forward.read_blob(path)
+    projected_reader, projected = forward._ci_assertion_v3_projected_read(
+        path, current, forward.read_blob)
+    forged = type(projected_reader)(
+        projected_reader.source_reader, dict(projected_reader.fixtures))
+    forged.fixtures['.github/workflows/tests.yml'] += b' '
+    with pytest.raises(ValueError, match='projected reader differs'):
+        forward._ci_assertion_predecessor_source(
+            path, projected, _reader=forged,
+            _current_reader=forward.read_blob)
+
+    with pytest.raises(ValueError, match='supplied projection value'):
+        forward._ci_assertion_v3_projected_read(
+            path, current, forward.read_blob,
+            _value={'source_forward': {path: {'fixture': 'untrusted'}}})
+
+
+def test_ci_assertion_v3_reader_helper_contract_drift_rejects_scoped_hit(monkeypatch):
+    path = 'tests/test_tests_shard_balance_successor.py'
+    current = forward.read_blob(path)
+
+    def forged_helper(_reader):
+        raise AssertionError('mutated reader helper must not execute')
+
+    with forward.source_derivation_scope():
+        forward._predecessor_source_for_reader(path, current)
+        with monkeypatch.context() as changed:
+            changed.setattr(forward, '_ci_assertion_v2_chain_uncached', forged_helper)
+            with pytest.raises(ValueError) as rejected:
+                forward._predecessor_source_for_reader(path, current)
+            assert str(rejected.value) == 'Pass-A source derivation reader changed during its request'
+
+
+def test_root_performance_projection_rejects_mismatched_v2_path_and_direction():
+    path = 'sitecustomize.py'
+    _prior, v2, v3 = forward._ci_assertion_v3_chain()
+    v2_row = v2['source_forward'][path]
+    v3_row = v3['source_forward'][path]
+    wrong_path_row = v2['source_forward'][forward.A2_TEXT_SOURCE]
+    with pytest.raises(ValueError, match='V2->V3 source edge direction/path mismatch'):
+        forward._require_v2_v3_source_edge(
+            path, wrong_path_row, v3_row, forward.read_blob)
+    with pytest.raises(ValueError, match='V2->V3 source edge direction/path mismatch'):
+        forward._require_v2_v3_source_edge(
+            path, v3_row, v2_row, forward.read_blob)
+
+
+def test_bootstrap_pin_projection_composes_root_v2_then_v3_exact_recipes():
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+
+    root_before = retention._expected_bootstrap_before_root_performance()
+    root_row = forward._root_performance_receipt()['source_forward']['sitecustomize.py']
+    assert forward.safe.identity(root_before) == root_row['before']
+    root_after = _apply_source_patches(root_before, root_row['patches'])
+    assert forward.safe.identity(root_after) == root_row['after']
+
+    _prior, v2, v3 = forward._ci_assertion_v3_chain()
+    v2_row = v2['source_forward']['sitecustomize.py']
+    v3_row = v3['source_forward']['sitecustomize.py']
+    assert root_after == forward.read_blob(v2_row['fixture'])
+    v2_after = _apply_source_patches(root_after, v2_row['patches'])
+    assert forward.safe.identity(v2_after) == v2_row['after']
+    v3_before = forward.read_blob(v3_row['fixture'])
+    assert v2_after == v3_before
+    v3_after = _apply_source_patches(v3_before, v3_row['patches'])
+    assert v3_after == retention._bootstrap_blob('sitecustomize.py')
+    assert retention.expected_bootstrap_source() == v3_after
+
+
+def test_retention_checkpoint_composes_v313_v348_then_a2_v2_and_v3():
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+
+    _v313, v348 = retention._checkpoint_v2_v313_source()
+    _prior, v2, v3 = forward._ci_assertion_v3_chain()
+    path = retention.CHECKPOINT_V2_PATH
+    v2_row = v2['source_forward'][path]
+    v3_row = v3['source_forward'][path]
+    v2_before, v2_after = forward._apply_exact_source_forward_row(
+        path, v2_row, forward.read_blob, label='retention test V2')
+    v3_before, v3_after = forward._apply_exact_source_forward_row(
+        path, v3_row, forward.read_blob, label='retention test V3')
+    assert v2_before == v348
+    assert v2_after == v3_before
+    assert v2_row['after'] == v3_row['before']
+    current, observed = retention._read_tracked_head_blob_scoped(
+        retention.ROOT, path)
+    assert retention._checkpoint_v2_authenticated_current_source(
+        v348, current=current, observed=observed) == current == v3_after
+
+
+def test_retention_bootstrap_composes_legacy_activation_root_v2_v3():
+    from scripts import audit_phase_a_pc_upcoming_retention_successor as retention
+
+    assert retention.authenticate_bootstrap_sources() is True
+
+
+@pytest.mark.parametrize('kind', ['symlink', 'reparse', 'hardlink', 'ancestor'])
+def test_pass_a_fixture_rejects_linked_evidence_before_read(monkeypatch, kind):
+    target = forward.ROOT / forward.EDGES[forward.SOURCE]['fixture']
+    affected = target.parent if kind == 'ancestor' else target
+    original = Path.lstat
+    def linked(candidate):
+        status = original(candidate)
+        if candidate == target and kind == 'ancestor':
+            raise AssertionError('followed linked ancestor')
+        if candidate != affected:
+            return status
+        return SimpleNamespace(st_mode=(stat.S_IFLNK | 0o777) if kind in {'symlink', 'ancestor'} else status.st_mode,
+                               st_file_attributes=0x400 if kind == 'reparse' else 0,
+                               st_nlink=2 if kind == 'hardlink' else 1)
+    monkeypatch.setattr(Path, 'lstat', linked)
+    with pytest.raises(ValueError, match='linked|nonregular'):
+        forward.read_blob(forward.EDGES[forward.SOURCE]['fixture'])
+
+
+@pytest.mark.parametrize('mode', ['100755', '120000', '160000'])
+def test_pass_a_fixture_rejects_wrong_mode(monkeypatch, mode):
+    safe = forward.safe
+    fixture = forward.EDGES[forward.SOURCE]['fixture']
+    forward.read_blob(fixture)  # Positive control and warm-cache mode check.
+    original = safe.subprocess.check_output
+    intercepted = []
+    def changed(args, **kwargs):
+        raw = original(args, **kwargs)
+        if args[:2] == ['git', 'ls-tree'] and args[-2:] == ['--', fixture]:
+            before, separator, rest = raw.partition(b' ')
+            assert before == b'100644' and separator == b' '
+            intercepted.append(True)
+            return mode.encode() + separator + rest
+        return raw
+    monkeypatch.setattr(safe.subprocess, 'check_output', changed)
+    with pytest.raises(ValueError, match='mode'):
+        forward.read_blob(fixture)
+    assert intercepted == [True]
+
+
+def test_pass_a_rejects_changed_discovery_line_or_frozen_inventory(monkeypatch):
+    from scripts import audit_core_01d_authority_reachability_review_a as review
+    expected = review.read_json(review.INVENTORY_PATH)
+    changed = deepcopy(expected)
+    changed['static_discovery_edges'][shards.WORKFLOW][6]['line'] += 1
+    monkeypatch.setattr(review, 'build_inventory', lambda: changed)
+    with pytest.raises(AssertionError, match='discovered edges drifted'):
+        review.authenticate_inventory()
+    changed = deepcopy(expected)
+    changed['canonical_sha256'] = '0' * 64
+    original = review.read_json
+    monkeypatch.setattr(review, 'read_json', lambda p: changed if p == review.INVENTORY_PATH else original(p))
+    with pytest.raises(AssertionError, match='inventory seal drift'):
+        review.authenticate_inventory()
+
+
+@pytest.fixture
+def blob_reuse_checkout(tmp_path, monkeypatch):
+ import subprocess
+ from scripts import audit_phase_a_b4_test_source_successor as safe
+ def git(*args):
+  return subprocess.check_output(['git', *args], cwd=tmp_path)
+ git('init', '-q')
+ git('config', 'user.name', 'Offline Fixture')
+ git('config', 'user.email', 'offline@example.invalid')
+ git('config', 'core.autocrlf', 'false')
+ file = tmp_path / 'proof.txt'
+ file.write_bytes(b'reviewed\n')
+ git('add', 'proof.txt')
+ git('commit', '-q', '-m', 'Deterministic offline source fixture')
+ monkeypatch.setattr(safe, 'ROOT', tmp_path)
+ safe._BLOB_PAYLOADS.clear()
+ yield safe, file, git
+ safe._BLOB_PAYLOADS.clear()
+
+
+def test_blob_reuse_reads_current_worktree_after_warm_cache(blob_reuse_checkout):
+ import os
+ safe, file, _git = blob_reuse_checkout
+ assert safe.read_blob('proof.txt') == safe.read_blob('proof.txt') == b'reviewed\n'
+ state = file.stat()
+ file.write_bytes(b'tampered\n')
+ os.utime(file, ns=(state.st_atime_ns, state.st_mtime_ns))
+ with pytest.raises(ValueError, match='filtered worktree identity drift'):
+  safe.read_blob('proof.txt')
+
+
+def test_blob_reuse_preserves_cold_reader_and_rejects_reader_replacement(blob_reuse_checkout, monkeypatch):
+ from runtime import source_identity
+ safe, _file, _git = blob_reuse_checkout
+ original = source_identity.read_tracked_head_blob
+ calls = []
+ def counted(*args, **kwargs):
+  calls.append(args)
+  return original(*args, **kwargs)
+ monkeypatch.setattr(source_identity, 'read_tracked_head_blob', counted)
+ assert safe.read_blob('proof.txt') == safe.read_blob('proof.txt') == b'reviewed\n'
+ assert len(calls) == 1
+ def denied(*args, **kwargs):
+  raise ValueError('replacement reader must run')
+ monkeypatch.setattr(source_identity, 'read_tracked_head_blob', denied)
+ with pytest.raises(ValueError, match='replacement reader must run'):
+  safe.read_blob('proof.txt')
+
+
+def test_blob_reuse_rechecks_git_mode(blob_reuse_checkout, monkeypatch):
+ safe, _file, _git = blob_reuse_checkout
+ safe.read_blob('proof.txt')
+ original = safe.subprocess.check_output
+ def executable(args, **kwargs):
+  raw = original(args, **kwargs)
+  return raw.replace(b'100644 blob ', b'100755 blob ') if args[:2] == ['git', 'ls-tree'] else raw
+ monkeypatch.setattr(safe.subprocess, 'check_output', executable)
+ with pytest.raises(ValueError, match='mode drift'):
+  safe.read_blob('proof.txt')
+
+
+def test_blob_reuse_preserves_crlf_and_observes_filter_change(blob_reuse_checkout):
+ safe, file, git = blob_reuse_checkout
+ assert safe.read_blob('proof.txt') == b'reviewed\n'
+ git('config', 'core.autocrlf', 'true')
+ file.write_bytes(b'reviewed\r\n')
+ assert safe.read_blob('proof.txt') == b'reviewed\n'
+ (file.parent / '.gitattributes').write_bytes(b'proof.txt -text\n')
+ with pytest.raises(ValueError, match='filtered worktree identity drift'):
+  safe.read_blob('proof.txt')
+
+
+def test_blob_reuse_observes_new_head_and_rejects_corrupted_cache(blob_reuse_checkout):
+ safe, file, git = blob_reuse_checkout
+ assert safe.read_blob('proof.txt') == b'reviewed\n'
+ file.write_bytes(b'successor\n')
+ git('add', 'proof.txt')
+ git('commit', '-q', '-m', 'Offline exact source successor')
+ assert safe.read_blob('proof.txt') == b'successor\n'
+ for key in list(safe._BLOB_PAYLOADS):
+  safe._BLOB_PAYLOADS[key] = b'forged'
+ with pytest.raises(ValueError, match='cached blob payload identity drift'):
+  safe.read_blob('proof.txt')
+
+
+@pytest.mark.parametrize('which', ['receipt', 'source', 'fixture', 'test', 'test_fixture', 'inventory'])
+def test_blob_reuse_source_successor_rejects_changed_evidence(monkeypatch, which):
+ value = forward._blob_reuse_receipt()
+ source = 'scripts/audit_phase_a_b4_test_source_successor.py'
+ test = 'tests/test_phase_a_pass_a_tests_source_successor.py'
+ target = {'receipt': forward.BLOB_REUSE_RECEIPT, 'source': source,
+           'fixture': value['source_forward'][source]['fixture'], 'test': test,
+           'test_fixture': value['source_forward'][test]['fixture'],
+           'inventory': value['predecessor_inventory']['path']}[which]
+ original = forward.read_blob
+ monkeypatch.setattr(forward, 'read_blob', lambda p: original(p) + (b' ' if p == target else b''))
+ with pytest.raises(ValueError, match='blob reuse'):
+  forward._blob_reuse_receipt()
+
+
+@pytest.mark.parametrize('which', ['receipt', 'b4_current', 'b4_fixture', 'pass_a_current', 'pass_a_fixture', 'reader_current', 'reader_fixture', 'inventory'])
+def test_git_mode_regression_successor_rejects_changed_evidence(monkeypatch, which):
+ value = forward._git_mode_regression_receipt()
+ b4 = 'tests/test_core_01d_sportybet_current_trigger_authority_b4.py'
+ target = {'receipt': forward.GIT_MODE_REGRESSION_RECEIPT,
+           'b4_current': b4, 'b4_fixture': value['source_forward'][b4]['fixture'],
+           'pass_a_current': forward.TEST, 'pass_a_fixture': value['source_forward'][forward.TEST]['fixture'],
+           'reader_current': 'scripts/audit_phase_a_b4_test_source_successor.py',
+           'reader_fixture': value['source_forward']['scripts/audit_phase_a_b4_test_source_successor.py']['fixture'],
+           'inventory': value['predecessor_inventory']['path']}[which]
+ original = forward.read_blob
+ monkeypatch.setattr(forward, 'read_blob', lambda p: original(p) + (b' ' if p == target else b''))
+ with pytest.raises(ValueError, match='Git-mode regression'):
+  forward._git_mode_regression_receipt()
+
+
+@pytest.mark.parametrize('which', ['generation', 'missing', 'forged', 'predecessor'])
+def test_git_mode_current_qualification_rejects_unqualified_a2(monkeypatch, which):
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ safe = forward.safe
+ latest = deepcopy(a2.authenticate_inventory())
+ if which == 'generation':
+  latest['generation'] = 371
+ elif which == 'missing':
+  latest['source_identities'] = [r for r in latest['source_identities'] if r['path'] != safe.SOURCE]
+ else:
+  for row in latest['source_identities']:
+   if row['path'] == safe.SOURCE:
+    row['lf_source_sha256'] = safe.AFTER['source_sha256'] if which == 'predecessor' else '0' * 64
+ monkeypatch.setattr(a2, 'authenticate_inventory', lambda: latest)
+ with pytest.raises(ValueError, match='current source is not authenticated by latest A2'):
+  safe.authenticate()
+
+
+def test_root_performance_json_snapshot_returns_fresh_values_and_observes_tamper(tmp_path, monkeypatch):
+ import os
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ value=a2.seal({'values':[1,True,1.0,None],'nested':{'source':'reviewed'}})
+ raw=a2.canonical(value);target=tmp_path/'receipt.json';target.write_bytes(raw)
+ monkeypatch.setattr(a2,'ROOT',tmp_path)
+ first=a2.read('receipt.json');first['values'].append('poison')
+ second=a2.read('receipt.json')
+ assert second==value and second is not first
+ assert [type(v) for v in second['values']]==[int,bool,float,type(None)]
+ state=target.stat();target.write_bytes(raw.replace(b'reviewed',b'tampered'))
+ os.utime(target,ns=(state.st_atime_ns,state.st_mtime_ns))
+ with pytest.raises(AssertionError,match='self-hash mismatch'):
+  a2.read('receipt.json')
+ target.write_bytes(raw)
+ assert a2.read('receipt.json')==value
+ def denied(*args,**kwargs):raise AssertionError('replacement validator must run')
+ monkeypatch.setattr(a2,'_authenticated_json_bytes',denied)
+ with pytest.raises(AssertionError,match='replacement validator must run'):
+  a2.read('receipt.json')
+
+
+@pytest.mark.parametrize('fault',['gap','malformed_name','leading_zero','predecessor','schema','early','trailing'])
+def test_root_performance_warm_chain_rejects_fresh_invalid_inputs(tmp_path,monkeypatch,fault):
+ from scripts import audit_core_01d_ci_offline_transport_boundary as a2
+ originals={i:(a2.ROOT/a2.inventory_generation_path(i)).read_bytes() for i in (1,2,3)}
+ for i,raw in originals.items():
+  p=tmp_path/a2.inventory_generation_path(i);p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(raw)
+ monkeypatch.setattr(a2,'ROOT',tmp_path)
+ chain=a2.load_inventory_generations();assert len(chain)==3
+ target=tmp_path/a2.inventory_generation_path(2)
+ if fault=='gap':target.unlink()
+ elif fault=='malformed_name':(target.parent/(a2.INVENTORY_PREFIX+'bad.json')).write_bytes(b'{}')
+ elif fault=='leading_zero':(target.parent/(a2.INVENTORY_PREFIX+'v02.json')).write_bytes(originals[2])
+ elif fault=='trailing':target.write_bytes(originals[2]+b' ')
+ else:
+  import json
+  number=1 if fault=='early' else 2;target=tmp_path/a2.inventory_generation_path(number)
+  value=json.loads(target.read_bytes())
+  if fault=='predecessor':value['predecessor_inventory']['canonical_sha256']='0'*64
+  elif fault=='schema':value['schema_version']=999
+  else:value['base_main_sha']='0'*40
+  target.write_bytes(a2.canonical(a2.seal(value)))
+ with pytest.raises(AssertionError):a2.load_inventory_generations()
+
+
+@pytest.mark.parametrize('bad',[b'',b'not-a-root-proof\n',b'../\n'+b'a'*40+b'\n',b'\n'+b'z'*40+b'\n',True])
+def test_root_performance_combined_fence_rejects_bad_root_or_head(blob_reuse_checkout,monkeypatch,bad):
+ from runtime import source_identity
+ safe,_file,_git=blob_reuse_checkout
+ assert safe.read_blob('proof.txt')==b'reviewed\n'
+ original=source_identity._run_git
+ def malformed(root,*args):
+  if args==('rev-parse','--show-cdup','--verify','HEAD^{commit}'):return bad
+  return original(root,*args)
+ monkeypatch.setattr(source_identity,'_run_git',malformed)
+ with pytest.raises(ValueError):safe.read_blob('proof.txt')
+
+
+def test_root_performance_large_working_set_keeps_every_fresh_filter_check(blob_reuse_checkout,monkeypatch):
+ from runtime import source_identity
+ safe,file,git=blob_reuse_checkout
+ names=[f'proof-{i:03}.txt' for i in range(96)]
+ for i,name in enumerate(names):(file.parent/name).write_text(f'reviewed {i:03}\n')
+ git('add','.');git('commit','-q','-m','Offline distinct immutable working set')
+ original=source_identity.read_tracked_head_blob;full=[];filtered=[]
+ def counted(*args,**kwargs):full.append(args);return original(*args,**kwargs)
+ original_ascii=source_identity._ascii_git_output
+ def hash_counted(root,*args):
+  if args and args[0]=='hash-object':filtered.append(args)
+  return original_ascii(root,*args)
+ monkeypatch.setattr(source_identity,'read_tracked_head_blob',counted)
+ monkeypatch.setattr(source_identity,'_ascii_git_output',hash_counted)
+ for _ in range(2):
+  for i,name in enumerate(names):assert safe.read_blob(name)==f'reviewed {i:03}\n'.encode()
+ assert len(full)==96 and len(filtered)==192
+ assert len(safe._BLOB_PAYLOADS)<=safe._BLOB_MAX_ITEMS
+ assert sum(map(len,safe._BLOB_PAYLOADS.values()))<=safe._BLOB_MAX_BYTES
+
+
+def test_root_performance_payload_cache_obeys_count_and_byte_budgets(blob_reuse_checkout,monkeypatch):
+ safe,file,git=blob_reuse_checkout
+ for i in range(5):(file.parent/f'item-{i}.txt').write_bytes(bytes([65+i])*8)
+ (file.parent/'large.txt').write_bytes(b'X'*256)
+ git('add','.');git('commit','-q','-m','Offline cache budget fixtures')
+ monkeypatch.setattr(safe,'_BLOB_MAX_ITEMS',3);monkeypatch.setattr(safe,'_BLOB_MAX_BYTES',24)
+ for i in range(5):
+  safe.read_blob(f'item-{i}.txt')
+  assert len(safe._BLOB_PAYLOADS)<=3 and sum(map(len,safe._BLOB_PAYLOADS.values()))<=24
+ assert safe.read_blob('large.txt')==b'X'*256
+ assert all(len(raw)<=24 for raw in safe._BLOB_PAYLOADS.values())
+
+
+@pytest.mark.parametrize('which',['receipt','before','after','extra','predecessor'])
+def test_root_performance_source_forward_rejects_tampering(monkeypatch,which):
+ import json
+ value=forward._root_performance_receipt()
+ assert forward._root_performance_receipt()==value
+ row=value['source_forward']['scripts/audit_phase_a_b4_test_source_successor.py']
+ path={'receipt':forward.ROOT_PERFORMANCE_RECEIPT,'before':row['fixture'],
+       'after':'scripts/audit_phase_a_b4_test_source_successor.py',
+       'extra':forward.ROOT_PERFORMANCE_RECEIPT,'predecessor':forward.ROOT_PERFORMANCE_PREDECESSOR['path']}[which]
+ original=forward.read_blob
+ def altered(p):
+  raw=original(p)
+  if p!=path:return raw
+  if which=='extra':
+   changed=json.loads(raw);changed['extra_authority']=True
+   changed['canonical_sha256']=forward.safe.canonical_digest(changed)
+   return forward.safe.canonical(changed)
+  return raw+b' '
+ monkeypatch.setattr(forward,'read_blob',altered)
+ with pytest.raises(ValueError):forward._authenticate_root_performance()
+
+
+def test_root_performance_rechecks_scope_after_warm_immutable_parse(monkeypatch):
+ assert forward._root_performance_receipt()['authority_granted'] is False
+ altered=dict(forward.ROOT_PERFORMANCE_PREDECESSOR,generation=0)
+ monkeypatch.setattr(forward,'ROOT_PERFORMANCE_PREDECESSOR',altered)
+ with pytest.raises(ValueError,match='scope drift'):
+  forward._root_performance_receipt()
+
+
+def test_root_performance_scope_is_local_and_checks_current_bytes_at_return(blob_reuse_checkout):
+ import os
+ safe,file,_git=blob_reuse_checkout
+ scope=forward._SourceReadScope(forward.read_blob)
+ assert scope.read('proof.txt')==b'reviewed\n'
+ state=file.stat();file.write_bytes(b'tampered\n');os.utime(file,ns=(state.st_atime_ns,state.st_mtime_ns))
+ # This is an uncommitted input snapshot, never an authorization result.
+ assert scope.read('proof.txt')==b'reviewed\n'
+ with pytest.raises(ValueError,match='filtered worktree identity drift'):scope.verify()
+ file.write_bytes(b'reviewed\n')
+ fresh=forward._SourceReadScope(forward.read_blob)
+ assert fresh.read('proof.txt')==b'reviewed\n';fresh.verify()
+
+
+def test_root_performance_scope_preserves_filters_and_fences_head(blob_reuse_checkout):
+ safe,file,git=blob_reuse_checkout
+ scope=forward._SourceReadScope(forward.read_blob);scope.read('proof.txt')
+ git('config','core.autocrlf','true');file.write_bytes(b'reviewed\r\n');scope.verify()
+ (file.parent/'.gitattributes').write_bytes(b'proof.txt -text\n')
+ with pytest.raises(ValueError,match='filtered worktree identity drift'):scope.verify()
+ (file.parent/'.gitattributes').unlink()
+ file.write_bytes(b'successor\n');git('add','proof.txt');git('commit','-q','-m','Offline scoped HEAD successor')
+ with pytest.raises(ValueError,match='HEAD changed'):scope.verify()
+ fresh=forward._SourceReadScope(forward.read_blob);assert fresh.read('proof.txt')==b'successor\n';fresh.verify()
+
+
+@pytest.mark.parametrize('which',['public_reader','safe_reader','runtime_reader','root'])
+def test_root_performance_scope_rejects_changed_reader_bindings(blob_reuse_checkout,monkeypatch,which):
+ from runtime import source_identity
+ safe,file,_git=blob_reuse_checkout
+ scope=forward._SourceReadScope(forward.read_blob);scope.read('proof.txt')
+ if which=='public_reader':monkeypatch.setattr(forward,'read_blob',lambda path:b'reviewed\n')
+ elif which=='safe_reader':monkeypatch.setattr(safe,'read_blob',lambda path:b'reviewed\n')
+ elif which=='runtime_reader':monkeypatch.setattr(source_identity,'read_tracked_head_blob',lambda *a,**kw:None)
+ else:monkeypatch.setattr(safe,'ROOT',file.parent/'different')
+ with pytest.raises(ValueError,match='reader changed'):scope.verify()
+
+
+@pytest.mark.parametrize('which',['symlink','reparse','hardlink','executable_mode'])
+def test_root_performance_scope_rejects_synthetic_link_and_mode_flags(blob_reuse_checkout,monkeypatch,which):
+ import stat
+ from pathlib import Path
+ from types import SimpleNamespace
+ safe,file,_git=blob_reuse_checkout
+ scope=forward._SourceReadScope(forward.read_blob);scope.read('proof.txt')
+ if which=='executable_mode':
+  original=safe.subprocess.check_output
+  def executable(args,**kwargs):
+   value=original(args,**kwargs)
+   return value.replace(b'100644 blob ',b'100755 blob ') if args[:2]==['git','ls-tree'] else value
+  monkeypatch.setattr(safe.subprocess,'check_output',executable)
+ else:
+  original=Path.lstat
+  def linked(path,*args,**kwargs):
+   value=original(path,*args,**kwargs)
+   if path!=file:return value
+   return SimpleNamespace(st_mode=(stat.S_IFLNK|0o777) if which=='symlink' else value.st_mode,
+                          st_file_attributes=0x400 if which=='reparse' else 0,
+                          st_nlink=2 if which=='hardlink' else 1)
+  monkeypatch.setattr(Path,'lstat',linked)
+ with pytest.raises(ValueError,match='source'):scope.verify()

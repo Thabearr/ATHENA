@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 import yaml
 
@@ -296,6 +297,18 @@ def authenticate_predecessor_chain() -> dict[str, object]:
     """Authenticate immutable predecessor documents without treating their old
     A2 V4 head as the current Python corpus after append-only V5 supersedes it.
     """
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as completion_v8
+    scope = completion_v8._active_receipt_scope("checkpoint-b3-predecessors")
+    cached = None if scope is None else scope.load()
+    if cached is not None:
+        return cached
+    result = _authenticate_predecessor_chain()
+    if scope is not None:
+        scope.store(result)
+    return result
+
+
+def _authenticate_predecessor_chain() -> dict[str, object]:
     completion = boundary.read(COMPLETION_V5_PATH)
     require(completion["canonical_sha256"] == COMPLETION_V5_SHA,
             "immutable Completion V5 identity drift")
@@ -488,6 +501,18 @@ def run_evidence(run_id: int) -> dict[str, object]:
 
 
 def build_source_inventory() -> dict[str, object]:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    scope = receipt_scope._active_receipt_scope("checkpoint-b3-source-inventory")
+    cached = None if scope is None else scope.load()
+    if cached is not None:
+        return cached
+    value = _build_source_inventory()
+    if scope is not None:
+        scope.store(value)
+    return value
+
+
+def _build_source_inventory() -> dict[str, object]:
     boundary.authenticate_predecessors()
     verify_workflow_ledgers()
     authenticate_predecessor_chain()
@@ -595,6 +620,17 @@ def _dynamic_edges(pr: int) -> list[dict[str, object]]:
 
 
 def build_receipt() -> dict[str, object]:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    with receipt_scope._bounded_receipt_scope(
+            "checkpoint-b3-predecessors", (sys.modules[__name__],),
+            receipt_scope._TRUSTED_B3_CONTRACT):
+        with receipt_scope._bounded_receipt_scope(
+                "checkpoint-b3-source-inventory", (sys.modules[__name__],),
+                receipt_scope._TRUSTED_B3_CONTRACT):
+            return _build_receipt()
+
+
+def _build_receipt() -> dict[str, object]:
     verify_workflow_ledgers()
     parent = authenticate_predecessor_chain()
     b2 = boundary.read("tests/fixtures/core_01d/core-01d-historical-warehouse-transfer-authority-b2-v1.json")
@@ -909,6 +945,17 @@ def validate_receipt(value: dict[str, object], expected: dict[str, object] | Non
 
 
 def audit() -> dict[str, object]:
+    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
+    with receipt_scope._bounded_receipt_scope(
+            "checkpoint-b3-predecessors", (sys.modules[__name__],),
+            receipt_scope._TRUSTED_B3_CONTRACT):
+        with receipt_scope._bounded_receipt_scope(
+                "checkpoint-b3-source-inventory", (sys.modules[__name__],),
+                receipt_scope._TRUSTED_B3_CONTRACT):
+            return _audit()
+
+
+def _audit() -> dict[str, object]:
     inventory = boundary.read(SOURCE_INVENTORY_PATH)
     validate_source_inventory(inventory)
     receipt = boundary.read(RECEIPT_PATH)
