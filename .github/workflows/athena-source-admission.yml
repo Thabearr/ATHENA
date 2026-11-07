@@ -1,0 +1,186 @@
+name: ATHENA independent source admission
+on:
+  pull_request:
+    branches: [main]
+  pull_request_target:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  source_admission:
+    name: athena-source-admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout trusted main source only
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
+      - name: Authenticate PR source as untrusted Git data
+        env:
+          TARGET_HEAD: ${{ github.event.pull_request.head.sha }}
+          TARGET_PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          import subprocess
+          
+          def fail(message):
+              raise SystemExit("ATHENA source-admission DENIED: " + message)
+          
+          def require(condition, message):
+              if not condition:
+                  fail(message)
+          
+          def git(*args):
+              return subprocess.run(
+                  ["git", *args], check=True, stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+              ).stdout
+          
+          def git_blob_sha(raw):
+              return hashlib.sha1(
+                  b"blob " + str(len(raw)).encode("ascii") + b"\\0" + raw
+              ).hexdigest()
+          
+          def read_at(commit, path):
+              tree = git("ls-tree", "-z", commit, "--", path)
+              if not tree:
+                  return None, None
+              require(tree.endswith(b"\\0") and tree.count(b"\\0") == 1,
+                      "Git tree entry is ambiguous: " + path)
+              try:
+                  metadata, recorded_path = tree[:-1].split(b"\\t", 1)
+                  mode, kind, blob = metadata.split(b" ")
+              except ValueError:
+                  fail("malformed Git tree entry: " + path)
+              require(recorded_path == path.encode("utf-8")
+                      and mode == b"100644" and kind == b"blob"
+                      and re.fullmatch(rb"[0-9a-f]{40}", blob) is not None,
+                      "Git path/mode/blob drift: " + path)
+              raw = git("cat-file", "blob", blob.decode("ascii"))
+              require(git_blob_sha(raw) == blob.decode("ascii"),
+                      "Git object bytes are not bound: " + path)
+              return blob.decode("ascii"), raw
+          
+          head = os.environ["TARGET_HEAD"]
+          base = os.environ["BASE_SHA"]
+          number = os.environ["TARGET_PR"]
+          require(re.fullmatch(r"[0-9a-f]{40}", head) is not None
+                  and re.fullmatch(r"[0-9a-f]{40}", base) is not None
+                  and re.fullmatch(r"[1-9][0-9]*", number) is not None,
+                  "untrusted event identifiers malformed")
+          require(git("rev-parse", "HEAD").decode().strip() == base,
+                  "trusted-base checkout does not match event base SHA")
+          git("fetch", "--no-tags", "--depth=1", "origin",
+              "refs/pull/" + number + "/head")
+          require(git("rev-parse", "FETCH_HEAD^{commit}").decode().strip() == head,
+                  "PR ref advanced or Git fetch disagrees with exact event head")
+          
+          protected = (
+              "sitecustomize.py",
+              "tests/conftest.py",
+              "tests/_offline_bootstrap/sitecustomize.py",
+              "tests/offline_linux.py",
+              "tests/offline_transport.py",
+              "scripts/audit_core_01d_ci_offline_transport_boundary.py",
+              "scripts/audit_phase_a_pass_a_tests_source_successor.py",
+              "scripts/audit_phase_a_pc_upcoming_retention_successor.py",
+          )
+          
+          if number != "465":
+              for path in protected:
+                  old, _ = read_at(base, path)
+                  new, _ = read_at(head, path)
+                  require(old == new,
+                          "protected source changed without independent admission: " + path)
+              print("ATHENA source-admission: no protected-source changes")
+              raise SystemExit(0)
+          
+          # Exact identities of PR #465 as originally observed. A future Pass-A
+          # amendment MUST first be independently reviewed and pinned in this
+          # protected-main workflow; the PR may never authorize its own new identity.
+          approved = {
+              "sitecustomize.py": "3c37116140e24baa9021df6724baa3929bd67f23",
+              "tests/conftest.py": "648159631d444fb14294f13bbfd1985d4673fef5",
+              "tests/_offline_bootstrap/sitecustomize.py": "96a4fbf7cb0fdfaaabeb59410459c8d448f9286c",
+              "tests/offline_linux.py": "d5b46b11fe4eec17faeaf5c59d631c80e3fc8226",
+              "tests/offline_transport.py": "a434157e73a96ea0b954008de16f349f2acc65b8",
+              "scripts/audit_core_01d_ci_offline_transport_boundary.py":
+                  "020f93ae350b598e0ba8290a0cd08264f0f9429f",
+              "scripts/audit_phase_a_pass_a_tests_source_successor.py":
+                  "7ae1194c7c056de3529c4a32d133836535babe14",
+              "scripts/audit_phase_a_pc_upcoming_retention_successor.py":
+                  "47d100181f96c1719b6d0b93ac320fc076cb745d",
+          }
+          require(set(approved) == set(protected), "protected source coverage drift")
+          for path, expected_blob in approved.items():
+              blob, _ = read_at(head, path)
+              require(blob == expected_blob,
+                      "current protected source is not separately admitted: " + path)
+          
+          receipt_blob, receipt_raw = read_at(
+              head, "tests/fixtures/architecture/ci_assertion_source_successor_v5/receipt.json")
+          require(receipt_blob == "db7f24b314abcca0bcbdca260ed09739c4e40471"
+                  and receipt_raw is not None and len(receipt_raw) < 2000000,
+                  "immutable V5 receipt blob drift")
+          receipt = json.loads(receipt_raw)
+          def canonical(value):
+              return (json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                 ensure_ascii=False, allow_nan=False) + "\\n").encode("utf-8")
+          require(canonical(receipt) == receipt_raw,
+                  "V5 receipt canonical bytes drift")
+          without_digest = {k: v for k, v in receipt.items()
+                            if k != "canonical_sha256"}
+          v5_digest = "c4627df2f55df85799e9f3b86a9fcf8f41029159ed01b9e0ac3d15b7c3300419"
+          require(receipt.get("canonical_sha256") == v5_digest
+                  and hashlib.sha256(canonical(without_digest)).hexdigest() == v5_digest
+                  and receipt.get("policy_id") ==
+                      "ATHENA_PHASE_A_CI_ASSERTION_SOURCE_SUCCESSOR_V5",
+                  "V5 receipt authenticated digest or policy drift")
+          row = receipt["source_forward"]["sitecustomize.py"]
+          require(row["after"]["git_blob_sha1"] ==
+                      "b3e7a640c6ae4e7380508dc8c7116304149c7789"
+                  and row["after"]["source_sha256"] ==
+                      "aefddb5950467341e44a44d4e98a2a5078803ab7a1f03af72f7a77f434762e03",
+                  "V5 historical after-image identity drift")
+          fixture_blob, fixture = read_at(head, row["fixture"])
+          require(fixture_blob == "7de9694f2bed747118c10ca3f99239990f842260"
+                  and fixture is not None
+                  and hashlib.sha256(fixture).hexdigest() ==
+                      row["before"]["source_sha256"],
+                  "V5 historical predecessor fixture drift")
+          historical = fixture
+          for patch in row["patches"]:
+              old, new = patch["before"].encode("utf-8"), patch["after"].encode("utf-8")
+              require(bool(old) and historical.count(old) == 1,
+                      "V5 exact patch seam drift")
+              historical = historical.replace(old, new)
+          require(len(historical) == 2989
+                  and git_blob_sha(historical) == row["after"]["git_blob_sha1"]
+                  and hashlib.sha256(historical).hexdigest() ==
+                      row["after"]["source_sha256"],
+                  "V5 reconstructed after-image differs from authenticated bytes")
+          insertion = (
+              '    "tests/conftest.py": (\\n'
+              '        "416099a03e71c90d725fb8d7d2e11e3cccdc8292eb2461f525f7046620b9078b",\\n'
+              '    ),\\n'
+          ).encode("utf-8")
+          marker = b'}\\n\\n_args = getattr(sys, "orig_argv", ())\\n'
+          require(len(insertion) == 110 and historical.count(marker) == 1,
+                  "sitecustomize source-forward insertion seam drift")
+          expected_current = historical.replace(marker, insertion + marker)
+          _, current = read_at(head, "sitecustomize.py")
+          require(current == expected_current
+                  and hashlib.sha256(current).hexdigest() ==
+                      "9aca6ddb13365552ce42f04b1664c0523934b186078ed079ffc600a7b989e9ef",
+                  "sitecustomize current-to-V5 history is not exact")
+          print("ATHENA source-admission: PR #465 historical sitecustomize transition authenticated")
+          PY
