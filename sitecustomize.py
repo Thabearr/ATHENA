@@ -26,6 +26,9 @@ ROOT_TEST_SOURCE_SUCCESSORS = {
         "9ce04b7ace117413c8f4306f62f580aab76932f2443dc91f7cc210b161742fc0",
         "3b3a462eebdd10e4c53ea835c5acb90e5f322549fb123b8f4cf16fce316820f1",
     ),
+    "tests/conftest.py": (
+        "416099a03e71c90d725fb8d7d2e11e3cccdc8292eb2461f525f7046620b9078b",
+    ),
 }
 
 _args = getattr(sys, "orig_argv", ())
