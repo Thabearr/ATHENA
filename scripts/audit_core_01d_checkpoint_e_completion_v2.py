@@ -814,14 +814,12 @@ def _historical_v1_receipt_scoped():
    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
    authenticated_v1_original_raw_tree(a2)
   return json.loads(cached)
- # The historical receipt is itself an immutable, canonical, SHA-pinned
- # artifact. Re-executing the entire V1 auditor for every caller duplicated a
- # multi-minute reconstruction after the receipt and source/tree identities
- # had already been authenticated.
+ code=_historical_v1_code(review.HISTORICAL_CHECKPOINT_E_SOURCE_SHA1,
+                          source,historical.__file__)
+ exec(code,historical.__dict__)
  with historical_v1_git_view():
-  from scripts import audit_core_01d_ci_offline_transport_boundary as a2
-  authenticated_v1_original_raw_tree(a2)
- review.validate_receipt(value)
+  expected=historical.build_receipt()
+  historical.validate_receipt(value,expected)
  if scope is not None:
   scope.store(value)
  return value
