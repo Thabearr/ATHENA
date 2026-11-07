@@ -57,7 +57,7 @@ jobs:
               require(tree.endswith(b"\0") and tree.count(b"\0") == 1,
                       "Git tree entry is ambiguous: " + path)
               try:
-                  metadata, recorded_path = tree[:-1].split(b"\\t", 1)
+                  metadata, recorded_path = tree[:-1].split(b"\t", 1)
                   mode, kind, blob = metadata.split(b" ")
               except ValueError:
                   fail("malformed Git tree entry: " + path)
