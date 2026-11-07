@@ -336,14 +336,13 @@ UX_01A_PREDECESSOR_SOURCE_BLOBS = {
     path: blob for path, (blob, _digest) in UX_01A_PREDECESSOR_SOURCE_IDENTITIES.items()
 }
 
-# VAR-01b (critical-path verification recovery): four new paths only. The B4
-# auditor successor keeps its existing D5 portability predecessor owner and its
-# current bytes stay authenticated by A2.
+# VAR-01b (critical-path verification recovery): three new A2-authenticated
+# Python paths only. The B4 auditor successor keeps its existing D5
+# portability predecessor owner and its current bytes stay authenticated by A2.
 VAR_01B_ADDITIVE_PATHS = {
     "conftest.py",
     "scripts/pytest_a2_chain_share.py",
     "tests/test_var_01b_a2_chain_share.py",
-    "docs/engineering/VAR-D005_chain_checkpoint_ADR.md",
 }
 
 
