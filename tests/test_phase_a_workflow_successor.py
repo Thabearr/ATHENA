@@ -385,3 +385,11 @@ def test_f3_f4_p4_forward_accepts_after_and_rejects_a_tampered_workflow(monkeypa
     _patched_read_bytes(monkeypatch, phase_a.PATH, _flip_one)
     with pytest.raises(evolution.WorkflowEvolutionError):
         evolution.validate_current_state()
+
+
+def test_listing_passes_before_rows_and_rejects_other_blobs():
+    before = b"100644 blob " + phase_a.BEFORE_BLOB.encode() + b"\t" + phase_a.PATH.encode() + b"\n"
+    assert phase_a.project_ls_tree(before) == before
+    forged = b"100644 blob " + b"0" * 40 + b"\t" + phase_a.PATH.encode() + b"\n"
+    with pytest.raises(phase_a.PhaseAWorkflowSuccessorError):
+        phase_a.project_ls_tree(forged)

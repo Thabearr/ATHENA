@@ -200,8 +200,10 @@ def project_workflow_tree(tree: Mapping[str, str], *, root: Path | None = None) 
 def project_ls_tree(raw: bytes, *, root: Path | None = None) -> bytes:
     """Project listed paths in a ``git ls-tree -r`` listing; partial listings pass through.
 
-    When a full repository listing lacks a listed path, the caller's own frozen
-    hash comparison still fails closed. A duplicated listed path fails here.
+    AFTER rows project to BEFORE only when the working tree is exactly AFTER;
+    BEFORE rows pass unchanged; any other blob fails closed. When a full listing
+    lacks a listed path, or carries BEFORE where the frozen record does not, the
+    caller's own frozen hash comparison still fails. A duplicated path fails here.
     """
     lines = []
     seen: dict[str, int] = {}
@@ -211,7 +213,13 @@ def project_ls_tree(raw: bytes, *, root: Path | None = None) -> bytes:
         if sep and name in _BY_PATH:
             seen[name] = seen.get(name, 0) + 1
             head, _, blob = meta.rpartition(b" ")
-            projected = project_tree_blob(name, blob.decode("ascii"), root=root)
+            blob_text = blob.decode("ascii")
+            # A frozen historical listing already carries BEFORE: it passes
+            # unchanged, and the caller's own frozen hash still authenticates it.
+            if blob_text == _BY_PATH[name].before_blob:
+                projected = blob_text
+            else:
+                projected = project_tree_blob(name, blob_text, root=root)
             line = head + b" " + projected.encode("ascii") + sep + path
         lines.append(line)
     if any(count > 1 for count in seen.values()):
