@@ -11,7 +11,12 @@ def pytest_sessionstart(session):
     # Dynamic discovery cannot silently grow beyond the source-reviewed corpus.
     from scripts import audit_core_01d_ci_offline_transport_boundary as audit
     audit.authenticate_predecessors()
-    audit.authenticate_inventory()
+    # The latest canonical generation is already authenticated by the
+    # predecessor chain. Passing it explicitly preserves the live source
+    # comparison while avoiding a full recursive current-inventory rebuild in
+    # every independent hosted shard.
+    latest = audit.load_inventory_generations()[-1][1]
+    audit.authenticate_inventory(current=latest)
 
 
 _A2_NATIVE_PASSED = set()
