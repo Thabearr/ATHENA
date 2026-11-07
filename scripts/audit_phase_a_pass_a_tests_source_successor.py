@@ -417,8 +417,7 @@ def source_derivation_scope():
     processes, threads or asyncio tasks, and all payloads are cleared in ``finally``.
     """
     checkpoint_scope = _active_checkpoint_derivation_scope()
-    if (checkpoint_scope is not None
-            and not getattr(checkpoint_scope, '_athena_pytest_session_a2', False)):
+    if checkpoint_scope is not None:
         yield checkpoint_scope
         return
     active = _active_source_derivation_scope()
@@ -1976,12 +1975,11 @@ def pytest_configure(config):
     from scripts import audit_core_01d_ci_offline_transport_boundary as a2
     from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
     config._athena_a2_scope = receipt_scope._bounded_receipt_scope(
-        'checkpoint-master-audit',
+        'pytest-session-a2',
         (a2,),
         receipt_scope._auditor_contract_digest(a2),
     )
     config._athena_a2_scope.__enter__()
-    config._athena_a2_scope._athena_pytest_session_a2 = True
     config._athena_source_derivation_scope = source_derivation_scope()
     config._athena_source_derivation_scope.__enter__()
     config.pluginmanager.register(_ParentNodeProgress(), 'athena-parent-node-progress')
@@ -2530,7 +2528,7 @@ CI_ASSERTION_V8_DERIVATION_KEY = 'pass-a.ci-assertion-v8-chain-details-v1'
 # V9 authenticates the exact V383 current image before projecting the three
 # admitted source paths back to V8. V383 remains immutable and is V9's parent.
 CI_ASSERTION_V9_RECEIPT = 'tests/fixtures/architecture/ci_assertion_source_successor_v9/receipt.json'
-CI_ASSERTION_V9_SHA256 = 'f35b37ed6f6ca442048b4ddf81ec829c07ac898445d6cca041c30dee4ebcacb5'
+CI_ASSERTION_V9_SHA256 = 'd49b5c23443fc49adac49b14fe80543e690a32767d0d544dca3bd2d4f7053ab6'
 CI_ASSERTION_V9_SOURCE = CI_ASSERTION_V8_SOURCE
 CI_ASSERTION_V9_RETENTION_SOURCE = CI_ASSERTION_V8_RETENTION_SOURCE
 CI_ASSERTION_V9_TEST_SOURCE = 'tests/test_tests_shard_balance_successor.py'
