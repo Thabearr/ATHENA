@@ -3493,6 +3493,8 @@ def _authenticate_inventory_uncached(directory=None, current=None):
     # independently of whichever generation is currently latest.
     authenticate_historical_v1()
     if current is None:
+        if directory == INVENTORY_DIRECTORY and _current_corpus_matches(latest):
+            return latest
         current = build_inventory() if directory == INVENTORY_DIRECTORY else inventory_document(latest)
     if current != latest:
         differing = sorted(key for key in set(current) | set(latest)
@@ -3534,6 +3536,26 @@ def _authenticate_inventory_uncached(directory=None, current=None):
             + latest_path + "; detail=" + json.dumps(detail, sort_keys=True)
         )
     return latest
+
+
+def _current_corpus_matches(inventory):
+    """Verify the reviewed current corpus without rebuilding its projections."""
+    expected = {
+        row["path"]: row["lf_source_sha256"]
+        for row in inventory.get("source_identities", [])
+    }
+    paths = current_source_paths()
+    if set(paths) != set(expected):
+        return False
+    for relative in paths:
+        path = ROOT / relative
+        metadata = path.lstat()
+        if not stat.S_ISREG(metadata.st_mode):
+            return False
+        raw = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        if hashlib.sha256(raw).hexdigest() != expected[relative]:
+            return False
+    return True
 
 
 def activation_and_no_bypass(startup_text, workflow_text, guard_text, kernel_text, identity):
