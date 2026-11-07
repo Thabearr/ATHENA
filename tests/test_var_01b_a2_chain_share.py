@@ -49,6 +49,12 @@ def _outcome(call):
         return ("raise", type(error).__name__, str(error))
 
 
+def _same_items(chain, reference) -> bool:
+    """A hit is a fresh outer list holding the very same shared items."""
+    return (chain is not reference and len(chain) == len(reference)
+            and all(a is b for a, b in zip(chain, reference)))
+
+
 def _path(directory: Path, generation: int) -> Path:
     return directory / Path(boundary.inventory_generation_path(generation)).name
 
@@ -105,7 +111,7 @@ def test_shared_chain_fails_closed_exactly_like_main(tmp_path, tamper, warm):
     share = _share(directory)
     if warm:
         good = share.load()
-        assert share.load() is good and share.metrics["hits"] == 1
+        assert _same_items(share.load(), good) and share.metrics["hits"] == 1
     TAMPERS[tamper](directory)
     expected = _outcome(lambda: _real_loader()(str(directory)))
     assert expected[0] == "raise"
@@ -134,7 +140,7 @@ def test_shared_value_is_the_real_authenticated_chain_and_hits_reuse_it(tmp_path
     share = _share(directory)
     first = share.load()
     assert first == _real_loader()(str(directory))
-    assert share.load() is first
+    assert _same_items(share.load(), first)
     assert (share.metrics["hits"], share.metrics["stores"], share.metrics["unshared"]) == (1, 1, 0)
 
 
@@ -357,7 +363,7 @@ M2_TAMPERS = {
 def _warm_in_test(share):
     share.begin_test("tests/example.py::warm")
     good = share.load()
-    assert share.load() is good
+    assert _same_items(share.load(), good)
     assert share.metrics["cheap_checks"] >= 1
     return good
 
@@ -386,11 +392,11 @@ def test_delete_and_restore_identical_bytes_is_accepted(tmp_path):
     target.unlink()
     target.write_bytes(raw)
     full_before = share.metrics["full_checks"]
-    assert share.load() is good
+    assert _same_items(share.load(), good)
     assert share.metrics["full_checks"] == full_before + 1
     # The refreshed stat key is used again for the next load in this test.
     cheap_before = share.metrics["cheap_checks"]
-    assert share.load() is good
+    assert _same_items(share.load(), good)
     assert share.metrics["cheap_checks"] == cheap_before + 1
 
 
@@ -454,7 +460,7 @@ def test_windows_branch_always_uses_the_full_key(tmp_path):
     share.begin_test("tests/example.py::nt")
     good = share.load()
     for _ in range(3):
-        assert share.load() is good
+        assert _same_items(share.load(), good)
     assert share.metrics["cheap_checks"] == 0
     assert share.metrics["full_checks"] >= 4
     _flip_then_restore_times(directory) if os.name != "nt" else _flip_middle_byte(directory)
@@ -467,3 +473,36 @@ def test_install_selects_cheap_key_only_off_windows():
     module.__dict__.update(vars(boundary))
     share = share_plugin._ChainShare(module)
     assert share.cheap_allowed is (os.name != "nt")
+
+
+# --- VAR-01c hosted finding: list-level writes must never reach the share ----
+def test_replacing_list_items_in_a_returned_chain_does_not_poison_the_share(tmp_path):
+    from copy import deepcopy
+
+    directory = tmp_path / "chain"
+    _seed(directory)
+    share = _share(directory)
+    real = _real_loader()(str(directory))
+    chain = share.load()
+    # The exact pattern of the V300/V312/V313 tamper tests: deep-copy one
+    # generation, tamper with the copy, write it back into the returned list.
+    path, latest = chain[-1]
+    latest = deepcopy(latest)
+    latest["canonical_sha256"] = "0" * 64
+    chain[-1] = (path, latest)
+    chain.append(("extra", {}))
+    again = share.load()
+    assert again == real
+    share.verify("at session finish")
+    assert share.failures == []
+
+
+def test_first_caller_list_is_not_the_private_share(tmp_path):
+    directory = tmp_path / "chain"
+    _seed(directory)
+    share = _share(directory)
+    first = share.load()
+    first.pop()
+    assert len(share.load()) == len(first) + 1
+    share.verify("at session finish")
+    assert share.failures == []

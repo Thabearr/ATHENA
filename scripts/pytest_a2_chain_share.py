@@ -24,7 +24,9 @@ Contract (owner decision VAR-01b, Part D):
       the very object captured when the plugin was installed (for example a
       tamper test replaced a callee), the real loader runs unshared.  The
       captured objects are held, so their identity can never be reused.
-* D5  No per-hit copy.  Each shared value is fingerprinted when stored and
+* D5  No per-hit deep copy.  Every caller gets its own shallow outer list (so
+      replacing list items, as tamper tests do, never reaches the share); the
+      (path, generation) items are shared.  The shared value is fingerprinted when stored and
       re-fingerprinted when replaced and at session finish.  A mismatch means a
       consumer mutated it in place: the session fails and names every test
       that received the shared value.
@@ -144,14 +146,14 @@ class _ChainShare:
                 and self._cheap_key(directory) == self.cheap_key):
             self.metrics["hits"] += 1
             self._received()
-            return self.value
+            return list(self.value)
         key, stat = self._full_key(directory)
         if self.value is not None and key == self.key:
             self.fully_checked = stat is not None
             self.cheap_key = stat
             self.metrics["hits"] += 1
             self._received()
-            return self.value
+            return list(self.value)
         self.fully_checked = False
         self.cheap_key = None
         value = self.original(directory)
@@ -161,7 +163,10 @@ class _ChainShare:
             self.metrics["unshared"] += 1
             return value
         self.verify("replaced by a new authenticated chain")
-        self.key, self.value, self.digest = key, value, _fingerprint(value)
+        # Keep a private outer list: callers may replace list items (as several
+        # tamper tests do after deep-copying one generation) without reaching it.
+        shared = list(value)
+        self.key, self.value, self.digest = key, shared, _fingerprint(shared)
         self.fully_checked = after_stat is not None and after_stat == stat
         self.cheap_key = after_stat if self.fully_checked else None
         self.receivers = []
