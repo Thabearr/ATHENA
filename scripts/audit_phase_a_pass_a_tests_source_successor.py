@@ -359,9 +359,7 @@ def _active_checkpoint_derivation_scope():
     # is the outermost bounded audit owner and survives short-lived child
     # scopes, whose derivation dictionaries are cleared on exit.
     unit = engine._execution_unit()
-    for key, scope in tuple(active.items()):
-        if key == 'pytest-session-a2':
-            continue
+    for scope in tuple(active.values()):
         if (getattr(scope, 'enabled', False)
                 and getattr(scope, 'unit', None) == unit
                 and callable(getattr(scope, 'load_derivation', None))
@@ -1972,14 +1970,6 @@ class _ParentNodeProgress:
 def pytest_configure(config):
     # pytest calls this only when this module is explicitly loaded with -p.
     # No PYTEST_ADDOPTS, environment marker, root conftest or child argv change.
-    from scripts import audit_core_01d_ci_offline_transport_boundary as a2
-    from scripts import audit_core_01d_checkpoint_e_completion_v8 as receipt_scope
-    config._athena_a2_scope = receipt_scope._bounded_receipt_scope(
-        'pytest-session-a2',
-        (a2,),
-        receipt_scope._auditor_contract_digest(a2),
-    )
-    config._athena_a2_scope.__enter__()
     config._athena_source_derivation_scope = source_derivation_scope()
     config._athena_source_derivation_scope.__enter__()
     config.pluginmanager.register(_ParentNodeProgress(), 'athena-parent-node-progress')
@@ -1989,9 +1979,6 @@ def pytest_unconfigure(config):
     scope = getattr(config, "_athena_source_derivation_scope", None)
     if scope is not None:
         scope.__exit__(None, None, None)
-    a2_scope = getattr(config, '_athena_a2_scope', None)
-    if a2_scope is not None:
-        a2_scope.__exit__(None, None, None)
 
 
 ROOT_PERFORMANCE_RECEIPT = 'artifacts/architecture/root_auth_performance_source_successor_v1.json'
@@ -2528,7 +2515,7 @@ CI_ASSERTION_V8_DERIVATION_KEY = 'pass-a.ci-assertion-v8-chain-details-v1'
 # V9 authenticates the exact V383 current image before projecting the three
 # admitted source paths back to V8. V383 remains immutable and is V9's parent.
 CI_ASSERTION_V9_RECEIPT = 'tests/fixtures/architecture/ci_assertion_source_successor_v9/receipt.json'
-CI_ASSERTION_V9_SHA256 = 'd49b5c23443fc49adac49b14fe80543e690a32767d0d544dca3bd2d4f7053ab6'
+CI_ASSERTION_V9_SHA256 = 'a316c1016be07c22a59c21a5441efc5dcfe587a4f71f43d18f107817fe4de125'
 CI_ASSERTION_V9_SOURCE = CI_ASSERTION_V8_SOURCE
 CI_ASSERTION_V9_RETENTION_SOURCE = CI_ASSERTION_V8_RETENTION_SOURCE
 CI_ASSERTION_V9_TEST_SOURCE = 'tests/test_tests_shard_balance_successor.py'
