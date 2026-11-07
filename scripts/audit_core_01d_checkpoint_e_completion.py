@@ -336,17 +336,15 @@ UX_01A_PREDECESSOR_SOURCE_BLOBS = {
     path: blob for path, (blob, _digest) in UX_01A_PREDECESSOR_SOURCE_IDENTITIES.items()
 }
 
-# VAR-01b (critical-path verification recovery): three new paths and one
-# non-Python pytest configuration successor whose exact current bytes are
-# pinned here. The B4 auditor successor keeps its existing D5 portability
-# predecessor owner and its current bytes stay authenticated by A2.
+# VAR-01b (critical-path verification recovery): four new paths only. The B4
+# auditor successor keeps its existing D5 portability predecessor owner and its
+# current bytes stay authenticated by A2.
 VAR_01B_ADDITIVE_PATHS = {
+    "conftest.py",
     "scripts/pytest_a2_chain_share.py",
     "tests/test_var_01b_a2_chain_share.py",
     "docs/engineering/VAR-D005_chain_checkpoint_ADR.md",
 }
-VAR_01B_PYTEST_INI_PREDECESSOR_BLOB = "27eec68ed708999a4b2ac00f8334a17f04c974cc"
-VAR_01B_PYTEST_INI_SHA256 = "5583438be30d72bc609ba3537ca5d0a629196020599d3fefaff21949abacabe7"
 
 
 def authenticate_fresh_holdout_20261015_evidence():
@@ -444,13 +442,6 @@ def validate_bounded_inventory(raw: bytes) -> None:
     )
     ux_predecessor_blobs = dict(UX_01A_PREDECESSOR_SOURCE_BLOBS)
     ux_additive_paths = {app.UX_SUCCESSOR, app.UX_STYLESHEET_FIXTURE}
-    # VAR-01b successor: pytest.ini must be its exact pinned bytes before its
-    # main predecessor blob is projected back.
-    var_01b_predecessor_blobs = {}
-    pytest_ini = (ROOT / "pytest.ini").read_bytes().replace(b"\r\n", b"\n")
-    policy.require(policy.sha256(pytest_ini) == VAR_01B_PYTEST_INI_SHA256,
-                   "VAR-01b pytest configuration differs from its exact reviewed bytes")
-    var_01b_predecessor_blobs["pytest.ini"] = VAR_01B_PYTEST_INI_PREDECESSOR_BLOB
     from runtime.source_identity import read_tracked_head_blob
     from scripts import audit_core_01d_checkpoint_e_completion_v2 as completion_v2
     from scripts import audit_core_01d_pr459_live_trigger_incident as incident
@@ -548,9 +539,6 @@ def validate_bounded_inventory(raw: bytes) -> None:
     policy.require(not (set(ux_predecessor_blobs) & set(predecessor_blobs)),
                    "UX-01A predecessor overlaps an existing historical source pin")
     predecessor_blobs.update(ux_predecessor_blobs)
-    policy.require(not (set(var_01b_predecessor_blobs) & set(predecessor_blobs)),
-                   "VAR-01b predecessor overlaps an existing historical source pin")
-    predecessor_blobs.update(var_01b_predecessor_blobs)
     unchanged_lines = []
     for line in raw.splitlines(keepends=True):
         metadata, separator, path_bytes = line.partition(b"\t")

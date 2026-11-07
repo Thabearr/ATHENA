@@ -1,8 +1,8 @@
 """VAR-01b: share one authenticated A2 inventory chain inside one pytest process.
 
-Loaded only as a pytest plugin (``pytest.ini`` ``addopts = -p ...``).  Scripts
-run from the command line and production code never import it and behave
-exactly as before.
+Loaded only as a pytest plugin, registered by the repository-root
+``conftest.py`` (``pytest_plugins``).  Scripts run from the command line and
+production code never import it and behave exactly as before.
 
 Contract (owner decision VAR-01b, Part D):
 
