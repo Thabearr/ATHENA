@@ -64,6 +64,9 @@ def test_workflow_preserves_live_pc_upcoming_root_and_invokes_audit():
     assert source_path in preservation
     assert "cp -a \"${source_dir}\" \"${evidence_root}/\"" in preservation
     assert "python -m scripts.verify_current_shadow_pc_upcoming_archive" in preservation
+    # A failing verification (bash -e) must not skip the identity-state copy.
+    assert preservation.index('cp "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH}"') < \
+        preservation.index("python -m scripts.verify_current_shadow_pc_upcoming_archive")
     assert "if: always()" in preservation
     assert "name: current-shadow-all-market-request" in workflow
     assert "retention-days: 30" in workflow

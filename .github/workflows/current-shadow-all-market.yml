@@ -247,10 +247,6 @@ jobs:
             fi
           done
 
-          # Verify copied raw pages, manifests and capture epochs against the
-          # exact source tree and the completed run receipt before artifact upload.
-          python -m scripts.verify_current_shadow_pc_upcoming_archive
-
           if [ -n "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH:-}" ] \
             && [ -f "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH}" ]
           then
@@ -258,6 +254,11 @@ jobs:
             mkdir -p "${identity_root}"
             cp "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH}" "${identity_root}/"
           fi
+
+          # Verify copied raw pages, manifests and capture epochs against the
+          # exact source tree and the completed run receipt before artifact upload.
+          # Runs last so a verification failure cannot skip the identity-state copy.
+          python -m scripts.verify_current_shadow_pc_upcoming_archive
 
       - name: Email durable Shadow result when configured
         if: always()
