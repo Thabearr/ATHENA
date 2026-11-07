@@ -47,14 +47,14 @@ jobs:
           
           def git_blob_sha(raw):
               return hashlib.sha1(
-                  b"blob " + str(len(raw)).encode("ascii") + b"\\0" + raw
+                  b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
               ).hexdigest()
           
           def read_at(commit, path):
               tree = git("ls-tree", "-z", commit, "--", path)
               if not tree:
                   return None, None
-              require(tree.endswith(b"\\0") and tree.count(b"\\0") == 1,
+              require(tree.endswith(b"\0") and tree.count(b"\0") == 1,
                       "Git tree entry is ambiguous: " + path)
               try:
                   metadata, recorded_path = tree[:-1].split(b"\\t", 1)
@@ -134,7 +134,7 @@ jobs:
           receipt = json.loads(receipt_raw)
           def canonical(value):
               return (json.dumps(value, sort_keys=True, separators=(",", ":"),
-                                 ensure_ascii=False, allow_nan=False) + "\\n").encode("utf-8")
+                                 ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
           require(canonical(receipt) == receipt_raw,
                   "V5 receipt canonical bytes drift")
           without_digest = {k: v for k, v in receipt.items()
@@ -169,11 +169,11 @@ jobs:
                       row["after"]["source_sha256"],
                   "V5 reconstructed after-image differs from authenticated bytes")
           insertion = (
-              '    "tests/conftest.py": (\\n'
-              '        "416099a03e71c90d725fb8d7d2e11e3cccdc8292eb2461f525f7046620b9078b",\\n'
-              '    ),\\n'
+              '    "tests/conftest.py": (\n'
+              '        "416099a03e71c90d725fb8d7d2e11e3cccdc8292eb2461f525f7046620b9078b",\n'
+              '    ),\n'
           ).encode("utf-8")
-          marker = b'}\\n\\n_args = getattr(sys, "orig_argv", ())\\n'
+          marker = b'}\n\n_args = getattr(sys, "orig_argv", ())\n'
           require(len(insertion) == 110 and historical.count(marker) == 1,
                   "sitecustomize source-forward insertion seam drift")
           expected_current = historical.replace(marker, insertion + marker)
