@@ -260,7 +260,7 @@ def project_historical_inventory(raw):
     sources = snapshot()["sources"]
     d4_sources = historical_d4_sources()
     from scripts import audit_phase_a_workflow_successor as phase_a
-    raw = phase_a.project_ls_tree(raw)
+    raw = phase_a.project_ls_tree(raw, keep=set(sources) | set(d4_sources))
     lines = []
     for line in raw.splitlines(keepends=True):
         meta, sep, path = line.partition(b"\t")

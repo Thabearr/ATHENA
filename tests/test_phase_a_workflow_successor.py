@@ -445,3 +445,13 @@ def test_r2_app_store_rejects_an_unlisted_change_to_the_admitted_file(monkeypatc
     _patched_read_bytes(monkeypatch, path, lambda raw: raw + b"# beyond the hook\n")
     with pytest.raises(AssertionError):
         app_store.audit(latest=boundary.authenticate_inventory())
+
+
+def test_listing_keep_paths_pass_unchanged_and_are_still_counted():
+    path = "scripts/audit_core_01d_retained_workflow_status_v3.py"
+    entry = phase_a.entry_for(path)
+    line = b"100644 blob " + entry.after_blob.encode() + b"\t" + path.encode() + b"\n"
+    assert phase_a.project_ls_tree(line, keep={path}) == line
+    assert phase_a.project_ls_tree(line) == line.replace(entry.after_blob.encode(), entry.before_blob.encode())
+    with pytest.raises(phase_a.PhaseAWorkflowSuccessorError):
+        phase_a.project_ls_tree(line + line, keep={path})
