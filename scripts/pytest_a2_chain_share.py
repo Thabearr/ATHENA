@@ -35,6 +35,12 @@ Contract (owner decision VAR-01b, Part D):
 * D7  ``ATHENA_DISABLE_CHAIN_SHARE=1`` disables the plugin entirely.
       ``ATHENA_CHAIN_SHARE_STRICT=1`` (local diagnostics only) also checks the
       fingerprint after every test that received the shared value.
+
+VAR-05 work budget: real chain decodes in one process (``stores`` plus
+``unshared``: every path that ran the real loader) are counted, and the session
+fails at finish when they exceed ``BUDGET_DECODES``. The check counts work, never
+wall-clock time, so a slow runner cannot trip it. It applies only while sharing
+is active; the kill switch above still restores pre-VAR-01 behaviour exactly.
 """
 from __future__ import annotations
 
@@ -48,6 +54,13 @@ from pathlib import Path
 DISABLE_ENV = "ATHENA_DISABLE_CHAIN_SHARE"
 STRICT_ENV = "ATHENA_CHAIN_SHARE_STRICT"
 MUTATION_FAILURE = "A2 shared inventory chain was mutated in place"
+BUDGET_FAILURE = "A2_CHAIN_SHARE_BUDGET_EXCEEDED"
+# Reviewed constant (VAR-05 B2): 2 x the maximum real decodes (stores + unshared)
+# observed in one process across hosted runs 42439924317 (PR #470 on main),
+# 42444694884 (PR #471) and 42482927126 (PR #471 on main): BUDGET_OBSERVED_MAX,
+# rounded up to a round number. Raise it only with data from a hosted run.
+BUDGET_OBSERVED_MAX = 344
+BUDGET_DECODES = 700
 
 _state = None
 
@@ -77,8 +90,11 @@ class _ChainShare:
         self.current_test = "<session start>"
         self.test_received = False
         self.failures: list[str] = []
+        self.budget = BUDGET_DECODES
+        self.budget_failure: str | None = None
+        self.last_decode_test = "<none>"
         self.metrics = {"hits": 0, "stores": 0, "unshared": 0,
-                        "full_checks": 0, "cheap_checks": 0}
+                        "full_checks": 0, "cheap_checks": 0, "bytes_hashed": 0}
 
     def _identities(self):
         # Hold the objects themselves: a held object's identity cannot be reused.
@@ -110,6 +126,7 @@ class _ChainShare:
         rows = []
         for generation, path in listing:
             raw = (self.root / path).read_bytes()
+            self.metrics["bytes_hashed"] += len(raw)
             rows.append((generation, path, hashlib.sha256(raw).hexdigest()))
         after = self._stat_key(listing)
         self.metrics["full_checks"] += 1
@@ -136,10 +153,22 @@ class _ChainShare:
             # Never hand a mutated value out again.
             self.key = self.value = self.digest = None
 
+    @property
+    def decodes(self) -> int:
+        """Real chain decodes in this process: every path that ran the real loader."""
+        return self.metrics["stores"] + self.metrics["unshared"]
+
+    def check_budget(self) -> str | None:
+        if self.decodes > self.budget:
+            self.budget_failure = (f"{BUDGET_FAILURE}: decodes={self.decodes} budget={self.budget} "
+                                   f"last_test={self.last_decode_test}")
+        return self.budget_failure
+
     def load(self, directory=None):
         directory = self.a2.INVENTORY_DIRECTORY if directory is None else directory
         if directory != self.directory or not self._callees_unchanged():
             self.metrics["unshared"] += 1
+            self.last_decode_test = self.current_test
             return self.original(directory)
         if (self.value is not None and self.cheap_allowed and self.fully_checked
                 and self.cheap_key is not None
@@ -156,6 +185,7 @@ class _ChainShare:
             return list(self.value)
         self.fully_checked = False
         self.cheap_key = None
+        self.last_decode_test = self.current_test
         value = self.original(directory)
         # Share only what the real loader authenticated from these exact bytes.
         after, after_stat = self._full_key(directory)
@@ -226,7 +256,8 @@ def pytest_sessionfinish(session, exitstatus):
     if _state is None:
         return
     _state.verify("at session finish")
-    if _state.failures:
+    _state.check_budget()
+    if _state.failures or _state.budget_failure:
         session.exitstatus = 1
 
 
@@ -235,6 +266,10 @@ def pytest_terminal_summary(terminalreporter):
         return
     terminalreporter.write_line(
         "A2_CHAIN_SHARE: hits={hits} stores={stores} unshared={unshared} "
-        "full_checks={full_checks} cheap_checks={cheap_checks}".format(**_state.metrics))
+        "full_checks={full_checks} cheap_checks={cheap_checks}".format(**_state.metrics)
+        + " decodes={} budget={} bytes_hashed={}".format(
+            _state.decodes, _state.budget, _state.metrics["bytes_hashed"]))
     for failure in _state.failures:
         terminalreporter.write_line("A2_CHAIN_SHARE_FAILURE: " + failure, red=True)
+    if _state.budget_failure:
+        terminalreporter.write_line(_state.budget_failure, red=True)

@@ -18,6 +18,12 @@ Properties enforced here (every violation raises ``SuccessorRegistryError``):
 * Entries for one path form a chain: steps are contiguous from 1, and each
   step's before identity is the previous step's after identity. A gap, a fork
   or a duplicate (path, step) fails closed.
+* VAR-05: a batch may also declare ADDED_PATHS (literal paths of the NEW files
+  its mission adds, same path rules, never an ENTRIES path, each an existing
+  regular unlinked file) with FIRST_GENERATION (the A2 generation that first
+  lists them). The additive allowlist and the exact B1 census read these, so a
+  mission no longer edits them by hand. ENTRIES may be empty only when
+  ADDED_PATHS is not. Existence is re-checked on every call.
 
 The executed bytes are exactly the bytes that were hashed. Batch files are
 authenticated by the A2 source inventory like every other governed source, and
@@ -77,6 +83,8 @@ class Batch:
     sha256: str
     previous_sha256: str
     entries: tuple[Successor, ...]
+    added_paths: tuple[str, ...] = ()
+    first_generation: int | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -101,6 +109,10 @@ class Registry:
     def entries_of(self, mission: str) -> tuple[Successor, ...]:
         return tuple(entry for batch in self.batches if batch.mission == mission
                      for entry in batch.entries)
+
+    def added_paths(self) -> dict[str, int]:
+        """Every batch-declared new path mapped to the A2 generation that first lists it."""
+        return {path: batch.first_generation for batch in self.batches for path in batch.added_paths}
 
 
 def _check_entry(number: int, entry: object) -> Successor:
@@ -130,6 +142,46 @@ def _check_entry(number: int, entry: object) -> Successor:
     if type(entry.step) is not int or entry.step < 1:
         _fail(f"{where} entry has a malformed step: {path}")
     return entry
+
+
+def _check_path(where: str, path: object) -> str:
+    if not isinstance(path, str) or not _PATH.fullmatch(path) or any(
+            part in (".", "..") for part in path.split("/")):
+        _fail(f"malformed id in {where}: path {path!r}")
+    assert isinstance(path, str)
+    return path
+
+
+def _check_added(number: int, namespace: dict) -> tuple[tuple[str, ...], int | None]:
+    where = f"batch {number:04d}"
+    added = namespace.get("ADDED_PATHS", ())
+    first = namespace.get("FIRST_GENERATION")
+    if not isinstance(added, tuple):
+        _fail(f"{where} ADDED_PATHS must be a tuple")
+    checked = tuple(_check_path(where + " ADDED_PATHS", path) for path in added)
+    if len(set(checked)) != len(checked):
+        _fail(f"{where} ADDED_PATHS lists a path twice")
+    if checked:
+        if type(first) is not int or first < 1:
+            _fail(f"{where} declares ADDED_PATHS without a valid FIRST_GENERATION")
+    elif first is not None:
+        _fail(f"{where} declares FIRST_GENERATION without ADDED_PATHS")
+    return checked, first
+
+
+def _require_regular_files(base: Path, registry: "Registry") -> None:
+    for path in registry.added_paths():
+        parts = Path(path).parts
+        for depth in range(1, len(parts) + 1):
+            node = base.joinpath(*parts[:depth])
+            try:
+                info = node.lstat()
+            except OSError:
+                _fail(f"added path is missing: {path}")
+            if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                _fail(f"added path is linked: {path}")
+        if not stat.S_ISREG(base.joinpath(*parts).lstat().st_mode):
+            _fail(f"added path is not a regular file: {path}")
 
 
 def _execute(name: str, number: int, source: bytes) -> dict:
@@ -207,6 +259,7 @@ def load(root: Path | str | None = None) -> Registry:
                                for number, _, name, source in files)
     cached = _CACHE.get(key)
     if cached is not None:
+        _require_regular_files(base, cached)
         return cached
     batches: list[Batch] = []
     previous_sha = ""
@@ -227,15 +280,27 @@ def load(root: Path | str | None = None) -> Registry:
         if not isinstance(previous, str) or previous != previous_sha:
             _fail(f"batch {number:04d} previous batch hash mismatch")
         entries = namespace["ENTRIES"]
-        if not isinstance(entries, tuple) or not entries:
+        added, first_generation = _check_added(number, namespace)
+        if not isinstance(entries, tuple) or (not entries and not added):
             _fail(f"batch {number:04d} ENTRIES must be a non-empty tuple")
         checked = tuple(_check_entry(number, entry) for entry in entries)
         digest = hashlib.sha256(source).hexdigest()
         batches.append(Batch(sequence=number, slug=slug, mission=mission, name=name,
-                             sha256=digest, previous_sha256=previous, entries=checked))
+                             sha256=digest, previous_sha256=previous, entries=checked,
+                             added_paths=added, first_generation=first_generation))
         previous_sha = digest
     ordered = tuple(batches)
-    registry = Registry(batches=ordered, chains=_build_chains(ordered))
+    chains = _build_chains(ordered)
+    seen_added: set[str] = set()
+    for batch in ordered:
+        for path in batch.added_paths:
+            if path in chains:
+                _fail(f"batch {batch.sequence:04d} ADDED_PATHS overlaps an ENTRIES path: {path}")
+            if path in seen_added:
+                _fail(f"batch {batch.sequence:04d} ADDED_PATHS repeats a path added earlier: {path}")
+            seen_added.add(path)
+    registry = Registry(batches=ordered, chains=chains)
+    _require_regular_files(base, registry)
     _CACHE[key] = registry
     return registry
 

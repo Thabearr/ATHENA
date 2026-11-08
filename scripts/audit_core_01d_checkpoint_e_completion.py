@@ -556,11 +556,14 @@ def validate_bounded_inventory(raw: bytes) -> None:
     policy.require(not (set(ux_predecessor_blobs) & set(predecessor_blobs)),
                    "UX-01A predecessor overlaps an existing historical source pin")
     predecessor_blobs.update(ux_predecessor_blobs)
+    # VAR-05: new paths a mission declares in its successor batch (ADDED_PATHS).
+    from scripts import source_successor_registry
+    batch_added_paths = set(source_successor_registry.current().added_paths())
     unchanged_lines = []
     for line in raw.splitlines(keepends=True):
         metadata, separator, path_bytes = line.partition(b"\t")
         path = path_bytes.strip().decode()
-        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | E3_RUN_02A_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | FRESH_HOLDOUT_20261015_ADDITIVE_PATHS | pr459_additive_paths | ux_additive_paths | VAR_01B_ADDITIVE_PATHS | PH_A_ADDITIVE_PATHS | SRC_01_ADDITIVE_PATHS:
+        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | E3_RUN_02A_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | FRESH_HOLDOUT_20261015_ADDITIVE_PATHS | pr459_additive_paths | ux_additive_paths | VAR_01B_ADDITIVE_PATHS | PH_A_ADDITIVE_PATHS | SRC_01_ADDITIVE_PATHS | batch_added_paths:
             continue
         if path in PR459_PREDECESSOR_SOURCE_BLOBS:
             policy.require(metadata.split()[:2] == [b"100644", b"blob"]
