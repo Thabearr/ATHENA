@@ -238,6 +238,7 @@ jobs:
           for source_dir in \
             '.cache/athena-research/current-shadow-sportybet-catalog-fanout' \
             '.cache/athena-research/current-shadow-sportybet-upcoming-discovery' \
+            '.cache/athena-research/current-shadow-sportybet-pc-upcoming-discovery' \
             '.cache/athena-research/sportybet-live-event-quote-evidence' \
             '.cache/athena-research/fotmob-data-matches-captures'
           do
@@ -253,6 +254,11 @@ jobs:
             mkdir -p "${identity_root}"
             cp "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH}" "${identity_root}/"
           fi
+
+          # Verify copied raw pages, manifests and capture epochs against the
+          # exact source tree and the completed run receipt before artifact upload.
+          # Runs last so a verification failure cannot skip the identity-state copy.
+          python -m scripts.verify_current_shadow_pc_upcoming_archive
 
       - name: Email durable Shadow result when configured
         if: always()

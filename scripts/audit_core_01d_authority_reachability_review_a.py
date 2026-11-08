@@ -152,6 +152,8 @@ def _fresh_holdout_predecessor_source(path):
  return raw
 
 def source_bytes(path):
+ from scripts import audit_phase_a_workflow_successor as phase_a
+ if phase_a.is_successor_path(path): return phase_a.before_bytes(path)
  if path in FRESH_HOLDOUT_20261014_PREDECESSOR_SOURCES:
   return _fresh_holdout_predecessor_source(path)
  if path in INCIDENT_20261010_PREDECESSOR_SOURCES:

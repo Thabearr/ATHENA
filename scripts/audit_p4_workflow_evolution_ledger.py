@@ -933,6 +933,12 @@ CORE01D_PR119_CONTROL_WORKFLOW_FORWARD = {
         },
     ),
 }
+
+from scripts import audit_phase_a_workflow_successor as _phase_a  # noqa: E402
+
+# Phase A successor forward (PH-A, rebuild of PR #465); exact ids from PHASE_A_SUCCESSORS.
+CORE01D_PR119_CONTROL_WORKFLOW_FORWARD.update(_phase_a.p4_workflow_forwards())
+
 CORE01D_PR119_CONTROL_WORKFLOW_BASE_FIXTURES = {
     ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml": (
         "tests/fixtures/core_01d/pass1-v1-source/audit-lineage.yml",

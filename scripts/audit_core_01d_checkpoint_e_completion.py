@@ -344,6 +344,15 @@ VAR_01B_ADDITIVE_PATHS = {
     "scripts/pytest_a2_chain_share.py",
     "tests/test_var_01b_a2_chain_share.py",
 }
+# PH-A (Phase A pcUpcoming retention rebuild): four new A2-authenticated Python
+# paths only. The changed workflow is projected back to its exact main blob by
+# scripts/audit_phase_a_workflow_successor.py inside project_historical_inventory.
+PH_A_ADDITIVE_PATHS = {
+    "scripts/verify_current_shadow_pc_upcoming_archive.py",
+    "tests/test_current_shadow_pc_upcoming_archive_retention.py",
+    "scripts/audit_phase_a_workflow_successor.py",
+    "tests/test_phase_a_workflow_successor.py",
+}
 
 
 def authenticate_fresh_holdout_20261015_evidence():
@@ -542,7 +551,7 @@ def validate_bounded_inventory(raw: bytes) -> None:
     for line in raw.splitlines(keepends=True):
         metadata, separator, path_bytes = line.partition(b"\t")
         path = path_bytes.strip().decode()
-        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | E3_RUN_02A_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | FRESH_HOLDOUT_20261015_ADDITIVE_PATHS | pr459_additive_paths | ux_additive_paths | VAR_01B_ADDITIVE_PATHS:
+        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | E3_RUN_02A_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | FRESH_HOLDOUT_20261015_ADDITIVE_PATHS | pr459_additive_paths | ux_additive_paths | VAR_01B_ADDITIVE_PATHS | PH_A_ADDITIVE_PATHS:
             continue
         if path in PR459_PREDECESSOR_SOURCE_BLOBS:
             policy.require(metadata.split()[:2] == [b"100644", b"blob"]
@@ -752,7 +761,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args(argv)
     if args.write:
-        value = build_receipt()
+        from scripts import audit_phase_a_workflow_successor as phase_a
+        with phase_a.emitting():  # a written receipt records true current identities
+            value = build_receipt()
         (ROOT / RECEIPT_PATH).write_bytes(policy.canonical_bytes(value))
         print(json.dumps({"result": "WROTE", "receipt_sha256": value["canonical_sha256"],
                           "status": value["checkpoint_e_status"], "blockers": value["remaining_blocker_ids"]}))

@@ -62,7 +62,11 @@ def raw(path):
         if evolution.source_identity(observed) != evolution.PORT02C_REPLAY_WORKFLOW_AFTER:
             d5.authenticate_workflow()
             return d5.predecessor_source(path)
-    return (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
+    observed = (ROOT / path).read_bytes().replace(b"\r\n", b"\n")
+    from scripts import audit_phase_a_workflow_successor as phase_a
+    if phase_a.is_admitted_after(path, observed):
+        return phase_a.before_bytes(path)
+    return observed
 
 
 def git(*args):
