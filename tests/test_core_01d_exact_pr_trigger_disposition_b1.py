@@ -259,8 +259,14 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
     }
     assert src_01_paths <= added
     assert {first_added_generation[path] for path in src_01_paths} == {350}
-    assert len(added - {e3_projection_path} - var_01b_paths - ph_a_paths - src_01_paths) == 94
-    assert len(added) == 95 + len(var_01b_paths) + len(ph_a_paths) + len(src_01_paths)
+    # VAR-05: later missions declare their new paths in their successor batch
+    # (ADDED_PATHS with FIRST_GENERATION); each is checked exactly here.
+    from scripts import source_successor_registry
+    batch_paths = batch_added_census(source_successor_registry.current().batches,
+                                     first_added_generation, added)
+    assert not batch_paths & (var_01b_paths | ph_a_paths | src_01_paths | {e3_projection_path})
+    assert len(added - {e3_projection_path} - var_01b_paths - ph_a_paths - src_01_paths - batch_paths) == 94
+    assert len(added) == 95 + len(var_01b_paths) + len(ph_a_paths) + len(src_01_paths) + len(batch_paths)
     assert first_added_generation["runtime/current_shadow_operation_authority.py"] == 263
     assert first_added_generation[
         "tests/test_core_01d_pass_a_v300_source_predecessors.py"
@@ -287,3 +293,27 @@ def test_no_replay_or_mutation_authority_was_exercised(receipt):
     assert receipt["workflow_retirement_count"] == receipt["workflow_deletion_count"] == 0
     assert receipt["checkpoint_e_status"] == receipt["p4_4_status"] == "INCOMPLETE"
     assert receipt["criteria_11_and_14_remain_false"] is True
+
+
+def batch_added_census(batches, first_added_generation, added):
+    """Every batch ADDED_PATHS entry is in the A2 census at exactly its FIRST_GENERATION."""
+    declared = set()
+    for batch in batches:
+        for path in batch.added_paths:
+            assert path in added, f"batch {batch.sequence:04d} added path is not in the A2 census: {path}"
+            assert first_added_generation[path] == batch.first_generation, (
+                f"batch {batch.sequence:04d} added path {path} first appears in generation "
+                f"{first_added_generation[path]}, not FIRST_GENERATION {batch.first_generation}")
+            declared.add(path)
+    return declared
+
+
+def test_batch_added_census_rejects_a_wrong_or_missing_first_generation():
+    from types import SimpleNamespace
+    batch = SimpleNamespace(sequence=2, added_paths=("scripts/new_tool.py",), first_generation=351)
+    assert batch_added_census([batch], {"scripts/new_tool.py": 351}, {"scripts/new_tool.py"}) == {
+        "scripts/new_tool.py"}
+    with pytest.raises(AssertionError, match="not FIRST_GENERATION 351"):
+        batch_added_census([batch], {"scripts/new_tool.py": 352}, {"scripts/new_tool.py"})
+    with pytest.raises(AssertionError, match="not in the A2 census"):
+        batch_added_census([batch], {}, set())
