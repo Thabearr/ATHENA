@@ -407,6 +407,9 @@ def audit(latest=None):
         # UX-01A's APP auditor now authenticates the UI successor while the
         # immutable D5 predecessor remains unchanged; bind its current bytes by A2.
         evolved |= {"scripts/audit_app_01a_local_shell.py"}
+        # PH-A: one-call Phase A successor hook (PHASE_A_SUCCESSORS entry 3);
+        # current bytes are authenticated by A2; the D5 receipt stays frozen.
+        evolved |= {"scripts/audit_core_01d_retained_workflow_status_v3.py"}
         inventory = boundary.authenticate_inventory()
         identities = {row["path"]: row["lf_source_sha256"] for row in inventory["source_identities"]}
         if (set(current) != set(frozen)

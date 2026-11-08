@@ -224,7 +224,8 @@ def test_review_a_reads_the_admitted_before_bytes():
 
 def test_c1_table_is_closed_and_exact():
     paths = [entry.path for entry in phase_a.PHASE_A_SUCCESSORS]
-    assert paths == [".github/workflows/current-shadow-all-market.yml", "scripts/core_01d_historical_source.py"]
+    assert paths == [".github/workflows/current-shadow-all-market.yml", "scripts/core_01d_historical_source.py",
+                     "scripts/audit_core_01d_retained_workflow_status_v3.py"]
     for entry in phase_a.PHASE_A_SUCCESSORS:
         assert "*" not in entry.path and not entry.path.endswith("/")
         assert len(entry.before_blob) == len(entry.after_blob) == 40
@@ -393,3 +394,54 @@ def test_listing_passes_before_rows_and_rejects_other_blobs():
     forged = b"100644 blob " + b"0" * 40 + b"\t" + phase_a.PATH.encode() + b"\n"
     with pytest.raises(phase_a.PhaseAWorkflowSuccessorError):
         phase_a.project_ls_tree(forged)
+
+
+# ---------------------------------------------------------------------------
+# PH-A3 R2: retained_workflow_status_v3._source_identity hook (entry 3, L1)
+# ---------------------------------------------------------------------------
+
+def test_r2_source_identity_projects_exact_after_to_before():
+    from scripts import audit_core_01d_retained_workflow_status_v3 as v3
+    row = v3._source_identity(phase_a.PATH)
+    assert row == {"path": phase_a.PATH, "git_blob_sha1": phase_a.BEFORE_BLOB,
+                   "source_sha256": phase_a.BEFORE_SHA256}
+    other = ".github/workflows/athena-run.yml"
+    raw = (phase_a.ROOT / other).read_bytes().replace(b"\r\n", b"\n")
+    assert v3._source_identity(other)["source_sha256"] == hashlib.sha256(raw).hexdigest()
+
+
+def test_r2_source_identity_on_a_tampered_workflow_raises(monkeypatch):
+    from scripts import audit_core_01d_retained_workflow_status_v3 as v3
+    _patched_read_bytes(monkeypatch, phase_a.PATH, _flip_one)
+    with pytest.raises(ValueError):
+        v3._source_identity(phase_a.PATH, must_match_head=False)
+    with pytest.raises(Exception):
+        v3._source_identity(phase_a.PATH)
+
+
+def test_r2_emission_records_the_true_current_identity():
+    from scripts import audit_core_01d_retained_workflow_status_v3 as v3
+    with phase_a.emitting():
+        row = v3._source_identity(phase_a.PATH)
+    assert (row["git_blob_sha1"], row["source_sha256"]) == (phase_a.AFTER_BLOB, phase_a.AFTER_SHA256)
+    # Projection resumes after the emitting block.
+    assert v3._source_identity(phase_a.PATH)["git_blob_sha1"] == phase_a.BEFORE_BLOB
+
+
+def test_r2_project_source_bytes_rejects_disagreeing_bytes():
+    raw = (phase_a.ROOT / phase_a.PATH).read_bytes().replace(b"\r\n", b"\n")
+    with pytest.raises(phase_a.PhaseAWorkflowSuccessorError):
+        phase_a.project_source_bytes(phase_a.PATH, phase_a.AFTER_BLOB, _flip_one(raw))
+    with pytest.raises(phase_a.PhaseAWorkflowSuccessorError):
+        phase_a.project_source_bytes(phase_a.PATH, "0" * 40, raw)
+    assert phase_a.project_source_bytes("a.py", "0" * 40, b"x") == ("0" * 40, b"x")
+
+
+def test_r2_app_store_rejects_an_unlisted_change_to_the_admitted_file(monkeypatch):
+    from scripts import audit_core_01d_ci_offline_transport_boundary as boundary
+    from scripts import audit_data_01c_app_store_complete as app_store
+    app_store.audit()
+    path = "scripts/audit_core_01d_retained_workflow_status_v3.py"
+    _patched_read_bytes(monkeypatch, path, lambda raw: raw + b"# beyond the hook\n")
+    with pytest.raises(AssertionError):
+        app_store.audit(latest=boundary.authenticate_inventory())

@@ -17,6 +17,8 @@ trigger, delivery or model authority.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import dataclasses
 import hashlib
 import stat
@@ -54,6 +56,11 @@ HISTORICAL_SOURCE_HOOK = (
     b"        from scripts import audit_phase_a_workflow_successor as phase_a\n"
     b"        live_identity = phase_a.project_source_identity(str(path), live, live_identity)\n"
 )
+# The one-call hook in retained_workflow_status_v3._source_identity (Amendment 3 R2).
+RETAINED_STATUS_V3_HOOK = (
+    b"    from scripts import audit_phase_a_workflow_successor as phase_a\n"
+    b"    blob, normalized = phase_a.project_source_bytes(path, blob, normalized)\n"
+)
 
 PHASE_A_SUCCESSORS: tuple[Successor, ...] = (
     Successor(
@@ -73,6 +80,15 @@ PHASE_A_SUCCESSORS: tuple[Successor, ...] = (
         after_sha256="de26bbae44894704399d9f520da478749739ca7b055b42bc5305c4f39213fd2b",
         hunks=(HISTORICAL_SOURCE_HOOK,),
         reason=REASON + ": one-call projection hook for the workflow successor",
+    ),
+    Successor(
+        path="scripts/audit_core_01d_retained_workflow_status_v3.py",
+        before_blob="6121d896de477c4384bcdb41a3d55f691227d2fd",
+        before_sha256="c55e244adb14979b7da384ad46e9fdf7958f15ec03dfa4250747a8091088d600",
+        after_blob="db9f14c86a78ec2314c746163506757956d4a65c",
+        after_sha256="0ef7a91bb52ceba90db9ac93e16ba6983933b2632d3bd04c3a2840d192b3ef51",
+        hunks=(RETAINED_STATUS_V3_HOOK,),
+        reason=REASON + ": one-call source-identity hook (L1; D5 app-store admission)",
     ),
 )
 _BY_PATH = {entry.path: entry for entry in PHASE_A_SUCCESSORS}
@@ -251,9 +267,48 @@ def filter_changed_paths(changed: Iterable[str]) -> list[str]:
     return changed
 
 
+_EMITTING: contextvars.ContextVar[bool] = contextvars.ContextVar("phase_a_emitting", default=False)
+
+
+@contextlib.contextmanager
+def emitting():
+    """Disable every source-identity projection while a caller writes a new record.
+
+    A receipt writer must record the true current identity (AFTER), never the
+    projected BEFORE; projections exist only to validate frozen records.
+    """
+    token = _EMITTING.set(True)
+    try:
+        yield
+    finally:
+        _EMITTING.reset(token)
+
+
+def project_source_bytes(path: str, blob: str, normalized: bytes) -> tuple[str, bytes]:
+    """Return (blob, LF bytes) for a frozen-record comparison of one source.
+
+    Unlisted paths and record emission pass unchanged. A listed path is
+    authenticated on disk first: exact AFTER -> exact BEFORE blob and bytes;
+    exact BEFORE -> unchanged; anything else (tamper, missing, linked, or bytes
+    that disagree with the working tree) raises.
+    """
+    entry = entry_for(path)
+    if entry is None or str(path) != entry.path or _EMITTING.get():
+        return blob, normalized
+    state = authenticate_current_bytes(None, entry.path)
+    identity = _identity(normalized)
+    if state == "AFTER" and identity == (entry.after_blob, entry.after_sha256) and blob == entry.after_blob:
+        before = before_bytes(entry.path)
+        return entry.before_blob, before
+    if state == "BEFORE" and identity == (entry.before_blob, entry.before_sha256) and blob == entry.before_blob:
+        return blob, normalized
+    _fail(entry.path + " source identity does not match the authenticated working tree")
+    raise AssertionError("unreachable")
+
+
 def project_source_identity(path: str, live: bytes, identity):
     """Project a runtime DevelopmentSourceIdentity for a listed path at exact AFTER bytes."""
-    if not is_admitted_after(path, live):
+    if _EMITTING.get() or not is_admitted_after(path, live):
         return identity
     entry = entry_for(path)
     updates = {"git_blob_sha1": entry.before_blob, "git_blob_payload_sha256": entry.before_sha256}

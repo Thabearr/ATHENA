@@ -105,6 +105,8 @@ def _source_identity(path: str, *, must_match_head: bool = True) -> dict[str, st
     head = _git("rev-parse", f"HEAD:{path}").decode("ascii").strip()
     if must_match_head:
         require(blob == head, f"authenticated source differs from HEAD: {path}")
+    from scripts import audit_phase_a_workflow_successor as phase_a
+    blob, normalized = phase_a.project_source_bytes(path, blob, normalized)
     return {
         "path": path,
         "git_blob_sha1": blob,

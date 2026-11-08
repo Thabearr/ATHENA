@@ -761,7 +761,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args(argv)
     if args.write:
-        value = build_receipt()
+        from scripts import audit_phase_a_workflow_successor as phase_a
+        with phase_a.emitting():  # a written receipt records true current identities
+            value = build_receipt()
         (ROOT / RECEIPT_PATH).write_bytes(policy.canonical_bytes(value))
         print(json.dumps({"result": "WROTE", "receipt_sha256": value["canonical_sha256"],
                           "status": value["checkpoint_e_status"], "blockers": value["remaining_blocker_ids"]}))
