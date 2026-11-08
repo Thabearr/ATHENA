@@ -249,8 +249,18 @@ def test_historical_completion_projection_accepts_only_post_v2_inventory_sources
     }
     assert ph_a_paths <= added
     assert {first_added_generation[path] for path in ph_a_paths} == {349}
-    assert len(added - {e3_projection_path} - var_01b_paths - ph_a_paths) == 94
-    assert len(added) == 95 + len(var_01b_paths) + len(ph_a_paths)
+    # SRC-01 admits exactly four new A2-authenticated Python paths, all first
+    # bound by generation V350.
+    src_01_paths = {
+        "scripts/source_successor_registry.py",
+        "scripts/source_successor_batch_0001_ph_a.py",
+        "scripts/source_successor_levels.py",
+        "tests/test_source_successor_registry.py",
+    }
+    assert src_01_paths <= added
+    assert {first_added_generation[path] for path in src_01_paths} == {350}
+    assert len(added - {e3_projection_path} - var_01b_paths - ph_a_paths - src_01_paths) == 94
+    assert len(added) == 95 + len(var_01b_paths) + len(ph_a_paths) + len(src_01_paths)
     assert first_added_generation["runtime/current_shadow_operation_authority.py"] == 263
     assert first_added_generation[
         "tests/test_core_01d_pass_a_v300_source_predecessors.py"

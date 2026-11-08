@@ -353,6 +353,15 @@ PH_A_ADDITIVE_PATHS = {
     "scripts/audit_phase_a_workflow_successor.py",
     "tests/test_phase_a_workflow_successor.py",
 }
+# SRC-01 (standing successor registry): four new A2-authenticated Python paths
+# only. Registered successors are projected back to their exact main identities
+# by scripts/audit_phase_a_workflow_successor.py; no hook call site changes.
+SRC_01_ADDITIVE_PATHS = {
+    "scripts/source_successor_registry.py",
+    "scripts/source_successor_batch_0001_ph_a.py",
+    "scripts/source_successor_levels.py",
+    "tests/test_source_successor_registry.py",
+}
 
 
 def authenticate_fresh_holdout_20261015_evidence():
@@ -551,7 +560,7 @@ def validate_bounded_inventory(raw: bytes) -> None:
     for line in raw.splitlines(keepends=True):
         metadata, separator, path_bytes = line.partition(b"\t")
         path = path_bytes.strip().decode()
-        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | E3_RUN_02A_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | FRESH_HOLDOUT_20261015_ADDITIVE_PATHS | pr459_additive_paths | ux_additive_paths | VAR_01B_ADDITIVE_PATHS | PH_A_ADDITIVE_PATHS:
+        if path in data01a.NEW_PATHS | successor_paths | INCIDENT_20261010_NEW_PATHS | a2_successor_inventory_paths | RUN_02A_PRE_ADDITIVE_PATHS | E3_RUN_02A_ADDITIVE_PATHS | FRESH_HOLDOUT_20261014_ADDITIVE_PATHS | FRESH_HOLDOUT_20261015_ADDITIVE_PATHS | pr459_additive_paths | ux_additive_paths | VAR_01B_ADDITIVE_PATHS | PH_A_ADDITIVE_PATHS | SRC_01_ADDITIVE_PATHS:
             continue
         if path in PR459_PREDECESSOR_SOURCE_BLOBS:
             policy.require(metadata.split()[:2] == [b"100644", b"blob"]
